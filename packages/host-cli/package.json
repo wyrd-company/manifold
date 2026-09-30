@@ -1,0 +1,23 @@
+{
+  "name": "@wyrd-company/manifold-host-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Manifold host CLI, a companion binary installed on each environment.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "bun build src/cli.ts --compile --outfile dist/manifold-host",
+    "build:targets": "for target in linux-x64 linux-arm64 darwin-arm64 windows-x64; do bun build src/cli.ts --compile --target=bun-$target --outfile dist/$target/manifold-host || exit 1; done",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "bun": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
