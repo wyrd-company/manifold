@@ -59,14 +59,18 @@ We need to be on the same page with terminology. When communicating, use this la
 - **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
 - **allocation** a percentage of a parent's capacity guaranteed to a portfolio item, with an optional ceiling. Guarantees under one parent total at most 100% at every level and need not total 100%; the remainder is unallocated and an item may borrow from it up to its ceiling, never from a sibling.
 - **available balance** allocation less usage counted as it arrives, per portfolio item and account. A reservation holds its full amount until that actor's posted usage consumes it.
+- **binding** a declaration in the process repository that ties a GitHub Project or a T3code project to Manifold by name: its environment and the portfolio item it attaches to.
 - **blueprint** a declarative, static schema (YAML) specifying states, transitions, and structure of a state machine.
 - **board** a KANBAN board
 - **callback** an imperative actor that runs until its state exits, receiving and sending events.
 - **capacity** what an account can spend in a window, in the account's native unit, observed from usage for subscriptions.
 - **client** means the web, desktop, or mobile UI for T3Code.
+- **comparator** a pure TypeScript function in the process repository, run in a sandbox by a gate, that picks the next task from the population, with optional reservations, or none.
 - **console** the web user interface to Manifold
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **estimate** a task's expected usage, produced by the user's process.
+- **gate** a Manifold implementation declared on a blueprint state that runs the comparator over the tasks waiting there and hands out one token at a time.
+- **intake** the decision model Manifold evaluates once when an issue is discovered, yielding the blueprint its actor runs and the portfolio item the task belongs to.
 - **issue** a way to track tasks related to a repository on GitHub
 - **parent** a task with subtasks
 - **portfolio item** a distinct item that is assigned a percentage of account usage budget
@@ -81,6 +85,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **state machine** a declarative stateful actor, built from a blueprint.
 - **task** a specific piece of work that needs to be completed, documented as an issue and executed as an actor
 - **thread** means the durable conversation and work history for a T3code project.
+- **token** the event a gate hands to one task actor that lets it take the guarded transition out of the gated state; it is held until returned where the blueprint declares.
 - **turn** a single, complete cycle of work executed by an agent in response to a user prompt
 - **T3code project** means an environment-local workspace record rooted at a directory.
 - **variance** actual less estimate.
