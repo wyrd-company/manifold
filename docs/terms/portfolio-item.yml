@@ -1,4 +1,4 @@
 $schema: https://refinery.systems/ontology/term
 title: Portfolio item
 description: >-
-  A user-declared node in the portfolio tree that budget is allocated to and usage is attributed to. GitHub Projects and T3code projects attach to items through bindings, several to one item if wanted. Every task belongs to exactly one lowest-level item, chosen at intake within the subtree its Project attaches to. Every item with sub-items has an Other sub-item for tasks and usage that match none of them.
+  A user-declared node in the portfolio tree that budget is allocated to and usage is attributed to.

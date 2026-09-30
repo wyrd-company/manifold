@@ -1,4 +1,4 @@
 $schema: https://refinery.systems/ontology/term
 title: Capacity
 description: >-
-  What an account can spend in a window, in the account's native unit. Observed from usage for subscriptions, declared for API budgets.
+  What an account can spend in a window.

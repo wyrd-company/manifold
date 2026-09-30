@@ -1,4 +1,4 @@
 $schema: https://refinery.systems/ontology/term
 title: Available balance
 description: >-
-  Allocation less usage counted as it arrives, per portfolio item and account. A reservation holds its full amount until posted usage for that actor consumes it; usage past the reservation reduces the balance further. Once every actor has settled it equals allocation less settled actuals.
+  Allocation less usage counted as it arrives, per portfolio item and account.

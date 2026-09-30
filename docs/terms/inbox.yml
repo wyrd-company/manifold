@@ -1,4 +1,4 @@
 $schema: https://refinery.systems/ontology/term
 title: Inbox
 description: >-
-  The per-actor store of routed events not yet consumed. Written before delivery, drained on resume.
+  The per-actor store of routed events not yet consumed.

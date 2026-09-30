@@ -1,4 +1,4 @@
 $schema: https://refinery.systems/ontology/term
 title: State Machine Actor
 description: >-
-  An actor running a blueprint. Manifold spawns one per bound Project and one per issue on it.
+  An actor running a blueprint.

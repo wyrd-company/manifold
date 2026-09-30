@@ -1,4 +1,4 @@
 $schema: https://refinery.systems/ontology/term
 title: Event Source
 description: >-
-  A shared origin of events Manifold owns and routes: GitHub webhooks and polling, notification actions from apprise-api, usage from each host CLI, and one thread stream per environment.
+  A shared origin of events that Manifold routes to actors.

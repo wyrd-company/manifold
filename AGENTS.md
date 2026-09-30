@@ -55,40 +55,50 @@ We need to be on the same page with terminology. When communicating, use this la
 
 - **account** a user profile that provides access to an artificial intelligence platform, tracks usage limits or subscription billing such as Anthropic, Cursor, GitHub, OpenAI, Opencode, OpenRouter, Command Code, X-AI, etc.
 - **actor** a state machine, promise, callback, observer, or transition instance.
-- **actual** exact usage posted from provider session data.
+- **actual** exact usage recorded for a task actor from provider session data.
 - **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
-- **allocation** a percentage of a parent's capacity guaranteed to a portfolio item, with an optional ceiling. Guarantees under one parent total at most 100% at every level and need not total 100%; the remainder is unallocated and an item may borrow from it up to its ceiling, never from a sibling.
-- **available balance** allocation less usage counted as it arrives, per portfolio item and account. A reservation holds its full amount until that actor's posted usage consumes it.
-- **binding** a declaration in the process repository that ties a GitHub Project or a T3code project to Manifold by name: its environment and the portfolio item it attaches to.
+- **allocation** a guaranteed percentage of a parent's capacity assigned to a portfolio item.
+- **available balance** allocation less usage counted as it arrives, per portfolio item and account.
+- **binding** a declaration in the process repository that ties a GitHub Project or a T3code project to a portfolio item.
 - **blueprint** a declarative, static schema (YAML) specifying states, transitions, and structure of a state machine.
 - **board** a KANBAN board
 - **callback** an imperative actor that runs until its state exits, receiving and sending events.
-- **capacity** what an account can spend in a window, in the account's native unit, observed from usage for subscriptions.
+- **capacity** what an account can spend in a window.
+- **child state machine** a blueprint invoked or spawned by another state machine actor, for work the parent owns.
 - **client** means the web, desktop, or mobile UI for T3Code.
-- **comparator** a pure TypeScript function in the process repository, run in a sandbox by a gate, that picks the next task from the population, with optional reservations, or none.
+- **comparator** the user's function that picks which task in a gate's population proceeds next.
 - **console** the web user interface to Manifold
+- **deadline** a time at which an actor in a state receives an event.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
-- **estimate** a task's expected usage, produced by the user's process.
-- **gate** a Manifold implementation declared on a blueprint state that runs the comparator over the tasks waiting there and hands out one token at a time.
-- **intake** the decision model Manifold evaluates once when an issue is discovered, yielding the blueprint its actor runs and the portfolio item the task belongs to.
+- **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
+- **event source** a shared origin of events that Manifold routes to actors.
+- **gate** an implementation on a blueprint state that decides which waiting tasks may leave it.
+- **holder** a task actor holding a token from a gate.
+- **implementation** a named piece of code a blueprint binds: actor logic, an action, a guard, or a delay.
+- **inbox** the per-actor store of routed events not yet consumed.
+- **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
 - **issue** a way to track tasks related to a repository on GitHub
 - **parent** a task with subtasks
-- **portfolio item** a distinct item that is assigned a percentage of account usage budget
+- **population** the task actors in a gated state that hold no token from its gate.
+- **portfolio item** a user-declared node in the portfolio tree that budget is allocated to and usage is attributed to.
 - **project** an adaptable table, board, and roadmap that integrates with your issues and pull requests on GitHub to help you plan and track your work
 - **promise** an invoked implementation actor that finishes once, with an output or an error.
 - **provider** means the agent runtime or harness T3 Code talks to, such as Codex, Claude, Cursor, Grok, or OpenCode.
 - **reservation** an estimate held against a portfolio item's available balance from a task's release until settlement.
+- **router** delivers an event from a source to the actors whose identity matches its topic.
 - **service** the running Manifold service
 - **session** the entire end-to-end conversation or workflow containing multiple agent turns
 - **settle** when no more activity is occuring on a thread
 - **settlement** retiring a reservation and posting the actual when a task actor ends.
+- **snapshot** the persisted state of an actor: its state value and context.
 - **state machine** a declarative stateful actor, built from a blueprint.
+- **state machine actor** an actor running a blueprint.
+- **T3code project** means an environment-local workspace record rooted at a directory.
 - **task** a specific piece of work that needs to be completed, documented as an issue and executed as an actor
 - **thread** means the durable conversation and work history for a T3code project.
-- **token** the event a gate hands to one task actor that lets it take the guarded transition out of the gated state; it is held until returned where the blueprint declares.
+- **token** what a gate grants a task actor so it may leave the gated state.
 - **turn** a single, complete cycle of work executed by an agent in response to a user prompt
-- **T3code project** means an environment-local workspace record rooted at a directory.
-- **variance** actual less estimate.
+- **variance** actual less estimate for one task.
 - **you** means the agent reading this file and changing Manifold Code.
 
 ## Thar be dragons
