@@ -57,7 +57,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **actor** a state machine, promise, callback, observer, or transition instance.
 - **actual** exact usage posted from provider session data.
 - **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
-- **allocation** a percentage of a parent's capacity guaranteed to a portfolio item, with an optional ceiling. Allocations under one parent need not total 100%; the remainder is unallocated and an item may borrow from it up to its ceiling, never from a sibling.
+- **allocation** a percentage of a parent's capacity guaranteed to a portfolio item, with an optional ceiling. Guarantees under one parent total at most 100% at every level and need not total 100%; the remainder is unallocated and an item may borrow from it up to its ceiling, never from a sibling.
 - **available balance** allocation less usage counted as it arrives, per portfolio item and account. A reservation holds its full amount until that actor's posted usage consumes it.
 - **blueprint** a declarative, static schema (YAML) specifying states, transitions, and structure of a state machine.
 - **board** a KANBAN board

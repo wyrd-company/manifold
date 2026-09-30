@@ -258,12 +258,12 @@ pointers every control has a hit area of at least 44×44px, as in T3 Code.
 A connection status is an 8px dot plus a text label. Never use the color
 alone.
 
-| State        | Dot               | Label color        |
-| ------------ | ----------------- | ------------------ |
-| Connected    | success           | foreground         |
-| Reconnecting | warning, pinging  | foreground         |
-| Disconnected | muted, 40%        | muted-foreground   |
-| Error        | error             | error-foreground   |
+| State        | Dot              | Label color      |
+| ------------ | ---------------- | ---------------- |
+| Connected    | success          | foreground       |
+| Reconnecting | warning, pinging | foreground       |
+| Disconnected | muted, 40%       | muted-foreground |
+| Error        | error            | error-foreground |
 
 A condition that is independent of the connection, such as "Paused", is a
 warning badge after the label.
@@ -444,9 +444,11 @@ the actor page.
   "Near limit".
 - An item with sub-items has a chevron that shows them as indented rows on
   the `lane` surface, with the same columns and their own "Unallocated" row.
-- "Other" is always the last item. It holds usage attached to no item. It
-  has an allocation like any item, but it has no Edit button and cannot be
-  renamed or archived.
+- "Other" is always the last item. At the top level it holds usage attached
+  to no item. Every item with sub-items has its own "Other" as its last
+  sub-item, holding tasks and usage that match none of its sub-items; an
+  item with no sub-items shows none. Every "Other" has an allocation like
+  any item, but it has no Edit button and cannot be renamed or archived.
 - Under the table, "Show archived (N)" lists archived items with their
   archive date, lifetime cost, completed tasks, and "Restore". A restored
   item comes back with a 0% allocation.
@@ -474,10 +476,13 @@ allocations add up to more than 100%, their inputs have error borders, the
 heading shows the sum in error color, and "Save" is disabled.
 
 The footer has "Archive item" on the left (error text, outline). Items are
-archived, never deleted: an archived item keeps its history, its
-allocation goes back to the parent's unallocated remainder, and its attached
-projects move to the parent. A muted note beside the button says so:
-"Its allocation returns to <parent> and its projects move there."
+archived, never deleted: an archived item keeps its history and its
+allocation goes back to the parent's unallocated remainder. A muted note
+beside the button says so: "Its allocation returns to <parent>." When the
+item has attached projects, "Archive item" opens a 480px dialog listing
+each project with a choice: "Move to <parent>" (it lands on the parent's
+"Other"), "Reassign to" a sibling picked from a select, or "Archive
+project". The confirm button is solid error.
 
 "Add item" opens the same dialog with only a name and adds a top-level
 item. A new item starts at 0%.
@@ -504,7 +509,8 @@ link returns to it.
     agent's question, the choices as outline buttons when the escalation has
     them, a one-line answer field otherwise, and a line naming the other
     channels the state accepts ("here, in the T3 Code thread, or by a
-    notification action"), with "Open thread" when the thread is one.
+    notification action"), with "Open thread" when the thread is one. The
+    answer goes back to the thread that raised the escalation.
   - Current actor: the current state and the actor's status, blueprint,
     environment, account, usage and time, the actor timeline bar with each
     visit's state and duration under it, and "Open actor". A task in Backlog

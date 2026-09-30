@@ -1,4 +1,4 @@
 $schema: https://refinery.systems/ontology/term
 title: Allocation
 description: >-
-  A percentage of a parent's capacity guaranteed to a portfolio item, with an optional ceiling. Allocations under one parent need not total 100%; the remainder is unallocated, and an item may borrow from it up to its ceiling. An item never borrows from a sibling's allocation. Pacing may spread the window's capacity across the window.
+  A percentage of a parent's capacity guaranteed to a portfolio item, with an optional ceiling. Guarantees under one parent total at most 100% at every level and need not total 100%; the remainder is unallocated, and an item may borrow from it up to its ceiling. An item never borrows from a sibling's allocation. Pacing may spread the window's capacity across the window.

@@ -34,12 +34,13 @@ proposed-design:
   high-level-overview: >-
     The portfolio is a tree of items the user declares in the process
     repository. GitHub Projects and T3code projects attach to items through
-    their bindings, and one item, Other, holds usage attached to nothing.
-    Each item has an allocation per account: a guaranteed
-    percentage of its parent, an optional ceiling, and optional pacing.
-    Allocations under a parent need not total 100%; the remainder is
-    unallocated and items borrow from it up to their ceiling, never from a
-    sibling. One ledger keyed by actor holds credits, reservations, actuals,
+    their bindings. Every item with sub-items has an Other sub-item, and a
+    top-level Other holds usage attached to nothing. Each item, Other
+    included, has an allocation per account: a guaranteed percentage of its
+    parent, an optional ceiling, and optional pacing. Guarantees under one
+    parent total at most 100% at every level of the tree. They need not
+    total 100%; the remainder is unallocated and items borrow from it up to
+    their ceiling, never from a sibling. One ledger keyed by actor holds credits, reservations, actuals,
     and settlements per item and account. Available balance counts usage as
     it arrives. The portfolio and its bindings are declared in the process
     repository; ledgers, observed capacity, and reset times are in the store.
@@ -53,12 +54,23 @@ proposed-design:
     appends to it when it creates a project and the operator edits it to
     associate an existing one. An item may hold any
     number of projects of either kind. Threads in a T3code project with no
-    binding land on Other. Intake assigns each task to the single
-    lowest-level item within the subtree of the item its Project attaches
-    to; usage on an item with no chosen sub-item sits on that item. The
-    assignment lives in the store with the actor. Archiving an item returns
-    its allocation to its parent's unallocated remainder and moves its
-    projects' bindings to the parent.
+    binding land on the top-level Other. Intake assigns each task to the
+    single lowest-level item within the subtree of the item its Project
+    attaches to. A task that matches none of an item's sub-items goes to
+    that item's Other, so that it is clear nothing matched within that item.
+    An item with no sub-items needs no Other; the console shows none under
+    it. The assignment lives in the store with the actor.
+  guarantee-limit: >-
+    Guarantees under one parent, Other included, total at most 100% at every
+    level. A declared portfolio whose guarantees under any parent exceed
+    100% is in an error state: the console names the parent and its sum and
+    refuses to save, and the store rejects the allocation rows.
+  archiving: >-
+    Archiving an item is one step. Its allocation returns to its parent's
+    unallocated remainder. For each project attached to it, the operator
+    chooses: move it up to the parent, where it lands on the parent's Other
+    by the same rule as intake; reassign it to a sibling; or archive the
+    project. An archived item keeps its history.
   sharing-rule: >-
     An item may reserve while its usage counted as it arrives plus the new
     reservation stays within its guarantee, or within its guarantee plus the

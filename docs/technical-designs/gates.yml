@@ -45,8 +45,9 @@ proposed-design:
     repository run in a sandbox. Orthogonal regions on the task machine hold
     derived facts so that every guard is a read of state.
   declaration: >-
-    The gated state carries `meta.gate` naming the comparator file and
-    whether a reservation accompanies the token. The transition out is
+    The gated state carries `meta.gate` naming the comparator file,
+    whether a reservation accompanies the token, and where the token is
+    returned. The transition out is
     guarded on being `in` the token-holding region state, and on any other
     regions the process requires, such as dependencies clear. Other
     transitions out of the same state, an issue closed by an operator, carry
@@ -76,11 +77,12 @@ proposed-design:
     input, output, and seed, so any grant can be explained and replayed.
   token: >-
     A token belongs to one task actor and one gate. It is granted by the gate,
-    delivered through the actor's inbox, and held until returned. By default
-    the guarded transition out of the gated state returns it. A state may be
-    marked as returning a token instead, so that a one-at-a-time gate holds
-    the token through the work that follows, as a merge queue does. An actor
-    that ends returns every token it holds. Holders are counted from
+    delivered through the actor's inbox, and held until returned. The
+    blueprint author decides where it is returned: on the guarded transition
+    out of the gated state, or at a later state the blueprint marks as
+    returning it, so that a one-at-a-time gate holds the token through the
+    work that follows, as a merge queue does. An actor that ends returns
+    every token it holds. Holders are counted from
     unconsumed and consumed token rows, so a gate rebuilt after a restart
     counts a token in flight as held.
   reservation: >-

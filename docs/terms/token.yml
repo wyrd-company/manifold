@@ -1,4 +1,4 @@
 $schema: https://refinery.systems/ontology/term
 title: Token
 description: >-
-  The signal a gate hands to one task actor, delivered as an event, that lets it take the guarded transition out of the gated state. It is held until returned: by that transition by default, by a state the blueprint marks as returning it, or by the actor ending.
+  The signal a gate hands to one task actor, delivered as an event, that lets it take the guarded transition out of the gated state. It is held until returned where the blueprint author declares, on that transition or at a later state the blueprint marks, and an actor that ends returns every token it holds.

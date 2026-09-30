@@ -123,14 +123,16 @@ properties:
     item it attaches to. An item may hold several projects of either kind.
     A T3code project associated with a bound GitHub Project follows that
     Project's item and needs no binding of its own. Threads in a T3code
-    project with no binding are attributed to the Other item, and an
+    project with no binding are attributed to the top-level Other, and an
     operator can move them.
   portfolio: >-
     A tree of portfolio items the user declares. GitHub Projects and T3code
-    projects attach to items through their bindings, and one item, Other,
-    holds usage attached to nothing. Each item has an allocation per account: a guaranteed percentage
-    of its parent, an optional ceiling, and optional pacing. Allocations
-    under a parent need not total 100%; the remainder is unallocated and
+    projects attach to items through their bindings. Every item with
+    sub-items has an Other sub-item for work that matches none of them, and a
+    top-level Other holds usage attached to nothing. Each item has an
+    allocation per account: a guaranteed percentage of its parent, an
+    optional ceiling, and optional pacing. Guarantees under one parent total
+    at most 100% at every level; the remainder is unallocated and
     items borrow from it up to their ceiling, never from a sibling. Accounts
     are provider profiles, API budgets or subscriptions, whose capacity
     Manifold observes from reported usage. One ledger keyed by actor holds
@@ -168,7 +170,10 @@ features:
   escalate-on-any-channel: >-
     Sends an escalation through apprise-api, to the thread, and to the Task page,
     waits on the first answer, and retracts the others where the channel
-    allows.
+    allows. The answer goes back to the T3 Code thread that raised the
+    escalation. An escalation raised by automation, with no thread, is
+    answered through Manifold's API, which takes a reply or an action from
+    any channel.
   deliver-messages-between-threads: >-
     Routes cross-thread messages through the actor as events and tells the
     receiving agent it has mail without interrupting its turn.
@@ -183,7 +188,7 @@ features:
     project and every thread a name that says what it is for.
   attribute-operator-threads: >-
     Attributes usage from threads an operator opened outside Manifold by the
-    T3code project's binding, or to the Other item, and lets the operator
+    T3code project's binding, or to the top-level Other, and lets the operator
     move it to an item or a task.
   attribute-cost-exactly: >-
     Records tokens and dollars per actor and state visit from provider
