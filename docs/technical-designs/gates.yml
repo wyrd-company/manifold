@@ -82,9 +82,18 @@ proposed-design:
     out of the gated state, or at a later state the blueprint marks as
     returning it, so that a one-at-a-time gate holds the token through the
     work that follows, as a merge queue does. An actor that ends returns
-    every token it holds. Holders are counted from
+    every token it holds. There is no default: a gate that does not
+    declare where its token is returned does not load. Holders are counted from
     unconsumed and consumed token rows, so a gate rebuilt after a restart
     counts a token in flight as held.
+  token-lint: >-
+    The blueprint lint, in the service on load and in the host CLI, proves
+    that every granted token is returned. It checks that the declared return
+    point is the guarded transition out of the gated state or a state
+    reachable from it, and that every path from that transition reaches the
+    return point or a final state; any other path is an error. At run time
+    the gate records, per token, the state in which it was returned, so a
+    held token can be traced to the actor and state holding it.
   reservation: >-
     When the comparator's output carries reservations, the gate writes them
     to the ledger in the same transaction that records the token, under an
