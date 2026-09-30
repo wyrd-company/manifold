@@ -1,0 +1,29 @@
+{
+  "name": "@wyrd-company/manifold",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Process workflow engine for agentic work.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wyrd-company/manifold.git"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "tsc --noEmit && pnpm -r run typecheck",
+    "lint": "vp lint --report-unused-disable-directives",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "test": "pnpm -r run test"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.11"
+  },
+  "packageManager": "pnpm@11.10.0"
+}

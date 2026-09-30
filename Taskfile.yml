@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds: [task --list]
+    silent: true
+
+  install:
+    desc: Install dependencies
+    cmds: [pnpm install --frozen-lockfile]
+
+  build:
+    desc: Build every package; the host CLI compiles for the current platform
+    cmds: [pnpm run build]
+
+  build:targets:
+    desc: Compile the host CLI for Linux x64/arm64, macOS arm64, and Windows x64
+    cmds: [pnpm --filter @wyrd-company/manifold-host-cli run build:targets]
+
+  format:
+    desc: Format every file
+    cmds: [pnpm run fmt]
+
+  format:check:
+    desc: Fail on any file that is not formatted
+    cmds: [pnpm run fmt:check]
+
+  lint:
+    desc: Lint every package
+    cmds: [pnpm run lint]
+
+  typecheck:
+    desc: Type-check every package
+    cmds: [pnpm run typecheck]
+
+  test:
+    desc: Run every package's tests
+    cmds: [pnpm run test]
+
+  check:
+    desc: Everything a change must pass; CI runs this
+    cmds:
+      - task: format:check
+      - task: lint
+      - task: typecheck
+      - task: test
