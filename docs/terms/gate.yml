@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Gate
+description: >-
+  A Manifold implementation declared on a state in a blueprint. It holds the population, the tasks in that state that hold no token, runs the comparator over them, and hands out one token at a time, with a reservation when the comparator asks for one. The transition out of the state is guarded on holding a token.

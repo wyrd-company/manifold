@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Binding
+description: >-
+  A declaration in the process repository that ties a GitHub Project or a T3code project to Manifold by name: its environment and the portfolio item it attaches to. An item may hold several projects. A T3code project associated with a bound GitHub Project follows that Project's item and needs no binding. The credentials behind the name live in service configuration.

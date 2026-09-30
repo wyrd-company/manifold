@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Holder
+description: >-
+  A task actor holding a token from a gate, whether or not it has left the gated state. Holders are an input to the comparator and are counted from token rows after a restart.

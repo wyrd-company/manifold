@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Population
+description: >-
+  The task actors in a gated state that hold no token from its gate. The comparator ranks the population; tokens leave it.

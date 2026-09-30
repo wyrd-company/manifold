@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Actual
+description: >-
+  Exact usage posted to the usage ledger from provider session data.

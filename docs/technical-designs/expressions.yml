@@ -1,0 +1,90 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - gates
+objective: >-
+  Give the user two ways to put logic in the process repository, an
+  expression for anything about one value and a function for anything over a
+  set, so that every guard, mapping, decision, and comparator is a file
+  Manifold can lint, run, and explain, with no third language.
+background:
+  problems:
+    - >-
+      Under XState every guard, action, and input mapping is an implementation
+      referenced by name, which would make every condition a code change if
+      nothing else were provided.
+    - >-
+      A decision model's cells are written in its engine's own expression
+      language, which would be a third language beside the blueprint's
+      expressions and the comparator's code.
+    - >-
+      Unconstrained user code in the service can reach the network, run
+      forever, or grow into a process of its own.
+design-challenges:
+  one-language-per-shape: >-
+    A user should be able to say in one sentence why a piece of logic is
+    written the way it is.
+  sandbox-limits: >-
+    A timeout and a memory limit must hold against a function that allocates
+    in a loop, and the lint in the host CLI must check a function without
+    running it.
+  cell-semantics: >-
+    A decision table cell in JSONata has no shorthand; `> 3` is a syntax
+    error and a range literal parses but never matches. What a cell means
+    must be written down and linted.
+proposed-design:
+  high-level-overview: >-
+    JSONata is the expression language everywhere an expression appears:
+    inline in a blueprint for guards, input and output mappings, and event
+    matches, and inside decision models through two custom Zen nodes whose
+    cells and expressions are JSONata. TypeScript, run in a QuickJS wasm
+    sandbox, is used only for the comparator, the one function whose input is
+    a set. Decision models remain GoRules JDM files edited in the JDMEditor
+    and evaluated by the Zen engine.
+  blueprint-expressions: >-
+    A guard is a JSONata expression over the actor's context and the event,
+    yielding a boolean. A mapping is a JSONata expression at a schema
+    boundary: the input of a child state machine or invoked implementation,
+    the output of a final state, or the assignment of an event payload into
+    context. An event match is a JSONata expression over the payload. Each is
+    carried in the YAML as the parameter of one generic implementation, so
+    the blueprint stays serializable.
+  expression-lint: >-
+    Every mapping sits between two declared schemas. The lint builds a sample
+    from the input schema, evaluates the expression, and validates the result
+    against the output schema. Guards and matches are checked for a boolean
+    result. The host CLI runs the same lint.
+  decision-models: >-
+    Manifold ships two custom Zen node types, a decision table and an
+    expression node, with JSONata cells and expressions, built on the
+    editor's exported table component and evaluated by a host handler beside
+    the engine. Input, output, switch, and graph stay stock. Hit policy and
+    pass-through are controls on the node card. The editor version is pinned
+    and a browser check guards the undocumented behaviour the table relies
+    on.
+  cell-semantics: >-
+    An input cell is a JSONata expression evaluated with the column's value
+    bound as `$` and the whole input bound as `$input`; an empty cell matches
+    anything; a cell matches when its result is true. An output cell is a
+    JSONata expression evaluated against the input whose result is the
+    column's value. The lint rejects a cell that does not parse and warns on a
+    cell whose result can never be boolean.
+  comparator-sandbox: >-
+    A comparator is a TypeScript module exporting one function typed by a
+    declaration file Manifold ships. The service transpiles it with the
+    TypeScript compiler API in-process and runs it in a fresh QuickJS wasm
+    instance per load with a capped memory and a per-evaluation timeout,
+    both set in service configuration with shipped defaults. The
+    function sees only its input; there is no import, no global, no network,
+    no timer, no clock. A seeded random and the values age is derived from
+    are inputs. A comparator that exceeds its limit fails the evaluation and
+    the gate records the failure and waits for the next input change.
+  comparator-lint: >-
+    The host CLI typechecks a comparator against the declaration file with
+    the TypeScript 6 compiler API in-process, rejecting a wrong signature and
+    any use of an undeclared host global. Library files are embedded in the
+    Bun binary. The CLI does not run the function.
+  explainability: >-
+    Each comparator evaluation is recorded with its input, output, and seed.
+    Each decision model evaluation is recorded with its input and the trace
+    the engine returns, naming the node, rule, and column of any failing cell.

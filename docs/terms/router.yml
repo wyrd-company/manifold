@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Router
+description: >-
+  Delivers an event from a source to the actors whose identity matches its topic. Built on hierarchical publish-subscribe topics.

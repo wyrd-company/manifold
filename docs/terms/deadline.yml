@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Deadline
+description: >-
+  A delayed transition made durable: a stored fire time for an actor in a state, published as an event when it passes.

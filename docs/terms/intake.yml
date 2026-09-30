@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Intake
+description: >-
+  The decision model Manifold evaluates once when an issue is discovered on a bound Project, before its task actor is spawned. It yields the blueprint the actor runs and the single lowest-level portfolio item, within the subtree of the item its Project attaches to, that the task belongs to. Both are held in the store; only an operator forcing intake again changes them.

@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Child State Machine
+description: >-
+  A blueprint invoked or spawned by another state machine actor, for work the parent owns.

@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Reservation
+description: >-
+  An estimate held against a portfolio item's available balance from a task's release until settlement.

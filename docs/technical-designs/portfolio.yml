@@ -1,0 +1,106 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - gates
+objective: >-
+  Track budget by portfolio item across accounts so that a gate can ask
+  whether a task may reserve an estimate, unused budget is not stranded, one
+  item cannot take a sibling's guarantee, and every token is attributed to
+  the actor that spent it.
+background:
+  problems:
+    - >-
+      A fixed split strands what one item does not use, while a proportion
+      of what is left lets the first spender take the window.
+    - >-
+      A balance that subtracts only settled usage is wrong while an actor is
+      running, and wrong across a reset and after a move.
+    - >-
+      Usage arrives from provider session files after the fact, and the
+      files are deleted by the harness after a retention window.
+design-challenges:
+  sharing: >-
+    Guarantee, spillover, and protection against a late arrival pull in
+    different directions and must be configured by a developer who does not
+    know scheduler vocabulary.
+  in-flight-accounting: >-
+    A reservation and the usage it covers overlap in time and must not be
+    double-counted or lost across a window boundary.
+  attribution: >-
+    Usage must reach the right actor from a session file that names only a
+    provider session, and threads an operator opened outside Manifold must
+    land somewhere.
+proposed-design:
+  high-level-overview: >-
+    The portfolio is a tree of items the user declares in the process
+    repository. GitHub Projects and T3code projects attach to items through
+    their bindings, and one item, Other, holds usage attached to nothing.
+    Each item has an allocation per account: a guaranteed
+    percentage of its parent, an optional ceiling, and optional pacing.
+    Allocations under a parent need not total 100%; the remainder is
+    unallocated and items borrow from it up to their ceiling, never from a
+    sibling. One ledger keyed by actor holds credits, reservations, actuals,
+    and settlements per item and account. Available balance counts usage as
+    it arrives. The portfolio and its bindings are declared in the process
+    repository; ledgers, observed capacity, and reset times are in the store.
+  items-and-bindings: >-
+    A GitHub Project binding names its environment and the item it attaches
+    to. A T3code project binding names the item it attaches to, unless the
+    T3code project is associated with a bound GitHub Project, in which case
+    it follows that Project's item and has no binding of its own. The
+    associations are a list on the GitHub Project binding naming its T3code
+    projects, one or many, since a process may create one per epic; Manifold
+    appends to it when it creates a project and the operator edits it to
+    associate an existing one. An item may hold any
+    number of projects of either kind. Threads in a T3code project with no
+    binding land on Other. Intake assigns each task to the single
+    lowest-level item within the subtree of the item its Project attaches
+    to; usage on an item with no chosen sub-item sits on that item. The
+    assignment lives in the store with the actor. Archiving an item returns
+    its allocation to its parent's unallocated remainder and moves its
+    projects' bindings to the parent.
+  sharing-rule: >-
+    An item may reserve while its usage counted as it arrives plus the new
+    reservation stays within its guarantee, or within its guarantee plus the
+    unallocated remainder up to its ceiling. Weight applies only to splitting
+    the remainder among items that have waiting work, and the gate supplies
+    which items have waiting work. Pacing, when set, spreads the window's
+    capacity across the window and restarts at a reset. With allocations at
+    100% and no ceiling the rule is a fixed split.
+  ledger: >-
+    One append-only table with signed entries keyed by actor, item, account,
+    and window: a credit when a window opens or a reset is observed, a
+    reservation when a gate grants a token, an actual when usage posts, and
+    cancelling entries at settlement and on a move. A reservation carries an
+    idempotency key so a replayed grant holds once. A move of an outstanding
+    reservation asks the sharing rule at the destination before it writes.
+  available-balance: >-
+    Allocation less usage counted as it arrives. A reservation holds its full
+    amount until the actor's posted usage consumes it; usage beyond the
+    reservation reduces the balance further. When every actor has settled it
+    equals allocation less settled actuals. The Portfolio page shows the
+    sharing rule's answer, what the item could reserve now, beside the
+    balance, and previews the rule on a fixed scenario when it is edited.
+  settlement: >-
+    When an actor ends, by final state, by forced re-intake, or by its issue
+    closing, its reservations are retired and its actuals stay. After a
+    forced re-intake the old actor's actuals remain on its item and the new
+    actor starts unreserved on the item its intake chose.
+  usage: >-
+    The host CLI reads provider session files in-process and decodes them
+    with a pinned decoding library, then Manifold prices each call from its
+    own price table in the account's native unit. Every call carries a
+    timestamp, a model, all token classes, and the provider session id.
+    Manifold maps provider session to thread from T3 Code's own state and
+    thread to actor and state visit from its store, and posts each actual to
+    the actor. Actuals are captured at settlement at the latest, before the
+    harness's retention window can remove the file.
+  attribution-of-operator-threads: >-
+    A thread Manifold did not start is attributed by its T3code project's
+    binding, or to Other. The Portfolio page lets an operator move such usage
+    to an item or a task, which writes the same move entries as re-intake.
+  capacity: >-
+    A subscription account's capacity per window is observed from reported
+    usage and its reset times are estimates until observed. An API account's
+    capacity is its declared monthly budget. A granted reset is shown and
+    never applied on the operator's behalf.

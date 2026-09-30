@@ -1,0 +1,7 @@
+$schema: https://refinery.systems/ontology/idea
+title: Task Orchestration Tool
+statements:
+    A: A tool to orchestrate task work instead of using pure skills
+    B: Interfaces with T3Code instead of using provider harnesses directly
+    C: Interfaces with GitHub Projects/Issues
+    D: Orchestrates work across multiple environments

@@ -1,0 +1,114 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - gates
+    - portfolio
+objective: >-
+  Deliver events from shared sources to state machine actors so that no
+  event is lost across a service interruption, a resumed actor continues
+  where it stopped, and a replayed event changes nothing.
+background:
+  problems:
+    - >-
+      XState persists an actor's state value and context, and nothing else. A
+      pending delayed transition is not in the snapshot; a restored actor
+      waits the full delay again or never fires it.
+    - >-
+      A restored invoked actor receives the input it had when first invoked,
+      not input recomputed from the current context.
+    - >-
+      A restore into a machine whose active state was renamed fails with an
+      error; a restore into one whose invoke id or implementation name was
+      renamed stalls with no error. An errored snapshot has no value or
+      context.
+    - >-
+      An in-process publish-subscribe bus holds no queue. An event published
+      while its actor is not loaded is gone.
+design-challenges:
+  ordering: >-
+    A crash between delivering an event and persisting its effect must replay
+    the event, and a crash after persisting must not.
+  identity: >-
+    A source event names an issue, a thread, or a Project. The actor that owns
+    it must be found without the blueprint knowing about subscriptions.
+  deadlines: >-
+    Timeouts a blueprint author writes must survive a restart and fire once.
+  idempotency: >-
+    At-least-once delivery means every actor takes some events twice.
+proposed-design:
+  high-level-overview: >-
+    One SQLite database holds two tables, snapshots and inbox. A router built
+    on PubSubJS with hierarchical topics fans events out from sources to
+    loaded actors. Every event is written to its target actors' inbox rows
+    before fan-out, and a row is marked consumed only after the actor's
+    snapshot is saved. Deadlines are rows too. Actors are addressed by
+    identity, and the blueprint declares only event names.
+  topics: >-
+    Topics are paths. `github.issue.<node-id>.<event>` for issue,
+    dependency, sub-issue, and Project item events, keyed by the issue's
+    node id because Project item deliveries carry no issue number and no
+    repository; `github.project.<id>.<event>` for Project-level events;
+    `t3.environment.<id>.thread.<id>.<event>`; `notify.action.<id>`;
+    `usage.environment.<id>.session.<id>`. A subscriber to a prefix receives
+    everything under it, so a gate subscribed to a state's actors hears
+    every entry and exit.
+  subscriptions: >-
+    Manifold derives each actor's subscriptions from its identity, its
+    Project, issue node id, and thread ids, and from the event names its
+    blueprint declares. Subscriptions are recreated on resume from the
+    snapshot's context. A blueprint never names a topic.
+  github-source: >-
+    The organization webhook is the source for Project item events; a
+    repository webhook is the source for issue, dependency, and sub-issue
+    events. A delivery received by both hooks carries one delivery id and is
+    accepted once. GitHub does not retry a failed delivery, so the source
+    redelivers through the hook deliveries API and a polling sweep with the
+    GraphQL queries for dependencies, sub-issues, and Project items covers
+    what never arrived; an issue's updated time does not move for those
+    changes, so the sweep compares relationship lists, never a since
+    timestamp. A blocking issue's close or reopen names only the blocker;
+    the source forwards it to every issue Manifold's dependency graph shows
+    as blocked by it.
+  inbox: >-
+    A row per target actor per event: event id, actor id, topic, payload,
+    received time, consumed time. Written inside the source handler before
+    publish. A loaded actor receives the event through the bus; a resumed
+    actor drains its unconsumed rows in insertion order before it subscribes
+    live.
+  snapshot-then-consume: >-
+    Delivery to an actor is send, save snapshot, mark consumed, in that order.
+    A crash after send and before save replays the event. A crash after save
+    and before mark replays it too, and the actor's idempotency makes that a
+    no-op. The store refuses to overwrite a snapshot whose status is active
+    with one whose status is error; the errored snapshot is kept beside it
+    for inspection.
+  idempotency: >-
+    Every event carries an id from its source, the webhook delivery id, the
+    thread event sequence, the notification action id, the token id. Source
+    ids are not ordered, so an actor's context holds the set of consumed
+    event ids per source, bounded by the source's redelivery window, and a
+    transition guard drops an event whose id is in the set. Commands an
+    actor sends carry ids fixed in context before sending, so a resumed
+    actor re-sends the same command and the receiver deduplicates.
+  deadlines: >-
+    A delayed transition in a blueprint becomes a deadline row: actor id,
+    state path, fire time, event name. A deadline loop publishes the event
+    when the time passes and the actor is still in that state. On resume,
+    rows for states the actor has left are deleted; the rest stay armed. The
+    delay is not restarted on history re-entry unless the blueprint says so.
+  environment-streams: >-
+    One connection per environment carries every thread's events. The
+    source handler stamps each event with its thread id and publishes under
+    the thread topic. No actor holds a subscription to T3 Code of its own,
+    so re-attaching after a restart is routing by thread id and nothing else.
+  gate-restore: >-
+    Gates are rebuilt only after every actor's inbox has been drained. A
+    gate's holders are counted from token rows, consumed or not, so a token
+    in flight at the crash is held and never granted twice. Its population
+    is a query over snapshots for actors in its state.
+  restore-checks: >-
+    Before restoring a snapshot into a blueprint version, every state path
+    in the snapshot's value, every child id, and every implementation name
+    is checked against the machine. A mismatch routes the actor through the
+    version's migration path or holds it at its current version, and is
+    never a silent stall.

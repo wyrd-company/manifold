@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Comparator
+description: >-
+  A pure TypeScript function in the process repository, run in a sandbox by a gate. It receives the population with each task's properties, the holders of tokens from that gate, the available balances per item and account, and a seeded random, and returns one task, with optional reservations, or none.

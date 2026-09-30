@@ -1,0 +1,105 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - durable-event-delivery
+    - portfolio
+    - expressions
+objective: >-
+  Let a process decide which tasks may proceed past a state, in what order,
+  and with what budget, without a state machine above the task and without
+  the task blueprint encoding anything about other tasks.
+background:
+  problems:
+    - >-
+      Ordering forty tasks under dependencies and budget is a function over a
+      set. Written as states and transitions it is unreadable, and a
+      rules engine sees one input at a time.
+    - >-
+      Dependency state and priority are facts a task can read for itself.
+      Budget is not: two tasks reading the same balance in the same tick both
+      pass, and both go.
+design-challenges:
+  reads-versus-takes: >-
+    Guards read. Reserving budget writes. A write contended between task
+    actors needs one decider so that the last of a balance goes to one task.
+  population: >-
+    The set of tasks competing at a state changes with every entry, exit,
+    dependency change, and balance change, and it must be rebuilt after a
+    restart from persisted state, never from memory.
+  expressiveness: >-
+    Greedy, skip, all-or-none, lottery, and one-at-a-time are all
+    legitimate ways to release tasks, and the user must be able to write
+    their own without Manifold knowing the strategy.
+  double-grant: >-
+    A token in flight during a crash must be delivered once and counted
+    once, and a task that already holds a token must never be offered
+    another.
+proposed-design:
+  high-level-overview: >-
+    A gate is an implementation declared on a state in a blueprint. It holds
+    that state's population, the task actors in it that hold no token, calls
+    the process's comparator over the population, and hands out one token at
+    a time until the comparator returns none. A token is delivered to the
+    task actor as an event named `token`; the guarded transition out of the
+    state requires it. The comparator is a pure TypeScript function in the process
+    repository run in a sandbox. Orthogonal regions on the task machine hold
+    derived facts so that every guard is a read of state.
+  declaration: >-
+    The gated state carries `meta.gate` naming the comparator file and
+    whether a reservation accompanies the token. The transition out is
+    guarded on being `in` the token-holding region state, and on any other
+    regions the process requires, such as dependencies clear. Other
+    transitions out of the same state, an issue closed by an operator, carry
+    no guard and return nothing. A blueprint may put a gate on any state and
+    may have none.
+  regions: >-
+    The task machine declares orthogonal regions for derived facts. A
+    `dependencies` region moves between `blocked` and `clear` on dependency
+    events. A `budget` region moves from `unreserved` to `reserved` on the
+    token event. The comparator's input is assembled from region state and
+    context, so what a blueprint exposes to the comparator is what its
+    regions hold.
+  comparator-contract: >-
+    Input: the population, each task with its id, fields, age in the state,
+    dependency facts, critical-path length, and portfolio item; the holders,
+    tasks holding a token from this gate with their item; the available
+    balances per item and account; a seeded random. Output: one task id with
+    an optional list of reservations, each naming an account and an amount,
+    or none. The function has no clock, no state between calls, no I/O, and
+    cannot send events. `now` is not an input; age is computed by Manifold.
+  loop: >-
+    The gate runs the comparator after every grant until it returns none,
+    and again on any event that changes an input: a task entering or leaving
+    the state, a dependency change, a balance change, a token returned.
+    Events that arrive during a pass are queued and applied after the pass,
+    so a pass sees one consistent input. Each evaluation is recorded with its
+    input, output, and seed, so any grant can be explained and replayed.
+  token: >-
+    A token belongs to one task actor and one gate. It is granted by the gate,
+    delivered through the actor's inbox, and held until returned. By default
+    the guarded transition out of the gated state returns it. A state may be
+    marked as returning a token instead, so that a one-at-a-time gate holds
+    the token through the work that follows, as a merge queue does. An actor
+    that ends returns every token it holds. Holders are counted from
+    unconsumed and consumed token rows, so a gate rebuilt after a restart
+    counts a token in flight as held.
+  reservation: >-
+    When the comparator's output carries reservations, the gate writes them
+    to the ledger in the same transaction that records the token, under an
+    idempotency key derived from the token id, so a replayed grant reserves
+    once. A gate never refuses a reservation the comparator asked for; a
+    comparator that must not overrun reads the balance it is given.
+  strategies-as-bodies: >-
+    Greedy stop returns the top task or none. Greedy skip returns the first
+    task whose reservation fits. All-or-none checks that a whole batch fits
+    before returning its first member, and relies on the pass seeing one
+    consistent input. A lottery draws by weight from the seeded random and
+    returns none when its own stop condition holds. One-at-a-time returns
+    none while any holder exists. None of these is known to Manifold.
+  restore: >-
+    After a restart, actors are restored from snapshots and inboxes are
+    drained before any gate runs. A gate rebuilds its population by querying
+    snapshots for actors in its state, and its holders from token rows. It
+    does not learn the population by replaying invocations, since a
+    replayed callback cannot see region state and a renamed implementation
+    joins no one without error.
