@@ -1,0 +1,42 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged rather
+# than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: GitHub webhooks may not deliver required dependency and Project events
+
+# GAP-EDGE: the risk schema declares no relationship-types; the spike schema's
+# `mitigates` edge (inverse: mitigated-by) is the intended link.
+relationships:
+  mitigated-by:
+    - github-dependency-events
+
+description: >-
+  Manifold's dependency gate reads facts that must arrive as webhook deliveries:
+  blocked-by relationships added or removed, blocking issues closed or reopened,
+  sub-issues added or removed, issues added to or removed from a Project, and
+  Project item fields changed. If webhooks do not cover these changes, or if
+  payloads lack fields needed to route events to the correct actor and identify
+  both ends of relationships, events will be lost and gates reading dependency
+  state will stall or fail. If delivery identifiers are unordered or unstable,
+  idempotency safeguards fail and duplicate processing corrupts state.
+
+categories:
+  - technical
+  - project
+
+likelihood: 3
+impact: 5
+
+response-strategy: mitigate
+
+status: mitigated
+
+# Mitigation: the github-dependency-events spike confirmed all required
+# dependency, sub-issue, and Project item changes produce webhook deliveries
+# with sufficient payload fields. Delivery GUIDs are stable across hook levels
+# and redelivery. The durable-event-delivery design specifies organization
+# webhook registration, set-based idempotency on unordered GUIDs, redelivery
+# through the hook deliveries API, reconciliation queries on resume, and graph
+# expansion to forward blocking issue closures to blocked issues.

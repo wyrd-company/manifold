@@ -1,0 +1,40 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged
+# rather than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: A gate on an XState state may not survive crashes or rebuild from snapshots
+
+# GAP-EDGE: the risk schema declares no relationship-types; the spike schema's
+# `mitigates` edge (inverse: mitigated-by) is the intended link.
+relationships:
+  mitigated-by:
+    - gate-xstate
+
+description: >-
+  A gate is an implementation on a gated state in a task blueprint, holding the
+  population of tasks waiting for tokens and granting them one at a time.
+  Tokens are written to inbox before delivery and snapshots are saved before
+  consumption, so they survive crashes. The uncertainty is whether this design
+  delivers exactly once across all crash points in the grant loop, rebuilds the
+  gate population from persisted snapshots without loading every actor into
+  memory, and scales to thousands of concurrent tasks. If durability fails
+  (tokens lost, redelivered, or population corrupted), task ordering and budget
+  guarantees break. If rebuild requires loading every actor instance, the
+  restore operation becomes unsuitable at scale.
+
+categories:
+  - technical
+
+likelihood: 3
+impact: 4
+
+response-strategy: mitigate
+# Mitigation: the gate-xstate spike (prototyping / proof of concept — reduce
+# technical uncertainty) exercises crash recovery at three gate loop points
+# (after-inbox-write, after-send, after-save) and real process SIGKILL,
+# confirms population rebuilds from snapshot rows alone without loading actor
+# instances, and profiles rebuild cost at scales from 20 to 2000 actors.
+
+status: mitigated

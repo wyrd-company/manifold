@@ -1,0 +1,39 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged rather
+# than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: Allocation schemes do not enforce guarantees as promised
+
+# GAP-EDGE: the risk schema declares no relationship-types; the spike schema's
+# `mitigates` edge (inverse: mitigated-by) is the intended link.
+relationships:
+  mitigated-by:
+    - ledger
+
+description: >-
+  Allocation schemes (floor, weight, ceiling, and pacing) must honor item
+  guarantees, prevent one item from taking a sibling's share, and distribute
+  unallocated remainder fairly to items with work waiting. If the schemes fail
+  to deliver this behavior or interact in ways that break guarantees, the
+  portfolio's core premise — reliable budget tracking and fair distribution —
+  is compromised. An item could silently exceed its guarantee, a sibling could
+  starve, or the unallocated remainder could distribute wrongly, leaving either
+  unused budget or budget shortfalls hidden from the operator.
+
+categories:
+  - technical
+  - project
+
+likelihood: 3
+impact: 4
+
+response-strategy: mitigate
+# Mitigation: the ledger spike (prototyping / proof of concept — reduce
+# technical uncertainty early) implemented all four primitives as pure functions
+# over a SQLite ledger, built scenario tests that exercise every combination and
+# boundary case, and ran them under the terms' own definitions to verify
+# conformance.
+
+status: mitigated

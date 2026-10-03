@@ -1,0 +1,39 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged
+# rather than followed: (1) it requires `slug`, which contradicts the
+# standing "artifact id = filename" bet — no slug field is authored here;
+# (2) its `required` list names `response` but the property is
+# `response-strategy` — the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: One comparator signature may not express every gate strategy
+
+# GAP-EDGE: the risk schema declares no relationship-types; the spike
+# schema's `mitigates` edge (inverse: mitigated-by) is the intended link.
+relationships:
+  mitigated-by:
+    - comparators
+
+description: >-
+  A gate declares a comparator, a pure TypeScript function that picks the
+  next task from its population. Five strategies are legitimate: greedy
+  stop, greedy skip, all-or-none, lottery, and one-at-a-time. One
+  signature may not carry what every strategy needs, for example which
+  tasks hold a token or the balance shared by an item. If it does not, the
+  gate design changes, or strategies move into Manifold code and stop being
+  the user's to declare.
+
+categories:
+  - technical
+  - project
+
+likelihood: 4
+impact: 3
+
+response-strategy: mitigate
+# Mitigation: the comparators spike tested four strategy bodies against the
+# draft contract. Findings show exactly what was missing: holders (tasks
+# holding a token), input-level balances (not per-task), and reservations
+# as a list (supporting multiple accounts). gates.yml adopts all these
+# contract changes. One signature covers five strategies. The risk is
+# mitigated given the contract revisions.
+
+status: mitigated

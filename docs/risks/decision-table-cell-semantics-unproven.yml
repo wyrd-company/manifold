@@ -1,0 +1,39 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged rather
+# than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: Custom JSONata cell node implementation may not match the specified semantics
+
+# GAP-EDGE: the risk schema declares no relationship-types; the spike schema's
+# `mitigates` edge (inverse: mitigated-by) is the intended link.
+relationships:
+  mitigated-by:
+    - zen-jsonata
+
+description: >-
+  The expressions.yml design specifies exact cell semantics: input cells are
+  evaluated with the column value as `$` and the whole input as `$input`, empty
+  cells match anything, cells match when the result is true; output cells write
+  the result to a field path; lint rejects unparsable cells and warns on cells
+  that cannot return boolean. The custom node implementation may not match these
+  semantics, particularly for array results, falsy values (null, false, 0, ""),
+  undefined, and lint validation. If the implementation diverges, decision tables
+  will produce incorrect results in production.
+
+categories:
+  - technical
+  - project
+
+likelihood: 3
+impact: 4
+
+response-strategy: mitigate
+# Mitigation: the zen-jsonata spike measured the custom node structure and
+# proved table editing is reusable. A proof-of-implementation pass must measure
+# every cell semantic specified in expressions.yml: array results, falsy values
+# (null, false, 0, ""), undefined, and lint validation rules. That measurement
+# confirms the implementation matches the design and gates production use.
+
+status: open

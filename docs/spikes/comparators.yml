@@ -1,0 +1,271 @@
+$schema: https://refinery.systems/ontology/spike
+title: Gate comparators against the draft contract
+
+relationships:
+  mitigates:
+    - comparator-contract-insufficient
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the technical design these findings inform.
+  references:
+    - gates
+
+objective:
+  - Can gate strategies be written as bodies of one pure comparator signature?
+  - What does the draft contract lack, and what does it carry that no body uses?
+
+background:
+  current-design: >-
+    A gate declares a comparator, a pure TypeScript function in the process
+    repository run in a sandbox. It receives a population (task actors in
+    a state, holding no token), calls the comparator over the population,
+    and grants tokens one at a time until the comparator returns none.
+    Five strategies are legitimate: greedy stop, greedy skip, all-or-none,
+    lottery, one-at-a-time. The question is whether one signature suffices
+    to cover them.
+  problems:
+    - >-
+      The draft contract lists ten fields per task, but it is unclear if
+      the shape fits every strategy or if it carries unused weight.
+    - >-
+      "Token holders leave the population" may not be enough for
+      strategies that limit tokens out, such as merge queue and capped
+      lottery. The contract is silent on how the comparator learns which
+      tasks hold a token.
+    - >-
+      A reservation shape of one account-amount pair may fail for tasks
+      that reserve from more than one account.
+
+ideas:
+  - >-
+    Write four comparator bodies: critical-path-first (with skip on
+    insufficient balance), lottery (weighted by priority), merge-queue
+    (grant only one at a time), and all-or-none (batch-gated grant).
+  - >-
+    Test each body with a harness that models the gate loop: grant, remove
+    the granted task from population, reduce its balance by the reservation,
+    and call again until none.
+  - >-
+    Fix populations with at least six tasks across two portfolio items and
+    two accounts, one blocked task, and mixed priorities.
+  - >-
+    Record each property each body reads via a Proxy wrapping deep-frozen
+    task objects.
+
+environment:
+  location: throwaway branch spike/comparators in wyrd-company/manifold
+  tools:
+    - Node.js
+    - TypeScript (plain, ESM)
+    - Vitest
+  resources:
+    - JSON Schema types from task field declarations
+    - docs/technical-designs/expressions.yml (for field narrowing patterns)
+
+findings:
+  single-signature-viable:
+    rating: GREEN
+    notes: >-
+      Measured: Four comparator bodies were written and tested: critical-path
+      (skip on insufficient fit), lottery (seeded weighted draw), merge-queue
+      (grant one at a time), and all-or-none (batch-gated grant). All four
+      implement their logic correctly with one signature. Inferred: The five
+      core strategies are greedy stop, greedy skip, all-or-none, lottery, and
+      one-at-a-time. Merge-queue is a variant of one-at-a-time (holds token
+      until merge completes). Capped-lottery is a variant of lottery (stops at
+      N tokens out).
+
+  pure-functions-confirmed:
+    verdict: no body wrote to its deep-frozen input
+    measurements:
+      bodies-tested: 4
+      tests-passed: 14
+      test-populations: 2 (mixed 7-task, batched 6-task across 2 items, 2 accounts)
+      calls-total: 38
+      input-modifications: 0
+      idempotent-bodies: 3 (critical-path, merge-queue, all-or-none)
+    notes: >-
+      Measured: Each body was wrapped in a Proxy logging property access.
+      No body wrote to its input. Bodies without internal random state
+      returned the same answer for the same input across multiple calls.
+      Inferred: Strategies without a stop condition (lottery, draft merge-queue)
+      grant the whole population in one drain unless the input contains
+      holders or the body checks balance fit.
+
+  draft-contract-insufficient:
+    verdict: contract lacks holders; strategies that limit tokens out fail
+    measurements:
+      merge-queue-draft-grants: 6
+      merge-queue-draft-calls: 1
+      merge-queue-holders-grants: 3
+      merge-queue-holders-calls: 5
+      merge-queue-grant-sequence-draft: "t6, t4, t3, t2, t1, t5 (all in one call)"
+      merge-queue-grant-sequence-holders: "t6 then t4 then t3 (one per release)"
+    notes: >-
+      Measured: The merge-queue body on the draft contract cannot distinguish
+      one token out from none out. One drain grants all six unblocked tasks
+      oldest-first in one call. With holders added to the input, the same
+      body grants one task, then none until the first is released, then the
+      next oldest. This directly refutes the assumption "token holders leave
+      the population" as sufficient. Inferred: A token release must be an
+      event that changes an input. In the draft contract, a release changes
+      nothing the body can see.
+
+  holders-requirement:
+    verdict: required for strategies that limit tokens out
+    measurements:
+      capped-lottery-cap: 2
+      capped-lottery-grants-before-release: 2
+      capped-lottery-grants-after-one-release: 1
+      one-per-item-alpha-grants: 1
+      one-per-item-beta-grants: 1
+    notes: >-
+      Measured: The capped lottery stops at 2 tokens out when it reads
+      holders. After one release, it grants exactly one more. One-per-item
+      merging requires reading each holder's item field to grant one task per
+      portfolio item; a count of tokens out is not sufficient. Inferred:
+      holders must be a list of tasks, not just a count, with each task's
+      item field accessible.
+
+  balances-restructuring-required:
+    verdict: restructuring balances from task property to input-level required
+    measurements:
+      draft-balance-location: "per-task"
+      corrected-balance-location: "input-level (item -> account -> number)"
+      overdraft-on-task-copy: true
+      alpha-acct-a-final-balance: -10000
+      estimated-balance-before-overdraft: 140000
+    notes: >-
+      Measured: With balances on each task (the draft design), the harness
+      reduced only the granted task's copy, not the item's shared balance.
+      After granting one task, the next call saw the original balance and
+      granted another, causing an overdraft of 10,000. Inferred: An
+      input-level balances shape (item -> account -> number, updated once
+      per grant) removes both the overdraft problem and the need for bodies
+      to regroup tasks by item when summing estimates.
+
+  properties-audit:
+    verdict: properties read by each body
+    measurements:
+      fixtures-used: 2 (mixed 7-task, batched 6-task)
+      bodies-tested: 4
+      properties-read-by-all: id, blocked
+      properties-read-by-some:
+        age: critical-path, one-at-a-time, all-or-none
+        criticalPath: critical-path only
+        item: one-at-a-time, all-or-none
+        "fields (strategy-specific)": all bodies
+      unused-properties-in-draft: now
+      used-from-fields:
+        critical-path: account, complexity
+        lottery: priority
+        one-at-a-time: (none)
+        all-or-none: batch, account, estimate
+    notes: >-
+      Measured: A Proxy wrapped each task object and logged property reads.
+      Every body reads id and blocked. Critical-path reads age, criticalPath,
+      and fields subfields account and complexity. Lottery reads only
+      fields.priority and calls input.random. One-at-a-time and variants
+      read age and item. All-or-none reads item, fields.batch, fields.account,
+      fields.estimate, and age. The draft contract's now field was read by no
+      body. Inferred: All strategies depend on blocked; some depend on schema
+      fields that are not part of the core contract shape.
+
+  random-state-issue:
+    rating: YELLOW
+    measurements:
+      test-calls-same-input: 5
+      different-answers: true
+      lottery-test-frequency-variance-60000-draws: 0.005
+      lottery-priority-weights-held: true
+    notes: >-
+      Measured: Five calls to the lottery with the same input object produced
+      more than one answer because the random function carries state inside
+      the input object. Over 60,000 draws from a seeded random, frequencies
+      matched the priority weights within 0.005 variance. Inferred: Replay
+      from a snapshot needs the gate to record the seed and draw position for
+      each drain. The contract provides the seeded random function; the gate
+      runtime design must decide whether to record these for replay.
+
+  all-or-none-conditions:
+    verdict: works under three specific conditions
+    measurements:
+      batches-tested: 3
+      test-runs: 3 (stable key, changing key, event injection)
+      condition-1-required: true
+      condition-2-required: true
+      condition-3-required: true
+      stable-key-result: "grants whole batches (b1, b3)"
+      changing-key-result: "splits batch b1 (a1 granted, a2 not)"
+      event-injection-result: "splits batch b1 (a1, a5, a6 granted)"
+    notes: >-
+      Measured: All-or-none works under the one-task loop only when
+      (1) no input-changing event arrives between calls of one drain,
+      (2) the body's choice key does not change as granted members leave,
+      and (3) every member of the group is already in the population.
+      When key was stable, batches b1 and b3 were granted whole while b2
+      was refused. When key changed (ordered by oldest remaining), b1 split.
+      When a balance change arrived between calls, b1 split. Inferred:
+      Members in other states are not visible, so "all" means "all in this
+      state". The loop's invariant holds: if a batch fit on the first call,
+      the rest fits on the next because the balance dropped by exactly the
+      granted member's reservation.
+
+  recommended-contract-shape:
+    verdict: contract revision required
+    notes: >-
+      Inferred from findings M1 to M13: The draft contract must be revised
+      before strategies can be correctly implemented. Changes needed:
+      (1) Add holders to GateInput (list of tasks holding tokens from this
+      gate, each with item field). (2) Move balances from Task to GateInput,
+      structured as item -> account -> number. (3) Change reservation from
+      a single {account, amount} to an optional list of reservations.
+      (4) Drop the now field; age is computed by Manifold. (5) Keep account
+      names as user fields; the gate needs them only through reservations.
+      Recommended contract shape:
+      ```yaml
+      Task:
+        id: string
+        fields: Record<string, unknown>
+        age: number (ms since entering state)
+        blocked: boolean (from dependencies region)
+        criticalPath: number
+        item: string
+      GateInput:
+        population: Task[]
+        holders: Task[]
+        balances: Record<string, Record<string, number>>  # item -> account
+        random: () => number
+      GateResult:
+        task: string
+        reservations?: Array<{account: string; amount: number}>
+      ```
+
+conclusion: >-
+  One pure comparator signature covers five strategies (greedy stop, greedy
+  skip, all-or-none, lottery, one-at-a-time) once the draft contract is
+  revised to include holders and move balances to the input level. The
+  harness validated each body against populations of 6-7 tasks across two
+  items and two accounts with mixed priorities and one blocked task.
+  Strategies that limit tokens out (one-at-a-time and its variants) cannot
+  work without holders: they need to know which tasks hold tokens and from
+  which item each token comes. All four tested bodies can be written as pure
+  functions with no side effects. Every body needs to read the blocked state
+  from the task's dependency facts. Some bodies need to read fields from the
+  task's schema (priority, complexity, batch, estimate) that are not part of
+  the comparator's core contract. The draft contract structure on
+  per-task balances invites overdrafts and forces regrouping work in bodies;
+  moving balances to the input level eliminates both problems and allows the
+  gate to update one balance per grant. Reservations must be a list to
+  support tasks that draw from multiple accounts. The seeded random function
+  is stateful and non-reproducible from a snapshot without recording the
+  seed and draw position.
+
+next-steps:
+  - >-
+    Name the dependency facts in the comparator input. gates.yml lists
+    dependency facts per task but names no field; every body reads a
+    `blocked` boolean derived from the dependencies region.
+  - >-
+    Settle group membership semantics for all-or-none when members are not
+    yet in the population: whether all-or-none can wait for members that
+    have not arrived in the gated state.

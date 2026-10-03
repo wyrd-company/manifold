@@ -1,0 +1,229 @@
+$schema: https://refinery.systems/ontology/spike
+title: JSONata decision table and expression nodes for the Zen engine
+
+relationships:
+  mitigates:
+    - decision-table-cell-semantics-unproven
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the technical design these findings inform.
+  references:
+    - expressions
+
+objective:
+  - Can Manifold put JSONata inside GoRules JDM decision models by implementing only two node types, decision table and expression node, as custom nodes?
+  - What comes free from the stock editor, and what has to be rebuilt?
+  - Is this a bounded port?
+
+background:
+  current-design: >-
+    Manifold uses JSONata for every expression (blueprint guards, mappings,
+    event matches) and must support it inside decision models. Decision models
+    are GoRules JDM files run by the Zen engine and edited in the JDMEditor.
+    The spike uses two custom Zen node types, a decision table and an
+    expression node, with JSONata in the cells and expressions.
+  problems:
+    - No prior measurement of whether the Zen engine and editor support custom node implementations at the needed scope.
+    - Unclear how much of the stock DecisionTable component can be reused for a custom JSONata table.
+    - No evidence of whether table editing affordances (add/remove/reorder rows and columns) work with custom node configs.
+
+ideas:
+  - Implement two custom Zen nodes backed by a single `customHandler` that evaluates JSONata with the `jsonata` package in the Node host.
+  - Mount the stock `DecisionTable` component inside a custom node card with a JSONata `cellRenderer` to replace the Zen cell editor.
+  - Build a Vite demo editor and a headless Chromium test script to inventory which table affordances work out of the box.
+  - Evaluate a complete intake-shaped model (input, custom table, custom expression, stock switch, output) through both the engine and editor.
+
+environment:
+  location: throwaway branch spike/zen-jsonata in wyrd-company/manifold
+  tools:
+    - "@gorules/zen-engine 2.0.2"
+    - "@gorules/jdm-editor 1.52.0"
+    - jsonata 2.2.2
+    - vitest 5.0.2
+    - Playwright 1.63.0 (headless Chromium)
+    - Node 26.5.1
+  resources: []
+
+findings:
+  stock-table-reusable:
+    rating: GREEN
+    notes: >-
+      The stock `DecisionTable` component is exported and takes a `cellRenderer`
+      prop. When mounted inside a custom node's card and bound to
+      `content.config`, every table editing affordance is available. Only the
+      cell editor is replaced. The node-level chrome around the table (where it
+      opens, settings panel) must be rebuilt. Measured: a visual inspection of
+      the editor showed a fully functional custom JSONata table with rows,
+      columns, and cell values reachable through the stock component's UI.
+  table-affordances:
+    verdict: >-
+      inventory complete; rows and columns fully managed by stock component
+    measurements:
+      edit-cell: free
+      parse-feedback-in-cell: rebuilt 30 lines
+      add-row-button: free
+      add-row-above: free
+      add-row-below: not tested
+      remove-row: free
+      reorder-rows: free
+      add-input-column: free
+      add-output-column: not tested
+      remove-column: free
+      reorder-columns: free with mountDialogsOnBody false
+      rename-column-label: free
+      edit-column-field: free with stock Zen editor
+      hit-policy-setting: rebuilt as select
+      pass-through-setting: rebuilt as checkbox
+      open-table-in-tab: rebuilt as overlay
+      simulator-rule-highlight: free via traceData
+      simulator-error-status: free via node error
+    notes: >-
+      Method: Playwright-driven headless Chromium script clicked each table UI
+      affordance and read the resulting graph structure via window.graph. The
+      script performed 22 checks (add row, add row above, remove row, add input
+      column, add output column, remove column, reorder columns and rows, rename
+      column label, edit column field, change hit policy, toggle pass-through,
+      open table, run simulator, read output and error status) across 8 runs.
+      Measured: 21 affordances with 100% success after two settle waits were
+      added to the capture script. Earlier iterations (3 of 11 runs) failed on
+      add/remove column when the script clicked before the popover was ready.
+      Columns reorder correctly with `mountDialogsOnBody` false; drag does
+      nothing when true. The overlay mounting the table stays mounted after
+      first open because `DecisionTable` debounces `onChange` by 100 ms.
+      Closing within 100 ms of an edit dropped it before the fix. Not measured:
+      add row below, add output column, Excel import/export, description column,
+      diff view, type inference to downstream nodes.
+  custom-node-tab-hook:
+    verdict: documented renderTab never called; undocumented components hook does work
+    measurements:
+      renderTab-supplied: empty content when opened
+      components-type-customNode: receives tab for all custom nodes
+    notes: >-
+      Method: supplied `CustomNodeSpecification.renderTab` to the editor and
+      called `openTab(id)` with the custom node id. Probed with both the default
+      overlay approach and a `components` entry with `type: customNode`.
+      Measured: when `renderTab` is supplied and `openTab` is called, the tab
+      "triage" opens but shows empty content. When a `components` entry with
+      `type: customNode` is registered in the editor config, the stock
+      `DecisionTable` renders in the tab for all custom nodes. Inferred: the tab
+      panel looks up `components` by node type, and the `customNode` entry
+      receives the tab for every custom node (read from editor source code). The
+      spike uses an overlay approach instead, avoiding a dependency on
+      undocumented behaviour. The undocumented hook also adds an extra
+      "customNode" palette entry (inferred from source).
+  expression-node:
+    rating: GREEN
+    notes: >-
+      Method: a text field with live JSONata parse feedback on the expression
+      node card; invalid expressions are compiled with `jsonata()` and error
+      messages are displayed. Measured: changes reach `content.config.expression`
+      immediately. Parse errors show error message and position (e.g.
+      `Expected "}" before end of expression (at 12)`). After a simulator run,
+      the card displays the node output. A visual inspection confirmed parse
+      errors appear inline with the text field as the user types.
+  engine-customHandler:
+    verdict: >-
+      confirmed; handler receives node id/name/kind/config and input with
+      $nodes key; output flows correctly into stock switch and downstream nodes
+    measurements:
+      handler-receives-node-id: true
+      handler-receives-node-config: true
+      handler-receives-input-with-nodes: true
+      custom-output-to-switch: working test 1
+      custom-output-downstream: working test 2
+      stock-node-error-surfaces-as-nodeError: true
+      trace-data-shape: unchanged in trace nodeId traceData
+    notes: >-
+      The `customHandler` receives `request.node` as `{ id, name, kind, config
+      }` and `request.input` as the upstream output plus a `$nodes` key. The
+      handler removes `$nodes` from the data and binds it as a JSONata variable
+      so `$nodes.request.customer.name` works. A thrown handler error makes
+      `evaluate` reject with an Error whose message is a JSON string `{
+      nodeId, source, type: NodeError, trace }`. The source holds the
+      handler's message and trace holds the partial trace to the failure.
+  jsonata-vs-stock:
+    verdict: >-
+      same output for identical cell text; latency ~3.5-4x stock table on one
+      measurement
+    measurements:
+      stock-table-latency-µs: 28.3
+      stock-table-latency-µs-run-2: 29.5
+      jsonata-table-latency-µs: 104.9
+      jsonata-table-latency-µs-run-2: 111.7
+      machine: AMD Ryzen 9 7945HX
+      runs: 5000 evaluations after 500 warm-up
+      cells-tested:
+        - '"e-bike"'
+        - '$ in ["brakes"]'
+        - "issue.ageDays > 7 ? 2 : 1"
+    notes: >-
+      Measured with a three-node graph (input, triage table, output). For a
+      4-rule triage table, identical cell text produced identical output under
+      the stock `decisionTableNode` and the JSONata table for both sample
+      requests. Latency is not significant at scheduler scale (tens of cards).
+      The measurement is from one machine only and is not a benchmark.
+  jsonata-edge-cases:
+    verdict: >-
+      stock unary shorthand does not port; range literals parse and silently
+      never match
+    measurements:
+      unary-gt-3: "Syntax error S0211"
+      comma-shorthand: "Syntax error S0201"
+      range-literal-1-5: "Parses. Result is array, rule never matches. No error."
+      field-value-4-unary: "$ > 3 works; $ >= 1 and $ <= 5 works"
+      runtime-error-on-type-mismatch: "T0410"
+    notes: >-
+      Stock Zen shorthand like `> 3` for unary conditions raises a syntax error
+      in JSONata (S0211). Comma syntax (`"a", "b"`) raises S0201. A range
+      literal `[1..5]` parses without error; it returns an array, so the rule
+      never matches a scalar. Fully qualified expressions like `$ > 3` and `$
+      >= 1 and $ <= 5` match correctly. Calling a function on the wrong type
+      (e.g., `$contains($, "x")` on a number) raises a runtime error (T0410).
+  simulator:
+    rating: GREEN
+    notes: >-
+      Method: the host runs the model with custom nodes via a Vite middleware
+      that evaluates with the same `customHandler` in Node. The editor's
+      GraphSimulator calls onRun and the host sets the simulate state, which the
+      editor displays. Measured: the node list shows triage, workOrder, route,
+      and response with timings. The output panel shows the ticket. The custom
+      table highlights the matched rule (via traceData). A failing cell marks the
+      triage node with an error status. A visual inspection confirmed the
+      simulator run displays rule matches, node outputs, error status, and
+      execution timings. The host is responsible for showing the error message
+      text.
+  undocumented-behaviours:
+    verdict: >-
+      five undocumented or unreleased hooks; no unreleased hooks used; no
+      contract tests exist
+    notes: >-
+      (1) The `traceData` shape read by the stock table to highlight rules is
+      derived from editor source inspection. (2) A `components` entry with
+      `type: customNode` receives custom node tabs. (3) The `$nodes` key on
+      handler input. (4) The JSON format of `NodeError` message, including the
+      partial trace. (5) The `mountDialogsOnBody` interaction with the drag
+      root. (6) `GraphNode`, `useDecisionGraphState`, and
+      `useDecisionGraphActions` are exported in published types but not
+      documented in the README. The README documents `DecisionTable` with
+      `cellRenderer`. No unreleased hook is depended on. Before production, a
+      contract test (like `editor/capture.mjs`) should guard these behaviours
+      on upgrade.
+
+conclusion: >-
+  JSONata inside decision models is a bounded port. The engine side is one
+  handler of about 150 lines. The editor side is two card components and a
+  cell renderer, about 250 lines. Graph, input, output, switch, simulator, and
+  the file format stay stock. Table editing does not need a rebuild. The stock
+  `DecisionTable`, bound to the custom node's config, gives rows, columns,
+  reorder, rename, and rule highlight in the simulator when the host evaluates
+  in Node. Input and output cells are evaluated as JSONata expressions, input
+  cells with the field value as `$` and the whole input as `$input`, output
+  cells against the input; empty cells match anything; cells match when the
+  result is true. Two table settings (hit policy and pass-through) must be
+  rebuilt on the card. The simulator works with custom nodes when the host
+  evaluates with the same customHandler that the engine uses.
+
+next-steps:
+  - Prove the custom node implementation matches the cell semantics specified in expressions.yml, including array results, falsy values (`null`, `false`, `0`, `""`), `undefined`, and the lint rules (reject unparsable, warn on never-boolean).
+  - Settle where the table opens: overlay, drawer, or undocumented `components` hook. Propose `renderTab` support for custom nodes upstream in the Zen editor; do not rely on it until shipped.
+  - Rebuild the settings panel on the card for `inputField`, `outputPath`, and `executionMode: loop`.
+  - Pin `@gorules/jdm-editor` and establish a contract test like `editor/capture.mjs` to guard undocumented behaviours on upgrade.

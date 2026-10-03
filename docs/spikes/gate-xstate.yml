@@ -1,0 +1,249 @@
+$schema: https://refinery.systems/ontology/spike
+title: Gate as XState meta.gate with durable tokens and crash recovery
+
+relationships:
+  mitigates:
+    - gate-durability-unproven
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the technical design these findings inform.
+  references:
+    - gates
+    - durable-event-delivery
+
+objective:
+  - Can a gate be declared as meta.gate on an XState v5 state, with many task actors sharing one gate and guarded transitions reading orthogonal regions?
+  - Does a gate implementation in plain TypeScript hold a population of 20+ actors, call a comparator once per grant, grant one token per call with no double-grants, and remove holders from the population?
+  - Do tokens written to SQLite inbox survive a crash between write and consumption, deliver exactly once when the inbox is drained before the gate rebuilds, and rebuild the population correctly from stored snapshots?
+  - How does the gate learn the population after restore, and what does that cost?
+
+background:
+  current-design: >-
+    Gates are declared in process blueprints to decide which tasks proceed past
+    a state and in what order. The gate is an implementation on a gated state,
+    not a state machine. It reads derived facts from orthogonal regions so that
+    every guard is a state read, not a write. Tokens travel through an inbox
+    and are saved before consumption so they survive crashes.
+  problems:
+    - No proof that a gate built from XState v5 metadata and plain TypeScript can deliver exactly-once tokens and rebuild correctly after a restart.
+    - Population membership changes with every task entry, exit, dependency change, and balance change; rebuilding after restart from persisted state was unverified.
+    - Durable event delivery requires precise ordering between inbox writes, snapshot saves, and inbox consumption to avoid double-grants or lost tokens at crash points.
+
+ideas: >-
+  YAML blueprint loading that collects meta.gate declarations and converts
+  guard conditions written in in: [state-ids] form to XState and callbacks.
+  A gate implementation that tracks actors as views derived from snapshots,
+  calls a stub comparator (oldest-first with fixed reservation), grants one
+  token per call until the comparator returns none, and loops on population
+  changes. SQLite store with snapshots, errored snapshots, and inbox tables,
+  using event id as idempotency key. Runtime that writes inbox row first,
+  sends event to actor, saves snapshot, marks row consumed, showing the new
+  snapshot to the gate. Crash fault hooks at after-inbox-write, after-send,
+  and after-save to test durability. Restore paths: drain-then-rebuild,
+  rebuild-before-drain, and rebuild-with-inbox-then-drain to determine which
+  prevents double-grants. Invoked callback on the gated state to test whether
+  subscription replay can discover the population. SIGKILL child process test
+  to verify a real process kill produces the same result.
+
+environment:
+  location: throwaway branch spike/gate-xstate in wyrd-company/manifold
+  tools:
+    - XState 5.33.2
+    - YAML 2.9.1
+    - Vitest 5.0.2
+    - Node 26.5.1
+    - SQLite 3.53.4 via node:sqlite
+  resources:
+    - docs/technical-designs/gates.yml
+    - docs/technical-designs/durable-event-delivery.yml
+
+findings:
+  blueprint-shape:
+    verdict: works in XState v5 from YAML
+    measurements:
+      test-count: 6
+      gate-location: task.open.lifecycle.ready
+    notes: >-
+      Measured: Six tests in test/blueprint.test.ts exercised a task machine
+      with root state `open` in parallel regions (lifecycle: ready/working,
+      dependencies: blocked/clear, budget: unreserved/reserved). The gated
+      state `ready` declares `meta.gate: { name: release, comparator:
+      oldestFirst, token: token }`. An always transition guarded on
+      `in: ["dependencies.clear", "budget.reserved"]` moves to working. An
+      issue-closed transition to the final state closed carries no guard. Tests
+      verified: gate found at correct path; token event alone leaves actor in
+      ready; clear-dependencies event alone leaves it in ready; both events
+      together move it to working; issue-closed transitions without token;
+      replayed event ids change nothing. The loader converts in: [state-ids]
+      guard form to XState stateIn() calls.
+  gate-implementation:
+    verdict: grants in comparator order, one per call, no double-grants
+    measurements:
+      test-setup: 20 actors with fixed creation times permuted against ids so oldest-first order is neither id order nor spawn order
+      allocation-100-grants: 10 grants in oldest-first order, 11 comparator calls (10 grants + 1 none), balance ended at 0, population held 10 youngest
+      allocation-1000-grants: 20 grants across 3 loop runs, one token row per actor, all in oldest-first order
+      allocation-50-early-exit: 6th-oldest sent issue-closed event, removed from population (14 left), loop re-ran without granting it; 2 holders sent finished event; 7th and 8th oldest granted after balance available; closed actor has no token row
+    notes: >-
+      Measured: Test setup was 20 fixture actors (item-01..item-20) with creation
+      times permuted so oldest-first order matched neither id nor spawn order.
+      Each grant called the comparator once over the full population, filtering
+      by reservation fit and returning one task id or none. No actor received
+      two tokens. Actors exiting the gated state via issue-closed removed
+      themselves from population and triggered a new loop run, which skipped
+      the closed actor.
+  exactly-once-delivery:
+    verdict: confirmed at after-inbox-write, after-send, after-save crash points and real SIGKILL
+    measurements:
+      test-setup: 20 actors, 20 dependency events, allocation 100, crash on 4th token grant
+      after-inbox-write: token sent before crash 0, resent on drain 1, taken by actor once, grants after restore 5th-10th oldest of 10
+      after-send: token sent before crash yes, resent on drain 1, taken by actor once, grants after restore 5th-10th oldest of 10
+      after-save: token sent before crash yes, resent on drain 1, taken by actor once, grants after restore 5th-10th oldest of 10
+      sigkill-child-process: real process death with SIGKILL, 20 snapshot rows persisted, 1 unconsumed token row, grants after restore 5th-10th oldest of 10
+    notes: >-
+      Measured: Each fault injection test crashed the grant loop at the named
+      point, then restored by creating a fresh runtime with empty gate,
+      restoring all 20 actors from snapshots, draining inbox in insertion
+      order, and rebuilding the gate. Result at every crash point: one token
+      row per actor for exactly the 10 oldest, no unconsumed rows, in-flight
+      actor held token under its original id, 10 oldest in working state, rebuilt
+      population held 10 youngest, balance at 0, no actor errored. SIGKILL test
+      ran the fault injection code in a child Node process that killed itself
+      with SIGKILL after writing the 4th token row; the database persisted 20
+      snapshot rows and 1 unconsumed token row; restore and drain produced
+      identical result to fault injection tests.
+  rebuild-ordering:
+    verdict: drain-then-rebuild and rebuild-with-inbox-then-drain both prevent double-grant
+    measurements:
+      test-scenario: crash at after-inbox-write with 20 actors, 4th token in flight
+      drain-then-rebuild: result correct, 10 token rows for 10 holders, no double-grant
+      rebuild-before-drain: double-grant observed, 11 token rows for 10 holders
+      rebuild-with-inbox-then-drain: result correct, 10 token rows for 10 holders, no double-grant
+    notes: >-
+      Measured: Three restore orderings were tested starting from the same
+      crash state (token in flight, inbox unconsumed). Drain-then-rebuild:
+      inbox drained first, then gate rebuilt; result correct. Rebuild-then-drain
+      (without counting unconsumed rows): gate rebuilt from snapshots only, saw
+      in-flight actor with no token, granted it again; resulted in 11 token
+      rows for 10 holders; old row consumed with no effect (budget.reserved
+      rejects token for already-reserved actor). Rebuild-with-inbox-then-drain:
+      gate rebuilt from snapshots, then unconsumed token rows marked their
+      actors as holders with reservations, then loop ran, then inbox drained;
+      result correct. Implication: the drain must be a barrier (no gate runs
+      over unconsumed token rows), or the gate must read unconsumed rows when
+      rebuilding. The latter approach does not require every actor loaded first,
+      suiting lazy loading.
+  population-discovery:
+    verdict: snapshot query required, invoked callback insufficient for rebuild
+    measurements:
+      test-setup: 20 actors in ready state, invoke callback (joinGate) on entry and cleanup on exit
+      live-behavior: 20 actors joined, issue-closed and guarded transition both triggered cleanup
+      restore-with-callback: 18 actors still in ready rejoined via callback, 1 token holder invisible to callback (cannot see budget region), callback rejoins it silently
+      restore-with-renamed-implementation: callback joined 0 actors on restore with no error
+    notes: >-
+      Measured: An invoked callback (id: gate, src: joinGate) was added to the
+      gated state ready, joining on entry and leaving on exit. Live behavior:
+      20 actors joined; both exit paths (issue-closed and guarded transition)
+      triggered cleanup. On restore, snapshots for 20 actors were restored; 18
+      were still in ready state; callback re-registered and rejoined them. One
+      of the 18 held a token but was invisible to the callback (callback cannot
+      read the budget region that holds the reservation), so it silently rejoined
+      a holder. When the implementation was renamed from joinGate to enterGate
+      in both YAML and setup.implementations, restore joined 0 actors with no
+      error—a silent failure. A snapshot query over all restored rows produces
+      the correct population directly and matches live observations.
+  snapshot-query-cost:
+    verdict: acceptable across 20 to 2000 actors
+    measurements:
+      test-method: half of N granted before stop, 3 runs on devcontainer, milliseconds
+      test-setup: actors per allocation size
+      n-20-grant-loop: 3.0-3.6
+      n-20-select-parse-all: 0.1-0.2
+      n-20-restore-drain-rebuild: 0.8-1.0
+      n-200-grant-loop: 16.8-32.9
+      n-200-select-parse-all: 0.4-2.2
+      n-200-restore-drain-rebuild: 2.6-11.6
+      n-2000-grant-loop: 257-293
+      n-2000-select-parse-all: 5.6-8.3
+      n-2000-restore-drain-rebuild: 28-44
+      snapshot-row-bytes: 260-262
+      grant-cost-at-n2000: 0.26-0.29 per grant
+      spike-code-lines: 673 total (blueprint 69, loader-and-implementations 174, gate 147, runtime 165, store 118)
+    notes: >-
+      Measured: Cost test in test/cost.test.ts ran 3 times on this devcontainer,
+      with half of N actors granted before the stop. Columns show grant loop
+      time for N/2 grants (XState send, comparator call over population, inbox
+      insert, snapshot upsert, consume update); SELECT + JSON.parse of all
+      snapshot rows; full restore-drain-rebuild cycle; rebuild from loaded
+      actors only; rebuild from snapshot rows only. A grant at N=2000 costs
+      0.26-0.29 ms total, including XState send, four SQLite statements, and
+      the stub comparator's sort over the population. Persisted snapshots
+      average 260-262 bytes. The grant loop cost is cheap relative to what a
+      real sandboxed comparator adds, since the stub only sorts. Spike code
+      totals 673 lines across components.
+  population-rebuild-mechanism:
+    verdict: snapshot query plus live observation suffices
+    notes: >-
+      Inferred: The gate learns the live population from the host, which shows
+      it each snapshot after the snapshot is saved. After a restore it queries
+      every restored snapshot. Subscription replay via invoked callback is
+      insufficient on its own: it rejoins token holders still in the gated
+      state, and a renamed implementation silently empties the population. A
+      callback would only duplicate a signal the host already has.
+  drain-as-barrier:
+    verdict: drain must precede gate rebuild, or gate must read unconsumed token rows
+    notes: >-
+      Inferred: The snapshot query is correct only when no unconsumed token for
+      this gate remains. Either all actors in the population are restored and
+      drained before the gate runs, or the gate also reads unconsumed token rows
+      when rebuilding and marks their holders. The latter approach does not
+      require every actor instance loaded first, enabling lazy loading.
+  token-identity:
+    verdict: token ids fixed before row write, row id is event id
+    notes: >-
+      Inferred: Every exactly-once result depends on the redelivered row
+      carrying the same id through the crash. The rebuild-before-drain case
+      shows what a second id does: the gate grants it again.
+  double-grant-cost:
+    verdict: second token is waste in current design, reservation leak in ledger
+    notes: >-
+      Inferred: In this spike the balance is derived from snapshots, so a
+      second token row reserved nothing. In a real system with a ledger that
+      records a reservation when the gate grants, a replayed grant would hold
+      two reservations.
+  comparator-overhead:
+    verdict: stub comparator is negligible relative to real implementation
+    notes: >-
+      Assumed: The grant loop is cheap next to what a real comparator will add.
+      At N = 2000, a grant costs 0.26-0.29 ms including XState send, four
+      SQLite statements, and the stub comparator's population sort. A sandboxed
+      comparator or complex decision logic would add more.
+  assumptions:
+    verdict: five constraints assumed for this spike
+    notes: >-
+      Assumed: (1) Balance is a fixed allocation less reservations read from
+      snapshots; real available balance comes from a ledger not built here. (2)
+      A token holder that ends (done or closed state) releases its reservation
+      at once; settlement with an actual is not modeled. (3) One gate, one
+      process, one SQLite connection at a time; no concurrent writers. (4) The
+      comparator receives taskId, createdAt, and the dependencies region value;
+      the gate reads that region by a path written in gate code. (5) Fixtures
+      are 20 generic actors; creation times are permuted so oldest-first order
+      matches neither id order nor spawn order.
+
+conclusion: >-
+  A gate declared as meta.gate on an XState v5 state works with the guarded
+  transition reading orthogonal regions via in-state conditions. Tokens
+  written to SQLite inbox deliver exactly once at all three crash points
+  (after-inbox-write, after-send, after-save) and survive a real process
+  SIGKILL. The gate's population and balance rebuild from stored snapshot rows
+  alone with no invoked callback needed; population discovery via snapshot
+  query is fast (0.1-5.6 ms for 20-2000 actors), small next to restoring
+  actors (0.8-44 ms for restore-drain-rebuild). The restore must drain inbox
+  before running the gate (or the gate must count unconsumed token rows as
+  held), preventing double-grants. The grant loop costs 0.26-0.29 ms per grant
+  at scale, cheap relative to a real comparator.
+
+next-steps:
+  - Probe behavior with more than one gate on a single task machine to confirm token routing and population isolation.
+  - Test lazy loading of actors, where not every actor is loaded into memory at restore time and the gate rebuilds from snapshot rows without loading actor instances.
+  - Verify that a token held past the gated state to a declared later return point is delivered to the correct actor and released at the return point.
+  - Profile the grant loop cost with a real sandboxed comparator, not the stub.

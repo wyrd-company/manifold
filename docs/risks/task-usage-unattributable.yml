@@ -1,0 +1,35 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged rather
+# than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: Provider session files cannot be reliably attributed to individual tasks
+
+# GAP-EDGE: the risk schema declares no relationship-types; the spike schema's
+# `mitigates` edge (inverse: mitigated-by) is the intended link.
+relationships:
+  mitigated-by:
+    - cost-history
+
+description: >-
+  Manifold's gates request estimates from the user's process, which intends to build
+  estimates from task cost history. Cost history must reach Manifold from provider
+  session files, attributed to the right task. A session file may be the work of one
+  agent on one task (a straightforward case) or an orchestrator spawning multiple child
+  threads across multiple tasks (the complex case). Without a reliable way to map a
+  session or session-like unit back to the task that owns the work, the usage tool
+  cannot settle actuals to the right task, estimates built on history will be wrong,
+  and per-task budgets cannot account for the work done.
+
+categories:
+  - technical
+  - project
+
+likelihood: 3
+
+impact: 4
+
+response-strategy: mitigate
+
+status: mitigated

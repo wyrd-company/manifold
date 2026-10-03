@@ -1,0 +1,360 @@
+$schema: https://refinery.systems/ontology/spike
+title: Sandboxed TypeScript comparator runtime
+
+relationships:
+  mitigates:
+    - comparator-sandbox-unenforceable
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the technical design these findings inform.
+  references:
+    - gates
+
+objective:
+  - Which JavaScript engine fits the service: isolated-vm or QuickJS in wasm?
+  - Can both engines load a TypeScript comparator from a file, run it over a
+    population of at least 200 tasks, and return the result to the host?
+  - Does a function that loops forever get stopped by a timeout; does a
+    function that allocates without bound get stopped by a memory limit?
+  - Can a function that tries require, import, fetch, process, or a timer
+    fail consistently across engines?
+  - Is a seeded random correctly passed in and deterministic across runs on
+    the same seed?
+  - Can a Bun-compiled binary typecheck a comparator against the contract
+    .d.ts file?
+  - Are both engines needed (one in the Node service, one for CLI lint under
+    Bun), or does one fit all paths?
+
+background:
+  current-design: >-
+    A gate holds a population of waiting task actors, runs a comparator
+    (a pure user-written TypeScript function over that population), and
+    hands out one token at a time. The comparator must run in a sandbox:
+    no world access, timeout on infinite loops, drop on unbounded memory.
+    The host CLI (a Bun binary) must typecheck a comparator before any run.
+    Which engine can meet these constraints is not known.
+  problems:
+    - No sandbox implementation exists; two candidate engines are isolated-vm
+      (faster, non-blocking) and QuickJS in wasm (no native build, portable
+      to Bun).
+    - Enforcement of timeout and memory limits varies by engine. A loop that
+      allocates and discards arrays or a long native builtin may defeat the
+      enforcement mechanism.
+    - isolated-vm does not build under Bun; if it is chosen, typecheck must
+      work under Bun in a different way.
+
+ideas:
+  - >-
+    Test both engines on the same comparator and population, measured on wall
+    time per evaluation. Warm up each engine and measure load time, evaluation
+    time, and full cycle (load, evaluate, dispose).
+  - >-
+    Write probe tests for timeout and memory boundary cases: infinite loops,
+    large allocations, small allocation loops with and without retention,
+    native builtin overruns (sort, join). Expect each engine to either stop
+    or fail with observed errors. Run tests under SIGKILL timeout for
+    uncontained cases.
+  - >-
+    Verify world-access blocking by attempting require, import, fetch,
+    process, and timers; expect ReferenceError on each.
+  - >-
+    Verify determinism with seeded random; run the same comparator twice with
+    the same seed and expect identical selections and random draws.
+  - >-
+    Test TypeScript typecheck in-process with the TypeScript 6.0.3 JS API.
+    Verify contract type checking, error messages, and execution. Test
+    embedding lib files in a Bun --compile binary for standalone lint.
+  - >-
+    Review isolated-vm compatibility on Node and Bun; review QuickJS on both.
+    Measure install time, build time, and runtime errors if any.
+
+environment:
+  location: throwaway branch spike/sandbox in wyrd-company/manifold
+  tools:
+    - isolated-vm 7.0.1 (engines: node >= 24); Node native build with node-gyp
+    - quickjs-emscripten 0.32.0 (with quickjs-emscripten-core and
+      @jitl/quickjs-wasmfile-release-sync 0.32.0)
+    - TypeScript 6.0.3 (JS API, ts.transpileModule in-process) and 7.0.2
+      (CLI only)
+    - Node 26.5.1 (V8 14.6.202.34-node.24, ABI 147, N-API 10)
+    - Bun 1.4.2 (npm package `bun`)
+    - npm 11.17.0
+    - gcc 15.2.0
+  resources:
+    - >-
+      Contract: Comparator = (input: ComparatorInput) => Selection | null,
+      with ComparatorInput = { population: readonly Task[]; now: number;
+      random: () => number }
+    - >-
+      Sandbox prelude: mulberry32 seeded random, Math.random/Date/setTimeout
+      replaced with functions that throw; __run(populationJson, now, seed)
+      entry point
+    - >-
+      Engines tested: isolated-vm (one Isolate per load, compileModule,
+      Reference.apply/applySync with timeout); QuickJS (setMemoryLimit,
+      setMaxStackSize 1 MiB, interrupt handler with deadline)
+    - Spike limits: timeout 100 ms, memory 32 MiB (not production values)
+    - >-
+      Testbed population: 200 generic tasks (fixtures/population.ts) in
+      benchmark; 2000 for scale tests
+    - >-
+      Single-behavior probes run in separate processes under timeout -s KILL
+      for cases the engine does not contain
+    - >-
+      Machine: AMD Ryzen 9 7945HX (32 threads), 92 GiB RAM,
+      Ubuntu 26.04.1 LTS
+
+findings:
+  engine-performance:
+    verdict: both run the comparator
+    measurements:
+      isolated-vm-async-200-warm-ms: 0.094
+      isolated-vm-async-200-warm-p95: 0.136
+      isolated-vm-async-2000-warm-ms: 0.93
+      isolated-vm-async-2000-warm-p95: 1.04
+      isolated-vm-sync-200-warm-ms: 0.086
+      isolated-vm-sync-200-warm-p95: 0.109
+      isolated-vm-sync-2000-warm-ms: 0.96
+      isolated-vm-sync-2000-warm-p95: 1.03
+      quickjs-per-load-200-warm-ms: 0.971
+      quickjs-per-load-200-warm-p95: 1.051
+      quickjs-per-load-2000-warm-ms: 4.77
+      quickjs-per-load-2000-warm-p95: 4.94
+      quickjs-shared-200-warm-ms: 0.476
+      quickjs-shared-200-warm-p95: 0.488
+      quickjs-shared-2000-warm-ms: 4.71
+      quickjs-shared-2000-warm-p95: 4.87
+      isolated-vm-load-200-ms: 1.32
+      isolated-vm-load-200-p95: 1.51
+      isolated-vm-load-dispose-200-ms: 1.64
+      isolated-vm-load-dispose-200-p95: 1.87
+      quickjs-per-load-load-200-ms: 0.91
+      quickjs-per-load-load-200-p95: 2.03
+      quickjs-per-load-load-dispose-200-ms: 1.96
+      quickjs-per-load-load-dispose-200-p95: 3.03
+      quickjs-shared-load-200-ms: 0.29
+      quickjs-shared-load-200-p95: 0.34
+      quickjs-shared-load-dispose-200-ms: 0.86
+      quickjs-shared-load-dispose-200-p95: 0.93
+      transpile-first-call-ms: 28.5
+      transpile-subsequent-ms: 1.10
+      transpile-p95-ms: 2.98
+      population-json-200-kb: 22
+      population-json-2000-kb: 220
+    notes: >-
+      Measured: both engines load pick-heaviest.ts from file, run over 200
+      and 2000 tasks, return expected result with identical seeded draws.
+      Warm evaluate: 500 runs after 20 warm-up runs on one loaded comparator.
+      Load: 100 runs (isolate/runtime + module). Load + dispose: 100 runs.
+      Transpile via ts.transpileModule: 28.5 ms first call in process, then
+      1.10 ms median (p95 2.98 ms). Inferred: isolated-vm evaluates 5x to 10x
+      faster; both below 5 ms per evaluation at these sizes.
+
+  simple-timeout-memory-test:
+    verdict: confirmed working
+    measurements:
+      infinite-loop-isolated-vm-ms: 104
+      infinite-loop-quickjs-per-load-ms: 106
+      large-alloc-isolated-vm-ms: 28
+      large-alloc-quickjs-per-load-ms: 53
+    notes: >-
+      Measured: infinite loop for (;;) {} stops at 100 ms timeout on both:
+      isolated-vm "Script execution timed out" at 104 ms, QuickJS
+      "InternalError: interrupted" at 106 ms. Large allocation loop push
+      new Array(1_000_000).fill(n) forever with 10 s timeout (memory limit
+      decides) stops on both: isolated-vm "Isolate was disposed during
+      execution due to memory limit" at 28 ms, QuickJS "InternalError: out of
+      memory" at 53 ms.
+
+  isolated-vm-allocation-loop-gap:
+    rating: RED
+    notes: >-
+      Measured: spike timeout 100 ms, memoryLimit 32 MiB. Loop for (;;) new
+      Array(1024).fill(1) (retains nothing) runs uncontained 4+ s on both
+      eval and evalSync, three runs each. Host RSS ~90 MB. Only outside
+      SIGKILL stops it. Same for sizes 64, 128, 256, 512, 1000, 1024. Does
+      stop at 100 ms: new Array(16).fill(1), new Array(1024) no fill,
+      a.fill(1) on one array, [1,2,3].map(...). Retaining loop const h = [];
+      for (;;) h.push(new Array(1024).fill(1)) grows host RSS 500 MB/s: 11.4
+      GB in 19 s, 40 GB in 2.5 min, both killed from outside. Host watchdog
+      calling isolate.dispose() at 500 ms does not stop either loop;
+      dispose() throws "Isolate is already disposed" while loop keeps running,
+      exit 139 (segmentation fault). Long native builtins overrun timeout:
+      a.sort() on 2e6 ran 890–912 ms against 100 ms timeout; join on 2e6 ran
+      132–150 ms; join on 1e7 timed out at 138 ms in one run, 731 ms another.
+      Inferred: in-process, a comparator can hold thread pool thread forever
+      and grow host memory unbounded. node:vm stops the allocation loop at
+      101.8 ms (gap is isolated-vm specific, not V8). Assumed: gap exists on
+      Node 24 and other isolated-vm versions but not tested.
+
+  quickjs-shared-wasm-unlimited:
+    rating: YELLOW
+    measurements:
+      arrays-allocated-before-oom: 250
+      host-rss-at-oom-mb: 2064
+      time-to-oom-s: 1.93
+      time-to-oom-s-p95: 2.26
+      interrupt-handler-calls: 1
+      wasm-memory-max-pages: 32768
+      wasm-memory-max-gb: 2
+    notes: >-
+      Measured: QuickJS shared wasm module, spike setMemoryLimit 32 MiB.
+      Loop push new Array(1_000_000).fill(1) allocates ~250 arrays, out of
+      memory at 1.93–2.26 s, host RSS 2064 MB. Interrupt handler called once
+      in that window, 100 ms deadline never checked. Inferred: setMemoryLimit
+      not the active bound; package default WebAssembly.Memory maximum
+      (32768 pages, 2 GiB) is, and allocation climbs until that cap,
+      exhausting host memory before runtime limit is reached.
+
+  quickjs-per-load-enforces-limits:
+    verdict: limits enforced
+    measurements:
+      infinite-loop-ms: 143
+      infinite-loop-p95-ms: 155
+      churn-arrays-probe-ms: 143
+      churn-arrays-probe-p95-ms: 155
+      hoard-small-arrays-probe-ms: 63
+      hoard-small-arrays-probe-p95-ms: 94
+      module-init-ms: 5.6
+      module-init-ms-max: 9.6
+      module-init-as-part-of-load-ms: 0.91
+      wasm-memory-cap-pages: 1024
+      wasm-memory-cap-mb: 64
+      native-builtin-join-2e6-ms: 187.5
+      native-builtin-join-deadline-ms: 100
+      native-builtin-join-interrupt-checks: 601
+      native-builtin-sort-2e6-ms: 102
+    notes: >-
+      Measured: per-load instance, capped wasm memory 1024 pages (64 MiB).
+      Infinite loop stops at timeout 143–155 ms. Two probes that isolated-vm
+      does not stop: churn-arrays (allocate/discard loop, timeout 143–155 ms),
+      hoard-small-arrays (retaining loop, out of memory 63–94 ms), both stopped
+      here. Fresh module init costs 5.6–9.6 ms in probe, 0.91 ms median as
+      part of full load benchmark. Per-load wasm memory cap is hard ceiling;
+      comparator cannot exceed. Per-load instance releases memory on dispose;
+      shared module cannot (wasm memory does not shrink). Inferred: native
+      builtins still overrun deadline. join on 2e6 elements ran to completion
+      at 187.5 ms against 100 ms deadline (601 interrupt checks); a.sort() on
+      2e6 was interrupted at 102 ms.
+
+  world-access-blocked:
+    rating: GREEN
+    notes: >-
+      Measured: every attempt to reach the world blocked on both engines.
+      require and static import fail at load time (spike import resolver or
+      engine default). Dynamic import and await import fail at load. fetch,
+      process.env, setTimeout raise ReferenceError. Math.random, Date
+      constructor, async comparators blocked by prelude with error messages
+      (use input.random, return synchronously). No difference between engines;
+      sandbox is tight on both.
+
+  determinism-confirmed:
+    rating: GREEN
+    notes: >-
+      Measured: with seed 1234, two runs return same selection and same seeded
+      random draws on each engine. Seed 99 gives different results. Age
+      (computed by host) arrives unchanged. Both engines produce identical
+      outputs for same seed; contract honored.
+
+  host-thread-blocking:
+    rating: YELLOW
+    measurements:
+      host-interval-fires-isolated-vm-async: 19
+      host-interval-fires-isolated-vm-sync: 0
+      host-interval-fires-quickjs: 0
+      host-interval-duration-ms: 5
+      loop-timeout-ms: 100
+    notes: >-
+      Measured: during 100 ms loop-forever evaluation, 5 ms host interval
+      fired 19 times with isolated-vm async apply, 0 times with applySync, 0
+      times with QuickJS. Inferred: QuickJS runs on host thread and blocks
+      service thread for up to timeout plus any native-builtin overrun on
+      each evaluation. Assumed: QuickJS in worker_threads Worker behaves same
+      as main thread (not tested).
+
+  isolated-vm-bun-incompatible:
+    rating: RED
+    measurements:
+      node-npm-install-seconds: 0.6
+      node-source-build-wall-seconds: 9.2
+      node-source-build-cpu-seconds: 98
+      node-source-build-binary-mb: 27
+      bun-prebuild-status: failed
+      bun-source-build-status: failed
+    notes: >-
+      Measured: Under Node 26.5.1, npm install does not compile (0.6 s);
+      isolated-vm loads shipped prebuild
+      prebuilds/linux-x64/isolated-vm.abi147.glibc.node via node-gyp-build.
+      Source build (node-gyp rebuild --release -j max, prebuilds removed)
+      succeeds in 9.2 s wall (1 m 38 s CPU, gcc 15.2.0), produces 27 MB
+      isolated_vm.node that runs under Node, linked to libuv.so.1 (Homebrew
+      Node uses shared libuv). Under Bun 1.4.2, prebuild fails: undefined
+      symbol _ZN2v815ValueSerializer8Delegate19HasCustomHostObjectEPNS_7IsolateE.
+      Source build fails: libuv.so.1 not found. Bun reports
+      process.versions.v8 as 14.6.202.34-node.20, ABI 147, but does not
+      export V8's C++ API.
+
+  quickjs-bun-compatible:
+    rating: GREEN
+    notes: >-
+      Measured: quickjs-emscripten runs under Bun 1.4.2 (bun scripts/run-one.ts).
+      Gives expected selection, timeout yields "interrupted", memory limit
+      yields "out of memory". Static import fails at load (Bun issue); dynamic
+      import works. Runtime is portable. In Bun --compile binary, spike's
+      QuickJS loader fails: Cannot find module
+      @jitl/quickjs-wasmfile-release-sync/wasm from /$bunfs/root/run-one-bin.
+      Loader finds wasm with import.meta.resolve; that path not in binary.
+      Embedding wasm was not attempted (spike scope).
+
+  typecheck-typescript-6-api:
+    verdict: in-process typecheck confirmed working
+    measurements:
+      node-first-check-ms: 63
+      node-check-range-ms-min: 63
+      node-check-range-ms-max: 184
+      bun-compile-binary-size-mb: 90.7
+      bun-compile-binary-build-time-s: 0.25
+      bun-compile-binary-runtime-ms: 300
+      embedded-lib-files-count: 57
+    notes: >-
+      Measured: src/lint.ts typechecks in-process with TypeScript 6.0.3 JS
+      API. Generated __check.ts assigns comparator default export to
+      Comparator (typed signature). Compiler options: strict,
+      lib: ["lib.es2022.d.ts"], types: [], paths for @manifold/comparator.
+      Test results on Node 26.5.1: wrong-signature.ts rejected TS2322 "Target
+      signature provides too few arguments"; async-comparator.ts rejected
+      TS2322 "Property 'id' is missing in type 'Promise'"; undeclared-host-globals
+      (setTimeout, fetch, process) rejected TS2304/TS2591; pick-heaviest.ts
+      passes. One check takes 63–184 ms (first in process slowest). tsc CLI
+      --noEmit -p fixtures/tsc rejects wrong signatures with same TS2322 under
+      TypeScript 6.0.3 (exit 2) and 7.0.2 (exit 1). Bun --compile binary
+      (src/lint-cli.ts, 90.7 MB, built 0.25 s) with contract and 57 lib files
+      embedded as text imports gives exit 0 for good comparator, exit 1 with
+      TS2322 for wrong one. One run ~300 ms. Works when copied to another
+      directory, when node_modules/typescript moved away. Library files baked
+      into binary; works without build tree or node_modules. Inferred:
+      in-process typecheck needs TypeScript 6.x JS API. On TypeScript 7 the
+      API spawns tsgo binary (child_process.spawn, found by reading source,
+      not run). Assumed: TypeScript 6.x line maintenance horizon unknown.
+
+conclusion: >-
+  QuickJS in wasm with per-load isolation and capped WebAssembly.Memory passes
+  every enforcement test: infinite loops (timeout at 100 ms), large allocations
+  (memory limit at 32 MiB), small-allocation loops without retention (timeout),
+  small-allocation loops with retention (memory limit). The cost is 5x to 10x
+  slower evaluation than isolated-vm (4.8 ms vs 0.93 ms at 2000 tasks) and
+  host-thread blocking during evaluation (0 host intervals fired during 100 ms
+  evaluation vs 19 with isolated-vm async). No native build required; runs on
+  both Node and Bun. At 200 tasks, cost is under 1 ms per evaluation and cost
+  at 2000 tasks (~5 ms) is acceptable. isolated-vm is faster and does not
+  block the host, but a three-line allocation loop defeats both its timeout
+  and memory limit. Host memory grows unbounded until process SIGKILL. This
+  is not a safe baseline. TypeScript 6.0.3 JS API enables in-process typecheck
+  in the CLI; ES2022 lib files are embedded in the Bun binary as text imports.
+  TypeScript 7.0.2 spawns a subprocess for type checking, requiring approval.
+
+next-steps:
+  - Clarify TypeScript 6.x maintenance horizon (lint path depends on 6.x line;
+    typescript package latest is 7.0.2).
+  - Measure gate evaluation frequency and real populations (hundreds to few
+    thousand tasks) to confirm per-evaluation cost is acceptable and identify
+    bottleneck (comparator cost vs population size vs gate overhead).
