@@ -13,8 +13,12 @@ relationships:
 
 description: >-
   The gate design requires blueprint lint to prove that every path after a
-  guarded transition reaches the declared token return point or actor
-  completion. Configuration traversal catches the tested parallel, ancestor,
+  guarded transition reaches the declared token return point or a final
+  state. The probe stops at the return point or root actor completion; its
+  region-final fixture remains active and reports an unreachable return.
+  Whether the design means any final state or actor completion is unresolved;
+  this wording gap selects no blueprint restriction. Configuration traversal
+  catches the tested parallel, ancestor,
   eventless, multi-target, dead-end, cycle, and history traps, but active-state
   sets alone merge different remembered histories and accept a runnable
   counterexample. Sound graph identity needs history memory or equivalent

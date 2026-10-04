@@ -510,6 +510,56 @@ findings:
                   held: {}
           done:
             type: final
+      region-final-fixture:
+        base-blueprint: configuration-lint-method.measurements.reconstructed-blueprint
+        replace-at-path:
+          states.open.states.flow.states.working:
+            always: trap
+        add-at-path:
+          states.open.states.flow.states.trap:
+            type: final
+        guarded-transition: &a2
+          source: parcel.open.flow.queued
+          event: always
+        declared-return: parcel.open.flow.released
+        verdict: reject
+        configurations: 11
+        violations:
+          - reason: unreachable return
+            path:
+              - "{parcel.open.firstToken.held,parcel.open.flow.queued,parcel.op\
+                en.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.working,parcel.o\
+                pen.secondToken.empty}"
+        region-final-actor-status:
+          - active
+      transient-return-fixture:
+        blueprint:
+          id: sample
+          initial: queued
+          states:
+            queued:
+              on:
+                grant:
+                  target: working
+                  guard: allowed
+            working:
+              always: returned
+            returned:
+              always: trap
+            trap: {}
+        guarded-transition: &a1
+          source: sample.queued
+          event: grant
+        declared-return: sample.returned
+        verdict: accept
+        configurations: 4
+        violations: []
+        graph-configurations:
+          - "{sample.queued}"
+          - "{sample.working}"
+          - "{sample.returned}"
+          - "{sample.trap}"
     notes: |-
       Measured: The disposable function takes a loaded XState v5 machine, a guarded transition identified by source id, event descriptor (or always), and transition index, and a declared return state id. YAML in guards of the form {in: [state ids]} is translated to XState stateIn and and. Other named guards, including parameterized ones, branch true and false at each evaluation. The function first breadth-first enumerates reachable configurations from initial entry, including every pre-grant history, then seeds token-held traversal at every edge that takes the selected guarded transition. It stops that traversal on entry to the return state, including an ancestor, or when the root actor is done. A region final is not actor completion. It reports dead ends, repeated configurations on a path (including cycles with exits), and an unreachable declared return, each with a configuration path. Ignored external events do not count as progress; ignored internal completion events are consumed. Eventless transitions have priority over queued events, which have priority over external events. Individual microsteps preserve transient return entry before an always exit. Every parallel region and ancestor contributes event descriptors; transition selection, conflict resolution, compound initial entry, history resolution, multi-target entry, and completion events run through the installed XState engine.
 
@@ -520,6 +570,12 @@ findings:
       Measured: The earlier disposable gate-xstate branch is unavailable locally. The valid two-gate fixture is reconstructed from this artifact's described states and transitions; both declared returns pass. It preserves structural behavior, not every original action implementation. Exact original fixture equivalence is not established. The complete reconstructed fixture is:
 
       The complete blueprint is recorded in this finding's measurements.
+
+      Measured: region-final-fixture replaces flow.working with always: trap and adds flow.trap as type: final to reconstructed-blueprint. The first-token guarded always transition remains the grant and flow.released remains the declared return. The probe reports reject, 11 configurations, and an unreachable-return path from held/queued/empty to held/working/empty, without a dead-end violation. Configurations containing the region final retain active actor status; other regions and cancel can still progress. This is a probe result, not a selected product rejection rule.
+
+      Wording gap: gates token-lint permits the return point or a final state. The probe instead stops at the declared return or root actor completion. A region final does not finish the actor, so the probe interpretation is stricter than a literal any-final-state reading. The design does not resolve that distinction. This spike records the gap without changing the design or selecting a restriction.
+
+      Measured: transient-return-fixture is a complete sample blueprint with guarded grant to working, always to returned, then always to trap. The declared return is sample.returned. It is accepted with no violations; the graph contains queued, working, returned, and trap as separate configurations. Token-held traversal stops at returned even though the same event continues to trap. The individual microstep observation, rather than the last snapshot alone, preserves the return entry.
   configuration-lint-rejections:
     verdict: parallel, dead-end, closed-cycle, unreachable-return, history, and
       eventless counterexamples have configuration-path diagnostics
@@ -628,10 +684,146 @@ findings:
               - "{sample.working} history[sample.box.memory=sample.box.trap]"
               - "{sample.box.trap} history[sample.box.memory=sample.box.trap]"
               - "{sample.box.trap} history[sample.box.memory=sample.box.trap]"
+        source-blueprint: history-configuration-identity.measurements.counterexample-blueprint
+        guarded-transition: *a1
+        declared-return: sample.box.safe
+      ancestor-trap:
+        base-blueprint: configuration-lint-method.measurements.reconstructed-blueprint
+        add-at-path:
+          states.open.on.strand: "#parcel.trap"
+          states.trap: {}
+        guarded-transition: *a2
+        declared-return: parcel.open.flow.released
+        verdict: reject
+        configurations: 12
+        violations:
+          - reason: dead end
+            path:
+              - "{parcel.open.firstToken.held,parcel.open.flow.queued,parcel.op\
+                en.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.working,parcel.o\
+                pen.secondToken.empty}"
+              - "{parcel.trap}"
+      multi-target-trap:
+        base-blueprint: configuration-lint-method.measurements.reconstructed-blueprint
+        add-at-path:
+          states.open.states.flow.states.trap: {}
+          states.open.states.firstToken.states.held.on:
+            strand:
+              target:
+                - "#parcel.open.flow.trap"
+                - "#parcel.open.secondToken.held"
+        guarded-transition: *a2
+        declared-return: parcel.open.flow.released
+        verdict: reject
+        configurations: 13
+        violations:
+          - reason: cycle
+            path:
+              - "{parcel.open.firstToken.held,parcel.open.flow.queued,parcel.op\
+                en.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.working,parcel.o\
+                pen.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.review,parcel.op\
+                en.secondToken.empty}"
+              - "{parcel.open.firstToken.empty,parcel.open.flow.trap,parcel.ope\
+                n.secondToken.held}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.trap,parcel.open\
+                .secondToken.held}"
+              - "{parcel.open.firstToken.empty,parcel.open.flow.trap,parcel.ope\
+                n.secondToken.held}"
+      shallow-history-trap:
+        blueprint:
+          id: sample
+          initial: box
+          states:
+            box:
+              initial: queued
+              states:
+                queued:
+                  on:
+                    grant:
+                      target: working
+                      guard: allowed
+                working:
+                  on:
+                    advance: returned
+                    bad: trap
+                trap:
+                  on:
+                    leave: "#sample.outside"
+                returned: {}
+                memory:
+                  type: history
+                  history: shallow
+            outside:
+              on:
+                back: "#sample.box.memory"
+        guarded-transition:
+          source: sample.box.queued
+          event: grant
+        declared-return: sample.box.returned
+        verdict: reject
+        configurations: 6
+        violations:
+          - reason: cycle
+            path:
+              - "{sample.box.queued}"
+              - "{sample.box.working}"
+              - "{sample.box.trap}"
+              - "{sample.outside} history[sample.box.memory=sample.box.trap]"
+              - "{sample.box.trap} history[sample.box.memory=sample.box.trap]"
+              - "{sample.outside} history[sample.box.memory=sample.box.trap]"
+      deep-history-trap:
+        blueprint:
+          id: sample
+          initial: box
+          states:
+            box:
+              initial: queued
+              states:
+                queued:
+                  on:
+                    grant:
+                      target: working
+                      guard: allowed
+                working:
+                  on:
+                    advance: returned
+                    bad: trap
+                trap:
+                  on:
+                    leave: "#sample.outside"
+                returned: {}
+                memory:
+                  type: history
+                  history: deep
+            outside:
+              on:
+                back: "#sample.box.memory"
+        guarded-transition:
+          source: sample.box.queued
+          event: grant
+        declared-return: sample.box.returned
+        verdict: reject
+        configurations: 6
+        violations:
+          - reason: cycle
+            path:
+              - "{sample.box.queued}"
+              - "{sample.box.working}"
+              - "{sample.box.trap}"
+              - "{sample.outside} history[sample.box.memory=sample.box.trap]"
+              - "{sample.box.trap} history[sample.box.memory=sample.box.trap]"
+              - "{sample.outside} history[sample.box.memory=sample.box.trap]"
     notes: |-
       Measured: The diagnostics below use sets of active leaf states as the display; ancestors are retained in graph identity. History memory is displayed explicitly. The base flat fixture is sample with initial queued and queued.on.grant = {target: working, guard: allowed}; allowed is an abstract named guard. Return is sample.returned. Dead end adds working.on = {bad: trap, advance: returned}, trap = {}, returned = {}. Closed cycle adds trap.on.again = trap. Unreachable return removes working.on.advance while retaining returned. Eventless bypass uses working.always = trap and working.on.advance = returned: advance cannot run before always. A cycle with an exit uses working.on = {again: working, advance: returned}; it is rejected because the exit need not be chosen. Guarded eventless self-cycles with a fallback return are also detected.
 
       Measured: The parallel trap adds flow.trap = {} and firstToken.held.on.strand = '#parcel.open.flow.trap' to the complete fixture in configuration-lint-method. A normal actor takes first, then strand. Its flow is trap. That cross-region transition resets firstToken to empty in XState, but the granted token remains outstanding: the replay test records first in context.tokens.first with an assign action on the first event and asserts that value remains true after strand. A region-state reset does not return a durable token. cancel remains an exit, so the graph detects a retention cycle rather than claiming trap has no exit. An ancestor strand targeting a root trap and a strand with simultaneous targets flow.trap and secondToken.held are rejected. Shallow and deep box history are separately exercised with queued -> working, bad -> trap, leave -> outside, back -> box.memory; both can re-enter trap. These are test results for those shapes, not exhaustive correctness proofs.
+
+      Measured: measurements.history is the history-configuration-identity counterexample, whose complete blueprint is counterexample-blueprint in that finding. Its gate is root queued.on.grant and its return is sample.box.safe. These paths are distinct from shallow-history-trap and deep-history-trap, which each record their own complete box/outside blueprint, gate, return, verdict, and configuration paths.
+
+      Measured: ancestor-trap and multi-target-trap record explicit blueprint deltas against reconstructed-blueprint. The ancestor case has a dead-end path from held/queued/empty through held/working/empty to the root trap. The simultaneous-target case records a retention cycle that reaches empty/trap/held. The recorded full ids and paths identify which parallel regions move together.
   history-configuration-identity:
     verdict: active-state-only graph identity is falsified by a runnable false
       acceptance
