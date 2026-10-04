@@ -50,10 +50,16 @@ decision-outcome:
     Each dependency is widely adopted, with thousands of GitHub stars or,
     for `sirv`, tens of millions of weekly downloads and a place inside
     Vite's own build; each project is maintained, with a release in the last
-    year and most in the last month; and no package the console or the
-    service ships runs an install script, spawns a process, or evaluates
-    generated code. `sirv` releases about once a year, which suits a
-    small static file listener whose interface has not changed. A static build needs nothing
+    year and most in the last month. The review evidence is proportionate
+    to each dependency: `sirv` and TanStack Query, which the console adds
+    beyond T3 Code's stack, had their source reviewed at the latest
+    release; the widely adopted, actively released projects are judged on
+    their adoption, their releases, and a scan of their published packages.
+    The published packages of the runtime dependencies this decision adds,
+    and of their own dependencies, have no install script and no
+    `child_process`, `eval`, or `new Function`. `sirv` releases about once
+    a year, which suits a small static file listener whose interface has
+    not changed. A static build needs nothing
     from the service but a request listener under a path prefix, which the
     HTTP host already gives every module, while a server-rendering
     framework adds a second server with nothing to render that the API
