@@ -668,3 +668,40 @@ it("preserves present values when output joins a child null and a non-null value
     models.dispose();
   }
 });
+it("enriches the failing table invocation after the same model completed without a match", async () => {
+  const leaf = graph([
+    node("check", "jsonataDecisionTable", {
+      hitPolicy: "first",
+      inputs: [{ id: "condition" }],
+      outputs: [],
+      rules: [{ _id: "candidate", condition: "$input.fail ? $notAFunction() : false" }],
+    }),
+  ]);
+  const parent = graph([
+    { id: "first", type: "decisionNode", content: { key: "leaf" } },
+    node("prepare", "jsonataExpression", { expression: '{"fail": true}' }),
+    { id: "second", type: "decisionNode", content: { key: "leaf" } },
+  ]);
+  const models = createDecisionModels({ sample: parent, leaf });
+  try {
+    const result = await models.evaluate("sample", { fail: false });
+    expect(result).toMatchObject({
+      outcome: "error",
+      error: { model: "leaf", nodeId: "check", ruleId: "candidate", columnId: "condition" },
+    });
+    expect(result.trace["first"]!.traceData).toMatchObject({
+      check: { output: {}, traceData: null },
+    });
+    expect(result.trace["second"]!.traceData).toMatchObject({
+      check: {
+        output: null,
+        traceData: {
+          error: { model: "leaf", nodeId: "check", ruleId: "candidate", columnId: "condition" },
+        },
+      },
+    });
+    expect(result.trace["output"]).toBeUndefined();
+  } finally {
+    models.dispose();
+  }
+});

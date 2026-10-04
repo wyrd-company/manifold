@@ -79,7 +79,12 @@ export function enrichDecisionModelError(
   models: Readonly<Record<string, DecisionModel>>,
   error: DecisionModelErrorDetail,
 ): boolean {
-  if (key === error.model && error.nodeId && trace[error.nodeId]?.traceData === null) {
+  if (
+    key === error.model &&
+    error.nodeId &&
+    trace[error.nodeId]?.traceData === null &&
+    trace[error.nodeId]?.output === null
+  ) {
     trace[error.nodeId]!.traceData = { error };
     return true;
   }
