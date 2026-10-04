@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   verifies: [store, portfolio-ledger, blueprint-expressions, decision-models, process-repository, blueprint-loader, portfolio, durable-event-delivery, github-event-source, t3code-environment-source]
+//   verifies: [store, portfolio-ledger, blueprint-expressions, decision-models, process-repository, blueprint-loader, portfolio, durable-event-delivery, github-event-source, t3code-environment-source, service-assembly, intake, gate-runtime, agent-threads, escalations, usage-intake, host-cli-usage]
 // ---
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +15,13 @@ import git from "isomorphic-git";
 import { fixture as repositoryFixture } from "./process-repository/test-fixtures/remote.ts";
 import { githubFake } from "./github-source/test-fixtures/api.ts";
 import { fakeServer, fixtureThread } from "./t3code-source/test-fixtures/server.ts";
+import { serviceFixture } from "./service/test-fixtures/repository.ts";
+import { commandServer } from "./agent-threads/test-fixtures/commands.ts";
+import { model } from "./intake/test-fixtures/fixture.ts";
+import { signedDelivery } from "./github-source/test-fixtures/api.ts";
+import { githubWebhookPath } from "./service/index.ts";
+import { serve, readRequest } from "./escalations/test-support.ts";
+import { DatabaseSync } from "node:sqlite";
 import { openPortfolio } from "./portfolio/index.ts";
 import { blueprintVersionKey } from "@wyrd-company/manifold-shared";
 import type { FoundationWorkerConfiguration } from "./test-fixtures/foundation-worker.ts";
@@ -706,4 +713,487 @@ it("resumes the same revision after SIGKILL across repository, sources, inbox an
   } finally {
     recovered.close();
   }
+}, 60000);
+
+it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and host usage settlement through the assembled service", async () => {
+  const f = await serviceFixture();
+  cleanup.push(f.close);
+  const server = await commandServer();
+  cleanup.push(() => server.close());
+  const notifications: {
+    topic: string;
+    message: string;
+    actions?: { url: string; method: string; headers: Record<string, string>; body: string }[];
+  }[] = [];
+  const ntfy = await serve((request, response) => {
+    void readRequest(request).then((body) => {
+      notifications.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" }).end("{}");
+    });
+  });
+  cleanup.push(ntfy.close);
+  // Keep the answer URL valid across both service processes.
+  const address = await serve((_request, response) => response.end());
+  const serviceUrl = address.url;
+  await address.close();
+  await fs.writeFile(join(f.directory, "t3.token"), "fixture-token");
+  await fs.writeFile(
+    f.file,
+    stringify({
+      ...f.configuration,
+      http: { port: Number(new URL(serviceUrl).port) },
+      credentials: {
+        ...f.configuration.credentials,
+        writer: { kind: "t3code-token", tokenFile: "t3.token" },
+      },
+      environments: {
+        "env-one": {
+          url: server.url,
+          credential: "writer",
+          reconnect: { initialMs: 10, factor: 2, maxMs: 30, jitter: 0 },
+        },
+      },
+      escalations: {
+        publicUrl: serviceUrl,
+        destinations: {
+          default: {
+            server: ntfy.url,
+            topic: "example-notification-topic-with-opaque-name",
+            posture: "open",
+          },
+        },
+      },
+    }),
+  );
+  const mapping = (expression: string) => ({ type: "expression.map", params: { expression } });
+  const assignment = (expression: string) => ({
+    type: "expression.assign",
+    params: { expression },
+  });
+  const ownTurn = {
+    type: "expression.guard",
+    params: { expression: "event.threadId = context.thread and event.messageId = context.message" },
+  };
+  const document = {
+    machine: {
+      id: "parcel",
+      initial: "queued",
+      context: { thread: "", message: "", starts: 0, settlements: 0, answer: "" },
+      states: {
+        queued: {
+          meta: {
+            gate: { comparator: "order.ts", reservation: true, return: { state: "asking" } },
+          },
+          on: { token: "working" },
+        },
+        working: {
+          initial: "opening",
+          on: {
+            "t3.turn.started": {
+              guard: ownTurn,
+              actions: assignment('{"starts": context.starts + 1}'),
+            },
+            "t3.turn.settled": {
+              guard: ownTurn,
+              target: "asking",
+              actions: assignment('{"settlements": context.settlements + 1}'),
+            },
+          },
+          states: {
+            opening: {
+              invoke: {
+                id: "opening",
+                src: "thread-create",
+                input: {
+                  project: "project",
+                  title: "Pack the parcel",
+                  model: { instanceId: "provider", model: "sample-model" },
+                },
+                onDone: {
+                  target: "preparing",
+                  actions: ["follow-thread", assignment('{"thread": event.output.threadId}')],
+                },
+              },
+            },
+            preparing: {
+              invoke: {
+                id: "preparing",
+                src: "turn-prepare",
+                onDone: {
+                  target: "prompting",
+                  actions: assignment('{"message": event.output.messageId}'),
+                },
+              },
+            },
+            prompting: {
+              invoke: {
+                id: "prompting",
+                src: "turn-start",
+                input: mapping(
+                  '{"threadId": context.thread, "messageId": context.message, "prompt": "templates/parcel.njk"}',
+                ),
+                onDone: "waiting",
+              },
+            },
+            waiting: {},
+          },
+        },
+        asking: {
+          invoke: {
+            id: "ask",
+            src: "escalate",
+            input: {
+              question: "Send the packed parcel?",
+              choices: [{ id: "send", label: "Send" }],
+            },
+          },
+          on: {
+            "escalation.answered": {
+              target: "delivered",
+              actions: assignment('{"answer": event.answer.choice}'),
+            },
+          },
+        },
+        delivered: { type: "final" },
+      },
+    },
+    schemas: {
+      input: true,
+      output: true,
+      context: true,
+      events: {
+        token: true,
+        "t3.turn.started": true,
+        "t3.turn.settled": true,
+        "escalation.answered": true,
+      },
+      actors: Object.fromEntries(
+        ["thread-create", "turn-prepare", "turn-start", "escalate"].map((name) => [
+          name,
+          { input: true, output: true },
+        ]),
+      ),
+    },
+  };
+  const parent = await f.commit(
+    60,
+    {
+      comparator:
+        "export default i => { const task = i.population[0]; return task && (i.balances[task.item]?.acct ?? 0) >= 10 ? { task: task.id, reservations: [{ account: 'acct', amount: 10 }] } : null; };",
+      bindings: {
+        githubProjects: {
+          parcels: {
+            owner: "sample",
+            number: 1,
+            environment: "env-one",
+            item: "alpha",
+            t3codeProjects: ["project"],
+          },
+        },
+      },
+      accounts: {
+        accounts: { acct: { unit: "usd", usage: [{ environment: "env-one", provider: "codex" }] } },
+      },
+      prices: {
+        unit: "usd",
+        models: { "sample-model": { standard: { input: 0.5, output: 0.5, cacheRead: 0.5 } } },
+      },
+    },
+    document,
+  );
+  const gitdir = f.remote.gitdir;
+  const { commit } = await git.readCommit({ fs, gitdir, oid: parent });
+  const { tree } = await git.readTree({ fs, gitdir, oid: commit.tree });
+  async function blob(path: string, content: string) {
+    return {
+      path,
+      mode: "100644",
+      type: "blob" as const,
+      oid: await git.writeBlob({ fs, gitdir, blob: Buffer.from(content) }),
+    };
+  }
+  const models = await git.writeTree({
+    fs,
+    gitdir,
+    tree: [
+      await blob(
+        "intake.yml",
+        stringify(model('{"blueprint":"blueprints/counter.yml","portfolioItem":"alpha"}')),
+      ),
+    ],
+  });
+  const templates = await git.writeTree({
+    fs,
+    gitdir,
+    tree: [await blob("parcel.njk", "Pack the sample parcel.")],
+  });
+  const root = await git.writeTree({
+    fs,
+    gitdir,
+    tree: [
+      ...tree,
+      await blob("manifold.yml", stringify({ intake: { decisionModel: "models/intake.yml" } })),
+      { path: "models", mode: "040000", type: "tree", oid: models },
+      { path: "templates", mode: "040000", type: "tree", oid: templates },
+    ],
+  });
+  const revision = await git.writeCommit({
+    fs,
+    gitdir,
+    commit: { ...commit, tree: root, parent: [parent], message: "Example parcel process" },
+  });
+  await f.remote.force(revision);
+
+  // Compile the shipping entry point with the shipping TypeScript settings.
+  const serviceRoot = fileURLToPath(new URL("..", import.meta.url));
+  const compiled = join(f.directory, "compiled");
+  const buildConfiguration = join(f.directory, "tsconfig.json");
+  await fs.writeFile(
+    buildConfiguration,
+    JSON.stringify({
+      extends: join(serviceRoot, "tsconfig.build.json"),
+      compilerOptions: {
+        outDir: compiled,
+        declaration: false,
+        typeRoots: [join(serviceRoot, "node_modules/@types")],
+      },
+    }),
+  );
+  await promisify(execFile)(join(serviceRoot, "node_modules/.bin/tsc"), ["-p", buildConfiguration]);
+  await fs.symlink(join(serviceRoot, "node_modules"), join(f.directory, "node_modules"));
+  await fs.writeFile(join(f.directory, "package.json"), '{"type":"module"}');
+  const binary = join(f.directory, "manifold-host");
+  const hostRoot = fileURLToPath(new URL("../../host-cli", import.meta.url));
+  await promisify(execFile)(join(hostRoot, "node_modules/.bin/bun"), [
+    "build",
+    join(hostRoot, "src/cli.ts"),
+    "--compile",
+    "--bytecode",
+    "--outfile",
+    binary,
+  ]);
+
+  function start() {
+    const child = fork(join(compiled, "main.js"), [f.file], { silent: true, execArgv: [] });
+    let stderr = "";
+    child.stderr!.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) =>
+      child.once("exit", (code, signal) => resolve({ code, signal })),
+    );
+    cleanup.push(async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+        await exited;
+      }
+    });
+    return {
+      child,
+      exited,
+      async ready() {
+        await expect
+          .poll(
+            () => {
+              if (child.exitCode !== null || child.signalCode !== null) throw new Error(stderr);
+              return stderr
+                .split("\n")
+                .some((line) => line.startsWith("{") && JSON.parse(line).event === "started");
+            },
+            { timeout: 15000 },
+          )
+          .toBe(true);
+      },
+      errors: () =>
+        stderr
+          .split("\n")
+          .filter((line) => line.startsWith("{"))
+          .map((line) => JSON.parse(line) as { level: string; event: string })
+          .filter((entry) => entry.level === "error"),
+    };
+  }
+  const path = join(f.directory, "data/state.sqlite");
+  const first = start();
+  await first.ready();
+  const observer = openStore({ path });
+  cleanup.push(() => observer.close());
+  const portfolio = openPortfolio({ connection: observer.connection });
+  // No capacity module exists: credit through the ledger's public seam before intake.
+  portfolio.ledger.credit({
+    key: "example-credit",
+    account: "acct",
+    window: "example-window",
+    opensAt: 0,
+    closesAt: Date.now() + 3600000,
+    amount: 1000,
+  });
+  f.api.addItem("item-one", "I_A");
+  const delivery = signedDelivery("projects_v2_item", {
+    action: "created",
+    projects_v2_item: {
+      node_id: "item-one",
+      project_node_id: "P_one",
+      content_node_id: "I_A",
+      content_type: "Issue",
+    },
+    organization: { login: "sample" },
+  });
+  expect(
+    (
+      await fetch(serviceUrl + githubWebhookPath, {
+        method: "POST",
+        headers: delivery.headers,
+        body: delivery.body,
+      })
+    ).status,
+  ).toBe(202);
+  await expect
+    .poll(() => observer.loadSnapshot("task:I_A")?.snapshot.value, { timeout: 15000 })
+    .toEqual({ working: "waiting" });
+  expect(observer.loadSnapshot("task:I_A")).toMatchObject({
+    machine: blueprintVersionKey({ commit: revision, path: "blueprints/counter.yml" }),
+    snapshot: {
+      context: {
+        starts: 1,
+        manifold: { issue: "I_A", environment: "env-one", portfolioItem: "alpha" },
+      },
+    },
+  });
+  expect(f.api.log.some((entry) => entry.operation.includes("Project"))).toBe(true);
+  expect(portfolio.ledger.actorUsage("task:I_A")).toMatchObject({
+    settled: false,
+    accounts: [{ account: "acct", estimate: 10, outstanding: 10, actual: 0 }],
+  });
+  expect(portfolio.ledger.balance({ item: "alpha", account: "acct", waiting: [] })).toMatchObject({
+    allocation: 600,
+    outstanding: 10,
+    available: 590,
+  });
+  expect(server.commands.map((command) => command.type)).toEqual([
+    "thread.create",
+    "thread.turn.start",
+  ]);
+  const thread = [...server.threads.values()][0]!;
+  expect(thread.messages[0]?.text).toBe("Pack the sample parcel.");
+  expect(thread.latestTurn?.state).toBe("running");
+  first.child.kill("SIGKILL");
+  expect(await first.exited).toEqual({ code: null, signal: "SIGKILL" });
+
+  // The turn changes while Manifold is down. Force an authoritative snapshot on reconnect.
+  server.settle(thread.id);
+  server.setBound(0);
+  const resumed = start();
+  await resumed.ready();
+  await expect
+    .poll(() => observer.loadSnapshot("task:I_A")?.snapshot.value, { timeout: 15000 })
+    .toBe("asking");
+  expect(observer.loadSnapshot("task:I_A")?.snapshot["context"]).toMatchObject({
+    starts: 1,
+    settlements: 1,
+    thread: thread.id,
+    manifold: { threads: [thread.id] },
+  });
+  expect(server.commands.map((command) => command.type)).toEqual([
+    "thread.create",
+    "thread.turn.start",
+  ]);
+  expect(server.threads.size).toBe(1);
+  expect(thread.messages).toHaveLength(1);
+  expect(
+    server.requests.filter(
+      (request) =>
+        request.tag === "orchestration.subscribeThread" &&
+        request.payload["threadId"] === thread.id,
+    ).length,
+  ).toBeGreaterThanOrEqual(2);
+  expect(portfolio.ledger.actorUsage("task:I_A").accounts[0]?.outstanding).toBe(10);
+
+  // Reuse the decoder's call fixture and map its session through T3 Code's database shape.
+  const t3home = join(f.directory, "t3-home");
+  await fs.mkdir(join(t3home, "userdata"), { recursive: true });
+  const db = new DatabaseSync(join(t3home, "userdata/state.sqlite"));
+  db.exec(
+    "CREATE TABLE provider_session_runtime (thread_id TEXT, provider_name TEXT, provider_instance_id TEXT, resume_cursor_json TEXT)",
+  );
+  db.prepare("INSERT INTO provider_session_runtime VALUES (?,?,?,?)").run(
+    thread.id,
+    "codex",
+    "provider",
+    JSON.stringify({ threadId: "root-a" }),
+  );
+  db.close();
+  const usageRoot = join(f.directory, "usage");
+  await fs.mkdir(join(usageRoot, "sessions"), { recursive: true });
+  const usage = await fs.readFile(
+    join(hostRoot, "src/usage/fixtures/codex/sessions/root.jsonl"),
+    "utf8",
+  );
+  // Put the historical fixture's call in this actor's current visit and credited window.
+  const timestamp = new Date().toISOString();
+  await fs.writeFile(
+    join(usageRoot, "sessions/root.jsonl"),
+    usage.replaceAll(/2026-01-01T00:00:(?:00|10)Z/g, timestamp),
+  );
+  const pushArgs = [
+    "usage",
+    "push",
+    "--service",
+    serviceUrl,
+    "--environment",
+    "env-one",
+    "--t3-home",
+    t3home,
+    "--state-dir",
+    join(f.directory, "host-state"),
+    "--root",
+    "codex=" + usageRoot,
+  ];
+  const pushed = await promisify(execFile)(binary, pushArgs);
+  expect(JSON.parse(pushed.stdout)).toMatchObject({
+    calls: { accepted: 1, pending: 0 },
+    threads: { accepted: 1 },
+  });
+  expect(portfolio.ledger.actorUsage("task:I_A")).toMatchObject({
+    settled: false,
+    accounts: [{ estimate: 10, actual: 8, variance: -2, outstanding: 2 }],
+  });
+
+  await expect
+    .poll(() =>
+      notifications.some((notification) => notification.message === "Send the packed parcel?"),
+    )
+    .toBe(true);
+  const notification = notifications.find((entry) => entry.message === "Send the packed parcel?")!;
+  const action = notification.actions![0]!;
+  expect(notification.topic).toBe("example-notification-topic-with-opaque-name");
+  expect(action.url.startsWith(serviceUrl + "/escalations/")).toBe(true);
+  expect(action.body).toContain("choice=send");
+  expect(
+    (await fetch(action.url, { method: action.method, headers: action.headers, body: action.body }))
+      .status,
+  ).toBe(200);
+  await expect.poll(() => observer.loadSnapshot("task:I_A")?.snapshot.status).toBe("done");
+  expect(observer.loadSnapshot("task:I_A")?.snapshot).toMatchObject({
+    value: "delivered",
+    context: { answer: "send", starts: 1, settlements: 1 },
+  });
+  expect(portfolio.ledger.actorUsage("task:I_A")).toEqual({
+    settled: true,
+    accounts: [{ account: "acct", estimate: 10, actual: 8, variance: -2, outstanding: 0 }],
+  });
+  expect(portfolio.ledger.balance({ item: "alpha", account: "acct", waiting: [] })).toMatchObject({
+    actual: 8,
+    outstanding: 0,
+    available: 592,
+  });
+  const replayed = await promisify(execFile)(binary, pushArgs);
+  expect(JSON.parse(replayed.stdout)).toMatchObject({ skippedSources: 1, calls: { accepted: 0 } });
+  expect(server.commands.map((command) => command.type)).toEqual([
+    "thread.create",
+    "thread.turn.start",
+  ]);
+  resumed.child.kill("SIGTERM");
+  expect(await resumed.exited).toEqual({ code: 0, signal: null });
+  expect(first.errors()).toEqual([]);
+  expect(resumed.errors()).toEqual([]);
 }, 60000);
