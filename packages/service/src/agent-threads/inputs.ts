@@ -18,7 +18,7 @@ export interface CreateInput {
   title: string;
   values?: Record<string, unknown>;
   model: Model;
-  runtimeMode: RuntimeMode;
+  runtimeMode?: RuntimeMode;
   interactionMode?: ProviderInteractionMode;
   branch?: string | null;
   worktreePath?: string | null;

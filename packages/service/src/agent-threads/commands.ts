@@ -27,7 +27,7 @@ export function createCommand(
     projectId: projectId(input.project.trim()),
     title,
     modelSelection: modelSelection(input.model),
-    runtimeMode: input.runtimeMode,
+    runtimeMode: input.runtimeMode ?? "full-access",
     interactionMode: input.interactionMode ?? "default",
     branch: input.branch?.trim() ?? null,
     worktreePath: input.worktreePath?.trim() ?? null,

@@ -138,8 +138,8 @@ proposed-design:
     topic of each id in `context.manifold.threads` as
     `threadTopic(context.manifold.environment, threadId)`, so the thread is
     created on that environment and on no environment an input names. The
-    runtime mode is required, since it is the permission the thread's agent
-    runs with, and Manifold sets no permission a process did not declare.
+    runtime mode is optional and defaults to `full-access`; an explicit
+    mode sets the permission the thread's agent runs with.
   turn-prepare: >-
     `turn-prepare` takes no input, sends nothing, and resolves at once with
     `{ messageId }`, the message id derived from its invocation. Its

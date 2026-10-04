@@ -87,7 +87,7 @@ export const agentThreadsSchema = {
     },
     "thread-create-input": {
       type: "object",
-      required: ["project", "title", "model", "runtimeMode"],
+      required: ["project", "title", "model"],
       properties: {
         project: {
           $ref: "#/$defs/id",
@@ -103,6 +103,7 @@ export const agentThreadsSchema = {
         },
         runtimeMode: {
           $ref: "#/$defs/runtime-mode",
+          default: "full-access",
         },
         interactionMode: {
           $ref: "#/$defs/interaction-mode",

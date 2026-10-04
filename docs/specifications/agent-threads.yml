@@ -31,8 +31,9 @@ description: |-
     starts with a letter, at most 64 characters; `model`, a string not
     empty after trimming; and optional `options`, a map from an option id
     to a string or a boolean.
-  - `runtimeMode`, required: `approval-required`, `auto-accept-edits`,
+  - `runtimeMode`: `approval-required`, `auto-accept-edits`,
     `auto`, or `full-access`, the permission the thread's agent runs with.
+    Default `full-access`.
   - `interactionMode`: `default` or `plan`. Default `default`.
   - `branch` and `worktreePath`: a string not empty after trimming, or
     `null`. Default `null`.

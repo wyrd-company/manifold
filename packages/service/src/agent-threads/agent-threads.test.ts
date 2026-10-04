@@ -127,6 +127,12 @@ test("same invocation gives fixed ids and new entries give new ids", async () =>
   entryId = "entry-two";
   expect(await fixture.run("thread-create", input)).not.toEqual(first);
 });
+test("thread-create defaults an absent runtimeMode to full-access", async () => {
+  const fixture = await setup();
+  const { runtimeMode: _mode, ...withoutMode } = input;
+  await fixture.run("thread-create", withoutMode);
+  expect(fixture.commands[0]).toMatchObject({ runtimeMode: "full-access" });
+});
 test("turn uses prepared message, revision includes, trimmed values, and current modes", async () => {
   const fixture = await setup();
   fixture.server.baseline(fixtureThread());
@@ -159,7 +165,7 @@ test.each([
   { branch: " " },
   { worktreePath: "" },
   { worktreePath: " " },
-  { runtimeMode: undefined },
+  { runtimeMode: null },
   { unknown: true },
 ])("invalid input fails before dispatch: %j", async (patch) => {
   const fixture = await setup();
