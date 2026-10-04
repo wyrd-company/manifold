@@ -1,0 +1,58 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged
+# rather than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: The stable T3 Code server resumes a thread's events only within a bounded gap
+
+# GAP-EDGE: the risk schema declares no relationship-types; these edges connect
+# the design whose environment streams the risk constrains and the seam its
+# source publishes through.
+relationships:
+  related-to:
+    - durable-event-delivery
+    - router-events
+
+description: >-
+  T3 Code 0.0.45, the stable release, has no stream that carries every
+  thread's domain events. `orchestration.subscribeShell` covers the whole
+  environment and carries thread summaries: one `thread-upserted` per
+  coalesced burst of events, with the thread's current shell state.
+  `orchestration.subscribeThread` carries one thread's detail events
+  (`thread.message-sent`, `thread.activity-appended`, `thread.session-set`,
+  `thread.turn-diff-completed`, `thread.proposed-plan-upserted`,
+  `thread.reverted`), each with the event store's global `sequence` and its
+  `eventId`. Thread creation, turn start, archive, and delete reach a client
+  only as shell state. Both subscriptions resume from `afterSequence`, and
+  several share one socket. The resume is bounded. A thread replays its
+  events only when the range holds at most 1000 of the thread's stored
+  events and 8 MiB of payload, and holds no `thread.created`; the shell
+  replays only when the environment's head is at most 1000 events past the
+  cursor. Past either bound the server sends a snapshot of current state in
+  place of the events. Assistant text is stored as `thread.message-sent`
+  deltas, one per paragraph by default, and every tool start, update, and
+  completion is an activity, so one long agent turn can pass the thread
+  bound. The live thread stream also coalesces tool update activities that
+  the replay delivers one by one. A source that publishes one source event
+  per server event therefore skips the events a snapshot replaces when the
+  service was down long enough, and sees a different event set live than on
+  replay. `@wyrd-company/t3code-client` 0.4.0 targets 0.0.45 and resumes
+  both subscriptions as the server allows: it deduplicates the replay
+  overlap by sequence and resubscribes after its socket reconnects.
+
+categories:
+  - technical
+
+likelihood: 3
+impact: 4
+
+response-strategy: mitigate
+# Mitigation candidate: the source keeps a durable projection per thread and
+# publishes the transitions of that projection (turn settled, request opened
+# or resolved, session status changed), each with an event id drawn from the
+# transition's own identity. A replay and a snapshot then yield the same
+# transitions with the same ids, so the router's replay rule applies to both,
+# and a snapshot loses only transitions that opened and closed inside the gap.
+
+status: open
