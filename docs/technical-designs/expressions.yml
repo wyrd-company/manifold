@@ -133,40 +133,65 @@ proposed-design:
     ended. A second call does the same, so it resolves at once. The service
     never closes its channel.
 
-    Arbitration. The buffer holds the pair's evaluation state, a sequence
-    number, an `exited` flag, and the worker's exit code. Each request and
-    each result carries the sequence number of its evaluation, and the
-    calling thread drops a message whose number is not the current one. The
-    state moves only by `Atomics.compareExchange`, so each step has one
+    Arbitration. The buffer holds two words, the pair's `state` and its
+    `life`, and the worker's exit code. Each request and each result
+    carries the sequence number of its evaluation, and the calling thread
+    drops a message whose number is not the current one. Every step is a
+    sequentially consistent `Atomics` operation on one word. `life` is
+    `alive` until the supervisor stores `exited`, and never changes again.
+    `state` moves only by `Atomics.compareExchange`, so each step has one
     winner:
 
     | From | To | By | When |
     |---|---|---|---|
-    | `idle` | `pending` | caller | it posts a request |
+    | `idle` | `pending` | caller | it claims the pair for a request |
+    | `pending` | `untaken` | caller | after its claim, it reads `life` as `exited` |
     | `pending` | `running` | worker | it takes the request |
     | `running` | `done` | worker | it has posted the result |
-    | `running` | `failed` | supervisor | the worker exits |
     | `pending` | `untaken` | supervisor | the worker exits |
+    | `running` | `failed` | supervisor | the worker exits |
     | `pending`, `running` | `abandoned` | caller | the wait reaches its deadline |
     | `done` | `idle` | caller | it has read the result |
 
-    The supervisor sets `exited` and the exit code before its exchange, on
-    every exit, so a pair whose worker has gone is known to be dead even
-    when no evaluation is in flight. It wakes the calling thread after the
-    exchange. The worker posts the result before it moves the state to
-    `done`, so the calling thread finds the result on the port whenever it
-    sees `done`. Only `done`, `failed`, `untaken`, and `abandoned` end a
-    wait, and none of them is ever overwritten. A result that the worker
-    publishes before it exits therefore stands. An exit while the worker
-    holds an evaluation fails that evaluation. An exit before the worker
-    takes the request is never charged to that request.
+    The handshake has two ordered halves. The caller first claims the pair
+    by exchanging `idle` for `pending`, and only then reads `life`. If it
+    reads `exited`, it exchanges `pending` for `untaken` and posts nothing.
+    Otherwise it posts the request and waits. The supervisor first stores
+    the exit code and `exited` in `life`, and only then exchanges `pending`
+    for `untaken`, or `running` for `failed`, and wakes the calling thread.
+    Both halves are sequentially consistent, so the two threads cannot both
+    miss each other. Either the caller's read of `life` follows the
+    supervisor's store and sees `exited`, or the supervisor's exchange
+    follows the caller's claim and finds `pending`. In both cases the
+    evaluation reaches `untaken` without waiting for the deadline, whatever
+    the interleaving. The caller always finds `idle` when it claims a
+    current pair: the channel discards a pair on every terminal state
+    except `done`, and it returns `done` to `idle` once it has read the
+    result.
+
+    The worker posts the result before it moves the state to `done`, so the
+    calling thread finds the result on the port whenever it sees `done`.
+    Only `done`, `failed`, `untaken`, and `abandoned` end a wait, and none of
+    them is ever overwritten. A result that the worker publishes before it
+    exits therefore stands. An exit while the worker holds an evaluation
+    fails that evaluation. An exit before the worker takes the request is
+    never charged to that request.
+
+    The handshake and every transition are pure functions over the buffer's
+    `Int32Array`, exported from `packages/service/src/expression-worker-protocol.ts`,
+    one function per step: `claim`, `confirm`, `take`, `complete`,
+    `recordExit`, `abandon`, and `release`. The channel and
+    `serveExpressionWorker` call them, and a test calls them on a buffer in
+    one thread in any order it chooses.
 
     One evaluation has one deadline, `timeoutMs` after `evaluate` is called,
     and it runs as follows:
 
-    1. If the current pair has `exited` set, the channel discards it.
+    1. If the current pair's `life` is `exited`, the channel discards it.
     2. If there is no current pair, the channel starts one.
-    3. The caller posts the request and waits on the buffer until the
+    3. The caller claims the pair and confirms `life`. If the confirm
+       finds `exited`, the state is `untaken` and step 6 follows.
+       Otherwise it posts the request and waits on the buffer until the
        deadline.
     4. On `done`, the result is the outcome.
     5. On `failed`, the outcome is `exit` with the worker's exit code, and
@@ -184,9 +209,10 @@ proposed-design:
        again. After `failed` or `untaken`, the pair is discarded.
 
     An evaluation worker that exits between evaluations therefore never
-    fails the next evaluation. Step 1 catches it when the supervisor has
-    already recorded the exit. Step 6 catches it when the exit lands after
-    the request is posted.
+    fails the next evaluation and never makes it wait for the deadline.
+    Step 1 catches an exit the supervisor recorded before the evaluation
+    began. The handshake in step 3 catches one that lands at any point
+    after that, before the worker takes the request.
 
     Discarding a pair calls `terminate` on its supervisor, which ends the
     worker with it. `Worker.terminate` interrupts the isolate, so it stops a

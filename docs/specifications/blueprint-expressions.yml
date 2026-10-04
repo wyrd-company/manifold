@@ -279,9 +279,20 @@ validation-criteria: >-
   that exits on start fails the evaluation with `exit` after two pairs; an
   evaluation that times out on a fixture that would answer later is
   followed by one that receives its own answer and never the late one;
-  three consecutive timeouts followed by a success start four pairs, of
+  a worker that exits while idle, with the next evaluation started
+  before its pair reports `ended`, leaves that evaluation to succeed on a
+  new pair well before `timeoutMs`; three consecutive timeouts followed by
+  a success start four pairs, of
   which three report `ended` and one stays current; and `close`, called
   twice, resolves both times with every started pair reported `ended`.
+  The protocol tests drive the functions of
+  `packages/service/src/expression-worker-protocol.ts` on one buffer in a
+  single thread, so each interleaving is fixed by the test. They place
+  `recordExit` before `claim`, between `claim` and `confirm`, and after
+  `confirm`, and show that each order ends in `untaken` with no request
+  left waiting. They also show that `recordExit` after `complete` leaves
+  `done`, that `abandon` loses to `complete` and to `recordExit`, and
+  that `take` after `abandon` does not move the state.
   The lint tests in `packages/shared` use fixtures for a
   valid mapping, a mapping whose result breaks its output schema, a guard
   whose result is not a boolean, an expression that does not parse, and a
