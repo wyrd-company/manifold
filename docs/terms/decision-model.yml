@@ -6,4 +6,4 @@ relationships:
     - decision-models
 title: Decision model
 description: >-
-  A GoRules JDM graph in the process repository whose tables and expressions are JSONata, evaluated by the Zen engine.
+  A GoRules JDM graph in the process repository whose tables, expressions, and switches are JSONata, evaluated by the Zen engine.

@@ -73,7 +73,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **console** the web user interface to Manifold
 - **credit** a ledger entry that adds to an account's capacity for a window.
 - **deadline** a time at which an actor in a state receives an event.
-- **decision model** a GoRules JDM graph in the process repository whose tables and expressions are JSONata, evaluated by the Zen engine.
+- **decision model** a GoRules JDM graph in the process repository whose tables, expressions, and switches are JSONata, evaluated by the Zen engine.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
 - **event match** a JSONata expression over an event that decides whether a transition takes it.

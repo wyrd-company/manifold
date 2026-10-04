@@ -7,8 +7,8 @@ $id: https://manifold.wyrd.company/schemas/decision-models
 title: Decision Models
 description: >-
   The shapes of a Manifold decision model: the GoRules JDM graph with the node
-  types Manifold evaluates, the configuration of the JSONata decision table
-  and JSONata expression node, the decision model finding the lint reports,
+  types Manifold evaluates, the configuration of the JSONata decision table,
+  JSONata expression node, and JSONata switch, the decision model finding the lint reports,
   the error detail of a failed evaluation, and the evaluation record kept for
   explainability.
 $defs:
@@ -49,9 +49,9 @@ $defs:
         type: string
   node:
     description: >-
-      One node of the graph. Input, output, switch, and decision (sub-graph)
-      nodes are stock JDM and keep their stock content. A custom node is one
-      of the two Manifold kinds.
+      One node of the graph. Input, output, and decision (sub-graph) nodes
+      are stock JDM and keep their stock content. A custom node is one of the
+      three Manifold kinds.
     type: object
     required:
       - id
@@ -66,7 +66,6 @@ $defs:
         enum:
           - inputNode
           - outputNode
-          - switchNode
           - decisionNode
           - customNode
     allOf:
@@ -80,16 +79,6 @@ $defs:
           properties:
             content:
               $ref: "#/$defs/custom-node-content"
-      - if:
-          properties:
-            type:
-              const: switchNode
-        then:
-          required:
-            - content
-          properties:
-            content:
-              $ref: "#/$defs/switch-node-content"
       - if:
           properties:
             type:
@@ -117,35 +106,6 @@ $defs:
                   description: The key of another decision model in the same set.
                   type: string
                   minLength: 1
-  switch-node-content:
-    description: >-
-      The stock switch. Each statement's `condition` is evaluated by the Zen
-      engine; a blank condition is the default branch. An edge leaving the
-      switch names its statement in `sourceHandle`.
-    type: object
-    required:
-      - statements
-    properties:
-      hitPolicy:
-        enum:
-          - first
-          - collect
-        default: first
-      statements:
-        type: array
-        items:
-          type: object
-          required:
-            - id
-            - condition
-          properties:
-            id:
-              type: string
-              minLength: 1
-            condition:
-              type: string
-            isDefault:
-              type: boolean
   custom-node-content:
     oneOf:
       - type: object
@@ -166,6 +126,15 @@ $defs:
             const: jsonataExpression
           config:
             $ref: "#/$defs/jsonata-expression"
+      - type: object
+        required:
+          - kind
+          - config
+        properties:
+          kind:
+            const: jsonataSwitch
+          config:
+            $ref: "#/$defs/jsonata-switch"
   node-settings:
     description: The settings on the card of both custom node kinds.
     type: object
@@ -270,6 +239,36 @@ $defs:
         description: The JSONata source whose result is the node's result.
         type: string
         minLength: 1
+  jsonata-switch:
+    description: >-
+      A switch whose conditions are JSONata. An edge leaving the switch names
+      a statement by its `id` in `sourceHandle`. A blank condition is a
+      default, taken when no other condition matched.
+    type: object
+    required:
+      - hitPolicy
+      - statements
+    additionalProperties: false
+    properties:
+      hitPolicy:
+        enum:
+          - first
+          - collect
+      statements:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+          properties:
+            id:
+              type: string
+              minLength: 1
+            condition:
+              description: The JSONata source of the condition.
+              type:
+                - string
+                - "null"
   column-id:
     type: string
     minLength: 1
@@ -286,7 +285,8 @@ $defs:
       Where an expression or setting is in a decision model:
       `<model>#/nodes/<nodeId>` followed by `/rules/<ruleId>/<columnId>` for a
       cell, `/inputs/<columnId>/field` for an input column field,
-      `/expression` for an expression node, or `/<setting>` for a setting.
+      `/expression` for an expression node, `/statements/<statementId>` for a
+      switch condition, or `/<setting>` for a setting.
       Each segment after `#` is escaped as in RFC 6901.
     type: string
   decision-model-finding:
@@ -313,8 +313,9 @@ $defs:
           id. `output-field-conflict`: one output field of a table is a prefix
           of another. `pass-through-needs-object`: pass-through on a node whose
           result is always an array. `loop-needs-input-field`: loop mode
-          without `inputField`. `model-missing`: a decision node names a key
-          that is not in the set.
+          without `inputField`. `switch-handle-unknown`: an edge leaving a
+          switch names no statement of it. `model-missing`: a decision node
+          names a key that is not in the set.
         enum:
           - syntax
           - never-boolean
@@ -324,6 +325,7 @@ $defs:
           - output-field-conflict
           - pass-through-needs-object
           - loop-needs-input-field
+          - switch-handle-unknown
           - model-missing
       model:
         description: The key of the decision model.
@@ -335,6 +337,8 @@ $defs:
       ruleId:
         type: string
       columnId:
+        type: string
+      statementId:
         type: string
       expression:
         description: The JSONata source, for `syntax` and `never-boolean`.
@@ -379,6 +383,8 @@ $defs:
       ruleId:
         type: string
       columnId:
+        type: string
+      statementId:
         type: string
       expression:
         type: string
@@ -433,6 +439,21 @@ $defs:
       reference_map:
         description: Each input column's id mapped to its column value.
         type: object
+  switch-trace:
+    description: A JSONata switch's `traceData`, listing the taken statements in order.
+    type: object
+    required:
+      - statements
+    properties:
+      statements:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+          properties:
+            id:
+              type: string
   decision-model-evaluation:
     description: >-
       One evaluation, as recorded for explainability. A failed evaluation

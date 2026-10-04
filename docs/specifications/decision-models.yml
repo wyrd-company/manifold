@@ -9,27 +9,27 @@ relationships:
   mitigates:
     - decision-table-cell-semantics-unproven
 description: |-
-  Defines what a Manifold decision model is, how the JSONata decision table
-  and JSONata expression node evaluate, what an evaluation returns and
+  Defines what a Manifold decision model is, how the JSONata decision
+  table, JSONata expression node, and JSONata switch evaluate, what an evaluation returns and
   records, how a failure is reported, and what the decision model lint
   checks. `docs/specifications/decision-models.schema.yml` is the
-  machine-readable definition of the decision model graph, both custom node
-  configurations, the finding, the error detail, and the evaluation record.
+  machine-readable definition of the decision model graph, the three custom
+  node configurations, the finding, the error detail, and the evaluation record.
   The engine is `@gorules/zen-engine`, pinned to an exact version. JSONata is
   the primitive `packages/shared` exports, so cells, expression nodes, and
   blueprint expressions share one JSONata version and one error shape.
+  Every expression in a decision model is JSONata; a model holds no
+  expression in Zen's own expression language.
 
   Decision model. A decision model is a GoRules JDM graph in a YAML file
   (`.yml`) in the process repository, parsed with the YAML parser into the
   JDM object, and identified by a key the caller supplies, such as its path
   in the process repository. A JSON export from the stock editor is valid
-  YAML and loads unchanged when saved as `.yml`. Its nodes are of five
-  types: `inputNode`, `outputNode`, `switchNode`, and `decisionNode` are
-  stock JDM; `customNode` carries one of two kinds in `content.kind`,
-  `jsonataDecisionTable` or `jsonataExpression`, with its configuration in
-  `content.config`. A `switchNode` holds its `statements`, each with an
-  `id` and a `condition`, and a `hitPolicy` of `first` or `collect`. A
-  `decisionNode` names another model by its key in `content.key`. The
+  YAML and loads unchanged when saved as `.yml`. Its nodes are of four
+  types: `inputNode`, `outputNode`, and `decisionNode` are stock JDM;
+  `customNode` carries one of three kinds in `content.kind`,
+  `jsonataDecisionTable`, `jsonataExpression`, or `jsonataSwitch`, with its
+  configuration in `content.config`. A `decisionNode` names another model by its key in `content.key`. The
   models evaluated together form a set, and every key a `decisionNode`
   names is in the set. Properties the editor writes beyond those the schema
   names are kept and ignored.
@@ -61,7 +61,8 @@ description: |-
   property holding the outputs of earlier nodes. The node removes `$nodes`;
   what remains is the node's whole input. When `inputField` is present, the
   node input is the value at that path of the whole input, or `null` when the
-  path is absent; otherwise the node input is the whole input. In `single`
+  path is absent; otherwise the node input is the whole input. A switch has
+  no `inputField`, so its node input is its whole input. In `single`
   mode the node evaluates once over the node input. In `loop` mode the node
   input is an array and the node evaluates once per element, with that
   element as the node input; the node's result is the array of per-element
@@ -81,8 +82,11 @@ description: |-
   - An output cell: `$` is the node input. Its result is the column's value.
   - An expression node's `expression`: `$` is the node input. Its result is
     the node's result.
+  - A switch statement's `condition`: `$` is the node input. It matches as
+    an input cell does: blank matches without being evaluated, and a
+    non-blank condition matches when its result is exactly `true`.
 
-  A cell is blank when its text is absent, `null`, empty, or whitespace
+  A cell or condition is blank when its text is absent, `null`, empty, or whitespace
   only. Zen gives an explicitly `undefined` cell property to the handler as
   `null`, so `null` is blank.
 
@@ -100,6 +104,19 @@ description: |-
   Expression node. The node's result is the expression's result. No result
   gives `{}`.
 
+  Switch. A JSONata switch holds `statements` in order, each with an `id`
+  and a `condition`, and a `hitPolicy` of `first` or `collect`. An edge
+  leaving the switch names a statement by its `id` in `sourceHandle`, and
+  only the edges of taken statements carry the switch's input onward. Under
+  `first` the first non-blank condition that matches, in `statements`
+  order, is taken, and evaluation stops there; under `collect` every
+  non-blank condition is evaluated and each that matches is taken. A
+  statement with a blank condition is a default: every default is taken
+  when no non-blank condition matched, under either policy. The switch's
+  output is its node input, which is an object; a node input that is not an
+  object fails with a `result` error. The switch has none of the node
+  settings.
+
   Node output. A function result from an output cell or an expression node
   fails with a `result` error. When `outputPath` is present, the node output
   is a new object with the result written at that path; otherwise it is the
@@ -114,12 +131,14 @@ description: |-
   reference_map }`, where `index` is the rule's position and `reference_map`
   maps each input column id to its column value. In `loop` mode `traceData`
   is the array of per-element trace data. An expression node returns
-  `{ "expression": <source> }`.
+  `{ "expression": <source> }`. A switch returns `{ statements: [{ id }] }`
+  listing the taken statements in order.
 
   Locations. Every expression has a location, passed to `compileExpression`
   so each error it yields names it: `<model>#/nodes/<nodeId>` followed by
   `/rules/<ruleId>/<columnId>` for a cell, `/inputs/<columnId>/field` for an
-  input column field, and `/expression` for an expression node. Each segment
+  input column field, `/expression` for an expression node, and
+  `/statements/<statementId>` for a switch condition. Each segment
   after `#` is escaped as in RFC 6901 (`~` as `~0`, `/` as `~1`).
 
   Shared lint. `packages/shared` exports the lint:
@@ -134,27 +153,34 @@ description: |-
   same order for the same model. It checks, in this order:
 
   1. `structure`: the model validates against `#/$defs/decision-model`. A
-     node whose `type` or custom `kind` is outside the five types and two
-     kinds is `node-unsupported`, not `structure`. When any `structure`
+     node whose `type` or custom `kind` is outside the four types and three
+     kinds, including the stock `switchNode`, `decisionTableNode`,
+     `expressionNode`, and `functionNode`, is `node-unsupported`, not
+     `structure`. When any `structure`
      finding exists the lint stops after this step.
   2. Per node in `nodes` order: `duplicate-id` for a node id seen before;
      for a custom node, `loop-needs-input-field`, and
      `pass-through-needs-object` for `passThrough` without `outputPath` on a
      `collect` table or any node in `loop` mode.
+     For a JSONata switch, `duplicate-id` for a statement id seen before in
+     that switch, and `switch-handle-unknown` for an edge leaving it whose
+     `sourceHandle` names none of its statements.
   3. Per JSONata decision table: `duplicate-id` for a column id or rule id
      seen before in that table, and `output-field-conflict` for an output
      field equal to or a prefix, at a `.` boundary, of another.
-  4. Per expression, in node order, then input column fields in `inputs`
-     order, then cells in `rules` order and within a rule `inputs` then
-     `outputs` order: `syntax` when `compileExpression` throws, carrying the
-     JSONata `code` and `position`; otherwise, for an input cell only,
-     `never-boolean` when its AST is one of the shapes below.
+  4. Per expression, in node order; within a table, input column fields in
+     `inputs` order, then cells in `rules` order and within a rule `inputs`
+     then `outputs` order; within a switch, conditions in `statements`
+     order: `syntax` when `compileExpression` throws, carrying the JSONata
+     `code` and `position`; otherwise, for a non-blank input cell or switch
+     condition only, `never-boolean` when its AST is one of the shapes
+     below.
 
   `syntax`, `structure`, `node-unsupported`, `duplicate-id`,
-  `output-field-conflict`, `pass-through-needs-object`, and
-  `loop-needs-input-field` are errors. `never-boolean` is a warning. Every
-  finding names the model, and the node, rule, column, and location that
-  apply.
+  `output-field-conflict`, `pass-through-needs-object`,
+  `loop-needs-input-field`, and `switch-handle-unknown` are errors.
+  `never-boolean` is a warning. Every finding names the model, and the
+  node, rule, column, statement, and location that apply.
 
   Never-boolean. The lint reads the AST of the compiled expression and
   classifies it without evaluating it. An expression is never-boolean when
@@ -191,21 +217,44 @@ description: |-
   not in `models`, and throws a `DecisionModelLoadError` carrying every error
   finding when any exists. Otherwise it compiles every expression once,
   keeps the compiled forms by location, and builds one Zen engine whose
-  loader serves the set and whose custom handler evaluates the two custom
-  kinds. The handler reads which model a node belongs to from a `$model`
-  property the service adds to each custom node's configuration in the copy
-  it gives the loader; the caller's objects are not changed.
+  loader serves a prepared copy of the set and whose custom handler
+  evaluates the three custom kinds. The caller's objects are not changed.
+  In the prepared copy:
+
+  - each custom node's configuration carries a `$model` property naming its
+    model, from which the handler reads which model a node belongs to;
+  - each JSONata switch with id `S` is followed by a routing node with id
+    `S~route`. The edges that left `S` leave `S~route`, and one edge joins
+    `S` to `S~route`. The handler evaluates the switch's conditions and
+    outputs the switch's node input with a `__manifoldSwitch` property, an
+    object with `s<i>` set to `true` for each taken statement at position
+    `i` and `false` for every other. `S~route` is a stock switch with hit
+    policy `collect` and one statement per position, with id `s<i>` and
+    condition `__manifoldSwitch.s<i>`; each edge's `sourceHandle` is the
+    `s<i>` of the statement it named. The routing conditions are generated
+    by the service, read one boolean each, and appear in no file in the
+    process repository.
+
+  `__manifoldSwitch` exists only at the top level of a node's input or
+  output: every custom node removes it from its whole input, as it removes
+  `$nodes`, and the service removes it from the result. Creating fails
+  with a `duplicate-id` error when a model already holds a node id equal to
+  a generated `S~route`.
 
   `evaluate` runs the model with the engine's trace on. It resolves to a
   `result` record with the model's result and the full trace, or to an
   `error` record with the error detail and the partial trace; it rejects only
-  for a key that is not in the set. `dispose` releases the engine.
+  for a key that is not in the set. The record shows the model as written:
+  the service removes each `S~route` entry from the trace and
+  `__manifoldSwitch` from every trace entry's input and output. `dispose`
+  releases the engine.
 
   Errors. `DecisionModelErrorDetail` is
   `#/$defs/decision-model-error-detail`. A cell, field, or expression that
   throws stops the evaluation: no later rule, fallback rule, or downstream
   node runs. Its detail has kind `evaluation`, the `ExpressionErrorDetail`
-  fields `evaluateExpression` gave, and the model, node, rule, and column.
+  fields `evaluateExpression` gave, and the model and node, with the rule
+  and column for a cell or field, or the statement for a switch condition.
   A `result` failure names the model and node, and the rule and column when
   an output cell gave it. The handler throws an error whose message is the
   detail as JSON. Zen rejects with an `Error` whose message is a JSON
@@ -230,8 +279,10 @@ validation-criteria: >-
   Fixture models are `.yml` files parsed with the YAML parser, and one is a
   stock editor JSON export saved as `.yml` unchanged. The
   service tests evaluate a model that joins input, a JSONata decision table,
-  a JSONata expression node, a stock switch, and output through
-  `createDecisionModels`. Table-driven tests run, under both `first` and
+  a JSONata expression node, a JSONata switch with two branches, and output
+  through `createDecisionModels`, and assert that only the taken branch's
+  nodes run and that the record's trace holds no `~route` entry and no
+  `__manifoldSwitch` property. Table-driven tests run, under both `first` and
   `collect`, an input cell for each result in `true`, `false`, `null`, `0`,
   `""`, no result, `[1,2]`, `[]`, `{"x":1}`, `7`, and `"sample"`, with the
   column value set equal to the result, and assert that only `true`
@@ -240,18 +291,26 @@ validation-criteria: >-
   absent, each matching present and missing values; an output cell writing a
   nested object, a blank output cell, and an output cell with no result.
   They cover `passThrough`, `inputField`, `outputPath`, and `loop` mode, a
-  `decisionNode` into a second model, and a `$nodes` reference. A failing
+  `decisionNode` into a second model, and a `$nodes` reference. Switch
+  tests run, under both `first` and `collect`, the same strict-matching
+  results as input cells for a condition; two matching statements, taking
+  one under `first` and both under `collect`; a default statement taken
+  only when no other matched; and a switch whose node input is an array,
+  failing with a `result` error. A failing
   input cell and a failing output cell, each followed by a catch-all rule,
   resolve an `error` record naming node, rule, and column, with that detail
-  in the failing node's `traceData.error`, under both policies. A contract
+  in the failing node's `traceData.error`, under both policies; a failing
+  switch condition resolves an `error` record naming node and statement.
+  A contract
   test asserts the `NodeError` envelope shape and the null native
   `traceData` of a failing custom node at the pinned engine version. The
-  lint tests in `packages/shared` cover each finding kind; `structure`
-  findings for malformed stock content, a `switchNode` whose `content` is
-  not an object, a statement with no `id`, and a `hitPolicy` outside `first`
-  and `collect`, while an unknown editor property on a recognized node gives
-  no finding; a `syntax`
-  finding in an input cell and in an output cell, each never-boolean shape,
+  lint tests in `packages/shared` cover each finding kind; a stock
+  `switchNode` giving `node-unsupported`; `structure` findings for
+  malformed content, a `decisionNode` with no `key`, a JSONata switch
+  statement with no `id`, and a switch `hitPolicy` outside `first` and
+  `collect`, while an unknown editor property on a recognized node gives no
+  finding; a `syntax` finding in an input cell, an output cell, and a switch
+  condition; a `never-boolean` warning on a switch condition; each never-boolean shape,
   and the expressions `true`, `false`, `$ > 3`, `$`, `item.value`,
   `$custom()`, `$number($)`, `true ? true : 3`, and `[true][0]` giving no
   warning. Fixtures use a domain unrelated to Manifold.

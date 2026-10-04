@@ -39,8 +39,8 @@ proposed-design:
   high-level-overview: >-
     JSONata is the expression language everywhere an expression appears:
     inline in a blueprint for guards, input and output mappings, and event
-    matches, and inside decision models through two custom Zen nodes whose
-    cells and expressions are JSONata. TypeScript, run in a QuickJS wasm
+    matches, and inside decision models through three custom Zen nodes whose
+    cells, expressions, and conditions are JSONata. TypeScript, run in a QuickJS wasm
     sandbox, is used only for the comparator, the one function whose input is
     a set. Decision models remain GoRules JDM files edited in the JDMEditor
     and evaluated by the Zen engine.
@@ -95,14 +95,17 @@ proposed-design:
     worker, the expression lint, and the decision model nodes use it, so
     JSONata has one version and one error shape in Manifold.
   decision-models: >-
-    Manifold ships two custom Zen node types, a decision table and an
-    expression node, with JSONata cells and expressions, built on the
-    editor's exported table component and evaluated by a host handler beside
-    the engine. Input, output, switch, and graph stay stock. Hit policy,
-    pass-through, input field, output path, and loop mode are controls on the
-    node card. A setting that reads a value is JSONata; a setting that names a
-    place is a dotted path. The service evaluates a set of models through one
-    Zen engine whose custom handler runs the two kinds over JSONata compiled
+    Manifold ships three custom Zen node types, a decision table, an
+    expression node, and a switch, with JSONata cells, expressions, and
+    conditions, built on the editor's exported table component and evaluated
+    by a host handler beside the engine. Input, output, and graph stay stock;
+    no decision model holds an expression in Zen's own language. The service
+    routes a JSONata switch through a generated stock switch that reads one
+    boolean per statement the handler computed. Hit policy, pass-through,
+    input field, output path, and loop mode are controls on the node card. A
+    setting that reads a value is JSONata; a setting that names a place is a
+    dotted path. The service evaluates a set of models through one
+    Zen engine whose custom handler runs the three kinds over JSONata compiled
     once at load, and the lint in `packages/shared` checks a model without
     evaluating it. The engine and editor versions are pinned; a contract test
     guards the engine's error envelope and a browser check guards the
