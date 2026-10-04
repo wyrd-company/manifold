@@ -1,0 +1,66 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - operator-console
+description: >-
+  The operator console is the web user interface to Manifold: the shell and
+  every screen in `DESIGN.md`, from the Actors list to the Board, the Epics
+  graph, and the blueprint editor. Every later screen builds on the framework
+  chosen here, so it is chosen once, before any screen. `DESIGN.md` asks for
+  T3 Code's visual language, its `components/ui` primitives as the starting
+  point, Lucide icons, a ReactFlow canvas for the Epics graph and the
+  blueprint editor, CodeMirror 6 for code, and `@gorules/jdm-editor` for
+  decision models. T3 Code's web client is React 19 built with Vite+
+  (`vp build`), with TanStack Router, Tailwind CSS v4, Base UI,
+  class-variance-authority, and lucide-react. The service is a Node process
+  with one HTTP host on which modules mount request listeners by path
+  prefix. The build-vs-buy rules ask that infrastructure is adopted, and
+  `AGENTS.md` makes only CLIs Bun binaries.
+considered-options:
+  "1": >-
+    A React 19 single-page application on T3 Code's web stack: built with
+    Vite+ into static files, TanStack Router for routes, TanStack Query for
+    reads from Manifold's API, Tailwind CSS v4, Base UI, and lucide-react,
+    with T3 Code's `components/ui` primitives vendored as the start of
+    Manifold's own. The service serves the built files under one path
+    prefix.
+  "2": >-
+    A SolidJS single-page application built with Vite, with Kobalte for
+    accessible primitives and Tailwind CSS v4. It is smaller and faster than
+    React, and Solid has no maintained equivalent of ReactFlow or
+    `@gorules/jdm-editor`, and no port of T3 Code's primitives.
+  "3": >-
+    A Svelte 5 single-page application built with SvelteKit's static
+    adapter, with Svelte Flow for graphs and bits-ui for primitives.
+    `@gorules/jdm-editor` is React only, so the decision model editor
+    needs a React island, and T3 Code's primitives are rewritten.
+  "4": >-
+    A React application on a server-rendering framework (Next.js or React
+    Router's framework mode). It brings its own HTTP server and routing,
+    which the console would run beside the service's HTTP host or proxy
+    through it.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Only React carries every component `DESIGN.md` names without a bridge:
+    T3 Code's primitives, ReactFlow, CodeMirror bindings, dnd-kit, and the
+    JDM editor. Using T3 Code's own stack and primitives is the shortest
+    path to looking and behaving like T3 Code, and lets a T3 Code change in
+    `components/ui` or `index.css` be taken by comparison, not translation.
+    Each dependency meets the adoption bar. A static build needs nothing
+    from the service but a request listener under a path prefix, which the
+    HTTP host already gives every module, while a server-rendering
+    framework adds a second server with nothing to render that the API
+    does not already answer. Vite+ is already the repository's build, test,
+    lint, and format tool. The console is not a CLI, so the Bun binary
+    constraint does not apply to it.
+expected-outcomes:
+  positive:
+    - T3 Code's primitives and tokens move into the console with their behavior, so the console reads as T3 Code to a T3 Code user.
+    - Every library `DESIGN.md` names for later screens runs in the console with no adapter.
+    - The service serves the console as static files through `mount`, with no second process and no server rendering.
+    - One build tool, Vite+, builds, tests, lints, and formats the console as it does every other package.
+  negative:
+    - A React single-page application ships a larger first load than Solid or Svelte; the console is an operator tool on a local network, where this costs little.
+    - Vendored T3 Code primitives drift from upstream unless they are compared when T3 Code changes them.
+    - The console's routes exist only in the browser, so the service answers every path under the console's prefix that is not a file with the application's entry page.

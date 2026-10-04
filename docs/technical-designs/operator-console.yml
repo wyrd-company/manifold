@@ -1,0 +1,329 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - store
+    - escalations
+    - service-configuration
+  # GAP-EDGE: the technical-design schema declares no edge to a
+  # specification; `references` is the best fit.
+  references:
+    - actors-api
+    - blueprint-version
+objective: >-
+  Give the operator console one package that builds into static files, one
+  place in the service that serves them and the API the console reads, and a
+  shell in T3 Code's visual language that every later screen fills, so that
+  an operator opens the console from the service's own HTTP host, moves
+  between every screen `DESIGN.md` lists, and sees every active actor with
+  its blueprint, current state, and environment.
+background:
+  current-design: >-
+    `packages/console` holds a `package.json` and a README, and no framework.
+    `DESIGN.md` is the console's visual design. The service has one HTTP host
+    on which a module mounts a request listener under a path prefix with
+    `mount(pathPrefix, listener)`, and mounts a listener behind Manifold's
+    operator authentication with `mountOperator(pathPrefix, listener)`. The
+    store lists the active snapshots with `activeSnapshots()`, and the
+    engine keeps an actor's identity at `context.manifold` in its snapshot.
+  problems:
+    - >-
+      No package builds a user interface, so no screen can be built and no
+      operator can see what Manifold runs.
+    - >-
+      The service has no listener that serves the console's files, and no
+      endpoint that answers which actors are running.
+    - >-
+      Manifold's API takes a bearer token, and a page served without
+      authentication must send it.
+design-challenges:
+  client-routes: >-
+    The console's routes exist only in the browser. A reload or a pasted
+    link to any screen must load the application, while a missing asset
+    must answer `404`, not the application's page.
+  build-order: >-
+    The service serves files that the console package builds, and the
+    service's tests drive the built console. The build and test order must
+    follow from the package graph, with no step a person remembers.
+  token-in-the-browser: >-
+    The console's files are served without authentication, and the API
+    answers only with the operator token. The token must reach the API from
+    the browser without the service adding an authentication path.
+  shell-before-screens: >-
+    Every screen but one is built in a later task. The shell must give
+    each its route, its navigation entry, and its title now, so that a later
+    task replaces one component and touches nothing else.
+  browser-proof: >-
+    The console is proved only when a browser renders it from the service.
+    The test must run inside `task check` on a developer machine and in CI.
+proposed-design:
+  high-level-overview: >-
+    `packages/console` is a React 19 single-page application built with
+    Vite+ into `packages/console/dist`, on the stack chosen in
+    `build-the-console-on-t3-codes-web-stack`. The service's console module,
+    `packages/service/src/console/`, exports `mountConsole(host, options)`.
+    It mounts two listeners on the HTTP host: the console's files under
+    `/console` with `mount`, and the actors read endpoint, specified in
+    `actors-api`, under `/api/actors` with `mountOperator`. The shell is
+    `AppShell` with the header, the sidebar, and the content region from
+    `DESIGN.md`. Every sidebar screen has a route; the Actors screen reads
+    `GET /api/actors`, and every other screen shows its title row and an
+    empty state. The browser keeps the operator token the operator enters
+    in Settings and sends it as a bearer token on every API request.
+  console-package: >-
+    `packages/console` holds `index.html`, `vite.config.ts`, `src/`, and
+    `public/`. Its scripts are `build` (`vp build`, after building
+    `@wyrd-company/manifold-shared`), `typecheck` (`tsc --noEmit`), and
+    `test` (`vp test run`). Its TypeScript configuration extends the base
+    with the DOM library, `jsx: react-jsx`, and bundler module resolution.
+    `vite.config.ts` sets `base: "/console/"` and adds the React and
+    Tailwind CSS plugins. The build writes hashed files under
+    `dist/assets/` and `dist/index.html`, and empties `dist/` first. The
+    package exports `"./dist/*"`, so that the service resolves the built
+    files through the package graph. The root lint configuration adds the
+    `react` plugin, so that `.tsx` files are linted with the rest.
+  console-source: >-
+    `src/main.tsx` mounts the router and the query client. `src/router.tsx`
+    declares the routes in code, with TanStack Router's `basepath`
+    `/console`. `src/shell/` holds `AppShell`, `Header`, `Sidebar`,
+    `CommandSearch`, `ThemeToggle`, and `navigation.ts`, the one list of
+    screens. `src/screens/` holds one `<Name>Content` component per sidebar
+    screen, with the names `DESIGN.md` gives. `src/ui/` holds the
+    primitives vendored from T3 Code's `apps/web/src/components/ui`
+    (button, badge, table, dialog, sidebar, kbd, empty), each with T3
+    Code's MIT notice in its header and its imports pointed at the
+    console's own `cn`. `src/styles.css` sets every color token from
+    `DESIGN.md` as a CSS custom property on `:root` and on `:root.dark`,
+    and maps them into Tailwind's `@theme`. `src/api/` holds the API client.
+  navigation: >-
+    `navigation.ts` lists every sidebar screen once: its route, its label,
+    its Lucide icon, its group, and its one-line description. The sidebar,
+    the breadcrumb, the command search, and each screen's title row read
+    this list. The groups and order are those of `DESIGN.md`: Overview,
+    Board, Epics, Actors with no label; Portfolio under Plan; Blueprints,
+    GitHub Projects, Environments under Configure; Settings at the bottom.
+    The routes are `/console/` for Overview, then `board`, `epics`,
+    `actors`, `portfolio`, `blueprints`, `projects`, `environments`, and
+    `settings` under `/console/`. Settings has the routes
+    `settings/task-fields`, `settings/accounts`, and `settings/general`
+    for its tabs, and `settings` opens Task fields. A path under
+    `/console/` that matches no route shows a "Page not found" empty state
+    with a link to Overview.
+  shell: >-
+    `AppShell` lays out the header, the sidebar, and the content region as
+    `DESIGN.md` states. The header holds the sidebar toggle, the Manifold
+    mark and name, the breadcrumb (the current screen's label, and the
+    Settings tab under Settings), the command search button with its `⌘K`
+    hint, and the theme toggle. The sidebar shows the navigation list, with
+    the current route selected. The toggle switches the sidebar between
+    256px and the 48px icon rail; the mode is kept in `localStorage` under
+    `manifold.sidebar`. The command search is a dialog, opened by its
+    button and by `⌘K` or `Ctrl+K`, with a filter field over the navigation
+    list; Enter opens the selected screen. Each screen starts with the
+    title row: its label and its description from `navigation.ts`.
+  theme: >-
+    The theme toggle cycles System, Light, and Dark, and is a ghost button
+    whose icon and `aria-label` name the current choice. System follows
+    `prefers-color-scheme` and changes with it. The choice is kept in
+    `localStorage` under `manifold.theme`, and the theme is the `dark`
+    class on the root element. `public/theme.js`, loaded before the
+    stylesheet, sets the class from the kept choice before the first paint,
+    so that a reload in dark theme does not flash light.
+  empty-screens: >-
+    Overview, Board, Epics, Portfolio, Blueprints, GitHub Projects,
+    Environments, and the Task fields and Accounts tabs of Settings show
+    their title row and the empty state from `DESIGN.md`: a dashed border,
+    the screen's icon, the title "Nothing here yet", and the line "This
+    screen is not built in this version of Manifold." A later task
+    replaces the screen's `<Name>Content` component and changes nothing in
+    the shell.
+  settings-general: >-
+    The General tab of Settings holds one field, "Operator token", a
+    password input with "Save" (primary). With a token kept, the field
+    shows that one is set, and "Forget" (destructive outline) removes it.
+    Saving replaces the kept token. The token is kept in `localStorage`
+    under `manifold.operatorToken` and is never written to a URL, a log, or
+    the page.
+  api-client: >-
+    `src/api/client.ts` exports `fetchActors()`. It sends `GET
+    /api/actors` with `Authorization: Bearer <token>` when a token is kept,
+    and without the header otherwise. It turns the answer into one of four
+    results: `ok` with the actors for `200`, `unauthorized` for `401`,
+    `disabled` for `404`, and `failed` with a message for anything else,
+    including a network error or a body that is not an actors response.
+    The mapping from a status and a body to a result is a pure function.
+    The body is checked at this boundary against the shape exported by
+    `@wyrd-company/manifold-shared/actors-api`, and the rest of the console
+    trusts it. Reads go through TanStack Query, which reads again when the
+    window regains focus and when the screen opens. No timer reads on a
+    schedule.
+  actors-screen: >-
+    `ActorsContent` reads `fetchActors()`. Its title row is "Actors" with
+    its description, and it has no primary action. Under it, one row holds
+    the actor count, right-aligned, and a ghost "Refresh" icon button that
+    reads again. The table columns are the Actors list's columns in
+    `DESIGN.md` that the endpoint answers, in its order: Task, Portfolio
+    item, Blueprint, Current state, and Environment. Usage, Time, and
+    Timeline join when the store holds what they show. Task is the issue
+    reference in mono when the summary has `issue`, else the actor id in
+    mono, with the actor id muted under a reference. Portfolio item is its
+    value, or a muted dash when absent. Blueprint is the path in mono with
+    the commit's first seven characters muted under it, or the `machine`
+    value in mono when the summary has no `blueprint`. Current state is a
+    success status dot and each state path in mono, one line each.
+    Environment is its value in mono, or a muted dash when absent. The
+    actor's status, the thread link, and the Active / Completed control
+    and filters join with the screens that give them data.
+    Rows follow the API's order and do not open a page. With no
+    actor, the table is replaced by the empty state "No active actors",
+    "Actors appear here while a blueprint runs." For `unauthorized`, the
+    empty state reads "Operator token required" with a link to Settings,
+    General. For `disabled`, it reads "Manifold's API is not enabled" and
+    "Configure an operator token for the service to list actors." For
+    `failed`, an error alert shows the message with "Try again".
+  serving: >-
+    The console listener serves `packages/console/dist` with `sirv`. It
+    takes the request's path, removes `/console` from its start when the
+    path has it, and serves the rest from the directory. A `GET` or `HEAD`
+    of a file answers it. A path with no file extension and no file
+    answers `index.html`, so a client route loads the application; a path
+    with an extension and no file answers `404`. Files under `assets/` are
+    served with `Cache-Control: public, max-age=31536000, immutable`, since
+    their names carry their content hash, and `index.html` with
+    `Cache-Control: no-cache`. Every answer carries
+    `Content-Security-Policy: default-src 'self'; style-src 'self'
+    'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'`,
+    `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`,
+    so that no script but the console's own runs on the page that holds the
+    operator token. Other methods answer `405`. A path that leaves the
+    directory answers `404`. `/console` without the slash redirects to
+    `/console/`.
+  actors-endpoint: >-
+    The actors listener implements `actors-api`. A pure function,
+    `actorSummaries(snapshots)`, turns the store's active snapshots into
+    the summaries in the order the specification states: it parses
+    `machine` with `parseBlueprintVersionKey`, collects the leaf state
+    paths from the state value, and reads the string fields of
+    `context.manifold`. The listener calls `store.activeSnapshots()` and
+    `actorSummaries` for each request and writes the JSON. It holds no
+    cache, so each request reads the store as it is.
+  public-interface: |-
+    `packages/service/src/console/index.ts` exports exactly these names.
+
+    ```ts
+    import type { IncomingMessage, ServerResponse } from "node:http";
+    import type { Store } from "../store/index.ts";
+
+    export type RequestListener = (request: IncomingMessage, response: ServerResponse) => void;
+
+    /** The members of the service's HTTP host the console uses. */
+    export interface ConsoleHttpHost {
+      mount(pathPrefix: string, listener: RequestListener): void;
+      mountOperator(pathPrefix: string, listener: RequestListener): void;
+    }
+
+    export interface ConsoleOptions {
+      readonly store: Pick<Store, "activeSnapshots">;
+      /** Directory of the built console. Defaults to the console package's `dist`. */
+      readonly root?: string;
+    }
+
+    /** Mounts the console's files at `/console` and the actors endpoint at `/api/actors`. */
+    export function mountConsole(host: ConsoleHttpHost, options: ConsoleOptions): void;
+    ```
+
+    `@wyrd-company/manifold-shared` adds the subpath export
+    `./actors-api`, which exports the response types and the path.
+
+    ```ts
+    export const actorsApiPath = "/api/actors";
+
+    export interface ActorsResponse {
+      readonly actors: readonly ActorSummary[];
+    }
+
+    export interface ActorSummary {
+      readonly actorId: string;
+      readonly machine: string;
+      readonly blueprint?: { readonly path: string; readonly commit: string };
+      readonly states: readonly string[];
+      readonly environment?: string;
+      readonly project?: string;
+      readonly issue?: string;
+      readonly portfolioItem?: string;
+      readonly savedAt: string;
+    }
+
+    export function isActorsResponse(value: unknown): value is ActorsResponse;
+    ```
+  module-layout: >-
+    `packages/service/src/console/` holds `index.ts`, `static-files.ts`
+    (the console listener), `actors-api.ts` (the actors listener and
+    `actorSummaries`), and the tests. `ConsoleHttpHost` is a structural
+    stand-in for the HTTP host's type until the service assembly exports
+    it; its members are the ruled `mount` and `mountOperator`, so the host
+    satisfies it unchanged and the stand-in is then replaced by the host's
+    own type. The service's entry point calls `mountConsole(host, { store
+    })` after the store opens and before the host listens. The service
+    package depends on `@wyrd-company/manifold-console` and on `sirv`.
+    `root` defaults to the directory of
+    `import.meta.resolve("@wyrd-company/manifold-console/dist/index.html")`.
+    `mountConsole` throws when `index.html` is not in `root`, so a
+    service built without its console fails at start with the path it
+    looked in.
+  build-and-test-order: >-
+    The service depends on the console package, so `pnpm -r run build`
+    builds the shared package, then the console, then the service. The
+    service's `test` script builds the console before it runs, as it
+    already builds the shared package. The browser test uses Playwright's
+    Chromium. `task install` installs it after the packages, so a
+    developer machine has it after one install. CI installs it with its
+    system dependencies before `task check`.
+  convergence: >-
+    The endpoint and the console listener only read, so a request that
+    runs twice answers twice from the current store and files. A console
+    build that runs twice empties `dist/` and writes the same files; a
+    build that stopped halfway leaves a `dist/` that the next build
+    replaces whole, and a service started on a `dist/` with no
+    `index.html` refuses to start. The browser's writes are `localStorage`
+    keys, each set to the operator's latest choice, so a repeated save
+    leaves one value.
+  errors: >-
+    `store.activeSnapshots()` throwing answers `500` with no body detail,
+    and the error goes to the service's log with the request path. A
+    snapshot whose `context` or `context.manifold` is not an object gives a
+    summary with no identity fields; it is not an error. The console shows
+    every failed read as an alert on the screen that made it, and the shell
+    keeps working.
+  tests: >-
+    Each behavior is red before green, and tests go through public
+    interfaces. In `packages/service/src/console/`, through `mountConsole`
+    and a stand-in host that serves the mounted listeners on a loopback
+    port and checks the bearer as `mountOperator` states: the actors
+    endpoint behaviors in `actors-api`'s validation criteria; a client
+    route under `/console/` answers `index.html`; a hashed asset answers
+    with the immutable header; a missing asset answers `404`; a path
+    with `..` segments answers `404`; and `mountConsole` throws for a root
+    with no `index.html`. In `packages/console`, unit tests of the API
+    result mapping and of `navigation.ts` (every route unique, every
+    `DESIGN.md` sidebar screen present). The browser test,
+    `packages/service/src/console/console.browser.test.ts`, starts the
+    stand-in host with the built console and a store holding fixture
+    actors, launches headless Chromium with Playwright, and checks that
+    Overview shows the shell with every navigation entry; the theme toggle
+    sets the dark class and a reload keeps it; the Actors screen asks for
+    the token; after the token is saved in Settings, General, it lists
+    every fixture actor with its blueprint, current state, and environment;
+    a reload of `/console/actors` shows the same; and an unbuilt screen
+    shows its empty state. Fixture values are generic and never drawn
+    from Manifold's own domain.
+  dependencies: >-
+    The console adds `react` and `react-dom` 19, `@tanstack/react-router`,
+    `@tanstack/react-query`, `@base-ui/react`, `class-variance-authority`,
+    `tailwind-merge`, `lucide-react`, `tailwindcss` 4 with
+    `@tailwindcss/vite`, and `@vitejs/plugin-react`, the versions T3 Code's
+    web client uses where it uses them. TanStack Query is the one library
+    T3 Code does not use; it is the most adopted React data-fetching
+    library and holds every API read the later screens make. The service
+    adds `sirv`, the static file listener Vite's preview server uses, and
+    `playwright` as a development dependency for the browser test. Renovate
+    keeps them current with the rest.

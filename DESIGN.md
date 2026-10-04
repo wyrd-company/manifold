@@ -541,8 +541,8 @@ breadcrumb shows "Actors / #ref actor", and "Actors" in it returns to the list.
   is right-aligned.
 - Columns: Task (title, reference in mono), Portfolio item, Blueprint (mono),
   Current state (status dot, state in mono, actor status, and a thread link
-  icon for an active actor; "Last state" in Completed), Usage (tokens over
-  dollars), Time, and Timeline.
+  icon for an active actor; "Last state" in Completed), Environment (mono),
+  Usage (tokens over dollars), Time, and Timeline.
 - The Timeline cell is a mini bar: one segment per state visit, width by time,
   2px gaps. Completed visits use `edge`; the current visit is primary
   (45% opacity while it waits on a turn); an escalated visit is warning and a

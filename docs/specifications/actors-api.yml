@@ -1,0 +1,61 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - operator-console
+    - store-database-schema
+description: >-
+  Defines the actors read endpoint of Manifold's API: `GET /api/actors`,
+  which lists every active actor with its blueprint, current state, and
+  environment. `docs/specifications/actors-api.openapi.yml` is the
+  machine-readable definition. The Actors screen of the operator console
+  reads it, and any automation may.
+
+  The endpoint is mounted with the HTTP host's `mountOperator` at the
+  prefix `/api/actors`, so it carries Manifold's operator authentication:
+  with no `operator-token` credential configured the prefix is not served
+  and answers `404`, and a request without `Authorization: Bearer` and the
+  configured token answers `401`. Both answers come from the HTTP host
+  before the endpoint runs.
+
+  The endpoint reads the store's active snapshots, the rows of
+  `store_snapshot` whose status is `active`, and changes nothing. An actor
+  is listed once for each active snapshot, child state machine actors
+  included. A snapshot whose status is `done` or `stopped`, and an errored
+  snapshot, is not listed.
+
+  The response body is `{ "actors": [...] }`, one actor summary per active
+  snapshot, ordered by `savedAt` newest first, then by `actorId`. A summary
+  holds:
+
+  - `actorId`: the actor's id.
+  - `machine`: the key the snapshot was saved with.
+  - `blueprint`: `{ path, commit }` when `machine` is a blueprint version
+    key, `<commit>:<path>`, and absent otherwise.
+  - `states`: the snapshot's current state as leaf state paths, the keys
+    from the root to each active leaf joined with `.`, in the order the
+    state value holds them. A snapshot in one atomic state has one path; a
+    parallel state has one path for each active leaf.
+  - `environment`, `project`, `issue`, `portfolioItem`: the string values of
+    the same names at `context.manifold` in the snapshot. A value that is
+    absent or is not a string is absent from the summary.
+  - `savedAt`: when the snapshot was last saved, as an ISO 8601 UTC date and
+    time with milliseconds.
+
+  The answer is `200` with `Content-Type: application/json` and
+  `Cache-Control: no-store`. With no active actor, `actors` is empty. The
+  query string is ignored. A path under the prefix other than
+  `/api/actors` itself answers `404`. A method other than `GET` answers
+  `405` with `Allow: GET`. The list is not paged.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/actors-api.openapi.yml` is a valid OpenAPI 3.1
+  document. A test in `packages/service` saves snapshots in a store,
+  including one in a parallel state, one whose machine is not a blueprint
+  version key, one with no `context.manifold`, and one that is `done`;
+  requests `GET /api/actors` with the bearer token through a stand-in HTTP
+  host; and checks that the body validates against the response schema in
+  the OpenAPI document, lists exactly the active snapshots in the order
+  stated, and gives each summary the fields stated. The same test checks
+  the `405` and the `404` for a sub-path.

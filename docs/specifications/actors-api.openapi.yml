@@ -1,0 +1,97 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: actors-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold actors API
+  version: 0.1.0
+  description: The actors read endpoint of Manifold's API.
+security:
+  - operatorToken: []
+paths:
+  /api/actors:
+    get:
+      operationId: listActiveActors
+      summary: List every active actor.
+      responses:
+        "200":
+          description: Every active actor, newest saved first, then by actor id.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorsResponse"
+        "401":
+          description: The request carries no bearer token, or not the configured one.
+        "404":
+          description: No operator token is configured, so the API is not served.
+        "405":
+          description: A method other than GET.
+          headers:
+            Allow:
+              schema:
+                const: GET
+components:
+  securitySchemes:
+    operatorToken:
+      type: http
+      scheme: bearer
+      description: The `operator-token` credential configured for the service.
+  schemas:
+    ActorsResponse:
+      type: object
+      additionalProperties: false
+      required: [actors]
+      properties:
+        actors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActorSummary"
+    ActorSummary:
+      type: object
+      additionalProperties: false
+      required: [actorId, machine, states, savedAt]
+      properties:
+        actorId:
+          type: string
+          minLength: 1
+        machine:
+          type: string
+          minLength: 1
+          description: The key the snapshot was saved with.
+        blueprint:
+          $ref: "#/components/schemas/BlueprintVersion"
+        states:
+          type: array
+          items:
+            type: string
+            minLength: 1
+          description: Leaf state paths, keys from the root joined with `.`.
+        environment:
+          type: string
+        project:
+          type: string
+        issue:
+          type: string
+        portfolioItem:
+          type: string
+        savedAt:
+          type: string
+          format: date-time
+    BlueprintVersion:
+      type: object
+      additionalProperties: false
+      required: [path, commit]
+      properties:
+        path:
+          type: string
+          pattern: "^blueprints/.+\\.ya?ml$"
+        commit:
+          type: string
+          pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
