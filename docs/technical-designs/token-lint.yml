@@ -240,7 +240,7 @@ proposed-design:
     XState's internal event queue is always empty, so the key need not hold
     it; a raised event is followed inside the edge that raised it. An edge
     is one run of one macrostep: its event, its choices, the gates whose
-    return and exit markers its microsteps carry, in microstep order, and
+    return and exit markers its microsteps carry, in microstep order, the gates active after each microstep, and
     the settled configuration it ends in. The lint builds one graph from
     the initial configuration, and adds, at each configuration in which a
     gate's state is active, an edge for that gate's token event, so every
@@ -260,12 +260,16 @@ proposed-design:
     gate's token edge is followed. Within an edge the phase changes per
     microstep, in order. In `held`, a microstep that carries the gate's
     return marker, at the grant or later, returns the token and the phase
-    becomes `spent`. In `spent`, a microstep that carries the gate's exit
+    becomes `spent` if the gated state is still active, or `eligible`
+    if it is outside the gated state. In `spent`, a microstep that carries the gate's exit
     marker ends the entry and the phase becomes `eligible`, so a return of
     `exit`, whose return marker is the exit marker, goes straight to
     `eligible`. An edge whose last snapshot's status is `done` returns
     every token the actor holds and ends the walk there. An exit and
-    re-entry while `held` changes nothing, since the token stays held. So
+    re-entry while `held` changes nothing until return, since the token stays
+    held. At return, the microstep snapshot determines whether the actor is
+    inside the entry or outside it, so a return after an earlier exit permits
+    a grant on the next entry. So
     a return inside the same entry never permits a second grant in that
     entry, and a return followed by an exit lets the walk reach every
     later grant, including one from a configuration that only an earlier

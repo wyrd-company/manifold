@@ -174,6 +174,11 @@ export const blueprintSchema = {
         },
         meta: {
           type: "object",
+          properties: {
+            gate: {
+              $ref: "#/$defs/gate-declaration",
+            },
+          },
         },
         tags: {
           oneOf: [
@@ -194,6 +199,58 @@ export const blueprintSchema = {
           $ref: "#/$defs/value-or-mapping",
         },
       },
+    },
+    "gate-declaration": {
+      description:
+        "The gate a state declares in `meta.gate`: its comparator file, where its token is returned, whether a reservation accompanies the token, the token event's type, and the region the comparator reads as the task's dependency state.",
+      type: "object",
+      required: ["comparator", "return"],
+      additionalProperties: false,
+      properties: {
+        comparator: {
+          description: "The repository-relative path of the comparator's TypeScript file.",
+          type: "string",
+          pattern: "^[^/].*\\.ts$",
+          not: {
+            pattern: "(^|/)\\.{1,2}(/|$)",
+          },
+        },
+        return: {
+          oneOf: [
+            {
+              const: "exit",
+            },
+            {
+              type: "object",
+              required: ["state"],
+              additionalProperties: false,
+              properties: {
+                state: {
+                  $ref: "#/$defs/state-path",
+                },
+              },
+            },
+          ],
+        },
+        reservation: {
+          type: "boolean",
+          default: false,
+        },
+        token: {
+          description: "The type of the event that delivers the token.",
+          type: "string",
+          minLength: 1,
+          default: "token",
+        },
+        dependencies: {
+          $ref: "#/$defs/state-path",
+        },
+      },
+    },
+    "state-path": {
+      description: "A state node's keys from the root, joined with `.`.",
+      type: "string",
+      pattern: "^[^.#]+(\\.[^.#]+)*$",
     },
     "state-key": {
       description: "A state key. Targets and state paths separate keys with `.` and ids with `#`.",
@@ -244,7 +301,7 @@ export const blueprintSchema = {
               $ref: "#/$defs/targets",
             },
             guard: {
-              $ref: "#/$defs/reference",
+              $ref: "#/$defs/guard",
             },
             actions: {
               $ref: "#/$defs/actions",
@@ -261,6 +318,59 @@ export const blueprintSchema = {
           },
         },
       ],
+    },
+    guard: {
+      description:
+        "A guard: an implementation reference, an expression reference, or the built-in `in` guard, which is never written by its bare name.",
+      allOf: [
+        {
+          $ref: "#/$defs/reference",
+        },
+        {
+          not: {
+            const: "in",
+          },
+        },
+        {
+          if: {
+            type: "object",
+            required: ["type"],
+            properties: {
+              type: {
+                const: "in",
+              },
+            },
+          },
+          then: {
+            $ref: "#/$defs/in-guard",
+          },
+        },
+      ],
+    },
+    "in-guard": {
+      description: "The built-in guard that is true when every listed state is active.",
+      type: "object",
+      required: ["type", "params"],
+      additionalProperties: false,
+      properties: {
+        type: {
+          const: "in",
+        },
+        params: {
+          type: "object",
+          required: ["states"],
+          additionalProperties: false,
+          properties: {
+            states: {
+              type: "array",
+              minItems: 1,
+              items: {
+                $ref: "#/$defs/state-path",
+              },
+            },
+          },
+        },
+      },
     },
     actions: {
       oneOf: [
@@ -472,12 +582,16 @@ export const blueprintSchema = {
             "implementation-unknown",
             "machine",
             "final-state-missing",
+            "gate",
             "syntax",
             "evaluation",
             "result",
             "schema",
             "schema-missing",
             "site-unsupported",
+            "token-violation",
+            "token-potential",
+            "token-unknown",
           ],
         },
         location: {
@@ -524,6 +638,80 @@ export const blueprintSchema = {
         },
         eventType: {
           type: "string",
+        },
+        gate: {
+          description: "For a token finding, the gated state's path.",
+          $ref: "#/$defs/state-path",
+        },
+        steps: {
+          description:
+            "For `token-violation` and `token-potential`, the path from the initial configuration through the grant to the first trap on it.",
+          type: "array",
+          minItems: 1,
+          items: {
+            $ref: "#/$defs/token-step",
+          },
+        },
+        choices: {
+          description: "For `token-potential`, each choice of a guard or a raise on the path.",
+          type: "array",
+          minItems: 1,
+          items: {
+            $ref: "#/$defs/token-choice",
+          },
+        },
+        configurationBound: {
+          description: "For `token-unknown`, the bound the graph reached.",
+          type: "integer",
+          minimum: 1,
+        },
+        configurations: {
+          description: "For `token-unknown`, the configurations the graph held when it stopped.",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    "token-step": {
+      description:
+        "One step of a token finding's path: the event sent, or `xstate.init` for the initial configuration, and the key of the configuration reached.",
+      type: "object",
+      required: ["event", "configuration"],
+      additionalProperties: false,
+      properties: {
+        event: {
+          type: "string",
+        },
+        configuration: {
+          type: "string",
+        },
+        grant: {
+          description: "True on the step that delivers the gate's token.",
+          const: true,
+        },
+      },
+    },
+    "token-choice": {
+      description: "One choice a token finding's path takes.",
+      type: "object",
+      required: ["step", "location", "value"],
+      additionalProperties: false,
+      properties: {
+        step: {
+          description: "The 0-based index into `steps` of the step that takes the choice.",
+          type: "integer",
+          minimum: 0,
+        },
+        location: {
+          description: "The JSON Pointer of the guard, or of the action that raises.",
+          type: "string",
+        },
+        raises: {
+          description: "For a raise, the event type raised.",
+          type: "string",
+        },
+        value: {
+          type: "boolean",
         },
       },
     },

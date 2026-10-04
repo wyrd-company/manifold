@@ -388,3 +388,20 @@ test("rejects unknown credential kinds before reading credential files", async (
     ]),
   });
 });
+
+test("blueprint lint bound defaults and rejects invalid bounds", async () => {
+  const defaults = await config(minimal);
+  expect((await loadServiceConfiguration(defaults.file)).blueprintLint).toEqual({
+    configurationBound: 20000,
+  });
+  const custom = await config({ ...minimal, blueprintLint: { configurationBound: 3 } });
+  expect((await loadServiceConfiguration(custom.file)).blueprintLint.configurationBound).toBe(3);
+  for (const configurationBound of [0, -1, 1.5, "3"]) {
+    const invalid = await config({ ...minimal, blueprintLint: { configurationBound } });
+    await expect(loadServiceConfiguration(invalid.file)).rejects.toMatchObject({
+      issues: expect.arrayContaining([
+        expect.objectContaining({ path: "/blueprintLint/configurationBound" }),
+      ]),
+    });
+  }
+});

@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: [host-cli-comparator-lint, host-cli-expressions-lint, host-cli-blueprint-lint]
 // ---
+import { stringify } from "yaml";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -96,6 +97,49 @@ describe("host CLI runs the comparator lint and the expressions lint", () => {
       writeFileSync(join(directory, `invalid-${name}.yml`), text);
   }, 30_000);
   afterAll(() => rmSync(directory, { recursive: true, force: true }));
+
+  it("reports token verdicts and bounds from the compiled binary", () => {
+    const doc = {
+      machine: {
+        initial: "queued",
+        states: {
+          queued: {
+            meta: { gate: { comparator: "comparators/order.ts", return: { state: "returned" } } },
+            on: { token: "broken" },
+          },
+          broken: {},
+          returned: {},
+          done: { type: "final" },
+        },
+      },
+      schemas: {
+        input: true,
+        output: true,
+        context: true,
+        events: {
+          token: { type: "object", properties: { type: { const: "token" } }, required: ["type"] },
+        },
+      },
+    };
+    writeFileSync(join(directory, "token-violation.yml"), stringify(doc));
+    const violation = run("blueprint", "lint", "token-violation.yml");
+    expect(violation.status).toBe(1);
+    expect(violation.stdout).toContain("token-violation");
+    expect(violation.stdout).toContain("(gate queued)");
+    const unknown = run("blueprint", "lint", "--configuration-bound", "1", "token-violation.yml");
+    expect(unknown.status).toBe(0);
+    expect(unknown.stdout).toContain("token-unknown");
+    doc.machine.states.queued.on.token = {
+      target: "broken",
+      guard: { type: "expression.guard", params: { expression: "true" } },
+    } as unknown as string;
+    writeFileSync(join(directory, "token-potential.yml"), stringify(doc));
+    const potential = run("blueprint", "lint", "token-potential.yml");
+    expect(potential.status).toBe(0);
+    expect(potential.stdout).toContain("token-potential");
+    const invalid = run("blueprint", "lint", "--configuration-bound", "0", "token-violation.yml");
+    expect([invalid.status, invalid.stdout]).toEqual([2, ""]);
+  });
 
   it("lints comparators from the compiled binary", () => {
     const clean = run("comparator", "lint", "pick.ts");

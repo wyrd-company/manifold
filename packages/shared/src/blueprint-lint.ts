@@ -2,6 +2,10 @@
 // relationships:
 //   implements: [blueprint, blueprint-loader]
 // ---
+import { lintTokens } from "./token-lint/index.ts";
+import type { TokenLintResult, TokenChoice, TokenStep } from "./token-lint/index.ts";
+import { compileStateGuards, StateGuardError } from "./state-guards.ts";
+import { gateFindings } from "./gate-lint.ts";
 import { createSchemaCompiler } from "./schema-compiler.ts";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
@@ -24,17 +28,38 @@ export type BlueprintFinding = {
     | "schema-invalid"
     | "implementation-unknown"
     | "machine"
-    | "final-state-missing";
+    | "final-state-missing"
+    | "gate"
+    | "token-violation"
+    | "token-potential"
+    | "token-unknown";
   readonly location: string;
   readonly message: string;
   readonly line?: number;
   readonly column?: number;
   readonly implementationKind?: "actor" | "action" | "guard" | "delay";
   readonly name?: string;
+  readonly gate?: string;
+  readonly steps?: readonly TokenStep[];
+  readonly choices?: readonly TokenChoice[];
+  readonly configurationBound?: number;
+  readonly configurations?: number;
 } & Partial<Omit<ExpressionFinding, "kind" | "location" | "message">>;
+export interface BlueprintLintOptions {
+  readonly configurationBound?: number;
+}
 export type BlueprintLint =
-  | { readonly ok: true; readonly blueprint: BlueprintDocument }
-  | { readonly ok: false; readonly findings: readonly BlueprintFinding[] };
+  | {
+      readonly ok: true;
+      readonly blueprint: BlueprintDocument;
+      readonly warnings: readonly BlueprintFinding[];
+      readonly tokens: TokenLintResult;
+    }
+  | {
+      readonly ok: false;
+      readonly findings: readonly BlueprintFinding[];
+      readonly warnings: readonly BlueprintFinding[];
+    };
 let blueprintValidator: ValidateFunction<BlueprintDocument> | undefined;
 function validator() {
   if (!blueprintValidator) {
@@ -66,6 +91,7 @@ export async function lintBlueprint(
   path: string,
   text: string,
   names: ImplementationNames,
+  options: BlueprintLintOptions = {},
 ): Promise<BlueprintLint> {
   const findings: BlueprintFinding[] = [];
   const finding = (
@@ -88,14 +114,14 @@ export async function lintBlueprint(
     if (problem) {
       const position = lines.linePos(problem.pos[0]);
       finding("yaml", "", problem.message, { line: position.line, column: position.col });
-      return { ok: false, findings };
+      return { ok: false, findings, warnings: [] };
     }
     if (yaml.directives?.yaml.version !== "1.2") throw new Error("Blueprint must use YAML 1.2");
     document = yaml.toJS();
     if (!jsonValue(document)) throw new Error("Document must round-trip through JSON unchanged");
   } catch (error) {
     finding("yaml", "", message(error), { line: 1, column: 1 });
-    return { ok: false, findings };
+    return { ok: false, findings, warnings: [] };
   }
   const validate = validator();
   if (!validate(document)) {
@@ -112,7 +138,7 @@ export async function lintBlueprint(
       compareExpressionText(a, b),
     ))
       finding("shape", location, reason);
-    return { ok: false, findings };
+    return { ok: false, findings, warnings: [] };
   }
   const blueprint = document;
   const schemaEntries: [string, unknown][] = ["input", "output", "context"].map((key) => [
@@ -142,7 +168,7 @@ export async function lintBlueprint(
     const name = typeof value === "string" ? value : (record(value)["type"] as string);
     const builtIn =
       kind === "guard"
-        ? ["expression.guard", "expression.match"]
+        ? ["expression.guard", "expression.match", ...(typeof value === "object" ? ["in"] : [])]
         : kind === "action"
           ? ["expression.assign"]
           : [];
@@ -206,7 +232,10 @@ export async function lintBlueprint(
   locate(blueprint.machine, [], "/machine");
   try {
     const machine = createMachine(
-      blueprint.machine as MachineConfig<Record<string, unknown>, { type: string }>,
+      compileStateGuards(blueprint.machine) as MachineConfig<
+        Record<string, unknown>,
+        { type: string }
+      >,
       {
         actors: Object.fromEntries(
           [...names.actors].map((name) => [name, fromPromise(async () => undefined)]),
@@ -237,7 +266,15 @@ export async function lintBlueprint(
     const id = [...nodeLocations.keys()].find(
       (id) => reason.includes(`state node '${id}'`) || reason.includes(`state node "#${id}"`),
     );
-    finding("machine", id ? (nodeLocations.get(id) ?? "/machine") : "/machine", reason);
+    finding(
+      "machine",
+      error instanceof StateGuardError
+        ? error.location
+        : id
+          ? (nodeLocations.get(id) ?? "/machine")
+          : "/machine",
+      reason,
+    );
   }
   findings.push(...machineFindings.sort((a, b) => compareExpressionText(a.location, b.location)));
   if (
@@ -246,8 +283,19 @@ export async function lintBlueprint(
     )
   )
     finding("final-state-missing", "/machine/states", "Machine requires a top-level final state");
+  findings.push(...gateFindings(blueprint, path));
   if (!schemaInvalid)
     for (const row of await lintBlueprintExpressions(blueprint, compileSchema))
       findings.push({ ...row, path, location: `/machine${row.location}` });
-  return findings.length ? { ok: false, findings } : { ok: true, blueprint };
+  if (findings.length) return { ok: false, findings, warnings: [] };
+  const tokens = lintTokens(blueprint, { names, ...options });
+  const warnings: BlueprintFinding[] = [];
+  for (const gate of tokens.gates)
+    for (const item of gate.findings) {
+      const row = { ...item, path };
+      (row.kind === "token-violation" ? findings : warnings).push(row);
+    }
+  return findings.length
+    ? { ok: false, findings, warnings }
+    : { ok: true, blueprint, warnings, tokens };
 }

@@ -10,6 +10,7 @@ import type { SecretValue } from "./credentials.ts";
 export interface ServiceConfiguration {
   readonly http: HttpHostConfiguration;
   readonly store: StoreConfiguration;
+  readonly blueprintLint: { readonly configurationBound: number };
   readonly environments: EnvironmentsConfiguration;
   readonly github: GitHubConfiguration;
   readonly file: string;

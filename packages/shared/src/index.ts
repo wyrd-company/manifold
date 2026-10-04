@@ -37,7 +37,12 @@ export {
 
 export { expressionsConfigurationSchema } from "./expressions-configuration-schema.ts";
 export { lintBlueprint } from "./blueprint-lint.ts";
-export type { BlueprintDocument, BlueprintFinding, BlueprintLint } from "./blueprint-lint.ts";
+export type {
+  BlueprintDocument,
+  BlueprintFinding,
+  BlueprintLint,
+  BlueprintLintOptions,
+} from "./blueprint-lint.ts";
 export { blueprintVersionKey, parseBlueprintVersionKey } from "./blueprint-version.ts";
 export type { BlueprintVersion } from "./blueprint-version.ts";
 export { manifoldImplementationNames } from "./implementation-names.ts";
@@ -82,3 +87,13 @@ export {
 export { bundledPriceTable } from "./prices.generated.ts";
 export type * from "./usage-types.ts";
 export { isUsagePushResult } from "./usage-push-response.ts";
+
+export { lintTokens, defaultConfigurationBound } from "./token-lint/index.ts";
+export type {
+  TokenLintOptions,
+  TokenLintResult,
+  TokenVerdict,
+  GateTokenLint,
+} from "./token-lint/index.ts";
+export { compileStateGuards } from "./state-guards.ts";
+export { blueprintLintConfigurationSchema } from "./blueprint-lint-configuration-schema.ts";

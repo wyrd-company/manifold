@@ -28,6 +28,12 @@ description: >-
   bound is unexplored. If the lint built from the design accepts a
   blueprint whose run strands a token, a gate stays held and no task
   behind it is released.
+  The shared lint is exercised through XState's exported microstep functions,
+  including persisted history keys, transient returns, invocations, delays,
+  wildcard events, opaque choices, and repeated grants. The remaining proof is
+  the gate runtime's holder check: a persisted holder in a trap must raise the
+  stranded-token escalation without returning a different token. The policy
+  for a trap with only an actor-ending route is a user decision.
 
 categories:
   - technical

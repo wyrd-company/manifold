@@ -4,8 +4,9 @@
 // ---
 import { setup, enqueueActions } from "xstate";
 import type { AnyActorLogic, AnyActorRef, AnyStateMachine, Snapshot } from "xstate";
-import { blueprintVersionKey, lintBlueprint, ExpressionError } from "@wyrd-company/manifold-shared";
+import { blueprintVersionKey, lintBlueprint, ExpressionError, compileStateGuards } from "@wyrd-company/manifold-shared";
 import type {
+  TokenLintResult,
   BlueprintDocument,
   BlueprintFinding,
   BlueprintVersion,
@@ -29,6 +30,7 @@ type SetupImplementations = Parameters<
   >
 >[0];
 export interface ImplementationRegistry {
+  readonly raises?: Readonly<Record<string, readonly string[]>>;
   readonly actors: Readonly<Record<string, AnyActorLogic>>;
   readonly actions: Readonly<Record<string, unknown>>;
   readonly guards: Readonly<Record<string, unknown>>;
@@ -41,6 +43,7 @@ export interface StateEntry {
 export interface BlueprintLoaderOptions {
   readonly onStateEntry?: (entry: StateEntry) => void;
   readonly implementations: ImplementationRegistry;
+  readonly configurationBound?: number;
   revisionAt(commit: string): Promise<ProcessRepositoryRevision | undefined>;
   onExpressionError(error: ExpressionError, version: BlueprintVersion): void;
 }
@@ -49,6 +52,8 @@ export interface LoadedBlueprint {
   readonly key: string;
   readonly document: BlueprintDocument;
   readonly machine: AnyStateMachine;
+  readonly warnings: readonly BlueprintFinding[];
+  readonly tokens: TokenLintResult;
   checkRestore(snapshot: Snapshot<unknown>): RestoreCheck;
 }
 export type VersionLoad =
@@ -85,7 +90,12 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
       )
         throw new TypeError(`Reserved implementation name: ${name}`);
     }
+  if (Object.hasOwn(implementations.guards, "in"))
+    throw new TypeError("Reserved implementation name: in");
   const names: ImplementationNames = {
+    ...(implementations.raises === undefined
+      ? {}
+      : { raises: new Map(Object.entries(implementations.raises)) }),
     actors: new Set(Object.keys(implementations.actors)),
     actions: new Set(Object.keys(implementations.actions)),
     guards: new Set(Object.keys(implementations.guards)),
@@ -100,7 +110,14 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
     if (!source) return { status: "missing", reason: "commit" };
     const text = await source.read(version.path);
     if (text === undefined) return { status: "missing", reason: "file" };
-    const lint = await lintBlueprint(version.path, text, names);
+    const lint = await lintBlueprint(
+      version.path,
+      text,
+      names,
+      options.configurationBound === undefined
+        ? {}
+        : { configurationBound: options.configurationBound },
+    );
     if (!lint.ok) return { status: "invalid", findings: lint.findings };
     try {
       const expressions = createBlueprintExpressions(lint.blueprint, {
@@ -138,7 +155,9 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
       });
       // The shared lint validates the serializable config; expressions bind its function sites.
       const machine = bound.createMachine(
-        expressions.machine as unknown as Parameters<typeof bound.createMachine>[0],
+        compileStateGuards(expressions.machine) as unknown as Parameters<
+          typeof bound.createMachine
+        >[0],
       );
       return {
         status: "loaded",
@@ -147,6 +166,8 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
           key: blueprintVersionKey(version),
           document: lint.blueprint,
           machine,
+          warnings: lint.warnings,
+          tokens: lint.tokens,
           checkRestore: (snapshot) => checkRestore(machine, snapshot),
         },
       };

@@ -632,3 +632,99 @@ it("rejects child path registry names and duplicate module names", () => {
   const part = registry();
   expect(serviceImplementations({ module: part })).toEqual(part);
 });
+
+it("matches raised-event declarations in the shipped registry", () => {
+  expect(new Map(Object.entries(serviceImplementations().raises ?? {}))).toEqual(manifoldImplementationNames.raises);
+});
+
+it("loads unknown token lint warnings at the configured bound and exposes runtime keys", async () => {
+  const doc = {
+    ...document(),
+    machine: {
+      id: "parcel",
+      initial: "sorting",
+      states: {
+        sorting: {
+          meta: { gate: { comparator: "comparators/order.ts", return: { state: "returned" } } },
+          on: { token: "packing" },
+        },
+        packing: { on: { finish: "returned" } },
+        returned: {},
+        done: { type: "final" },
+      },
+    },
+  };
+  const source = memoryRevision(first, { "blueprints/sample.yml": stringify(doc) });
+  const loader = createBlueprintLoader({
+    implementations: registry(),
+    revisionAt: async () => source,
+    onExpressionError: vi.fn(),
+    configurationBound: 1,
+  });
+  const load = await loader.version({ commit: first, path: "blueprints/sample.yml" });
+  expect(load).toMatchObject({
+    status: "loaded",
+    blueprint: {
+      warnings: [{ kind: "token-unknown" }],
+      tokens: { gates: [{ verdict: "unknown" }] },
+    },
+  });
+});
+
+it("reserves the in guard and compiles it for runtime state reads", async () => {
+  expect(() =>
+    createBlueprintLoader({
+      implementations: { ...registry(), guards: { in: () => true } },
+      revisionAt: async () => undefined,
+      onExpressionError: vi.fn(),
+    }),
+  ).toThrow("Reserved implementation name: in");
+  const doc = document();
+  doc.machine.states["sorting"] = {
+    on: {
+      scanned: { target: "delivered", guard: { type: "in", params: { states: ["sorting"] } } },
+    },
+  } as unknown as (typeof doc.machine.states)[string];
+  const source = memoryRevision(first, { "blueprints/sample.yml": stringify(doc) });
+  const loader = createBlueprintLoader({
+    implementations: registry(),
+    revisionAt: async () => source,
+    onExpressionError: vi.fn(),
+  });
+  const load = await loader.version({ commit: first, path: "blueprints/sample.yml" });
+  if (load.status !== "loaded") throw new Error(JSON.stringify(load));
+  const actor = createActor(load.blueprint.machine).start();
+  actor.send({ type: "scanned" });
+  expect(actor.getSnapshot().status).toBe("done");
+  actor.stop();
+});
+
+it("shares every fixture verdict and finding with the pure lint", async () => {
+  const { fixtures, names } =
+    await import("../../../shared/src/token-lint/test-fixtures/blueprints.ts");
+  const { lintBlueprint } = await import("@wyrd-company/manifold-shared");
+  for (const [, doc] of fixtures) {
+    const text = stringify(doc),
+      path = "blueprints/sample.yml";
+    const source = memoryRevision(first, { [path]: text });
+    const implementations = {
+      actors: { worker: fromPromise(async () => undefined) },
+      guards: { allowed: () => true },
+      actions: { signal: () => {} },
+      delays: { wait: 1 },
+      raises: { signal: ["break"] },
+    };
+    const loader = createBlueprintLoader({
+      implementations,
+      revisionAt: async () => source,
+      onExpressionError: vi.fn(),
+    });
+    const pure = await lintBlueprint(path, text, names);
+    const load = await loader.version({ commit: first, path });
+    if (pure.ok) {
+      if (load.status !== "loaded") throw new Error(JSON.stringify(load));
+      expect(load.blueprint.tokens.gates).toEqual(pure.tokens.gates);
+      expect(load.blueprint.warnings).toEqual(pure.warnings);
+    } else expect(load).toEqual({ status: "invalid", findings: pure.findings });
+  }
+});

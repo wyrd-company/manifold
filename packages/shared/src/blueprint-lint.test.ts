@@ -70,8 +70,13 @@ describe("blueprint lint", () => {
   });
 
   it("accepts a clean document deterministically and keeps embedded schemas in agreement", async () => {
-    expect(await lint(document())).toEqual({ ok: true, blueprint: document() });
-    expect(await lint(document())).toEqual(await lint(document()));
+    expect(await lint(document())).toMatchObject({
+      ok: true,
+      blueprint: document(),
+      warnings: [],
+      tokens: { gates: [] },
+    });
+    expect(JSON.stringify(await lint(document()))).toEqual(JSON.stringify(await lint(document())));
     for (const [file, embedded] of [
       ["blueprint", blueprintSchema],
       ["blueprint-expressions", blueprintExpressionsSchema],
@@ -357,4 +362,111 @@ it("resolves unreachable history defaults relative to their parent", async () =>
   );
   expect(await lint(history("ready"))).toMatchObject({ ok: true });
   expect(await lint(history("#delivery.delivered"))).toMatchObject({ ok: true });
+});
+
+it("runs gate rule before token lint and separates opaque warnings", async () => {
+  const doc: import("./blueprint-lint.ts").BlueprintDocument = document();
+  doc.machine = {
+    initial: "queued",
+    states: {
+      queued: {
+        meta: { gate: { comparator: "comparators/order.ts", return: { state: "returned" } } },
+        on: { token: { target: "trap", guard: "allowed" } },
+      },
+      trap: {},
+      returned: {},
+      done: { type: "final" },
+    },
+  };
+  const opaque = { ...names, guards: new Set(["allowed"]) };
+  expect(await lintBlueprint("file", stringify(doc), opaque)).toMatchObject({
+    ok: true,
+    warnings: [{ kind: "token-potential" }],
+    tokens: { gates: [{ verdict: "potential" }] },
+  });
+  (doc.machine["states"] as Record<string, unknown>)["queued"] = {
+    meta: { gate: { comparator: "comparators/order.ts", return: { state: "missing" } } },
+  };
+  expect(await lintBlueprint("file", stringify(doc), opaque)).toMatchObject({
+    ok: false,
+    findings: [{ kind: "gate" }],
+    warnings: [],
+  });
+});
+
+it("locates invalid in state paths and leaves context data untouched", async () => {
+  const doc: import("./blueprint-lint.ts").BlueprintDocument = document();
+  doc.machine["context"] = { guard: { type: "in", params: { states: ["data"] } } };
+  expect(await lint(doc)).toMatchObject({ ok: true });
+  doc.machine["states"] = {
+    queued: {
+      on: {
+        finish: { target: "done", guard: { type: "in", params: { states: ["missing.child"] } } },
+      },
+    },
+    done: { type: "final" },
+  };
+  expect(await lint(doc)).toMatchObject({
+    ok: false,
+    findings: [
+      { kind: "machine", location: "/machine/states/queued/on/finish/guard/params/states/0" },
+    ],
+  });
+});
+
+it("enforces root, return, dependency, and token gate contracts before exploration", async () => {
+  const base = () => ({
+    machine: {
+      initial: "group",
+      states: {
+        group: {
+          initial: "queued",
+          states: {
+            queued: {
+              meta: { gate: { comparator: "comparators/order.ts", return: { state: "returned" } } },
+            },
+          },
+        },
+        returned: {},
+        done: { type: "final" },
+      },
+    },
+    schemas: { input: true, output: true, context: true, events: {} },
+  });
+  const cases: import("./blueprint-lint.ts").BlueprintDocument[] = [];
+  const root = base();
+  Object.assign(root.machine, {
+    meta: { gate: { comparator: "comparators/order.ts", return: "exit", token: "root-token" } },
+  });
+  cases.push(root);
+  const ancestor = base();
+  ancestor.machine.states.group.states.queued.meta.gate.return.state = "group";
+  cases.push(ancestor);
+  const self = base();
+  self.machine.states.group.states.queued.meta.gate.return.state = "group.queued";
+  cases.push(self);
+  const dependencies = base();
+  Object.assign(dependencies.machine.states.group.states.queued.meta.gate, {
+    dependencies: "returned",
+  });
+  cases.push(dependencies);
+  const duplicate = base();
+  Object.assign(duplicate.machine.states.returned, {
+    meta: { gate: { comparator: "comparators/order.ts", return: "exit" } },
+  });
+  cases.push(duplicate);
+  for (const doc of cases)
+    expect(await lint(doc)).toMatchObject({
+      ok: false,
+      findings: [expect.objectContaining({ kind: "gate" })],
+      warnings: [],
+    });
+  const missing = base();
+  Object.assign(missing.machine.states.group.states.queued.meta, {
+    gate: { comparator: "comparators/order.ts" },
+  });
+  expect(await lint(missing)).toMatchObject({
+    ok: false,
+    findings: [expect.objectContaining({ kind: "shape" })],
+  });
 });
