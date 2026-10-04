@@ -27,6 +27,7 @@ async function notified(
     credential?: boolean;
     freeText?: boolean;
     hold?: boolean;
+    requestTimeoutMs?: number;
   } = {},
 ) {
   const messages: Publish[] = [];
@@ -42,6 +43,7 @@ async function notified(
     void readRequest(req).then((body) => {
       messages.push(JSON.parse(body) as Publish);
       headers.push(req.headers.authorization);
+      res.statusCode = options.statuses?.[messages.length - 1] ?? 200;
       if (options.hold && messages.length === 1) {
         finish = () => res.end("{}");
         return;
@@ -50,7 +52,6 @@ async function notified(
         req.socket.destroy();
         return;
       }
-      res.statusCode = options.statuses?.[messages.length - 1] ?? 200;
       res.end("{}");
     });
   });
@@ -68,7 +69,7 @@ async function notified(
           ...(options.credential ? { credential: "publisher" } : {}),
         },
       },
-      requestTimeoutMs: 50,
+      requestTimeoutMs: options.requestTimeoutMs ?? 1000,
       retryIntervalMs: 60,
     },
     clock: { now: () => time },
@@ -109,6 +110,7 @@ async function notified(
     advance: () => {
       time += 100;
     },
+    now: () => time,
     anonymous: () => anonymous,
     finish: () => finish?.(),
     ntfy,
@@ -159,6 +161,13 @@ test("ntfy JSON has stable sequence id, bearer token and usable HTTP buttons; cl
 });
 test("500 retries the same buttons and reads a rotated token; 400 is terminal and gets no close", async () => {
   const f = await notified({ statuses: [500, 200], credential: true });
+  await eventually(() =>
+    expect(
+      f.store.connection.database.prepare("SELECT last_error FROM escalation_notification").get()?.[
+        "last_error"
+      ],
+    ).toBe("500"),
+  );
   const first = f.messages[0];
   writeFileSync(join(f.directory, "token"), "rotated-key");
   f.advance();
@@ -178,10 +187,30 @@ test("500 retries the same buttons and reads a rotated token; 400 is terminal an
   await new Promise((resolve) => setTimeout(resolve, 90));
   expect(refused.messages).toHaveLength(1);
 });
+test("retry time starts when the response completes", async () => {
+  const f = await notified({ statuses: [500, 200], hold: true });
+  f.advance();
+  f.finish();
+  await eventually(() =>
+    expect(
+      f.store.connection.database
+        .prepare("SELECT last_error,next_attempt_at FROM escalation_notification")
+        .get(),
+    ).toMatchObject({ last_error: "500", next_attempt_at: f.now() + 60 }),
+  );
+  expect(f.messages).toHaveLength(1);
+  f.advance();
+  await eventually(() => expect(f.messages).toHaveLength(2));
+  expect(f.messages[1]).toEqual(f.messages[0]);
+});
 test.each(["drop", "timeout", "inflight"] as const)(
   "an ask with an uncertain publication gets one close, after the request ends: %s",
   async (mode) => {
-    const f = await notified({ drop: mode === "drop", hold: mode !== "drop" });
+    const f = await notified({
+      drop: mode === "drop",
+      hold: mode !== "drop",
+      requestTimeoutMs: mode === "timeout" ? 50 : 1000,
+    });
     f.module.answer(f.escalation.id, { choice: "retry" }, "api");
     if (mode === "inflight") f.finish();
     await eventually(() => expect(f.messages).toHaveLength(2));
@@ -193,6 +222,13 @@ test.each(["drop", "timeout", "inflight"] as const)(
 );
 test("a failed second attempt closes an earlier uncertain publication", async () => {
   const f = await notified({ drop: true, statuses: [200, 400] });
+  await eventually(() =>
+    expect(
+      f.store.connection.database.prepare("SELECT last_error FROM escalation_notification").get()?.[
+        "last_error"
+      ],
+    ).toBe("unavailable"),
+  );
   f.advance();
   await eventually(() => expect(f.messages).toHaveLength(2));
   await eventually(() =>
