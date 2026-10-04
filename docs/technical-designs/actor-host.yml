@@ -129,7 +129,7 @@ proposed-design:
       readonly machine: string;
       readonly snapshot: PersistedSnapshot;
       readonly activeInvokes: readonly ActiveInvoke[];
-      /** Root state paths entered since the actor's previous save, in first-entry order. */
+      /** Root state paths entered since the actor's last committed save, in first-entry order. */
       readonly entered: readonly string[];
       /** Each active root state path, `""` excluded, to the entry id of its current entry. */
       readonly entries: Readonly<Record<string, string>>;
@@ -193,7 +193,10 @@ proposed-design:
     engine writes it: `start` sets it from the input's `manifold`, and
     registered actions, such as `follow-thread`, change it. Blueprint
     expressions read it and never assign it, as `blueprint-expressions`
-    states. A child blueprint's context holds no identity of its own.
+    states. Identity belongs to the actors the host starts and restores,
+    the top-level actors: a child blueprint's context holds no `manifold`,
+    and an expression in it that reads `context.manifold` reads an absent
+    value.
   subscriptions: >-
     `subscription(actor)` is a pure function of the stored snapshot and the
     loaded version. The topics are `github.issue.<issue>` when the identity
@@ -260,9 +263,9 @@ proposed-design:
     actor's machine, and records a fire time of `now` plus the action's
     `delay` under the `after` key on that state's current entry. The host
     never evaluates a delay itself, so a deadline fires after exactly the
-    delay XState resolved. A root state path, other than the
-    root's own `""`, is added to the record's `entered` list when the list
-    does not hold it. The count starts at zero for a new actor, so its
+    delay XState resolved. Each entry of a root state path, other than the
+    root's own `""`, is also appended to the record's entry log with its
+    id. The count starts at zero for a new actor, so its
     first entry, the root's, is `1`. A replayed delivery starts from the
     snapshot saved before it, with the count saved in it, and gives every
     entry the id it had the first time. Ids are unique within an actor and
@@ -350,9 +353,18 @@ proposed-design:
     host builds one `ActorSave` and calls each save hook with it, in
     registration order. `activeInvokes` lists every invoked child in the
     snapshot's tree with its invoke id and the entry id of the state node
-    that declares it; for `done` and `stopped` it is empty. `entered` is the
-    record's list, which the host clears once the hooks return, so it holds
-    a state that an eventless transition left within the same delivery.
+    that declares it; for `done` and `stopped` it is empty. `entered` is
+    computed against the last committed save, never against the last
+    attempted one: when the host builds a write in `persist`, before the
+    save's transaction opens, it reads the entry count of the actor's
+    stored snapshot with `store.loadSnapshot`, drops from the entry log
+    every entry whose id is at or below that count, and lists the paths of
+    the rest, each once, in first-entry order. A save that rolls back after
+    its hooks ran, by a later hook, the delivery probe, or the consume,
+    leaves the stored count where it was, so the next save lists the same
+    entries again, a state an eventless transition left within the same
+    delivery included, and its hooks redo what the rollback undid. An
+    entry is retired only once a committed snapshot counts it.
     `entries` maps each active root state path of the snapshot, the root's
     `""` excluded, to its current entry id; a repeated save gives the same
     map, and a re-entry gives the state a new id. For `done` and `stopped`
@@ -449,7 +461,10 @@ proposed-design:
     re-entry; each save hook runs in registration order inside the save's
     transaction, sees `activeInvokes` and `entered` including a state an
     eventless transition left in the same delivery, and `entries` with the
-    same ids on a repeated save and a new id after a re-entry, and a hook
+    same ids on a repeated save and a new id after a re-entry; a save whose
+    hooks return and whose transaction then rolls back, by a throwing
+    `saved` probe, is followed by a save whose `entered` still holds the
+    transient state, and whose hook effect commits once; a hook
     that throws
     leaves the previous snapshot stored; an `error` save runs no hook; a
     `done` save lists no active invokes. Fault tests, in a child Node

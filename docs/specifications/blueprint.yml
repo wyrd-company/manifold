@@ -163,13 +163,16 @@ description: |-
   snapshot of a state machine actor with its version key, so a restored
   actor runs the version it started on.
 
-  Identity. Each actor's context holds the engine's identity of the actor
-  at `context.manifold`, a value of `#/$defs/actor-identity`: the issue
-  node id, the Project node id, the environment name, the thread ids it
+  Identity. A top-level actor, one Manifold starts or restores and routes
+  events to, holds the engine's identity of the actor at
+  `context.manifold`, a value of `#/$defs/actor-identity`: the issue node
+  id, the Project node id, the environment name, the thread ids it
   follows, the portfolio item, and the blueprint path, each when it
   applies. Manifold writes it; expressions read it, as
-  `blueprint-expressions` states. The actor's events come from its issue
-  and its threads.
+  `blueprint-expressions` states. The actor's routed events come from its
+  issue and its threads. A blueprint running as a child has no
+  `context.manifold`, and takes events only from its parent and its own
+  invokes.
 
   Lint. The blueprint lint checks one file and reports findings, each
   naming the file's path, a kind, and a location: the RFC 6901 JSON

@@ -77,9 +77,10 @@ description: |-
   - `expression.map` as `output`: `$` is `{ "context": <context>, "event":
     <event> }`. The result validates against the blueprint's output schema.
 
-  `context.manifold` is the actor's identity, a value of
-  `#/$defs/actor-identity` of the `blueprint` schema asset. Every site
-  reads it; the context schema describes the context without it, and only
+  `context.manifold` is a top-level actor's identity, a value of
+  `#/$defs/actor-identity` of the `blueprint` schema asset. Every site of
+  a top-level actor reads it; in a blueprint running as a child it is
+  absent. The context schema describes the context without it, and only
   the engine writes it. An assignment result that holds `manifold` is a
   `result` error.
 
@@ -250,7 +251,13 @@ description: |-
   pairs a context sample with an event sample, for each event schema in
   the site's event set. A context sample holds `manifold`, a sample of
   `#/$defs/actor-identity` of the same kind, `full` or `required`; an
-  `examples[n]` context sample holds the `full` identity sample. The samples of one schema are each entry of its
+  `examples[n]` context sample holds the `full` identity sample. The
+  identity declares no required property, so the `required` sample's
+  identity is `{}`, and every identity field reads absent in it as it
+  does in a child, where `context.manifold` is absent. A blueprint that
+  lints clean therefore evaluates without a finding whether or not an
+  identity field is present; the lint guarantees nothing about which
+  fields a running actor holds, and nothing about identity in a child. The samples of one schema are each entry of its
   `examples`, then one value with every optional property present, then one
   value with required properties only, generated from a fixed seed. A
   `default` or `examples` value inside the schema is used where it applies.
@@ -321,5 +328,9 @@ validation-criteria: >-
   findings. They show that an assignment whose result holds `manifold` is
   a `result` finding at lint and leaves context unchanged at run time, and
   that an assignment under a context schema with `additionalProperties:
-  false` succeeds while context holds `manifold`. Fixtures use a domain
+  false` succeeds while context holds `manifold`. They show that a mapping
+  whose output schema requires a string it reads from
+  `context.manifold.issue` is a `schema` finding on the `required` sample,
+  and that the same blueprint's expression, invoked as a child, reads
+  `context.manifold.issue` as absent. Fixtures use a domain
   unrelated to Manifold.
