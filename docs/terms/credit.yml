@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Credit
+description: >-
+  A ledger entry that adds to an account's capacity for a window.

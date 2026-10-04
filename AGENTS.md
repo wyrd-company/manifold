@@ -64,10 +64,12 @@ We need to be on the same page with terminology. When communicating, use this la
 - **board** a KANBAN board
 - **callback** an imperative actor that runs until its state exits, receiving and sending events.
 - **capacity** what an account can spend in a window.
+- **ceiling** the most of its parent's limit a portfolio item may use, its allocation and borrowed unallocated remainder together.
 - **child state machine** a blueprint invoked or spawned by another state machine actor, for work the parent owns.
 - **client** means the web, desktop, or mobile UI for T3Code.
 - **comparator** the user's function that picks which task in a gate's population proceeds next.
 - **console** the web user interface to Manifold
+- **credit** a ledger entry that adds to an account's capacity for a window.
 - **deadline** a time at which an actor in a state receives an event.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
@@ -78,6 +80,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **inbox** the per-actor store of routed events not yet consumed.
 - **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
 - **issue** a way to track tasks related to a repository on GitHub
+- **pacing** a limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.
 - **parent** a task with subtasks
 - **population** the task actors in a gated state that hold no token from its gate.
 - **portfolio item** a user-declared node in the portfolio tree that budget is allocated to and usage is attributed to.
@@ -98,7 +101,10 @@ We need to be on the same page with terminology. When communicating, use this la
 - **thread** means the durable conversation and work history for a T3code project.
 - **token** what a gate grants a task actor so it may leave the gated state.
 - **turn** a single, complete cycle of work executed by an agent in response to a user prompt
+- **unallocated remainder** the part of a parent's limit that no child's allocation guarantees, which its children borrow up to their ceiling.
 - **variance** actual less estimate for one task.
+- **weight** a portfolio item's share of the unallocated remainder among its siblings with waiting work.
+- **window** the period from one reset of an account's capacity to the next.
 - **you** means the agent reading this file and changing Manifold Code.
 
 ## Thar be dragons

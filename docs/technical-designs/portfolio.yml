@@ -64,7 +64,7 @@ proposed-design:
     Guarantees under one parent, Other included, total at most 100% at every
     level. A declared portfolio whose guarantees under any parent exceed
     100% is in an error state: the console names the parent and its sum and
-    refuses to save, and the store rejects the allocation rows.
+    refuses to save, and the ledger rejects the allocation rows.
   archiving: >-
     Archiving an item is one step. Its allocation returns to its parent's
     unallocated remainder. For each project attached to it, the operator
@@ -77,13 +77,17 @@ proposed-design:
     unallocated remainder up to its ceiling. Weight applies only to splitting
     the remainder among items that have waiting work, and the gate supplies
     which items have waiting work. Pacing, when set, spreads the window's
-    capacity across the window and restarts at a reset. With allocations at
-    100% and no ceiling the rule is a fixed split.
+    capacity across the window and restarts at a reset. Room an item borrows
+    from its parent's remainder is room its sub-items may use. With
+    allocations at 100% and no ceiling the rule is a fixed split.
   ledger: >-
-    One append-only table with signed entries keyed by actor, item, account,
-    and window: a credit when a window opens or a reset is observed, a
+    One append-only table with signed entries keyed by actor, item, and
+    account: a credit when a window opens or a reset is observed, a
     reservation when a gate grants a token, an actual when usage posts, and
-    cancelling entries at settlement and on a move. A reservation carries an
+    cancelling entries at settlement and on a move. Credits and actuals carry
+    their window; an actual counts in the window its usage happened in. An
+    outstanding reservation counts against the account's current window, so
+    it is neither lost nor counted twice across a reset. A reservation carries an
     idempotency key so a replayed grant holds once. A move of an outstanding
     reservation asks the sharing rule at the destination before it writes.
   available-balance: >-
