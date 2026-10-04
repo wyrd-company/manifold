@@ -182,10 +182,11 @@ proposed-design:
     `expression.assign` action is removed, since context is not part of a
     configuration. A named action becomes an `enqueueActions` action that,
     for each event type its declaration lists, in declared order, takes a
-    choice and raises the event when the choice is true. For each gate, a
-    marker action naming the gate is added to the exit actions of the gated
-    state when its return is `exit`, or to the entry actions of the return
-    state otherwise. Every invoke `src` is an inert actor logic that never
+    choice and raises the event when the choice is true. For each gate, an
+    exit marker naming the gate is added to the exit actions of the gated
+    state, and a return marker naming the gate is added to the entry actions
+    of the return state, or, when its return is `exit`, the exit marker is
+    also the return marker. Every invoke `src` is an inert actor logic that never
     emits, and every named delay resolves to 1 millisecond, so neither runs
     anything. Context starts as an empty object and stays empty. The
     copy's `options.maxIterations`, XState's runtime option for the
@@ -199,7 +200,7 @@ proposed-design:
     `getNextTransitions` the transitions of a settled snapshot, from which
     the events are drawn. Each microstep is a snapshot with the actions it
     resolved, so a marker in a microstep's actions shows that the microstep
-    returned a gate's token. XState processes raised events and eventless
+    returned a gate's token or left its gated state. XState processes raised events and eventless
     transitions inside the macrostep in its own order of priority, so the
     lint never orders them itself. No unexported XState function is used
     and no XState module is patched.
@@ -239,31 +240,39 @@ proposed-design:
     XState's internal event queue is always empty, so the key need not hold
     it; a raised event is followed inside the edge that raised it. An edge
     is one run of one macrostep: its event, its choices, the gates whose
-    return markers its microsteps carry, and the settled configuration it
-    ends in. The lint builds one graph from the initial configuration, and
-    adds, at each configuration in which a gate's state is active, an edge
-    for that gate's token event, so every gate's held configurations are in
-    the one graph.
+    return and exit markers its microsteps carry, in microstep order, and
+    the settled configuration it ends in. The lint builds one graph from
+    the initial configuration, and adds, at each configuration in which a
+    gate's state is active, an edge for that gate's token event, so every
+    gate's held configurations are in the one graph.
   grant: >-
     The gate grants a token only to an actor in the gated state with no
-    undelivered event, so the token event is the next event the actor takes
-    there. For each gate the lint walks the graph with one bit of
-    bookkeeping, whether the actor holds the gate's token, so a walk state
-    is a configuration and that bit. It starts at the initial configuration,
-    not holding. From a state that does not hold the token, every edge is
+    undelivered event, and at most one token per entry into that state, so
+    the token event is the next event the actor takes there. For each gate
+    the lint walks the graph with a phase beside each configuration:
+    `eligible`, the actor holds no token from the gate and the current
+    entry into the gated state, if any, has received none; `held`, the
+    actor holds the token; and `spent`, the token came back but the actor
+    has not left the gated state since its grant. The walk starts at the
+    initial configuration, `eligible`. From `eligible`, every edge is
     followed, and the gate's token edge is a grant: the token is held from
-    the start of its macrostep. From a state that holds it, every edge but
-    the gate's token edge is followed, since a holder is never offered a
-    second token. An edge that carries the gate's return marker, at the
-    grant or later in the same macrostep, or whose last snapshot's status
-    is `done`, since an actor that ends returns every token it holds,
-    leads to the configuration it ends in without the token. Every other
-    edge keeps the bit. So a token that comes back lets the walk reach
-    every later grant, including a grant from a configuration that only an
-    earlier grant and return can reach. The held configurations are the
-    configurations of the walk states that hold the token. The graph's
-    edges depend only on the configuration, so the walk reuses the one
-    graph and holds at most two states per configuration.
+    the start of its macrostep. From `held` and `spent`, every edge but the
+    gate's token edge is followed. Within an edge the phase changes per
+    microstep, in order. In `held`, a microstep that carries the gate's
+    return marker, at the grant or later, returns the token and the phase
+    becomes `spent`. In `spent`, a microstep that carries the gate's exit
+    marker ends the entry and the phase becomes `eligible`, so a return of
+    `exit`, whose return marker is the exit marker, goes straight to
+    `eligible`. An edge whose last snapshot's status is `done` returns
+    every token the actor holds and ends the walk there. An exit and
+    re-entry while `held` changes nothing, since the token stays held. So
+    a return inside the same entry never permits a second grant in that
+    entry, and a return followed by an exit lets the walk reach every
+    later grant, including one from a configuration that only an earlier
+    grant and return reach. The held configurations are the
+    configurations of the walk states in `held`. The graph's edges depend
+    only on the configuration, so the walk reuses the one graph and holds
+    at most three states per configuration.
   configuration-key: >-
     The key of a configuration is computed from its persisted snapshot
     alone: the ids of the active state nodes with their ancestors, sorted by
@@ -391,7 +400,14 @@ proposed-design:
     root-final completion, the same fixture with `working` always going to
     the root final `done`, `proved`; and the named-guard false positive,
     `potential` with its choice. Further fixtures show a review cycle with
-    a route to the return point, `proved`; a repeated grant, a parallel
+    a route to the return point, `proved`; a same-entry return, a
+    compound gated state `packing` whose token event takes `queued` to its
+    child `returned`, the return state, and whose token event from
+    `returned` would take it to a dead end, `proved`, since that entry has
+    had its token; a re-entry, the same machine where `returned` can leave
+    `packing` and a history state brings it back to `returned`, from which
+    the token event of the new entry reaches the dead end, a `violation`;
+    a repeated grant, a parallel
     machine whose first grant enters the return state and whose `again`
     event takes the flow back to the gated state while a second region
     moves from `fresh` to `changed`, so the next grant, on an exact `in`
@@ -411,8 +427,9 @@ proposed-design:
     `configurationKey` of it is in the gate's trap set. Each part of the
     lint is killed by a named test when it is removed: history in the key,
     the microstep return, exact `in` guards, the choice branch, the
-    wildcard event, the exclusion of the token event while held, the grant
-    after a return, the key's encoding, and the bound. A
+    wildcard event, the exclusion of the token event while `held` and
+    `spent`, the grant after a return and an exit, the key's encoding, and
+    the bound. A
     host CLI test runs every fixture through `manifold-host blueprint lint`
     and compares its lines with the loader's findings and warnings for the
     same text. Test values use a domain unrelated to Manifold.
