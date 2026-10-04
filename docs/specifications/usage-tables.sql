@@ -66,18 +66,21 @@ CREATE INDEX usage_visits_by_time ON usage_visits (actor_id, entered_at);
 
 -- The call record held for each call key of an environment: the first
 -- record of a `call`, and the greatest copy of a `session-total`.
--- `revision` counts the postings made for the key.
+-- `charged` is the tokens the key has charged: each class at the greatest
+-- count of any copy. `revision` counts the postings made for the key.
 CREATE TABLE usage_calls (
   environment TEXT NOT NULL CHECK (length(environment) > 0),
   call_key TEXT NOT NULL CHECK (length(call_key) > 0),
   record TEXT NOT NULL CHECK (json_valid(record)),
+  charged TEXT NOT NULL CHECK (json_valid(charged)),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   received_at INTEGER NOT NULL,
   PRIMARY KEY (environment, call_key)
 ) STRICT, WITHOUT ROWID;
 
 -- One posting per call record of a `call`, and one per growth of a
--- `session-total`, with the tokens it adds and the attribution fixed when
+-- `session-total`, with the tokens it adds to its base, the tokens the key
+-- had charged before it, and the attribution fixed when
 -- it was made. A pending posting waits for an account, a price, or a
 -- ledger window; a posted one names its ledger operation.
 CREATE TABLE usage_postings (
@@ -89,6 +92,7 @@ CREATE TABLE usage_postings (
   provider TEXT NOT NULL,
   model TEXT,
   speed TEXT NOT NULL CHECK (speed IN ('standard', 'fast')),
+  base_tokens TEXT NOT NULL CHECK (json_valid(base_tokens)),
   tokens TEXT NOT NULL CHECK (json_valid(tokens)),
   actor TEXT NOT NULL CHECK (length(actor) > 0),
   item TEXT NOT NULL CHECK (length(item) > 0),

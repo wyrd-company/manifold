@@ -96,7 +96,8 @@ description: |-
 
   Idempotency. A request may be sent any number of times. Each call is
   held once per environment by its key; a call record of granularity
-  `session-total` posts only what its totals grew by since the copy held.
+  `session-total` posts only the classes it carries above the greatest
+  count any earlier copy of its key carried.
   A mapping is held once per environment, provider, and provider session.
   The host sends a request again whenever it did not see its 200.
 format: json-schema

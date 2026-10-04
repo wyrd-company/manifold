@@ -37,7 +37,9 @@ description: >-
   `--token-file` names, else from the environment variable
   `MANIFOLD_OPERATOR_TOKEN`, surrounding whitespace ignored. It keeps the
   stamps of the sources the service has acknowledged in its push state
-  under `--state-dir`, and decodes only sources whose stamps changed. It
+  under `--state-dir`, and decodes only sources whose stamps changed. A
+  source whose decode was `unreadable` or `decoder-failed` keeps no new
+  stamp, so the next run decodes it again. It
   sends one request at a time and stops at the first that does not answer
   200. On standard output it writes one JSON object when it ends: the
   counts `batches`, `requests`, and `skippedSources`, and the sums of the

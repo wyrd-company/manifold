@@ -69,6 +69,13 @@ description: |-
 
   computed with integer arithmetic.
 
+  Growth. A posting that adds tokens to a base, the tokens a call key had
+  already charged, is priced as the amount of the base plus the added
+  tokens, less the amount of the base, both at one price. Each amount is
+  rounded once, so the postings of a key at one price sum to the amount of
+  all its tokens however the growth was split. A posting with a base of 0
+  is priced as its own tokens.
+
   Findings. `lintUsageDeclaration` lints `prices.yml` with the kinds
   `syntax` and `schema` as `accounts-declaration` states them, and
   `duplicate-model`: a model id or alias that equals another entry's id
@@ -82,4 +89,6 @@ validation-criteria: >-
   for each token class, a one-hour cache write, a web search request, a
   `codex` call's reasoning, a `fast` call with and without `fast` prices,
   an alias, an override of a bundled entry, a price with six fractional
-  digits, and the rounding of a half millionth up.
+  digits, the rounding of a half millionth up, and growth split into
+  increments that each price below half a millionth summing to the
+  amount of the whole.

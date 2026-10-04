@@ -42,13 +42,14 @@ ideas:
     environment.
 
 environment:
-  location: a development environment running T3 Code, read-only
+  location: a development environment running the released T3 Code server 0.0.44, read-only
   tools:
     - "node:sqlite DatabaseSync with readOnly: true (Node 24)"
-    - "T3 Code source at commit b0ae3f3 (v0.0.36-nightly.20260828.1208)"
+    - "T3 Code server 0.0.44, the npm package `t3` and its `@t3code/t3-linux-x64` binary, serving the database measured"
+    - "T3 Code source at the release tags v0.0.44 and v0.0.45, and at commit b0ae3f3 (v0.0.36-nightly.20260828.1208)"
     - "@codeburn/core 0.9.20"
   resources:
-    - "T3 Code database `~/.t3/userdata/state.sqlite` while the server ran"
+    - "T3 Code database `~/.t3/userdata/state.sqlite` while the 0.0.44 server ran"
     - "Provider session files under `~/.claude`, `~/.codex`, and `~/.cursor`"
 
 findings:
@@ -61,7 +62,7 @@ findings:
       projection-provider-session-columns-filled: "0 of 183"
     notes: >-
       Measured: `DatabaseSync` opened the database with `readOnly: true`
-      while the T3 Code server ran and wrote to it, and read every row of
+      while the T3 Code 0.0.44 server ran and wrote to it, and read every row of
       `provider_session_runtime`. T3 Code writes that table from
       `ProviderSessionRuntimeRepository.upsert`, one row per thread keyed
       by `thread_id`, holding the cursor each adapter returns. The
@@ -84,9 +85,34 @@ findings:
       id in `resume`, and its `threadId` is the T3 Code thread id. The
       Codex cursor holds the Codex thread id in `threadId`. The Cursor
       cursor holds the ACP session id in `sessionId`. Read from T3 Code's
-      adapters: `readClaudeResumeState` accepts `resume`, else `sessionId`;
+      adapters at v0.0.44, v0.0.45, and b0ae3f3: `readClaudeResumeState` accepts `resume`, else `sessionId`;
       the Grok and OpenCode adapters write `{ schemaVersion, sessionId }`,
       the OpenCode id being the OpenCode session's id.
+
+  stable-releases:
+    verdict: "confirmed in source: v0.0.44 and v0.0.45 keep the table, columns, cursor fields, and provider names"
+    measurements:
+      live-server-release: "0.0.44"
+      source-tags-read: "v0.0.44, v0.0.45"
+      provider-session-runtime-migrations: "004 creates the table with thread_id, provider_name, resume_cursor_json; 027 adds provider_instance_id; both in each tag"
+      claude-cursor-in-source: "readClaudeResumeState reads `resume`, else `sessionId`; the cursor writes `resume: context.resumeSessionId`; in each tag"
+      codex-cursor-in-source: "CodexResumeCursorSchema is `{ threadId: string }` in each tag"
+      cursor-grok-opencode-cursor-in-source: "each adapter's resumeCursor holds `sessionId` in each tag"
+      provider-driver-kinds: "antigravity, claudeAgent, codex, cursor, grok, opencode in each tag"
+    notes: >-
+      Measured live: every row and cursor shape in this spike was read from
+      the database of a T3 Code 0.0.44 server, a stable release. Read from
+      source: at the tags v0.0.44 and v0.0.45, the release the T3 Code
+      environment source targets, `provider_session_runtime` is created by
+      migration 004 and gains `provider_instance_id` in migration 027, and
+      `ProviderSessionRuntime.ts` writes `thread_id`, `provider_name`,
+      `provider_instance_id`, and `resume_cursor_json` on every upsert. The
+      adapters write the cursor fields the `cursor-shapes` finding names.
+      The driver kind `antigravity` has no provider in the decoder, so its
+      rows give no mapping. The 0.0.45 shapes are read from source and not
+      measured on a 0.0.45 database. The host performs no version check: a
+      release that drops the table or a column fails the run, and a release
+      that moves a cursor field gives no mapping for that provider.
 
   claude:
     verdict: "confirmed: 36 of 38 resume ids name a session transcript"
@@ -155,13 +181,18 @@ conclusion: >-
   remain. For Cursor the mapping is read but the sessions it names are in
   the ACP session store, which the decoder does not read. For Grok and
   OpenCode the equality follows from T3 Code's source and is not yet
-  observed. The table keeps only each thread's current session.
+  observed. The table keeps only each thread's current session. The live
+  measurements are on the stable 0.0.44 server; the table, columns, and
+  cursor fields are the same in the source of 0.0.44 and 0.0.45.
 
 next-steps:
   - >-
     Extend the usage decoder to read Cursor ACP sessions
     (`~/.cursor/acp-sessions/<id>/store.db`) and nested agent transcripts,
     and add their fixtures.
+  - >-
+    Measure the table and cursor shapes on a 0.0.45 server database when an
+    environment runs that release, and record them here.
   - >-
     Observe the Grok and OpenCode equality on an environment that runs
     those providers under T3 Code, and record it here.

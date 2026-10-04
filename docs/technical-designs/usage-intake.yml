@@ -101,8 +101,15 @@ proposed-design:
     mappings from T3 Code's database and includes the mapping of every
     provider session among the request's call records that has one. It
     sends each request and waits for its response before the next. When
-    every request of a batch answers 200, it writes the stamps of the
-    sources the batch names into the push state; a batch with no records
+    every request of a batch answers 200, it writes into the push state
+    the stamps of the sources the batch names, except a source with a
+    source error record of code `unreadable` or `decoder-failed`, whose
+    decode yielded no calls. Such a source keeps the stamp it had, or none,
+    so the next run decodes it again whatever its files' sizes and times,
+    and its calls are pushed once the lock, the permission, or the library
+    failure that stopped them clears. A source with only `truncated`,
+    `malformed-record`, or `unknown-record` errors decoded every call the
+    library could read, and its stamp is written. A batch with no records
     writes its stamps with no request. A response other than 200, or a
     failed connection, ends the run with exit code 1 and leaves the push
     state as the last completed batch left it. The mapping is read after
@@ -110,13 +117,19 @@ proposed-design:
     request has its mapping in that request whenever T3 Code holds it.
   push-state: >-
     The push state is one JSON file,
-    `<state-dir>/usage-push/<sha256 of the service URL and the environment
-    name>.json`, holding the source stamps keyed by provider and source
+    `<state-dir>/usage-push/<sha256 of the service URL, the environment
+    name, and the decoder revision>.json`, holding the source stamps keyed by provider and source
     path. `<state-dir>` is `--state-dir`, else `XDG_STATE_HOME/manifold-host`,
     else `<home>/.local/state/manifold-host`. The host writes it to a
     temporary file in the same directory and renames it over the old one,
     so a reader sees the old file or the new one. A missing or unparsable
-    file is an empty state. The file only saves work: an empty state
+    file is an empty state. The decoder revision is a constant the host
+    CLI build embeds: the SHA-256 of the decoder's golden output
+    `fixtures/expected.jsonl`. A change to what the decoder yields changes
+    that file, so a host CLI that decodes differently starts from an empty
+    state and decodes every source again, including sources an earlier
+    build decoded with `unknown-record` or `malformed-record` errors. The
+    file only saves work: an empty state
     decodes and pushes every source, and the service replays every call
     it already holds. Two runs at once each write a complete state; the
     one that renames last wins, and a source it does not name is pushed
@@ -160,17 +173,24 @@ proposed-design:
     first, then each record in request order. A source error record
     replaces the row for its environment, provider, source, and code. A
     call record of granularity `call` whose key the environment already
-    holds is replayed and writes nothing. A new one is stored, and one
-    posting is made for it with revision 1. A call record of granularity
-    `session-total` whose key is new is stored with one posting of
-    revision 1. One whose key is held is compared with the stored record
+    holds is replayed and writes nothing. A new one is stored with its
+    tokens as the key's charged tokens, and one posting is made for it
+    with revision 1, base tokens all 0, and the call's tokens. A call
+    record of granularity `session-total` charges the high-water mark of
+    its key: each token class at the greatest count any copy of the key
+    has carried. A copy that carries no class above the key's charged
+    tokens is replayed. Any other copy, including the first, raises the
+    charged tokens to the per-class maximum of the two and gets a posting
+    with the next revision, whose base tokens are the charged tokens
+    before it and whose tokens are the increase of each class. The
+    charged total of a key never decreases, because every count it holds
+    was already posted. It is the same whatever the order in which the
+    copies arrive, how often they are pushed, and whether a restart falls
+    between them. The stored record is replaced by a copy that is greater
     by the decoder's rule for copies: the later timestamp, then the
     greater sum of token classes, then the greater classes in the order
-    of the record's `tokens` object. When the new record is greater it
-    replaces the stored one and gets a posting with the next revision,
-    whose tokens are each class's increase, never below 0. Otherwise it
-    is replayed. Each posting is attributed, then posted as the
-    `posting` paragraph states.
+    of the record's `tokens` object. Each posting is attributed, then
+    posted as the `posting` paragraph states.
   attribution: >-
     `attribute` is a pure function of a posting and four lookups read in
     the push transaction. The thread is the mapping of the call's
@@ -222,9 +242,15 @@ proposed-design:
     account is the one the accounts declaration in force gives the call's
     environment, provider, and provider instance, the instance read from
     the call's mapping. With no account, the posting is pending with
-    reason `unaccounted`. The amount is the price of the posting's tokens
-    for the call's model and speed in the account's unit, by the
-    `price-table` rule. With no price, it is pending with reason
+    reason `unaccounted`. The amount is the difference of two cumulative
+    amounts by the `price-table` rule, in the account's unit, for the
+    call's model and speed, at the price in force when the posting posts:
+    the amount of the base tokens plus the posting's tokens, less the
+    amount of the base tokens. Each cumulative amount is rounded once, so
+    the postings of one key at one price sum to the amount of its charged
+    tokens rounded once, however the growth was split. A price that
+    changes between two postings of a key prices each posting's growth at
+    the price in force when it posts. With no price, it is pending with reason
     `unpriced`. It then calls `ledger.postActual` with key
     `usage:<environment>:<call key>:<revision>`, the attributed actor and
     item, the account, the amount, and `usedAt` the call's timestamp in
@@ -344,7 +370,9 @@ proposed-design:
     `index.ts` exports `runUsagePush(args, io)`, which `runUsageCommand`
     calls for `usage push`, and `readSessionMappings(databasePath)`, the
     read of T3 Code's database. It sends requests with the runtime's
-    `fetch`.
+    `fetch`. `io` carries the decoder revision; `src/usage/revision.generated.ts`
+    holds it, written by `scripts/generate-decoder-revision.mjs`, and a
+    test shows it equals the SHA-256 of `fixtures/expected.jsonl`.
 
     `packages/shared` exports `lintUsageDeclaration`, the generated
     constants of `usage-push.schema.yml`, `accounts-declaration.schema.yml`,
@@ -358,7 +386,7 @@ proposed-design:
   convergence: >-
     A request sent twice posts once: every call key is held once per
     environment, every ledger write is keyed, and a session total posts
-    only what it grew by. A service killed before its transaction commits
+    only what raises its charged tokens. A service killed before its transaction commits
     holds nothing of the request, and the host, which saw no 200, sends
     it again on its next run. A service killed after the commit and before
     its answer holds the request, and the host's next run replays it. A
@@ -377,8 +405,9 @@ proposed-design:
     account `acct`, items `alpha` and `beta`, actor `actor-1`, threads
     `thread-1` and `thread-2`, sessions `session-1` to `session-3`,
     T3code project `t3-project-1` bound to `beta`, model `model-a` priced
-    at 2 USD per million input tokens and 8 per million output tokens, and
-    `model-b` with no price. The scenarios, each written red before green:
+    at 2 USD per million input tokens and 8 per million output tokens,
+    `model-c` at 0.2 USD per million input tokens and 0.2 per million
+    output tokens, and `model-b` with no price. The scenarios, each written red before green:
 
     - Price: a call of 1,000,000 input and 500,000 output tokens on
       `model-a` posts an actual of 6,000,000.
@@ -398,7 +427,21 @@ proposed-design:
       for every call, and the ledger holds one actual per call.
 
     - Session total: totals of 100 then 150 input tokens post two actuals
-      whose sum prices 150; a copy with an earlier timestamp is replayed.
+      whose sum prices 150; the 100 copy pushed again is replayed.
+
+    - Conflicting totals: copies of one key with input and output (100,
+      100), (200, 0), and (200, 100), in timestamp order, charge (200,
+      100) in all; the ledger's actuals sum to its amount, and pushing the
+      copies in reverse order, or each twice, charges the same.
+
+    - Split totals: on `model-c`, totals of 1, 2, 3, 4, and 5 input tokens
+      pushed one per request, with a service restart on the same file
+      between the third and the fourth, post actuals summing to 1, the
+      amount of one push of the total 5.
+
+    - Pending total: two growths of a key on `model-b` wait `unpriced`;
+      after `prices.yml` prices `model-b`, they post actuals summing to the
+      amount of the key's charged tokens rounded once.
 
     - Attribution: after a save of `actor-1` listing `thread-1`, a call on
       `session-1` mapped to `thread-1` posts to `actor-1` on its item, in
@@ -448,5 +491,11 @@ proposed-design:
     cursor shape, the push state skipping unchanged sources, a source
     that grows being pushed again, a locked or tableless database ending
     the run with exit 1 before any request, and a 500 leaving the push
-    state unchanged. Shared tests cover `lintUsageDeclaration` and check
+    state unchanged. A transient failure test locks an OpenCode fixture
+    database with an exclusive transaction the test holds, runs a push
+    whose `unreadable` record the server answers 200, releases the lock
+    with the database's size and modification time unchanged, and runs
+    again: the second run decodes the database and pushes its calls. A
+    second build revision, given to `runUsagePush` in place of the
+    embedded one, starts from an empty push state. Shared tests cover `lintUsageDeclaration` and check
     the bundled price table against its schema.

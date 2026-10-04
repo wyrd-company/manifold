@@ -45,13 +45,19 @@ description: >-
 
   Calls. `usage_calls` holds one call record per call key of an
   environment: the first record of granularity `call`, and the greatest
-  copy of granularity `session-total`. `revision` is the number of
+  copy of granularity `session-total`. `charged` is the usage-record
+  `tokens` object the key has charged: the record's tokens for a `call`,
+  and each class at the greatest count any copy carried for a
+  `session-total`; it never decreases. `revision` is the number of
   postings made for the key.
 
   Postings. `usage_postings` holds what each call record adds to the
   ledger: one posting for a record of granularity `call`, and one for
   each growth of a `session-total`, with `revision` counting from 1.
-  `tokens` is the usage-record `tokens` object of what the posting adds.
+  `base_tokens` is the key's charged tokens before the posting, all 0 for
+  revision 1, and `tokens` the usage-record `tokens` object of what the
+  posting adds; the posting's amount is priced from both, as
+  `price-table` states for growth.
   `used_at` is the record's timestamp in epoch milliseconds. `actor`,
   `item`, and `visit` are its attribution, fixed when the posting is made;
   `visit` is null for the ledger actors of unowned usage. A posting is
