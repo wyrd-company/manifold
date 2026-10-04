@@ -99,11 +99,13 @@ export function lintPortfolioDeclaration(files: {
       : lintBindings(bindings, normalized?.declaration.items, bindingFindings);
   let ledgerPortfolio;
   if (normalized) {
+    let rowsValid = true;
     for (const { row, location } of normalized.rows) {
       try {
         parseLedgerPortfolio({ items: [{ id: row.item, parent: null }], allocations: [row] });
       } catch (error) {
         if (!(error instanceof LedgerError)) throw error;
+        rowsValid = false;
         const fields = ["guarantee", "ceiling", "burst", "weight"].filter(
           (field) => field in error.details,
         );
@@ -119,7 +121,7 @@ export function lintPortfolioDeclaration(files: {
         });
       }
     }
-    if (portfolioFindings.length === 0) {
+    if (rowsValid) {
       try {
         ledgerPortfolio = parseLedgerPortfolio(normalized.declaration.ledger);
       } catch (error) {

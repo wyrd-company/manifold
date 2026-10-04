@@ -134,6 +134,33 @@ describe("portfolio declaration lint", () => {
         kind: "other-without-items",
         location: "/items/delta/items/other",
       }),
+      expect.objectContaining({
+        kind: "invalid-portfolio",
+        location: "/items",
+        message: 'Duplicate item "beta".',
+        details: { item: "beta" },
+      }),
+    ]);
+  });
+  it("reports guarantee limits alongside Other without siblings", () => {
+    expect(
+      findings({
+        items: {
+          alpha: { items: { other: {} }, allocations: { acct: { guarantee: 60 } } },
+          beta: { allocations: { acct: { guarantee: 50 } } },
+        },
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "other-without-items",
+        location: "/items/alpha/items/other",
+      }),
+      expect.objectContaining({
+        kind: "guarantee-limit",
+        location: "/items",
+        message: 'Guarantees under the top level for account "acct" total 110%, above 100%.',
+        details: { parent: null, account: "acct", sum: 110 },
+      }),
     ]);
   });
   it.each(["guarantee", "ceiling", "burst"])(
