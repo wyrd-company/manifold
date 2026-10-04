@@ -1,0 +1,5 @@
+$schema: https://refinery.systems/ontology/term
+title: State Entry
+description: >-
+  One entry of an actor into a state, named by an entry id that a replay
+  reproduces and a re-entry changes.

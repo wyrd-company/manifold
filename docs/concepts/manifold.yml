@@ -47,8 +47,8 @@ properties:
     polling, usage from each host CLI, and one thread stream per
     environment. An answer to an escalation is not routed: it reaches the
     actor through the state that asked. A blueprint declares event names; Manifold
-    derives the subscriptions from the actor's identity, its Project, issue,
-    and thread ids, over hierarchical topics.
+    derives the subscriptions from the actor's identity, its issue and
+    thread ids, over hierarchical topics.
   durability: >-
     Nothing important lives only in memory. Every routed event is written to
     the target actor's inbox before delivery; an actor's snapshot is saved

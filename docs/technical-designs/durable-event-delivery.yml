@@ -81,9 +81,9 @@ proposed-design:
   subscriptions: >-
     An actor's subscription is the topics it hears and the event types it
     takes. The actor host derives it from a stored snapshot: the topics from
-    the actor's identity in the snapshot's context, its Project, issue node
-    id, and thread ids, and the event types from the `events` its blueprint
-    version declares. The derivation is a pure function of the snapshot and
+    the actor's identity at `context.manifold`, its issue node id and its
+    thread ids with their environment, and the event types from the
+    `events` its blueprint version declares, as `actor-host` states. The derivation is a pure function of the snapshot and
     the blueprint, so the router recreates every subscription on resume from
     the stored snapshots alone and keeps no subscription on disk. An event
     reaches an actor when one of the event's topics equals or extends one of
@@ -185,15 +185,22 @@ proposed-design:
     sends it an internal event. The host calls `persist(actorId)`, and the
     router saves the target's persisted write with `store.saveSnapshot`,
     updates its subscription, and re-arms the deadline loop. Every snapshot
-    save the router makes, by delivery, `persist`, or `attach`, calls the
-    host's `saving` inside the save's transaction, so a write that must
-    commit with the snapshot, such as withdrawing an escalation whose
-    asking state the snapshot has left, commits with it or not at all. An
-    actor the engine starts is given to `attach`, which persists its first snapshot,
-    indexes it, and drains it.
+    save the router makes, by delivery, `persist`, or `attach`, whose
+    outcome is `saved`, calls the host's `saving` inside the save's
+    transaction, so a write that must commit with the snapshot, such as
+    withdrawing an escalation whose asking state the snapshot has left,
+    commits with it or not at all. For a delivery the router passes the
+    store a target whose `saved` calls `saving`; for `persist` and `attach`
+    it calls `saveSnapshot` and then `saving` inside one
+    `store.connection.transaction`. An errored write calls no `saving`. An
+    actor the engine starts is given to `attach`, which persists its first
+    snapshot, indexes it, and drains it. The router calls the host's
+    `connect` with itself once, before it restores any actor, so the host
+    can attach and persist actors it starts after resume.
   resume: >-
     `startRouter` is the restart path and the start path, and it runs
-    synchronously. It indexes every active stored snapshot; restores each
+    synchronously. It calls the host's `connect`; indexes every active
+    stored snapshot; restores each
     through the host in actor id order, passing the router so that a
     restored actor can publish from its first delivery, and holds the ones
     the host refuses; drains to quiescence; calls `afterDrain`; starts the
@@ -228,9 +235,11 @@ proposed-design:
   deadlines: >-
     A delayed transition in a blueprint becomes a deadline row: actor id,
     state path, fire time, event name. The row is armed in the transaction
-    that saves the snapshot entering its state, and the same save deletes the
-    rows of states the actor has left, so a row exists only while its state
-    is active and survives a restart armed. The deadline loop fires a due row
+    that saves the snapshot entering its state, and every save deletes the
+    rows it does not list, so a row exists only while its state entry is
+    active and survives a restart armed. The actor host lists the rows and
+    turns a fired row back into XState's delayed event, as `actor-host`
+    states. The deadline loop fires a due row
     by marking it fired and writing its event to the actor's inbox in one
     transaction, then schedules the actor. A fired row stays until its entry
     ends, so a state entry fires its deadline once. Each arm names the state
@@ -290,10 +299,12 @@ proposed-design:
     }
 
     export interface ActorHost {
+      /** Called once by startRouter, before any restore. */
+      connect(router: Router): void;
       subscription(actor: ActorRecord): Subscription;
       /** `router` is the one the restored actor publishes through. */
       restore(stored: StoredSnapshot, router: Router): RestoreOutcome;
-      /** Runs inside the transaction of every snapshot save the router makes. */
+      /** Runs inside the transaction of every saved snapshot the router writes. */
       saving?(actor: ActorRecord): void;
     }
 

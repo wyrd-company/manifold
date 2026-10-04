@@ -158,6 +158,8 @@ proposed-design:
       readonly actorId: string;
       send(row: InboxRow): void;
       persist(): Omit<SnapshotWrite, "actorId" | "eventId">;
+      /** Called inside the transaction of a saved write, before the consume. */
+      saved?(write: SnapshotWrite): void;
     }
 
     export type DeliveryOutcome = "delivered" | "already-consumed" | "errored";
@@ -280,8 +282,10 @@ proposed-design:
     When the persisted snapshot's status is `error`, it saves it with the
     row's event id as an errored snapshot, leaves the row pending, and
     returns `errored`. Otherwise, in one transaction, it saves the snapshot
-    with its deadlines, calls `probe("saved", row)`, and sets the row's
-    `consumed_at`; then it returns `delivered`. The save and the consume
+    with its deadlines, calls the target's `saved` with the write when the
+    target has one, calls `probe("saved", row)`, and sets the row's
+    `consumed_at`; then it returns `delivered`. A `saved` that throws rolls
+    back the save and the consume, and the error propagates. The save and the consume
     commit together, so the only crash window that replays an event is
     between `send` and that commit, and the target's idempotency makes the
     replay a no-op. A probe that throws inside the transaction rolls back
@@ -297,24 +301,26 @@ proposed-design:
     the crash interrupted; a second drain delivers nothing.
   deadlines: >-
     A deadline is armed by the snapshot save that enters its state.
-    `SnapshotWrite.deadlines` lists the deadlines of the states the snapshot
-    is in. A listed deadline's `entryId` names the entry into its state that
-    armed it: the target sets it, on the transition that enters the state,
-    to the id of the event that caused the entry, and lists the same
-    `entryId` on every later save while the state stays active. A replayed
-    delivery carries the same event id, so a replayed save lists the same
-    `entryId`; an exit and re-entry of the state, in one delivery or across
-    several, gives a new one. In the transaction of a `saved` write, the
-    store first deletes every deadline row of the actor whose state path is
-    not in the new snapshot's state paths. Then for each listed deadline,
+    `SnapshotWrite.deadlines` lists every deadline the snapshot holds
+    armed. A listed deadline's `entryId` names the entry into its state that
+    armed it: the target gives each entry an id when the entry happens,
+    lists the same `entryId` on every later save while the entry stays
+    active, and gives the same id when a replayed delivery reproduces the
+    entry; an exit and re-entry of the state, in one delivery or across
+    several, gives a new one. The actor host numbers entries this way, as
+    `actor-host` states. A deadline's state path is a path of the
+    snapshot's state paths, or `""`, which names the root state node every
+    snapshot is in. In the transaction of a `saved` write, the store first
+    deletes every deadline row of the actor that the write does not list,
+    by state path and event name. Then for each listed deadline,
     keyed by actor, state path, and event name: when no row exists it
     inserts one; when a row exists with the same `entryId` it leaves the
     row unchanged, fired or not, so a retained deadline and a replayed save
     keep the first fire time and a fired deadline stays fired for the rest
     of its entry; when a row exists with a different `entryId` it deletes that
     row and inserts the listed one, so a re-entry restarts the delay. A
-    listed deadline whose state path is not in the snapshot's state paths
-    makes `saveSnapshot` throw a `RangeError` and write nothing. Every
+    listed deadline whose state path is neither `""` nor in the snapshot's
+    state paths makes `saveSnapshot` throw a `RangeError` and write nothing. Every
     inserted row takes a new `deadline_id` from an `AUTOINCREMENT` key,
     which SQLite never reuses, so each arm has its own id that stays the
     same across saves that retain it. `dueDeadlines(at)` returns every row
@@ -383,6 +389,11 @@ proposed-design:
     only new rows; `pendingInbox` returns insertion order; a deadline
     survives closing and reopening the store; a save that leaves a state
     deletes only that state's deadlines and keeps the fire time of the rest;
+    a save that stays in a state and no longer lists one of its deadlines
+    deletes that row; a deadline at state path `""` is armed and kept while
+    the actor is active; a target's `saved` runs inside the delivery's
+    transaction, and one that throws leaves the row pending and the
+    previous snapshot stored;
     a save that lists a retained deadline with its `entryId` and a later
     fire time keeps the first fire time and deadline id; a save that
     re-enters the same state with a new `entryId` replaces the fire time and

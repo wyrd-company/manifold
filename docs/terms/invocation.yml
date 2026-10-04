@@ -1,0 +1,5 @@
+$schema: https://refinery.systems/ontology/term
+title: Invocation
+description: >-
+  The identity of an invoked implementation: its actor id, its invoke id,
+  and the entry id of the state entry that invoked it.

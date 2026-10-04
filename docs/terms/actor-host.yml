@@ -1,0 +1,5 @@
+$schema: https://refinery.systems/ontology/term
+title: Actor Host
+description: >-
+  The service module that creates, restores, and saves state machine actors
+  for the router, and derives each actor's subscription.

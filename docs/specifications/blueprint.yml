@@ -82,8 +82,9 @@ description: |-
 
   Machine configuration. The root is a state node with two more keys:
   `id`, the machine id, and `context`, the initial context, a static
-  mapping. Context is set from input by an `entry` assignment of an
-  initial state, which sees the `xstate.init` event and its `input`. A
+  mapping with no `manifold` key. Context is set from input by an `entry`
+  assignment of an initial state, which sees the `xstate.init` event and
+  its `input`. A
   state node has the keys `id`, `description`, `type` (`atomic`,
   `compound`, `parallel`, `final`, or `history`), `initial`, `history`
   (`shallow` or `deep`), `target` for a history state's default, `states`,
@@ -112,6 +113,35 @@ description: |-
     `{ type, params }`;
   - a delay: an `after` key that is not decimal digits.
 
+  Child blueprints. An invoke whose `src` is a blueprint path,
+  `blueprints/` followed by a path ending in `.yml` or `.yaml` as under
+  Location, invokes that blueprint as a child state machine. The child
+  runs the version at its parent's commit. The invoke's `input` is the
+  child's input, its `onDone` takes the child's output, and its `onError`
+  takes the child's error. A child that cannot run fails the invoke at
+  once with an error that validates against
+  `#/$defs/child-blueprint-error`: its `path`, and `reason` `missing` for
+  a file not at the commit, `invalid` with the lint's `findings`, `cycle`
+  for a child whose references at the commit lead back to the invoking
+  blueprint, or `schemas` when a schema the parent declares for the path
+  under `schemas.actors` differs from the child's own `input` or `output`
+  schema. The parent loads whatever its children do. A child receives
+  events from its parent and its own invokes.
+
+  ```yaml
+  states:
+    reviewing:
+      invoke:
+        id: review
+        src: blueprints/reviews/standard.yml
+        input:
+          type: expression.map
+          params:
+            expression: '{ "depot": context.depot }'
+        onDone: delivered
+        onError: sorting
+  ```
+
   `params` is a mapping passed to the implementation. Names beginning with
   `expression.` belong to the four expression implementations of
   `blueprint-expressions`, and every other name is an implementation that
@@ -132,6 +162,14 @@ description: |-
   commit and path always give the same document. The service saves every
   snapshot of a state machine actor with its version key, so a restored
   actor runs the version it started on.
+
+  Identity. Each actor's context holds the engine's identity of the actor
+  at `context.manifold`, a value of `#/$defs/actor-identity`: the issue
+  node id, the Project node id, the environment name, the thread ids it
+  follows, the portfolio item, and the blueprint path, each when it
+  applies. Manifold writes it; expressions read it, as
+  `blueprint-expressions` states. The actor's events come from its issue
+  and its threads.
 
   Lint. The blueprint lint checks one file and reports findings, each
   naming the file's path, a kind, and a location: the RFC 6901 JSON
@@ -155,7 +193,9 @@ description: |-
      message.
   4. `implementation-unknown`: a reference names no implementation of its
      kind among the names the lint is given, and is not an expression
-     implementation of the right kind. The finding carries
+     implementation of the right kind. An invoke `src` that is a blueprint
+     path is a child blueprint, never an unknown implementation; the lint
+     reads no other file. The finding carries
      `implementationKind` and `name`, at the reference.
   5. `machine`: XState v5 rejects the configuration when it resolves a
      state node, such as a target or an `initial` that names no state.
@@ -220,6 +260,9 @@ validation-criteria: >-
   clean fixture returns the parsed document, and the same call twice
   returns the same result. A test round-trips a version through its key,
   including a path that contains `:`, and shows that a string with no
-  commit id is not a key. A test shows that the example in this
+  commit id is not a key. Lint tests show that an invoke `src` of
+  `blueprints/a.yml` lints clean with no actor names given, and that a
+  root `context` holding `manifold` is a `shape` finding at
+  `/machine/context`. A test shows that the example in this
   specification lints clean when `courier.route` is among the actor
   names. Fixtures use a domain unrelated to Manifold.
