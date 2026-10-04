@@ -308,7 +308,11 @@ findings:
       wrapper parses the error envelope and writes that location into the
       failed node's traceData.error, then rejects with the enriched envelope.
       All four tests assert both native null and enriched structured location.
-      No Zen fork or node_modules patch is needed. Inferred: production must
+      No Zen fork or node_modules patch is needed. Contradiction with the
+      technical design: explainability attributes node, rule, and column to
+      the trace the engine returns. That native trace identifies the node but
+      does not carry rule or column; the host supplies them through enrichment.
+      Inferred: production must
       retain the error envelope and perform this enrichment to meet the
       explainability contract; storing only Zen's native trace loses rule and
       column. Assumed: the measured NodeError envelope remains compatible on
@@ -362,9 +366,11 @@ findings:
       ast() without evaluating it. Parse errors reject and carry nodeId,
       ruleId, and columnId for either direction. Boolean warnings apply only to
       input cells; numeric and string outputs are legitimate values. Measured:
-      numeric/string/null literals, arithmetic (+ - * / %), concatenation,
-      ranges, array/object constructors, and unary minus can be classified as
-      never returning boolean from their root AST shape. The implementation
+      numeric/string/null literals, addition (1+2), concatenation, ranges,
+      and array/object constructors are classified as never returning boolean
+      in the listed cases. Source inspection: the classifier also handles
+      subtraction, multiplication, division, remainder, and unary minus; these
+      operators have no measured cases in this spike. The implementation
       also follows the final expression of a block and conditionals whose two
       branches are both provably nonboolean. Ten representative expressions
       warn. Variables, paths, calls (including $number), mixed conditional
@@ -407,7 +413,11 @@ findings:
       all 69 tests in three files, and npx tsc --noEmit exits zero. Independently
       mutate strict matching to always true, disable warnings, and remove host
       trace enrichment: the respective targeted runs fail 20, 11, and four
-      tests. Restore each mutation and run the final green suite and typecheck.
+      tests. The 11 suppressed-warning failures comprise the ten listed
+      warning-expression cases plus "counts warnings in the example model":
+      its reconstructed literal conditions must yield four warnings, but the
+      mutation yields zero. Restore each mutation and run the final green suite
+      and typecheck.
       Spike code stays disposable on spike/zen-jsonata and is not pushed.
       No editor/browser checks or latency measurements were repeated by this
       semantic proof. This evidence proves extension feasibility at the listed
@@ -422,15 +432,17 @@ conclusion: >-
   host enrichment of Zen's error envelope. The original equality fallback and
   four literal input conditions do not implement the specified matching rule.
   Explicit equality expressions implement the intended example behavior.
-  There is no contradiction with the technical design when the host performs
-  trace enrichment and lint warnings mean conservative static proof. Exhaustive
-  classification of all never-boolean JSONata expressions is not established.
+  The explainability design is contradicted: the native engine trace names
+  the node but carries no failing rule or column. Host enrichment supplies the
+  names that the design attributes to the engine trace. Lint warnings are
+  conservative static proof. Exhaustive classification of all never-boolean
+  JSONata expressions is not established.
   The editor's exported table component supplies the measured editing controls;
   settings and cell editing remain custom host/editor work.
 
 next-steps:
   - Implement strict matching and the proved cell bindings and output behavior in the production custom node; retain behavior tests through ZenEngine.
-  - Preserve structured cell locations across the handler error boundary and enrich the failing node's trace in the host; contract-test the NodeError envelope on upgrades.
+  - Resolve the explainability design contradiction by identifying host enrichment as the source of rule and column in failing-cell traces. Preserve structured locations across the handler error boundary and contract-test the NodeError envelope on upgrades.
   - Implement parse rejection for every cell and conservative AST warnings for input cells. Keep unclassified expressions valid and document the warning coverage.
   - Specify blank-output and no-result output representation before production; the spike omits both.
   - Settle where the table opens and rebuild settings for inputField, outputPath, and executionMode loop; these remain unproved by the cell tests.
