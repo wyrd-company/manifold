@@ -14,8 +14,9 @@ considered-options:
   "1": >-
     Derived ids and server receipts. Each command carries a command id, and
     a thread id or message id, derived from the actor id, invoke id, and
-    entry id of the invoking state. A re-sent command is answered with its
-    first receipt.
+    entry id of the invoking state; a turn's command id is derived from the
+    message id the actor prepared and saved before sending. A re-sent
+    command is answered with its first receipt.
   "2": >-
     Read before send. Each command carries a derived thread id or message
     id; before sending, the promise reads the thread and sends only when

@@ -71,7 +71,9 @@ proposed-design:
   thread-state: >-
     A thread state is a pure function of a compact thread: the thread's
     project id; its latest turn, with turn id, state (`running`,
-    `completed`, `interrupted`, or `error`), and assistant message id; its
+    `completed`, `interrupted`, or `error`), assistant message id, and the
+    id of the user message that requested it, as turn attribution gives it;
+    its
     open requests, each with request id, kind (`approval` or `user-input`),
     and the opening activity's payload, in activity order, as the client's
     `pendingRequests` returns them; and its session's status, last error,
@@ -86,6 +88,26 @@ proposed-design:
     to the compact thread and reducing it gives the same thread state as
     applying it to the full thread, a revert included, since a revert reads
     the checkpoints' turn ids and statuses.
+  turn-attribution: >-
+    T3 Code records on each turn the user message whose request the turn
+    took, and exposes it to no client, so the source keeps the attribution
+    beside the compact thread: the id of the latest turn, the id of the
+    user message that requested it or none, and the pending message, the
+    id of the last user message sent that no turn has taken yet. An applied
+    `thread.message-sent` event of a user message sets the pending message.
+    After any applied item, a latest turn whose id differs from the stored
+    one takes the pending message as its message, and the pending message
+    is cleared; this is the server's own rule, under which each turn start
+    request replaces the pending one and the next turn to start takes it,
+    so a message sent while a turn runs goes to the next turn that starts.
+    A `snapshot` item carries no order of events, so a new latest turn in a
+    snapshot takes the last user message whose `createdAt` equals the
+    turn's `requestedAt`, or none, since the server sets both from the
+    `createdAt` of the command that requested the turn, and the pending
+    message becomes the last user message created after that time, or
+    none. The baselines at the origin take their attribution from the read
+    model by the same rule. A turn first observed with no attribution has
+    none, and its changes carry `null`.
   thread-changes: >-
     `threadChanges(before, after)` is a pure function from two thread
     states, `before` possibly empty, to the thread changes between them, in
@@ -115,7 +137,7 @@ proposed-design:
     `store.connection.transaction`, it applies the item to the stored
     compact thread, computes the thread changes, calls `router.publish` once
     per change, and writes the thread's row with the reduced compact thread
-    and the new cursor. An `event` item above the cursor is applied with
+    and the new cursor and attribution. An `event` item above the cursor is applied with
     `applyThreadEvent` and sets the cursor to its sequence; one at or below
     the cursor changes nothing. A `snapshot` item replaces the compact
     thread with the reduced snapshot, compared with the stored compact
@@ -183,6 +205,19 @@ proposed-design:
     publishes every change still visible in it. A change that opened and
     closed inside a gap past the bound, such as a request answered while
     the service was down, is not published.
+  readiness: >-
+    An environment is ready from the moment, in this run of the service,
+    that its row is committed with an origin and a connection has compared
+    the server's `environmentId` with it: after the first transaction of a
+    new environment, after the reset of one whose `environmentId` changed,
+    or after the first connection of a resumed one. It stays ready until
+    the service stops, through lost connections. `ready` resolves at that
+    moment, or at once after it, so a writer that sends a command only
+    after `ready` creates every thread and turn after the origin, and the
+    source publishes their changes. A crash before the first transaction
+    commits leaves no row, and the environment is not ready in the next
+    run until its own origin commits. An environment that stops before it
+    is ready rejects every waiting `ready`.
   connection: >-
     The client resubscribes after its socket reconnects, deduplicates the
     replay overlap by sequence, and keeps retrying a watch whose first
@@ -233,6 +268,12 @@ proposed-design:
 
     export interface T3CodeSource {
       status(): readonly EnvironmentStatus[];
+      /**
+       * Resolves once the environment's origin is committed and this run's
+       * connection has confirmed its `environmentId`; rejects when the
+       * environment stops, is not configured, or `signal` aborts.
+       */
+      ready(environment: string, signal?: AbortSignal): Promise<void>;
       /** Closes every client; resolves when every environment loop has ended. */
       stop(): Promise<void>;
     }
@@ -317,7 +358,15 @@ proposed-design:
     the old server's thread, turn, and request ids; two environments run at once, and one whose server is down
     or rejects the token leaves the other publishing; a dropped socket
     resumes and publishes every change once; and a replaced token file is
-    used on the next connection. The fault test runs the source in a child
+    used on the next connection; a turn is published with the id of the
+    user message that requested it, live, on replay, and from a snapshot
+    past the bound, a turn whose message was sent while another turn ran is
+    published with that message, and a turn first seen in a baseline with
+    no matching message is published with `null`; `ready` waits while the
+    first connection is held back and resolves after the origin commits,
+    resolves at once afterwards, waits again in a run that starts after a
+    kill before the first transaction committed, and rejects when the
+    environment stops first. The fault test runs the source in a child
     Node process against the fake server, kills it with `SIGKILL` mid-stream
     and asserts the signal, starts it again on the same file, and checks the
     published changes against the changes the fake server's log implies: no

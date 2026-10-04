@@ -1,0 +1,54 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - agent-threads
+    - t3code-environment-source
+    - t3code-thread-events
+description: >-
+  An actor follows every thread in `context.manifold.threads`, and the
+  router writes each change of those threads to its inbox whatever state
+  it is in. A change of an earlier turn delivered late, a change of
+  another followed thread, and a turn an operator started from T3 Code all
+  reach an actor that is waiting for the turn it requested, and a change
+  of its own turn can arrive before the command's result, live or when
+  resume drains the inbox. T3 Code 0.0.45 records on each turn the user
+  message that requested it and exposes that to no client; a client sees
+  user messages, turn starts, and, in a snapshot, each turn's
+  `requestedAt`.
+considered-options:
+  "1": >-
+    Attribute in the source. The environment source gives each turn the id
+    of the user message that requested it, from the order of events and,
+    in a snapshot, from `requestedAt`, and publishes it on the turn's
+    changes. The actor prepares the message id and saves it before it
+    sends the turn, and guards the turn's changes on it.
+  "2": >-
+    Correlate by sequence. The source publishes the server sequence at
+    which it observed each turn start, and the actor's turn is the first
+    turn observed after its command's receipt sequence.
+  "3": >-
+    Wait in the promise. `turn-start` watches the thread itself from its
+    receipt and resolves only when its turn settles, so the blueprint
+    takes the result from `onDone` and no turn change needs a guard.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 gives each turn change an identity the actor already holds
+    durably before the turn can exist, so one guard judges a change the
+    same way before the command's result, after it, and after a restart,
+    and it follows the server's own rule for which message a turn takes.
+    Option 2 misattributes a turn that started before the receipt and is
+    first observed in a snapshot taken after it, since a snapshot carries
+    no start sequence. Option 3 holds a second subscription per running
+    turn beside the source, repeats the source's resume and snapshot
+    handling, and takes the turn's changes away from the blueprint, which
+    then cannot act on a request the turn opens.
+expected-outcomes:
+  positive:
+    - A blueprint guards its turn's changes with one expression on two ids it holds.
+    - Late changes of earlier turns, other threads, and operator turns take no transition.
+    - The attribution is one rule in the source, shared by every actor.
+  negative:
+    - A blueprint prepares a turn in a state of its own before it sends it.
+    - A message T3 Code steers into a running turn requests no turn, so a turn that never starts for it must be met with a deadline or an escalation.
+    - Attribution from a snapshot rests on undocumented server behaviour.

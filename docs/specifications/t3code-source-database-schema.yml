@@ -31,7 +31,11 @@ description: >-
   snapshot, or the shell sequence that reopened a thread caught up while
   idle. `thread` is the compact thread as JSON. `project_id` holds the project
   identity from the shell summary even before the first detail snapshot,
-  so a deletion can be published without a detail projection. At the environment's first
+  so a deletion can be published without a detail projection.
+  `attribution` is the turn attribution as JSON: `turnId`, the latest
+  turn's id; `messageId`, the id of the user message that requested it;
+  and `pendingMessageId`, the last user message no turn has taken; each
+  `null` when there is none. At the environment's first
   connection every thread in the server's read model that is not deleted
   gets a row holding its compact thread at the origin; a thread created
   later gets its row from its shell summary, then its projection from its first snapshot. A row is written in the

@@ -11,11 +11,13 @@ relationships:
     - bindings-declaration
 description: |-
   Defines the implementations a blueprint invokes to create agent threads
-  and start turns on T3 Code: `thread-create` and `turn-start`, promise
-  actors, and `follow-thread`, an action. It defines their inputs, outputs,
-  and errors, and the ids their commands carry.
+  and start turns on T3 Code: `thread-create`, `turn-prepare`, and
+  `turn-start`, promise actors, and `follow-thread`, an action. It defines
+  their inputs, outputs, and errors, and the ids their commands carry.
   `docs/specifications/agent-threads.schema.yml` is the machine-readable
-  definition of each input, output, and error.
+  definition of each input, output, and error. The implementations are for
+  top-level task blueprints: a child state machine has no environment and
+  no followed threads.
 
   `thread-create`. Creates a thread in a T3code project on the invoking
   actor's environment, `context.manifold.environment`, and resolves with
@@ -24,31 +26,50 @@ description: |-
   - `project`, required: the id of the T3code project on that environment.
   - `title`, required: a Nunjucks template for the thread's title.
   - `values`: the object the template renders against. Default `{}`.
-  - `model`, required: the model selection, `instanceId`, the provider
-    instance on the server, and `model`, with optional `options` passed as
-    given.
+  - `model`, required: the model selection: `instanceId`, the provider
+    instance on the server, a slug of letters, digits, `-`, and `_` that
+    starts with a letter, at most 64 characters; `model`, a string not
+    empty after trimming; and optional `options`, a map from an option id
+    to a string or a boolean.
   - `runtimeMode`, required: `approval-required`, `auto-accept-edits`,
     `auto`, or `full-access`, the permission the thread's agent runs with.
   - `interactionMode`: `default` or `plan`. Default `default`.
-  - `branch` and `worktreePath`: passed to the server as given. Default
-    `null`.
+  - `branch` and `worktreePath`: a string not empty after trimming, or
+    `null`. Default `null`.
+
+  `turn-prepare`. Takes no input, sends nothing, and resolves with
+  `{ messageId }`, the message id of the turn the state entry will request.
+  The blueprint assigns it to its context before it invokes `turn-start`.
 
   `turn-start`. Starts a turn in a thread on the invoking actor's
   environment from a prompt template, and resolves with
   `{ threadId, messageId }`. Input:
 
   - `threadId`, required: the thread, one the actor follows.
+  - `messageId`, required: the message id `turn-prepare` gave.
   - `prompt`, required: the repository-relative path of a Nunjucks
     template file in the process repository.
   - `values`: the object the template renders against. Default `{}`.
-  - `model`: a model selection for this turn. Absent leaves the thread's.
+  - `model`: a model selection for this turn, as for `thread-create`.
+    Absent leaves the thread's.
   - `runtimeMode` and `interactionMode`: as for `thread-create`. Absent
     takes the thread's current mode.
 
+  Strings are trimmed before they are sent.
+
   `follow-thread`. An action written in the `onDone` of a `thread-create`
-  invoke. It appends `event.output.threadId` to `context.manifold.threads`
-  unless the list holds it, so the actor's subscription follows the
-  thread's topic.
+  invoke of a top-level blueprint. It appends `event.output.threadId` to
+  `context.manifold.threads` unless the list holds it, so the actor's
+  subscription follows the thread's topic. In a child blueprint it changes
+  only the child's context, and the thread is not followed.
+
+  Turn correlation. `t3.turn.started` and `t3.turn.settled` carry the
+  `messageId` of the user message that requested the turn. A blueprint
+  takes its turn's changes on a state that encloses the invoking states,
+  guarded on its thread id and the prepared message id, so a change of
+  another turn or another thread takes no transition, and a change of its
+  own turn is taken whether it arrives before or after `turn-start`
+  resolves.
 
   ```yaml
   working:
@@ -56,6 +77,10 @@ description: |-
     on:
       t3.turn.settled:
         target: reviewing
+        guard:
+          type: expression.guard
+          params:
+            expression: event.threadId = context.thread and event.messageId = context.turn
     states:
       opening:
         invoke:
@@ -68,12 +93,21 @@ description: |-
                   "values": context, "runtimeMode": "approval-required",
                   "model": { "instanceId": "agent", "model": "default" } }
           onDone:
-            target: prompting
+            target: preparing
             actions:
               - follow-thread
               - type: expression.assign
                 params:
                   expression: '{ "thread": event.output.threadId }'
+      preparing:
+        invoke:
+          src: turn-prepare
+          onDone:
+            target: prompting
+            actions:
+              - type: expression.assign
+                params:
+                  expression: '{ "turn": event.output.messageId }'
       prompting:
         invoke:
           src: turn-start
@@ -81,7 +115,7 @@ description: |-
             type: expression.map
             params:
               expression: >-
-                { "threadId": context.thread,
+                { "threadId": context.thread, "messageId": context.turn,
                   "prompt": "templates/parcel.njk", "values": context }
           onDone: waiting
       waiting: {}
@@ -94,28 +128,35 @@ description: |-
   rendered title or prompt is trimmed of surrounding whitespace, and must
   not be empty.
 
-  Ids. Each command carries ids derived from the invocation: the actor id,
-  the invoke id, and the entry id of the invoking state. An id of kind `k`
-  is a UUID made from the SHA-256 digest of the UTF-8 bytes of
-  `manifold.agent-threads`, `k`, the actor id, the invoke id, and the entry
-  id, joined by U+0000: the first 16 bytes of the digest, with the high
-  four bits of byte 6 set to `1000` and the high two bits of byte 8 set to
-  `10`, written as 32 lowercase hexadecimal digits grouped 8-4-4-4-12.
+  Ids. An id of kind `k` derived from parts `p1 … pn` is a UUID made from
+  the SHA-256 digest of the UTF-8 bytes of `manifold.agent-threads`, `k`,
+  and the parts, joined by U+0000: the first 16 bytes of the digest, with
+  the high four bits of byte 6 set to `1000` and the high two bits of byte
+  8 set to `10`, written as 32 lowercase hexadecimal digits grouped
+  8-4-4-4-12. The invocation parts are the actor id, the invoke id, and the
+  entry id of the invoking state.
 
-  | Implementation | Kind | Carried as |
-  | --- | --- | --- |
-  | `thread-create` | `thread-create/command` | `commandId` of `thread.create` |
-  | `thread-create` | `thread-create/thread` | `threadId` of `thread.create`, and the output's `threadId` |
-  | `turn-start` | `turn-start/command` | `commandId` of `thread.turn.start` |
-  | `turn-start` | `turn-start/message` | `message.messageId` of `thread.turn.start`, and the output's `messageId` |
+  | Implementation | Kind | Parts | Carried as |
+  | --- | --- | --- | --- |
+  | `thread-create` | `thread-create/command` | invocation | `commandId` of `thread.create` |
+  | `thread-create` | `thread-create/thread` | invocation | `threadId` of `thread.create`, and the output's `threadId` |
+  | `turn-prepare` | `turn-prepare/message` | invocation | the output's `messageId` |
+  | `turn-start` | `turn-start/command` | the input's `messageId` | `commandId` of `thread.turn.start` |
+
+  `turn-start` sends the input's `messageId` as `message.messageId` of
+  `thread.turn.start`.
+
+  Readiness. A command is sent only after the environment source is ready
+  on the actor's environment, and waits until then.
 
   Errors. A failure rejects the promise with an agent thread error, a plain
   object: `name` `AgentThreadError`, `kind`, and `message`, and for
   `rejected` the server's message as `serverMessage`. Kinds:
 
-  - `input`: the input fails its schema.
-  - `environment`: the actor has no environment, or service configuration
-    declares none of that name.
+  - `input`: the input fails its schema, or the client refuses the command
+    before sending it.
+  - `environment`: the actor has no environment, service configuration
+    declares none of that name, or the environment source stopped it.
   - `archived`: `thread-create` for an actor whose GitHub Project binding
     is archived.
   - `template`: a template is missing, does not parse, reads an undefined
@@ -133,9 +174,15 @@ validation-criteria: >-
   2020-12 document. The module's tests validate every input they invoke
   with against its definition, every output against its definition, and
   every rejection against `#/$defs/error`, and show that an input the
-  schema rejects fails with `input`. A test derives each kind of id for a
-  fixture invocation and compares it with a fixed expected UUID, shows that
-  the same invocation gives the same ids, and that a different entry id
-  gives different ids. A test shows that the example in this specification
-  lints clean with `thread-create`, `turn-start`, and `follow-thread` among
-  the implementation names, given its context and output schemas.
+  schema rejects fails with `input`. A test shows that every input the
+  schema accepts, once trimmed, builds a command that the client release's
+  command schema accepts, for fixtures that include the boundary of each
+  field: a provider instance id of 64 characters and of 65, one starting
+  with a digit, an empty and a blank branch and worktree path, a blank
+  model, and option values of each type. A test derives each kind of id
+  for a fixture invocation and message id and compares it with a fixed
+  expected UUID, shows that the same invocation gives the same ids, and
+  that a different entry id gives different ids. A test shows that the
+  example in this specification lints clean with `thread-create`,
+  `turn-prepare`, `turn-start`, and `follow-thread` among the
+  implementation names, given its context and output schemas.

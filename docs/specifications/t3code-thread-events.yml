@@ -55,8 +55,11 @@ description: |-
   `projectId`, the id of the T3code project the thread belongs to on that
   environment. Ids are the server's, unencoded.
 
-  - `t3.turn.started`: a turn began. `turnId`.
-  - `t3.turn.settled`: a turn ended. `turnId`; `state`, `completed`,
+  - `t3.turn.started`: a turn began. `turnId`; `messageId`, the id of the
+    user message whose request the turn took, or `null` when the source
+    has none, as `t3code-environment-source` attributes it.
+  - `t3.turn.settled`: a turn ended. `turnId`; `messageId`, as for
+    `t3.turn.started`; `state`, `completed`,
     `interrupted`, or `error`; `assistantMessageId`, the id of the turn's
     assistant message or `null`; `error`, the session's last error when
     `state` is `error`, otherwise `null`.
@@ -78,6 +81,7 @@ description: |-
   threadId: thread-1
   projectId: project-1
   turnId: turn-1
+  messageId: message-0
   state: completed
   assistantMessageId: message-1
   error: null

@@ -37,6 +37,13 @@ $defs:
         $ref: "#/$defs/id"
       projectId:
         $ref: "#/$defs/id"
+  requesting-message:
+    description: >-
+      The id of the user message whose request the turn took, or null when
+      the source has none.
+    oneOf:
+      - $ref: "#/$defs/id"
+      - type: "null"
   request-kind:
     enum:
       - approval
@@ -46,6 +53,7 @@ $defs:
       - $ref: "#/$defs/thread-fields"
     required:
       - turnId
+      - messageId
     properties:
       type:
         const: t3.turn.started
@@ -54,12 +62,15 @@ $defs:
       projectId: true
       turnId:
         $ref: "#/$defs/id"
+      messageId:
+        $ref: "#/$defs/requesting-message"
     unevaluatedProperties: false
   turn-settled:
     allOf:
       - $ref: "#/$defs/thread-fields"
     required:
       - turnId
+      - messageId
       - state
       - assistantMessageId
       - error
@@ -71,6 +82,8 @@ $defs:
       projectId: true
       turnId:
         $ref: "#/$defs/id"
+      messageId:
+        $ref: "#/$defs/requesting-message"
       state:
         enum:
           - completed
