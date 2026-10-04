@@ -447,8 +447,7 @@ findings:
       may change costs; this probe does not benchmark that complete contract.
 
   configuration-lint-method:
-    verdict:
-      full-configuration traversal works for the tested structural subset;
+    verdict: full-configuration traversal works for the tested structural subset;
       universal completeness is unproven
     measurements:
       accepted-structural-fixture-configurations: 11
@@ -1042,8 +1041,7 @@ findings:
 
       Inferred: Three regions are inexpensive on this host. Seven regions cross one second; eight approach six seconds. Under an interactive sub-second load goal (an assumption, not a product requirement), seven regions are already impractical for this implementation. No universal practical-size boundary is established: history, transition density, opaque guard branching, worker overhead, and payload-dependent context can change it. An implementation could share one graph across gates and improve memory layout; neither optimization is measured.
   configuration-lint-undecided-shapes:
-    verdict:
-      guard abstraction is conservative and several supported shapes remain
+    verdict: guard abstraction is conservative and several supported shapes remain
       undecided; no capability restriction is selected
     measurements:
       guard-false-positive: "working.always = [{target: trap, guard: uncertain},
@@ -1051,8 +1049,7 @@ findings:
       guard-false-positive-results:
         - abstract lint reject
         - ordinary actor enters returned after grant
-      context-cycle-case:
-        remaining starts at 2; tick self-transitions while more
+      context-cycle-case: remaining starts at 2; tick self-transitions while more
         reads remaining > 0 and decrement assigns remaining - 1, then tick
         returns
       context-cycle-results:
@@ -1060,8 +1057,7 @@ findings:
         - ordinary actor returns after three ticks
       invocation-case: "working.invoke = {src: worker, onDone: returned}"
       delay-case: "working.after = {100: returned}"
-      named-action-case:
-        working.entry = signal; working.on.signal = returned; the
+      named-action-case: working.entry = signal; working.on.signal = returned; the
         implementation may raise signal
       wildcard-case: "working.on = {'*': returned}"
       resource-case: nine independent four-state regions exceeds the 100000-node probe bound
@@ -1072,8 +1068,7 @@ findings:
 
       Inferred: A finite acyclic over-approximation can establish a structural sufficient condition, but a path in that approximation does not establish an actual defect. General unbounded context/actions require an abstraction or invariants; this spike supplies no general decision procedure. State-read-only guards may permit a tighter finite analysis if their implementations expose their reads, but the named false guard demonstrates that opaque branching alone cannot classify all valid blueprints exactly. The design's universal token-return guarantee remains unproved for every supported shape. Choosing to reject undecided shapes or valid conservative false positives would narrow a capability and remains a user decision. No timeout, permissions change, or production resource limit is introduced.
   configuration-lint-verification:
-    verdict:
-      30 tests pass; history identity, eventless priority, and parallel event
+    verdict: 30 tests pass; history identity, eventless priority, and parallel event
       coverage mutations each fail the intended test
     measurements:
       command: npx vitest run
