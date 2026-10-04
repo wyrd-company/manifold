@@ -113,10 +113,17 @@ description: |-
   - a delay: an `after` key that is not decimal digits.
 
   `params` is a mapping passed to the implementation. Names beginning with
-  `expression.` are the four expression implementations of
-  `blueprint-expressions`; every other name is an implementation that
-  Manifold's code registers. A top-level `output` that is not an
-  `expression.map` is static, as `blueprint-expressions` defines.
+  `expression.` belong to the four expression implementations of
+  `blueprint-expressions`, and every other name is an implementation that
+  Manifold's code registers. An expression implementation is always
+  written as an expression reference, `{ type, params: { expression } }`:
+  a bare name beginning with `expression.`, an invoke `src` beginning with
+  `expression.`, and an object whose `type` begins with `expression.`
+  without the expression reference shape are `shape` findings. An `input`
+  of an invoke or an `output` of a top-level final state that is an
+  object with `type: expression.map` is a mapping and has the expression
+  reference shape; any other value is static, as `blueprint-expressions`
+  defines.
 
   Version identity. The loader gives each blueprint it loads a version:
   the full id of the process repository commit it was read at, and its
@@ -140,24 +147,33 @@ description: |-
      `#/$defs/blueprint`. One finding per failing location, the failing
      value or, when a key is not allowed, the key, with the message of the
      first validation error there. No other rule runs.
-  3. `implementation-unknown`: a reference names no implementation of its
+  3. `schema-invalid`: a schema under `schemas`, `input`, `output`,
+     `context`, an event schema, or an actor's `input` or `output`, does
+     not compile as a JSON Schema of draft 2020-12. Every schema is
+     compiled, whether or not an expression site reaches it. The finding
+     is at the schema, such as `/schemas/context`, with the compiler's
+     message.
+  4. `implementation-unknown`: a reference names no implementation of its
      kind among the names the lint is given, and is not an expression
      implementation of the right kind. The finding carries
      `implementationKind` and `name`, at the reference.
-  4. `machine`: XState v5 rejects the configuration when it resolves a
+  5. `machine`: XState v5 rejects the configuration when it resolves a
      state node, such as a target or an `initial` that names no state.
      The finding is at the state node XState was resolving, with XState's
      message.
-  5. `final-state-missing`: the machine has no top-level final state,
+  6. `final-state-missing`: the machine has no top-level final state,
      at `/machine/states`.
-  6. The expression lint of `blueprint-expressions`, with its kinds
+  7. The expression lint of `blueprint-expressions`, with its kinds
      `syntax`, `evaluation`, `result`, `schema`, `schema-missing`, and
      `site-unsupported` and its fields, with the location rewritten from
-     the machine to the document.
+     the machine to the document. It runs only when rule 3 found nothing.
 
   Findings are ordered by rule, then by location; expression findings
   keep the expression lint's order. A blueprint with no findings loads.
-  Every finding fails the blueprint.
+  Every finding fails the blueprint. A blueprint with no findings builds
+  with `createBlueprintExpressions` without a throw: the lint reports
+  every syntax error, `schema-missing`, and `site-unsupported` site,
+  reachable or not, and rule 3 compiles every schema a site can use.
 
   Shared function. `packages/shared` exports the lint and the version key:
 
@@ -190,9 +206,15 @@ validation-criteria: >-
   `packages/shared` call `lintBlueprint` on fixture text and check each
   finding's kind, location, and order for: text that is not YAML, with
   its line and column; a document with no `schemas`; a state key that
-  contains `.`; an action, a guard, an invoke `src`, and a named delay
-  that are not among the names given, each with its implementation kind;
-  an `expression.` name that is not an expression implementation; a
+  contains `.`; a bare `guard: expression.guard`, a bare
+  `entry: expression.assign`, an `expression.map` input with no
+  `params`, and an invoke `src` of `expression.map`, each a `shape`
+  finding; a context schema of `{ type: 17 }` used only by an
+  unreachable assignment, a `schema-invalid` finding at
+  `/schemas/context`; an action, a guard, an invoke `src`, and a named
+  delay that are not among the names given, each with its
+  implementation kind; an expression reference of the wrong kind, such
+  as `expression.assign` as a guard; a
   target that names no state; a machine with no top-level final state;
   and a guard whose result is not a boolean, located in the document. A
   clean fixture returns the parsed document, and the same call twice

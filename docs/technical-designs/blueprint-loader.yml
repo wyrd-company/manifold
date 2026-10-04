@@ -157,9 +157,13 @@ proposed-design:
     with the expression guards, and the registry's actions with the
     expression action, and `createMachine` with the returned machine
     configuration. Code supplies only implementations; the configuration
-    is the blueprint's own. Since the lint already resolved the machine
-    and compiled every expression, a throw from the last two steps is a
-    defect and propagates.
+    is the blueprint's own. The lint has already compiled every
+    expression and every schema and resolved the machine, so a clean
+    blueprint builds. A throw from either build step still fails only
+    that version: an `ExpressionError` becomes a finding of its kind at
+    its location under `/machine`, and any other error a `machine`
+    finding at `/machine` with its message. A `loadRevision` therefore
+    never stops for a fault in one blueprint.
   implementation-registry: >-
     The registry is a plain object of four records, keyed by
     implementation name. `serviceImplementations`, exported from
@@ -180,7 +184,9 @@ proposed-design:
     the loader on every load and by the host CLI. It parses the text with
     the `yaml` package as YAML 1.2 under the core schema with unique keys
     and no custom tags, validates the document with Ajv against
-    `#/$defs/blueprint` of the `blueprint` schema asset, collects every
+    `#/$defs/blueprint` of the `blueprint` schema asset, which gives every
+    expression implementation the expression reference shape, compiles
+    every schema under `schemas` with Ajv for draft 2020-12, collects every
     implementation reference and checks it against `names` and the four
     expression implementations, builds the machine with XState's
     `createMachine` over a stub for every referenced name and walks every
@@ -280,6 +286,9 @@ proposed-design:
     missing a region; that `loadRevision` twice builds each machine once;
     that `version` with a commit `revisionAt` does not hold returns
     `missing` and loads after the commit is added; that a registry entry
-    named `expression.custom` throws; and that `serviceImplementations` has
+    named `expression.custom` throws; that a revision holding one
+    blueprint with a context schema of `{ type: 17 }` used only by an
+    unreachable assignment returns it in `failures` with a
+    `schema-invalid` finding and loads the others; and that `serviceImplementations` has
     exactly the names of `manifoldImplementationNames`. Each test is written red before
     green.

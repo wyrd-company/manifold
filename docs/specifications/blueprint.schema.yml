@@ -143,6 +143,7 @@ $defs:
         description: >-
           On a top-level final state, the machine's output: static, or an
           `expression.map`.
+        $ref: "#/$defs/value-or-mapping"
   state-key:
     description: A state key. Targets and state paths separate keys with `.` and ids with `#`.
     type: string
@@ -189,7 +190,10 @@ $defs:
         items:
           $ref: "#/$defs/reference"
   reference:
-    description: An implementation referenced by name, with optional parameters.
+    description: >-
+      An implementation referenced by name, with optional parameters, or an
+      expression reference. An expression implementation is never
+      referenced by its bare name.
     oneOf:
       - $ref: "#/$defs/implementation-name"
       - type: object
@@ -201,9 +205,28 @@ $defs:
             $ref: "#/$defs/implementation-name"
           params:
             type: object
+      - $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference"
   implementation-name:
+    description: >-
+      The name of an implementation that code registers. Names beginning
+      with `expression.` belong to the expression implementations.
     type: string
     minLength: 1
+    not:
+      pattern: "^expression\\."
+  value-or-mapping:
+    description: >-
+      A static value, or a mapping. An object whose `type` is
+      `expression.map` is a mapping and has the expression reference shape.
+    if:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          const: expression.map
+    then:
+      $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference"
   invoke:
     type: object
     required:
@@ -220,6 +243,7 @@ $defs:
         minLength: 1
       input:
         description: Static input, or an `expression.map`.
+        $ref: "#/$defs/value-or-mapping"
       onDone:
         $ref: "#/$defs/transitions"
       onError:
@@ -263,6 +287,7 @@ $defs:
         enum:
           - yaml
           - shape
+          - schema-invalid
           - implementation-unknown
           - machine
           - final-state-missing

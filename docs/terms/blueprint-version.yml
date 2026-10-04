@@ -1,4 +1,10 @@
 $schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship types; `references`
+  # names the artifacts that define and use this term.
+  references:
+    - blueprint
+    - blueprint-loader
 title: Blueprint version
 description: >-
   A blueprint as it is at one process repository commit, identified by the
