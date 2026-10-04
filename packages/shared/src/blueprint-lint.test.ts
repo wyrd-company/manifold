@@ -89,7 +89,7 @@ describe("blueprint lint", () => {
           ),
         ),
       );
-    expect(manifoldImplementationNames.actors).toEqual(new Set(["escalate"]));
+    expect(manifoldImplementationNames.actors).toEqual(new Set(["escalate", "thread-create", "turn-prepare", "turn-start"]));
   });
   it("rejects invalid YAML with a position, duplicate keys, custom tags, multiple documents, and non-JSON values", async () => {
     for (const text of [

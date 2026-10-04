@@ -34,7 +34,7 @@ background:
       T3 Code 0.0.45 exposes no link from a turn to the user message that
       requested it. The server's own projection records the requesting
       message on each turn, and its read model gives the turn's
-      `requestedAt` from the command's `createdAt`, the same time it gives
+      `requestedAt` from the server-normalized command's `createdAt`, the same time it gives
       the user message.
     - >-
       Thread changes of a followed thread reach the actor whatever state it
@@ -414,5 +414,5 @@ proposed-design:
     also shows that a thread snapshot's latest turn has the `requestedAt`
     of the user message that requested it, which the source's attribution
     from a snapshot rests on and which the 0.0.45 projection source shows:
-    both are the command's `createdAt`. Values are generic and never drawn from Manifold's
+    both are the server-normalized command's `createdAt`. Values are generic and never drawn from Manifold's
     own domain.

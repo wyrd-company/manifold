@@ -11,8 +11,8 @@ export interface ImplementationNames {
 }
 // Providers add their names here when their implementation joins the service registry.
 export const manifoldImplementationNames: ImplementationNames = {
-  actors: new Set(["escalate"]),
-  actions: new Set(),
+  actors: new Set(["escalate", "thread-create", "turn-prepare", "turn-start"]),
+  actions: new Set(["follow-thread"]),
   guards: new Set(),
   delays: new Set(),
   raises: new Map(),

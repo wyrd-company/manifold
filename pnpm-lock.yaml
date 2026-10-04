@@ -149,6 +149,9 @@ importers:
       isomorphic-git:
         specifier: ^1.42.6
         version: 1.42.6
+      nunjucks:
+        specifier: ^3.2.4
+        version: 3.2.4
       quickjs-emscripten-core:
         specifier: 0.32.0
         version: 0.32.0
@@ -171,12 +174,18 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 24.19.0
+      '@types/nunjucks':
+        specifier: ^3.2.6
+        version: 3.2.6
       '@types/ws':
         specifier: ^8.18.2
         version: 8.18.2
       playwright:
         specifier: ^1.63.0
         version: 1.63.0
+      t3:
+        specifier: 0.0.45
+        version: 0.0.45
       vite-plus:
         specifier: 'catalog:'
         version: 0.3.3(@types/node@24.19.0)(jiti@2.7.0)(typescript@6.0.3)(yaml@2.9.1)
@@ -996,6 +1005,78 @@ packages:
 
   '@tanstack/store@0.11.2':
     resolution: {integrity: sha512-sJ4mjol8uQsHV0gOJzzjwXfh2Fwm+Sz0+8deqiTm4jGbMdjzNSW+xZCFm0kUa870uhd8yi+DpKnZb5Kc4apa0Q==}
+  '@t3code/t3-darwin-arm64@0.0.45':
+    resolution: {integrity: sha512-Q7Y3dYLKygpuIQd+6uPM83+EzSBcHOFOLa/EcVkynVgdToklVsnjZbbctgtkiZHyV7zJ4jJ/RUQalZABivfQsA==}
+    cpu: [arm64]
+    os: [darwin]
+    bundledDependencies:
+      - '@ff-labs/fff-bin-darwin-arm64'
+      - '@ff-labs/fff-node'
+      - '@napi-rs/keyring'
+      - '@napi-rs/keyring-darwin-arm64'
+      - '@yuuang/ffi-rs-darwin-arm64'
+      - ffi-rs
+      - node-addon-api
+      - node-pty
+
+  '@t3code/t3-linux-arm64@0.0.45':
+    resolution: {integrity: sha512-/ZJpA+ZY2wi4INAy5G425lCrU3f7SWqtR1f4sNXtNiN61VHDERi3H1D67Xkk8mXdrqd5jFb1cSxjEtixVQWznw==}
+    cpu: [arm64]
+    os: [linux]
+    bundledDependencies:
+      - '@ff-labs/fff-bin-linux-arm64-gnu'
+      - '@ff-labs/fff-bin-linux-arm64-musl'
+      - '@ff-labs/fff-node'
+      - '@napi-rs/keyring'
+      - '@napi-rs/keyring-linux-arm64-gnu'
+      - '@yuuang/ffi-rs-linux-arm64-gnu'
+      - ffi-rs
+      - node-addon-api
+      - node-pty
+
+  '@t3code/t3-linux-x64@0.0.45':
+    resolution: {integrity: sha512-9nXZm98W0uxNK1lAC1TG3LJDfWQMV5qTKcGgV4JtsK4wFjvjGIHLrdL8KDTbaFwvH6BKqw4+sDpeZD8x9rNNNQ==}
+    cpu: [x64]
+    os: [linux]
+    bundledDependencies:
+      - '@ff-labs/fff-bin-linux-x64-gnu'
+      - '@ff-labs/fff-bin-linux-x64-musl'
+      - '@ff-labs/fff-node'
+      - '@napi-rs/keyring'
+      - '@napi-rs/keyring-linux-x64-gnu'
+      - '@yuuang/ffi-rs-linux-x64-gnu'
+      - ffi-rs
+      - node-addon-api
+      - node-pty
+
+  '@t3code/t3-win32-arm64@0.0.45':
+    resolution: {integrity: sha512-gy3qipJWfSgECfzG1Km9z16ME4nn67N6CPlbuH8TpB9GH8gi4LymN0b6yyCgmgL0J3eaKm4SyKJl9rK6Z7O4jQ==}
+    cpu: [arm64]
+    os: [win32]
+    bundledDependencies:
+      - '@ff-labs/fff-bin-win32-arm64'
+      - '@ff-labs/fff-node'
+      - '@napi-rs/keyring'
+      - '@napi-rs/keyring-win32-arm64-msvc'
+      - '@yuuang/ffi-rs-win32-arm64-msvc'
+      - ffi-rs
+      - node-addon-api
+      - node-pty
+
+  '@t3code/t3-win32-x64@0.0.45':
+    resolution: {integrity: sha512-voXiHGtb/L5sGiISLD8GSkfjJUUZgA74MlJs6hCviP2NGJ4REfRrc/G5mQ/022x8fLd5OubWfvfccg5danjmBA==}
+    cpu: [x64]
+    os: [win32]
+    bundledDependencies:
+      - '@ff-labs/fff-bin-win32-x64'
+      - '@ff-labs/fff-node'
+      - '@napi-rs/keyring'
+      - '@napi-rs/keyring-win32-x64-msvc'
+      - '@yuuang/ffi-rs-win32-ia32-msvc'
+      - '@yuuang/ffi-rs-win32-x64-msvc'
+      - ffi-rs
+      - node-addon-api
+      - node-pty
 
   '@testing-library/dom@10.4.2':
     resolution: {integrity: sha512-yzr2S9HyAIdhz2/6qHgbs665Q7PKVcDF05vsOlHPxG1mo36gKVesdYVeDLnXgfjJ03CrKRk08knc6+E/9m8v2Q==}
@@ -1032,6 +1113,8 @@ packages:
 
   '@types/react@19.3.0':
     resolution: {integrity: sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==}
+  '@types/nunjucks@3.2.6':
+    resolution: {integrity: sha512-pHiGtf83na1nCzliuAdq8GowYiXvH5l931xZ0YEHaLMNFgynpEqx+IPStlu7UaDkehfvl01e4x/9Tpwhy7Ue3w==}
 
   '@types/ws@8.18.2':
     resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
@@ -1363,6 +1446,9 @@ packages:
   '@yuku-toolchain/types@0.9.5':
     resolution: {integrity: sha512-KiuLNNgX9uNealaWAR+G3/cMXnRk9x4TY2EkYe/KIag+UPdwiA0RRf1hr1WAxzTP8KGzCTkqUdLPvqh32sEO3w==}
 
+  a-sync-waterfall@1.0.1:
+    resolution: {integrity: sha512-RYTOHHdWipFUliRFMCS4X2Yn2X8M87V/OpSqWzKKOGhzqyUxzyVmhHDH9sAvG+ZuQf/TAOFsLCpMw09I1ufUnA==}
+
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
     engines: {node: '>=6.5'}
@@ -1380,6 +1466,9 @@ packages:
 
   aria-query@5.3.0:
     resolution: {integrity: sha512-b0P0sZPKtyu8HkeRAfCq0IfURZK+SuwMjY1UXGBU27wpAiTwQAIlq56IbIO+ytk/JjS1fMR14ee5WBBfKi5J6A==}
+
+  asap@2.0.6:
+    resolution: {integrity: sha512-BSHWgDSAiKs50o2Re8ppvp3seVHXSRM44cdSsT9FfNEUUZLOGWVCsiWaRPWM1Znn+mqZ1OfVZ3z3DWEzSp7hRA==}
 
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
@@ -1429,6 +1518,9 @@ packages:
   clsx@2.1.1:
     resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
     engines: {node: '>=6'}
+  commander@5.1.0:
+    resolution: {integrity: sha512-P0CysNDQ7rtVw4QIQtm+MRxV66vKFSvlsQvGYXZWR3qFU0jlMKHZZZgw8e+8DSah4UDKMqnknRDQz+xuQXQ/Zg==}
+    engines: {node: '>= 6'}
 
   content-type@3.1.1:
     resolution: {integrity: sha512-GW4qUsfFo59d0HbUibDlWv5wPz+vAAcaTWbKIuKCf0JkC7wWkSyf8f13IpXn5JkeMlB2P8iTSSIjwXljorg2vA==}
@@ -1803,6 +1895,16 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
+  nunjucks@3.2.4:
+    resolution: {integrity: sha512-26XRV6BhkgK0VOxfbU5cQI+ICFUtMLixv1noZn1tGU38kQH5A5nmmbk/O45xdyBhD1esk47nKrY0mvQpZIhRjQ==}
+    engines: {node: '>= 6.9.0'}
+    hasBin: true
+    peerDependencies:
+      chokidar: ^3.3.0
+    peerDependenciesMeta:
+      chokidar:
+        optional: true
+
   obug@2.2.1:
     resolution: {integrity: sha512-XrsrhT5sybtKI6wakr2SPOlGZWWYbUXZ7a0jT8/QOeAPau+1X/bSegNe5YR75oJmEZQbKningirmGOEJCIk61Q==}
     engines: {node: '>=12.20.0'}
@@ -1978,6 +2080,9 @@ packages:
   tapable@2.3.3:
     resolution: {integrity: sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==}
     engines: {node: '>=6'}
+  t3@0.0.45:
+    resolution: {integrity: sha512-K67qRNKWQHdIyoQ8oCP/cK7lG9y23a1bDNaSsdGkvWJTVRySVd9nvYZS49LW6Ap+RF1nR9QBg/i4s0ovDHi96A==}
+    hasBin: true
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -2731,6 +2836,21 @@ snapshots:
 
   '@tanstack/store@0.11.2': {}
 
+  '@t3code/t3-darwin-arm64@0.0.45':
+    optional: true
+
+  '@t3code/t3-linux-arm64@0.0.45':
+    optional: true
+
+  '@t3code/t3-linux-x64@0.0.45':
+    optional: true
+
+  '@t3code/t3-win32-arm64@0.0.45':
+    optional: true
+
+  '@t3code/t3-win32-x64@0.0.45':
+    optional: true
+
   '@testing-library/dom@10.4.2':
     dependencies:
       '@babel/code-frame': 7.29.7
@@ -2773,6 +2893,7 @@ snapshots:
   '@types/react@19.3.0':
     dependencies:
       csstype: 3.2.3
+  '@types/nunjucks@3.2.6': {}
 
   '@types/ws@8.18.2':
     dependencies:
@@ -2978,6 +3099,8 @@ snapshots:
 
   '@yuku-toolchain/types@0.9.5': {}
 
+  a-sync-waterfall@1.0.1: {}
+
   abort-controller@3.0.0:
     dependencies:
       event-target-shim: 5.0.1
@@ -2996,6 +3119,8 @@ snapshots:
   aria-query@5.3.0:
     dependencies:
       dequal: 2.0.3
+
+  asap@2.0.6: {}
 
   assertion-error@2.0.1: {}
 
@@ -3053,6 +3178,7 @@ snapshots:
   clean-git-ref@2.0.1: {}
 
   clsx@2.1.1: {}
+  commander@5.1.0: {}
 
   content-type@3.1.1: {}
 
@@ -3332,6 +3458,12 @@ snapshots:
 
   nanoid@3.3.19: {}
 
+  nunjucks@3.2.4:
+    dependencies:
+      a-sync-waterfall: 1.0.1
+      asap: 2.0.6
+      commander: 5.1.0
+
   obug@2.2.1: {}
 
   once@1.4.0:
@@ -3532,6 +3664,13 @@ snapshots:
   tailwindcss@4.3.3: {}
 
   tapable@2.3.3: {}
+  t3@0.0.45:
+    optionalDependencies:
+      '@t3code/t3-darwin-arm64': 0.0.45
+      '@t3code/t3-linux-arm64': 0.0.45
+      '@t3code/t3-linux-x64': 0.0.45
+      '@t3code/t3-win32-arm64': 0.0.45
+      '@t3code/t3-win32-x64': 0.0.45
 
   tinybench@2.9.0: {}
 

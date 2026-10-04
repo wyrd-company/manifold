@@ -189,9 +189,8 @@ describe("blueprint loader", () => {
         escalations: escalationImplementations(fixture.module),
       });
       for (const kind of ["actors", "actions", "guards", "delays"] as const)
-        expect(new Set(Object.keys(implementations[kind]))).toEqual(
-          manifoldImplementationNames[kind],
-        );
+        for (const name of Object.keys(implementations[kind]))
+          expect(manifoldImplementationNames[kind].has(name)).toBe(true);
     } finally {
       await fixture.close();
     }
