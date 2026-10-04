@@ -54,23 +54,27 @@ design-challenges:
 proposed-design:
   high-level-overview: >-
     The ledger is `packages/service/src/ledger/`. Its only public surface is
-    `createLedger`, `parseLedgerPortfolio`, `LedgerError`, and their types,
-    exported from `packages/service/src/ledger/index.ts`. `createLedger`
-    receives an open SQLite connection, a parsed portfolio, and a clock. It
-    runs the table script of the `portfolio-ledger-tables` specification and
-    returns a `Ledger`. Writes append entries to `ledger_entries` inside a
-    savepoint. Reads load the sums they need with SQL and compute balances and
+    `createLedger`, `parseLedgerPortfolio`, `ledgerMigrationSteps`,
+    `LedgerError`, and their types, exported from
+    `packages/service/src/ledger/index.ts`. The service applies
+    `ledgerMigrationSteps` with the store's `migrate("ledger", steps)`, then
+    calls `createLedger` with the store's connection, a parsed portfolio, and
+    a clock. Its tables are specified in `portfolio-ledger-tables`. Writes
+    append entries to `ledger_entries` inside the connection's
+    transaction. Reads load the sums they need with SQL and compute balances and
     the sharing rule's answer with pure functions. The ledger holds no state
     between calls except the portfolio it was given; everything else is read
     from the database on each call, so a second `Ledger` on the same file
     reads the same balances.
   connection: |-
     The store owns the database file and the connection, opens it, sets its
-    pragmas, and closes it. The ledger receives the connection at construction
-    as `LedgerDatabase`, the smallest interface it uses. A `DatabaseSync` from
-    `node:sqlite` satisfies it structurally. The ledger uses positional `?`
-    parameters only. The ledger's tests open their own database file in a
-    temporary directory with `node:sqlite`.
+    pragmas, applies every owner's migrations, and closes it. The ledger
+    receives the connection at construction as `LedgerConnection`, the
+    smallest interface it uses. The store's `StoreConnection` satisfies it
+    structurally, and so does a bare `DatabaseSync` from `node:sqlite` paired
+    with a savepoint-based `transaction`. The ledger never runs DDL, never
+    sets a pragma, never closes the database, and touches only tables named
+    `ledger_<name>`. It uses positional `?` parameters only.
 
     ```ts
     export type LedgerSqlValue = null | number | bigint | string | Uint8Array;
@@ -82,10 +86,18 @@ proposed-design:
     }
 
     export interface LedgerDatabase {
-      exec(sql: string): void;
       prepare(sql: string): LedgerStatement;
     }
+
+    export interface LedgerConnection {
+      readonly database: LedgerDatabase;
+      transaction<T>(work: () => T): T; // nests by savepoint inside an open transaction
+    }
+
+    /** Migration steps for owner `ledger`, applied in order by the store's migrate. */
+    export const ledgerMigrationSteps: readonly string[];
     ```
+
   interface: |-
     Every operation is synchronous. Times are epoch milliseconds. Amounts are
     non-negative safe integers in the account's native unit; the ledger never
@@ -96,7 +108,7 @@ proposed-design:
     export function parseLedgerPortfolio(input: LedgerPortfolioInput): LedgerPortfolio;
 
     export function createLedger(options: {
-      database: LedgerDatabase;
+      connection: LedgerConnection;
       portfolio: LedgerPortfolio;
       now?: () => number; // defaults to Date.now
     }): Ledger;
@@ -249,13 +261,13 @@ proposed-design:
     the token id, so a replayed grant holds once. Settlement is keyed by
     actor.
   transactions: >-
-    Each write runs inside `SAVEPOINT ledger_write` and ends with `RELEASE
-    ledger_write`; on any error it runs `ROLLBACK TO ledger_write` and
-    `RELEASE ledger_write`, then rethrows. Outside a transaction the
-    savepoint is its own transaction, so a write is atomic. Inside the
-    caller's transaction it nests, so a gate's token and its reservation
-    commit or roll back together. Reads run plain statements. Calls are
-    synchronous, so two calls in one process never interleave.
+    Each write runs its checks, its operation row, and its entries inside one
+    `connection.transaction(work)` call, and the error of a failed write
+    propagates after the transaction rolls back. Outside a transaction the
+    call is its own transaction, so a write is atomic. Inside the caller's
+    transaction it nests as a savepoint, so a gate's token and its
+    reservation commit or roll back together. Reads run plain statements.
+    Calls are synchronous, so two calls in one process never interleave.
   reserve: >-
     Writes one `reserve` entry for the actor, item, and account. It throws
     `invalid-input` for an item the portfolio does not hold or an amount
@@ -352,11 +364,12 @@ proposed-design:
     guarantees totalling 100% and no ceiling, `R` is 0 up to rounding and the
     rule is a fixed split.
   convergence: >-
-    Every write runs in one savepoint, so a crash leaves it wholly written or
-    not at all. Running a write twice: credit, reserve, actual, and an
+    Every write runs in one transaction, so a crash leaves it wholly written
+    or not at all. Running a write twice: credit, reserve, actual, and an
     accepted move replay by key and write nothing; a refused move writes
     nothing and asks again; settle finds nothing left to retire. Construction
-    runs only `IF NOT EXISTS` statements. `setPortfolio` writes nothing.
+    and `setPortfolio` write nothing. Migration convergence belongs to the
+    store's `migrate`.
   errors: >-
     Every rejection is a `LedgerError` with a `code` of `invalid-portfolio`,
     `guarantee-limit`, `invalid-input`, `idempotency-conflict`,
@@ -366,15 +379,19 @@ proposed-design:
     validates again.
   module-layout: >-
     `index.ts` exports the public surface. `ledger.ts` holds `createLedger`
-    and the SQL. `portfolio.ts` holds `parseLedgerPortfolio`. `sharing-rule.ts`
-    and `balance.ts` hold the pure computations. `tables.sql` is a copy of the
-    specification's asset, loaded at construction, and a test asserts it is
-    byte-identical to `docs/specifications/portfolio-ledger-tables.sql`. The
-    module adds nothing to `packages/shared`.
+    and its SQL statements. `migrations.ts` holds `ledgerMigrationSteps`, an
+    array of SQL strings whose step 1 is the script of
+    `docs/specifications/portfolio-ledger-tables.sql`. `portfolio.ts` holds
+    `parseLedgerPortfolio`. `sharing-rule.ts` and `balance.ts` hold the pure
+    computations. The module adds nothing to `packages/shared` and does not
+    import the store.
   tests: |-
     Tests live in `packages/service/src/ledger/ledger.test.ts` and drive
     only the public interface, against a database file each test opens in a
-    temporary directory, with an injected clock. Values are generic: account
+    temporary directory with `node:sqlite`, with an injected clock. A test
+    helper applies `ledgerMigrationSteps` in order with `exec` and builds a
+    `LedgerConnection` from the `DatabaseSync` and a `transaction` that uses
+    `BEGIN IMMEDIATE` at the outermost call and `SAVEPOINT` when nested. Values are generic: account
     `acct`, items `alpha`, `beta`, `gamma`, actors `actor-1` and `actor-2`,
     one window `w1` from 0 to 1000 credited 100 unless a scenario says
     otherwise. The scenarios, each written red before green:
@@ -434,5 +451,8 @@ proposed-design:
     - Durability: a second `Ledger` on the same file returns the same
       balances and actor usage.
 
-    - Transaction: a reserve inside the caller's `BEGIN` that is rolled back
-      leaves no entry and no operation.
+    - Transaction: a reserve inside the caller's `transaction` whose work
+      then throws leaves no entry and no operation.
+
+    - Schema: the steps applied to an empty database produce the schema of
+      `docs/specifications/portfolio-ledger-tables.sql`.

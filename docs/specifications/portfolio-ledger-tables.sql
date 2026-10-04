@@ -4,12 +4,12 @@
 -- ---
 -- The portfolio ledger's tables. The ledger runs this script on the
 -- connection it receives, every time it is constructed. Every statement is
--- IF NOT EXISTS, so a second run changes nothing.
+--, so a second run changes nothing.
 
 -- One row per idempotent write: credit, reserve, actual, and move.
 -- `request` is the canonical JSON of the request (keys sorted), so a replay
 -- with the same key is compared to the first request field by field.
-CREATE TABLE IF NOT EXISTS ledger_operations (
+CREATE TABLE ledger_operations (
   key TEXT PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('credit', 'reserve', 'actual', 'move')),
   request TEXT NOT NULL,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS ledger_operations (
 -- One row per account window. The first credit of a window writes it.
 -- A window is current for its account from `opens_at` until a window with a
 -- later `opens_at` exists. `closes_at` is the expected reset, used by pacing.
-CREATE TABLE IF NOT EXISTS ledger_windows (
+CREATE TABLE ledger_windows (
   account TEXT NOT NULL,
   window_key TEXT NOT NULL,
   opens_at INTEGER NOT NULL,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS ledger_windows (
 ) STRICT;
 
 -- One row per settled actor. A settled actor reserves nothing more.
-CREATE TABLE IF NOT EXISTS ledger_settlements (
+CREATE TABLE ledger_settlements (
   actor TEXT PRIMARY KEY,
   at INTEGER NOT NULL
 ) STRICT;
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS ledger_settlements (
 --   move     carries an outstanding reservation from one item to another,
 --            as a pair of rows with the same operation and opposite signs.
 -- `amount` is an integer in the account's native unit.
-CREATE TABLE IF NOT EXISTS ledger_entries (
+CREATE TABLE ledger_entries (
   seq INTEGER PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('credit', 'actual', 'reserve', 'settle', 'move')),
   operation TEXT,
@@ -65,38 +65,38 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
 ) STRICT;
 
 -- Window sums: credits and actuals of one account window.
-CREATE INDEX IF NOT EXISTS ledger_entries_by_window
+CREATE INDEX ledger_entries_by_window
   ON ledger_entries (account, window_key, kind);
 
 -- Outstanding reservations: entries of one actor on one item and account.
-CREATE INDEX IF NOT EXISTS ledger_entries_by_actor
+CREATE INDEX ledger_entries_by_actor
   ON ledger_entries (actor, account, item);
 
 -- Append-only: every ledger table refuses UPDATE and DELETE.
-CREATE TRIGGER IF NOT EXISTS ledger_operations_no_update
+CREATE TRIGGER ledger_operations_no_update
   BEFORE UPDATE ON ledger_operations
   BEGIN SELECT RAISE(ABORT, 'ledger_operations is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS ledger_operations_no_delete
+CREATE TRIGGER ledger_operations_no_delete
   BEFORE DELETE ON ledger_operations
   BEGIN SELECT RAISE(ABORT, 'ledger_operations is append-only'); END;
 
-CREATE TRIGGER IF NOT EXISTS ledger_windows_no_update
+CREATE TRIGGER ledger_windows_no_update
   BEFORE UPDATE ON ledger_windows
   BEGIN SELECT RAISE(ABORT, 'ledger_windows is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS ledger_windows_no_delete
+CREATE TRIGGER ledger_windows_no_delete
   BEFORE DELETE ON ledger_windows
   BEGIN SELECT RAISE(ABORT, 'ledger_windows is append-only'); END;
 
-CREATE TRIGGER IF NOT EXISTS ledger_settlements_no_update
+CREATE TRIGGER ledger_settlements_no_update
   BEFORE UPDATE ON ledger_settlements
   BEGIN SELECT RAISE(ABORT, 'ledger_settlements is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS ledger_settlements_no_delete
+CREATE TRIGGER ledger_settlements_no_delete
   BEFORE DELETE ON ledger_settlements
   BEGIN SELECT RAISE(ABORT, 'ledger_settlements is append-only'); END;
 
-CREATE TRIGGER IF NOT EXISTS ledger_entries_no_update
+CREATE TRIGGER ledger_entries_no_update
   BEFORE UPDATE ON ledger_entries
   BEGIN SELECT RAISE(ABORT, 'ledger_entries is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS ledger_entries_no_delete
+CREATE TRIGGER ledger_entries_no_delete
   BEFORE DELETE ON ledger_entries
   BEGIN SELECT RAISE(ABORT, 'ledger_entries is append-only'); END;
