@@ -427,7 +427,11 @@ proposed-design:
     id each write their row; each
     validation rule rejects with its path and writes nothing, and the
     validation agrees with `router-events.schema.yml` on every fixture the
-    schema expresses, and every accepted outcome, including one for an
+    schema expresses; an event id that starts with U+0000, one that holds
+    U+0000 later, and two event ids that differ only in an unpaired
+    surrogate are each rejected at `/eventId` and write nothing, while an
+    event id that holds a newline is accepted, replays after a reopen, and
+    is told apart from every other id; and every accepted outcome, including one for an
     event id that holds a newline, validates against its publish outcome;
     the router's tables match `router-database-schema`;
     `publish` inside a caller's transaction that rolls back writes and

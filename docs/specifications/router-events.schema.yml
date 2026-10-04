@@ -53,8 +53,11 @@ $defs:
       source:
         $ref: "#/$defs/source-name"
       eventId:
+        description: >-
+          Non-empty, well-formed Unicode with no U+0000: no unpaired
+          surrogate code unit.
         type: string
-        minLength: 1
+        pattern: "^[^\\u0000\\uD800-\\uDFFF]+$"
       topics:
         type: array
         minItems: 1
@@ -112,7 +115,7 @@ $defs:
       eventId:
         description: "`<source>:<eventId>`."
         type: string
-        pattern: "^[a-z][a-z0-9-]{0,62}:[\\s\\S]+$"
+        pattern: "^[a-z][a-z0-9-]{0,62}:[^\\u0000\\uD800-\\uDFFF]+$"
       actorId:
         type: string
         minLength: 1

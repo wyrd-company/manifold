@@ -28,7 +28,8 @@ description: |-
   - `source` names the event source: a lower-case letter followed by at most
     62 lower-case letters, digits, and `-`. The name `deadline` belongs to
     the router's deadline loop, and no source publishes under it.
-  - `eventId` is the source's id for this event, a non-empty string unique
+  - `eventId` is the source's id for this event, a non-empty string of
+    well-formed Unicode that holds no U+0000, unique
     among the source's events: a webhook delivery id, a stream sequence, an
     action id. A source that learns of one change through two paths gives
     both the same id.
@@ -69,8 +70,8 @@ description: |-
 
   Outcome. `publish` returns a publish outcome. `accepted` carries `replay`,
   true when the source event was accepted before, and the inbox rows the
-  call wrote, one per target; a replay carries no rows. `rejected` carries one event issue per rule the
-  event breaks, each with the RFC 6901 JSON Pointer of the failing value in
+  call wrote, one per target; a replay carries no rows. `rejected` carries
+  one event issue per rule the event breaks, each with the RFC 6901 JSON Pointer of the failing value in
   the source event and a message; a rejected event writes nothing and
   reaches no actor. `publish` never throws for an event that breaks a rule.
 
@@ -98,4 +99,8 @@ validation-criteria: >-
   outcome the router returns validates against `#/$defs/publish-outcome`,
   across fixtures whose event ids hold any character a source event
   permits, a newline included, so that every accepted source event has a
-  valid accepted outcome.
+  valid accepted outcome. An event id that holds U+0000, at its start or
+  later, and one that holds an unpaired surrogate are rejected at
+  `/eventId` by the router and by the schema alike; a source name is held
+  to the same rule by its pattern. Two event ids the router accepts are
+  equal in `router_source_event` only when they are equal strings.
