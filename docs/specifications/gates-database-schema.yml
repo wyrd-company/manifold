@@ -37,9 +37,11 @@ description: |-
   state entry, and the entry time. A save that gives a different host
   entry id for the gated state is a new entry and replaces the row with a
   new entry id; a save that repeats the host entry id changes nothing. A
-  row written at resume has no host entry id until the actor's next save
-  in the gated state sets it. The row is deleted when a save leaves the
-  gated state or ends the actor. The entry time gives each member of the
+  row written at resume has no host entry id. The actor's next save that
+  stays in the same entry of the gated state sets it on the row and on the
+  token rows of that entry; a missing id is never compared with a present
+  one. The row is deleted when a save leaves the gated state or ends the
+  actor. The entry time gives each member of the
   population its age.
 
   Evaluations. `gates_evaluation` holds one row per comparator evaluation:

@@ -100,6 +100,8 @@ proposed-design:
       readonly probe?: () => void;
       /** Called after each transaction that publishes an item addition commits, with the content issues' node ids. */
       readonly onTracked?: (issueNodeIds: readonly string[]) => void;
+      /** Called after each committed transaction that changed a mirror row. */
+      readonly onMirrorChanged?: () => void;
     }
 
     /** The `github` section of the service configuration, defaults applied. */
@@ -552,6 +554,9 @@ proposed-design:
     `trackedIssue` answers. Both read the mirror synchronously, so a caller
     that reads them and acts in the same turn of the event loop sees no
     reconcile between. Intake reconciles against `trackedIssueIds`.
+    After each transaction that commits a change to a mirror row, whether or not
+    it publishes an event, the source calls `onMirrorChanged`. A transaction
+    that writes no mirror change, and a rolled-back one, call nothing.
   stop: >-
     `stop()` clears both timers, aborts the request in flight, and resolves
     when the runner has returned; the aborted work stays pending. `receive`
@@ -635,7 +640,10 @@ proposed-design:
     `trackedIssueIds` lists exactly the issues `trackedIssue` answers for. A matching push calls
     `pull` with its head once, a push to another branch or repository does
     not, and each sweep calls `pull()`. Every published event validates
-    against `github-events.schema.yml`. The source's tables match
+    against `github-events.schema.yml`. `onMirrorChanged` is called once
+    after a reconcile that removes an issue's last Project item, once after
+    one that marks an issue absent with no event, and not after a reconcile
+    that finds nothing changed. The source's tables match
     `github-source-database-schema`. Fault test, in a child Node process
     that sends itself `SIGKILL` from `probe`, between a reconcile's read
     and its commit, and whose kill signal the parent asserts: after a restart on the same

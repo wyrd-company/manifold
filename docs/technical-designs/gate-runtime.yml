@@ -191,12 +191,24 @@ proposed-design:
     gated state path or the actor has ended. So a save repeated for one
     entry keeps the entry id, the age, and the one token the entry may be
     granted, and a real re-entry gets a new entry id. `entry_id` is an
-    `AUTOINCREMENT` key, so no two entries share one. `afterDrain` writes
-    the entry row of a population member that has none, such as an actor
-    already in a state that a new revision gates, with the snapshot's saved
-    time as its entry time and no host entry id; the next save of that actor
-    in the gated state sets the host entry id on the row and keeps its
-    `entry_id`.
+    `AUTOINCREMENT` key, so no two entries share one.
+  bootstrap-entries: >-
+    `afterDrain` writes the entry row of a population member that has none,
+    such as an actor already in a state that a new revision gates, with the
+    snapshot's saved time as its entry time and no host entry id, since the
+    host gives that id only with a save. A grant to such an entry copies the
+    missing id into its token row. The next save of the actor whose
+    configuration holds the gated state path settles the identity. When the
+    save's `entered` list does not hold the gated state path, the actor has
+    stayed in the same entry: the hook adopts the save's host entry id on
+    the entry row and on every token row of that entry, and keeps the
+    `entry_id`, the entry time, and every token held. When the `entered`
+    list holds it, the actor left and entered again: the hook returns the
+    entry's `exit` tokens and replaces the row as for any new entry. A save
+    whose configuration does not hold the gated state path deletes the row
+    and returns its `exit` tokens. A missing host entry id is never compared
+    with a present one, so a restored entry never returns a token without an
+    exit.
   pass: >-
     A pass of one gate is synchronous. It starts when the gate has a
     comparator. Each step reads the members that can take a token, the
@@ -230,19 +242,18 @@ proposed-design:
   input-changes: >-
     Two inputs change outside the module: the ledger, when the service posts
     an actual, credits a window, or applies a new portfolio, and the GitHub
-    mirror, whose dependency graph and issue states give `criticalPath`. A
-    change to the mirror can change a member's `criticalPath` through a
-    transitive dependent that no member's actor hears, so the module does
-    not rely on member saves for it. `inputChanged()` marks every gate
-    dirty. The service calls it after each ledger write it makes outside a
-    gate, and after each `publish` by the GitHub event source that is
-    accepted and not a replay and whose event type is one `github-events`
-    lists for an issue's state, dependencies, or sub-issues. The service
-    gives the GitHub source a router whose `publish` calls the router's
-    `publish` and then, on such an outcome, `inputChanged`. The pass runs in
-    a later `setImmediate` callback, after the source's transaction around
-    `publish` has committed or rolled back; a pass after a rollback reads
-    unchanged rows and grants what the gate would grant anyway.
+    mirror, which gives `criticalPath` through `trackedIssue`. A change to
+    the mirror can change a member's `criticalPath` through a transitive
+    dependent that no member's actor hears, and some mirror changes publish
+    no event that names the change, such as the removal of an issue's last
+    Project item or an issue observed absent. So the module relies neither
+    on member saves nor on event types for it. `inputChanged()` marks every
+    gate dirty. The service calls it after each ledger write it makes
+    outside a gate, and passes it to the GitHub event source as
+    `onMirrorChanged`, which the source calls after each transaction it
+    commits that changes a mirror row, whatever it publishes, as
+    `github-event-source` states. The pass runs in a later `setImmediate`
+    callback, after that transaction has committed.
   grant: >-
     A grant for selection `s` runs in one `store.connection.transaction`.
     Its token id is `token:<entry_id>` of the selected member's entry row,
@@ -276,13 +287,15 @@ proposed-design:
     ended, the hook returns every token with reason `ended` and the snapshot
     status as its state. Else, for each token, it reads the return point of
     the gate in the actor's own version. A return point of `exit` is reached
-    when the saved configuration no longer holds the gated state path, or
-    when the gated state's host entry id in `entries` differs from the one
-    the token row records, which marks an exit and a re-entry. A return
-    point of `{ state: <path> }` is reached when the saved configuration
-    holds the path or the hook's `entered` list holds it, so a return state
-    that an eventless transition leaves in the same step still returns the
-    token. A reached return point returns the token with reason
+    when the saved configuration no longer holds the gated state path; or,
+    when the token row records a host entry id, when the gated state's id in
+    `entries` differs from it; or, when the token row records none, when the
+    hook's `entered` list holds the gated state path. The last two mark an
+    exit and a re-entry. The hook checks returns before it writes entries. A
+    return point of `{ state: <path> }` is reached when the saved
+    configuration holds the path or the hook's `entered` list holds it, so a
+    return state that an eventless transition leaves in the same step still
+    returns the token. A reached return point returns the token with reason
     `return-point` and the return point's path as its state. A return writes
     `returned_at`, `return_reason`, and `return_state` on the token row
     where `returned_at` is null, so a second return of the same token
@@ -424,8 +437,8 @@ proposed-design:
     `VersionLoad` and `RevisionLoad`, the process repository's revision
     `read`, the portfolio's `ledger.reserve`, `ledger.balance`, and
     `current().declaration.ledger.allocations`, the token lint's
-    `TokenLintResult` with `gates[].statePath`, `verdict`, `traps.has`, and
-    `configurationKey`, the GitHub source's `TrackedIssue`, and the
+    `TokenLintResult` with its `configurationKey` and its `gates[]` with
+    `statePath`, `verdict`, and `traps`, a `ReadonlySet<string>`, the GitHub source's `TrackedIssue`, and the
     escalations module's `raise({ kind, subject, question, choices })`,
     `withdraw({ kind, subject })`, and the escalation's `subject` and
     answer that a handler receives.
@@ -463,8 +476,8 @@ proposed-design:
     head revision and then `prepare`, and starts the router with
     `afterDrain`. It calls `revision` with every later revision it loads, in
     the order it pulls them. It calls `inputChanged` after each ledger write
-    it makes outside a gate, and gives the GitHub source the router wrapper
-    that `input-changes` describes.
+    it makes outside a gate, and gives it to the GitHub source as
+    `onMirrorChanged`.
   convergence: >-
     One entry into the gated state is granted at most one token: the token
     id is derived from the entry id and is the token row's primary key, and
@@ -547,17 +560,22 @@ proposed-design:
     comparator that throws, then a comparator that times out, each record a
     failure and the next input change runs the gate again; an actor in the
     gated state whose issue blocks two open tracked issues in a chain has
-    `criticalPath` 3, and a dependency cycle ends the walk; when only a
-    transitive dependent's issue closes, through the GitHub source's wrapped
-    `publish`, and the waiting actor takes no event, its gate evaluates
-    again with the smaller `criticalPath`; with two gates over one item and
-    account, a reservation granted by one gate runs the other gate again
-    with the smaller balance, with no actor save. Fault tests run the grant
-    loop in a child Node process that sends itself `SIGKILL` at each crash
-    point the `gate-xstate` spike names, after the token's inbox row is
-    written (`granted`), after the token is sent (the store's `sent`), and
-    after the holder's save (the store's `saved`), and at `granting`, inside
-    the grant's transaction. The parent asserts the kill signal, starts a
+    `criticalPath` 3, and a dependency cycle ends the walk; with the GitHub
+    source's `onMirrorChanged` wired to `inputChanged` and no save of the
+    waiting actor, its gate evaluates again with the smaller `criticalPath`
+    when a transitive dependent's issue closes, when only that dependent's
+    last Project item is removed, and when a reconcile observes it absent
+    and publishes no event; a population member restored with no entry row
+    is granted a token, saves in the same entry, and keeps the token across
+    a restart, while the same start followed by an exit and re-entry returns
+    an `exit` token; with two gates over one item and account, a reservation
+    granted by one gate runs the other gate again with the smaller balance,
+    with no actor save. Fault tests run the grant loop in a child Node
+    process that sends itself `SIGKILL` at each crash point the
+    `gate-xstate` spike names, after the token's inbox row is written
+    (`granted`), after the token is sent (the store's `sent`), and after the
+    holder's save (the store's `saved`), and at `granting`, inside the
+    grant's transaction. The parent asserts the kill signal, starts a
     router, gates, and ledger on the same file, and shows each token granted
     once, one reservation per token, holders counted once, and the grants
     that follow in the comparator's order. Values are generic and never
