@@ -1,0 +1,42 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged
+# rather than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: T3 Code deduplicates command ids by its implementation, not by a documented contract
+
+# GAP-EDGE: the risk schema declares no relationship-types; these edges connect
+# the design that relies on the behaviour and mitigates the risk.
+relationships:
+  related-to:
+    - t3code-environment-source
+  mitigated-by:
+    - agent-threads
+
+description: >-
+  T3 Code 0.0.45 keeps a receipt per orchestration command id and answers a
+  repeated command id with its first receipt, so a command sent twice is
+  applied once. Manifold relies on this to send `thread.create` and
+  `thread.turn.start` again after a crash without creating a second thread
+  or starting a second turn. The behaviour is measured and read from the
+  server source, and T3 Code documents no guarantee of it;
+  `@wyrd-company/t3code-client` treats command ids as attempt ids and mints
+  a new one per dispatch. Manifold runs with stable T3 Code releases it
+  does not control, and a release that stops keeping receipts, prunes them,
+  or keys them differently would let a re-sent command start a second turn
+  with no error.
+
+categories:
+  - technical
+
+likelihood: 2
+impact: 4
+
+response-strategy: mitigate
+# Mitigation: the agent-threads design's live test repeats the receipt
+# measurement against the server release the environment source targets,
+# and the derived message id and thread id keep a read-before-send
+# fallback open.
+
+status: mitigated

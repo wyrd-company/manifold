@@ -1,0 +1,141 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design
+# or to the specifications it builds on; `realizes` names the design this
+# contract serves and `references` the events and bindings it relies on.
+relationships:
+  realizes:
+    - agent-threads
+  references:
+    - blueprint
+    - t3code-thread-events
+    - bindings-declaration
+description: |-
+  Defines the implementations a blueprint invokes to create agent threads
+  and start turns on T3 Code: `thread-create` and `turn-start`, promise
+  actors, and `follow-thread`, an action. It defines their inputs, outputs,
+  and errors, and the ids their commands carry.
+  `docs/specifications/agent-threads.schema.yml` is the machine-readable
+  definition of each input, output, and error.
+
+  `thread-create`. Creates a thread in a T3code project on the invoking
+  actor's environment, `context.manifold.environment`, and resolves with
+  `{ threadId }`. Input:
+
+  - `project`, required: the id of the T3code project on that environment.
+  - `title`, required: a Nunjucks template for the thread's title.
+  - `values`: the object the template renders against. Default `{}`.
+  - `model`, required: the model selection, `instanceId`, the provider
+    instance on the server, and `model`, with optional `options` passed as
+    given.
+  - `runtimeMode`, required: `approval-required`, `auto-accept-edits`,
+    `auto`, or `full-access`, the permission the thread's agent runs with.
+  - `interactionMode`: `default` or `plan`. Default `default`.
+  - `branch` and `worktreePath`: passed to the server as given. Default
+    `null`.
+
+  `turn-start`. Starts a turn in a thread on the invoking actor's
+  environment from a prompt template, and resolves with
+  `{ threadId, messageId }`. Input:
+
+  - `threadId`, required: the thread, one the actor follows.
+  - `prompt`, required: the repository-relative path of a Nunjucks
+    template file in the process repository.
+  - `values`: the object the template renders against. Default `{}`.
+  - `model`: a model selection for this turn. Absent leaves the thread's.
+  - `runtimeMode` and `interactionMode`: as for `thread-create`. Absent
+    takes the thread's current mode.
+
+  `follow-thread`. An action written in the `onDone` of a `thread-create`
+  invoke. It appends `event.output.threadId` to `context.manifold.threads`
+  unless the list holds it, so the actor's subscription follows the
+  thread's topic.
+
+  ```yaml
+  working:
+    initial: opening
+    on:
+      t3.turn.settled:
+        target: reviewing
+    states:
+      opening:
+        invoke:
+          src: thread-create
+          input:
+            type: expression.map
+            params:
+              expression: >-
+                { "project": context.workspace, "title": "Parcel {{ parcel }}",
+                  "values": context, "runtimeMode": "approval-required",
+                  "model": { "instanceId": "agent", "model": "default" } }
+          onDone:
+            target: prompting
+            actions:
+              - follow-thread
+              - type: expression.assign
+                params:
+                  expression: '{ "thread": event.output.threadId }'
+      prompting:
+        invoke:
+          src: turn-start
+          input:
+            type: expression.map
+            params:
+              expression: >-
+                { "threadId": context.thread,
+                  "prompt": "templates/parcel.njk", "values": context }
+          onDone: waiting
+      waiting: {}
+  ```
+
+  Templates. Templates are Nunjucks, rendered with autoescape off and an
+  undefined value an error. They are read from the process repository at
+  the commit of the actor's blueprint version; an `include`, `import`, or
+  `extends` names another repository-relative path at that commit. A
+  rendered title or prompt is trimmed of surrounding whitespace, and must
+  not be empty.
+
+  Ids. Each command carries ids derived from the invocation: the actor id,
+  the invoke id, and the entry id of the invoking state. An id of kind `k`
+  is a UUID made from the SHA-256 digest of the UTF-8 bytes of
+  `manifold.agent-threads`, `k`, the actor id, the invoke id, and the entry
+  id, joined by U+0000: the first 16 bytes of the digest, with the high
+  four bits of byte 6 set to `1000` and the high two bits of byte 8 set to
+  `10`, written as 32 lowercase hexadecimal digits grouped 8-4-4-4-12.
+
+  | Implementation | Kind | Carried as |
+  | --- | --- | --- |
+  | `thread-create` | `thread-create/command` | `commandId` of `thread.create` |
+  | `thread-create` | `thread-create/thread` | `threadId` of `thread.create`, and the output's `threadId` |
+  | `turn-start` | `turn-start/command` | `commandId` of `thread.turn.start` |
+  | `turn-start` | `turn-start/message` | `message.messageId` of `thread.turn.start`, and the output's `messageId` |
+
+  Errors. A failure rejects the promise with an agent thread error, a plain
+  object: `name` `AgentThreadError`, `kind`, and `message`, and for
+  `rejected` the server's message as `serverMessage`. Kinds:
+
+  - `input`: the input fails its schema.
+  - `environment`: the actor has no environment, or service configuration
+    declares none of that name.
+  - `archived`: `thread-create` for an actor whose GitHub Project binding
+    is archived.
+  - `template`: a template is missing, does not parse, reads an undefined
+    value, or renders empty.
+  - `rejected`: the server rejected the command, or rejected it before
+    and was sent it again.
+  - `unauthorized`: the server or the client refused the token, or the
+    token lacks the scope the command needs.
+
+  A lost connection or one that cannot open is retried with the same ids,
+  and never rejects the promise.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/agent-threads.schema.yml` is a valid JSON Schema
+  2020-12 document. The module's tests validate every input they invoke
+  with against its definition, every output against its definition, and
+  every rejection against `#/$defs/error`, and show that an input the
+  schema rejects fails with `input`. A test derives each kind of id for a
+  fixture invocation and compares it with a fixed expected UUID, shows that
+  the same invocation gives the same ids, and that a different entry id
+  gives different ids. A test shows that the example in this specification
+  lints clean with `thread-create`, `turn-start`, and `follow-thread` among
+  the implementation names, given its context and output schemas.

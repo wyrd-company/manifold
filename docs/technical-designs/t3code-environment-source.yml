@@ -197,8 +197,9 @@ proposed-design:
     The client's credential store for an environment reads the bearer access
     token from the `tokenFile` of the environment's `t3code-token`
     credential each time it is asked, and refuses every write, so the token
-    the operator places in the file is the only one used. The token needs
-    the `orchestration:read` scope.
+    the operator places in the file is the only one used. The source needs
+    the token's `orchestration:read` scope; the same credential serves the
+    commands of `agent-threads`, which need `orchestration:operate`.
   failures: >-
     Each environment runs its own loop, and an error in one is caught at
     that loop: it is logged with the environment name, and the environment's

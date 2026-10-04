@@ -6,6 +6,7 @@ relationships:
     - portfolio
     - store
     - escalations
+    - agent-threads
 objective: >-
   Deliver events from shared sources to state machine actors so that no
   event is lost across a service interruption, a resumed actor continues
@@ -230,8 +231,11 @@ proposed-design:
     of one change through two paths, a webhook and a sweep, gives both the
     same event id, as its specification defines. Commands an actor sends
     carry ids derived from the actor id and the id of the event being
-    delivered, so a replayed delivery re-sends the same command and the
-    receiver deduplicates.
+    delivered, and commands an invoked promise sends carry ids derived from
+    the actor id, the invoke id, and the entry id of the invoking state, so
+    a replayed delivery or a restarted promise re-sends the same command
+    and the receiver deduplicates, as `agent-threads` does with T3 Code's
+    command receipts.
   deadlines: >-
     A delayed transition in a blueprint becomes a deadline row: actor id,
     state path, fire time, event name. The row is armed in the transaction

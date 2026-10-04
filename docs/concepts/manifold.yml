@@ -219,9 +219,6 @@ open-questions:
     Which implementations carry git and worktree operations, such as
     confirming a merge and removing a worktree, so a process can express
     cleanup without shelling out from Manifold.
-  Q02: >-
-    How an actor recovers from a crash between sending a turn and receiving its
-    receipt without sending a second turn.
   Q03: >-
     Whether an all-or-none release strategy needs a batch identity on tasks
     beyond what the population carries.

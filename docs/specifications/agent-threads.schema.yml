@@ -1,0 +1,115 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: agent-threads
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/agent-threads
+title: Agent threads
+description: >-
+  The inputs, outputs, and errors of the `thread-create` and `turn-start`
+  implementations.
+$defs:
+  id:
+    description: An id as the T3 Code server takes it.
+    type: string
+    minLength: 1
+    pattern: "\\S"
+  template:
+    description: A Nunjucks template.
+    type: string
+    minLength: 1
+  repository-path:
+    description: A repository-relative path with `/` separators.
+    type: string
+    pattern: "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))(?!.*//)[^\\\\]+$"
+  values:
+    description: The object the templates render against.
+    type: object
+    default: {}
+  model:
+    type: object
+    required: [instanceId, model]
+    properties:
+      instanceId:
+        $ref: "#/$defs/id"
+      model:
+        $ref: "#/$defs/id"
+      options:
+        type: object
+    additionalProperties: false
+  runtime-mode:
+    enum: [approval-required, auto-accept-edits, auto, full-access]
+  interaction-mode:
+    enum: [default, plan]
+  thread-create-input:
+    type: object
+    required: [project, title, model, runtimeMode]
+    properties:
+      project:
+        $ref: "#/$defs/id"
+      title:
+        $ref: "#/$defs/template"
+      values:
+        $ref: "#/$defs/values"
+      model:
+        $ref: "#/$defs/model"
+      runtimeMode:
+        $ref: "#/$defs/runtime-mode"
+      interactionMode:
+        $ref: "#/$defs/interaction-mode"
+        default: default
+      branch:
+        type: [string, "null"]
+        default: null
+      worktreePath:
+        type: [string, "null"]
+        default: null
+    additionalProperties: false
+  thread-create-output:
+    type: object
+    required: [threadId]
+    properties:
+      threadId:
+        $ref: "#/$defs/id"
+    additionalProperties: false
+  turn-start-input:
+    type: object
+    required: [threadId, prompt]
+    properties:
+      threadId:
+        $ref: "#/$defs/id"
+      prompt:
+        $ref: "#/$defs/repository-path"
+      values:
+        $ref: "#/$defs/values"
+      model:
+        $ref: "#/$defs/model"
+      runtimeMode:
+        $ref: "#/$defs/runtime-mode"
+      interactionMode:
+        $ref: "#/$defs/interaction-mode"
+    additionalProperties: false
+  turn-start-output:
+    type: object
+    required: [threadId, messageId]
+    properties:
+      threadId:
+        $ref: "#/$defs/id"
+      messageId:
+        $ref: "#/$defs/id"
+    additionalProperties: false
+  error:
+    type: object
+    required: [name, kind, message]
+    properties:
+      name:
+        const: AgentThreadError
+      kind:
+        enum: [input, environment, archived, template, rejected, unauthorized]
+      message:
+        type: string
+      serverMessage:
+        type: string
+    additionalProperties: false

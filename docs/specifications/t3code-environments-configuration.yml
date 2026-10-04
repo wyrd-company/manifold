@@ -6,6 +6,7 @@ $schema: https://refinery.systems/ontology/specification
 relationships:
   realizes:
     - t3code-environment-source
+    - agent-threads
   references:
     - service-configuration
     - bindings-declaration
@@ -42,7 +43,9 @@ description: |-
 
   Credential kind `t3code-token`. A bearer access token for a T3 Code
   server, issued by `t3 auth session issue` or by exchanging a pairing
-  token, with the `orchestration:read` scope. `tokenFile` is the path of a
+  token, with the `orchestration:read` scope, which the environment source
+  uses, and the `orchestration:operate` scope, which the thread and turn
+  commands of `agent-threads` use. `tokenFile` is the path of a
   file holding the token as its only content, surrounding whitespace
   ignored; a relative path resolves against the directory of the
   configuration file. The source reads the file at each connection

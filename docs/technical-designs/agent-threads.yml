@@ -1,0 +1,324 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - t3code-environment-source
+    - durable-event-delivery
+    - blueprint-loader
+    - process-repository
+  mitigates:
+    - t3code-command-receipts-undocumented
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  references:
+    - agent-threads
+    - t3code-thread-events
+    - t3code-environments-configuration
+    - bindings-declaration
+objective: >-
+  Let a blueprint create agent threads on T3 Code and start turns in them
+  from templates in the process repository, so that a thread is created
+  once and a turn is started once for each entry of the state that asks for
+  it, across a crash at any point between sending the command and saving
+  its result.
+background:
+  problems:
+    - >-
+      A turn sent twice is an agent doing the work twice. An invoked promise
+      that was running at a crash starts again with its actor, so whatever
+      it sent before the crash, it sends again.
+    - >-
+      A crash after the server accepts a command and before the actor saves
+      the result leaves Manifold with no record that the command was sent.
+    - >-
+      T3 Code 0.0.45 never links a user message to the turn that takes it,
+      and the thread changes the environment source publishes carry no
+      message id.
+    - >-
+      Thread changes of a followed thread reach the actor as soon as the
+      server records them, which can be before the actor takes the result
+      of the command that started the turn.
+design-challenges:
+  exactly-once: >-
+    A command re-sent after a crash must leave the server as if it was sent
+    once: one thread, one user message, one turn.
+  identity: >-
+    The id of a command must be fixed before it is sent, the same each time
+    the same state entry sends it, and different for every other entry.
+  following: >-
+    The actor must take every change of the turn it started, including
+    changes the source publishes before the actor takes the command's
+    result.
+  templates: >-
+    A thread name and a prompt are rendered from Nunjucks templates in the
+    process repository, and a template error must reach the blueprint as an
+    error it can handle.
+proposed-design:
+  high-level-overview: >-
+    The agent threads module, `packages/service/src/agent-threads/`, gives
+    the implementation registry two promise implementations, `thread-create`
+    and `turn-start`, and one action, `follow-thread`. Each promise derives
+    its ids from the invocation, the actor id, invoke id, and entry id that
+    the actor host's `invocationOf(args)` reads, renders its template from
+    the process repository at the commit of the actor's blueprint version,
+    and sends one T3 Code orchestration command through a `T3Client` it
+    holds for the actor's environment. The T3 Code server records a receipt
+    for every command id in the transaction that stores the command's
+    events, and answers a command id it holds a receipt for with that
+    receipt and nothing else, so a re-sent command does nothing a second
+    time. The inputs, outputs, errors, and id derivation are specified in
+    `agent-threads`.
+  command-ids: >-
+    Every id a command carries is derived before the command is sent, from
+    the invocation alone: the command id, and the thread id of
+    `thread.create` or the message id of `thread.turn.start`. An id is a
+    UUID made from the SHA-256 digest of the namespace
+    `manifold.agent-threads`, the id's kind, the actor id, the invoke id,
+    and the entry id, as `agent-threads` defines. The same state entry gives
+    the same ids at every attempt, before and after a restart. A new entry
+    of the state, such as a blueprint that leaves a state and enters it
+    again, gives new ids, so it creates a new thread or starts a new turn.
+    The invoke id is in the derivation so that two invokes in one state
+    entry never share an id.
+  server-receipts: >-
+    T3 Code 0.0.45 keeps one receipt per command id in its database, with
+    the aggregate the command targeted, its status, and the sequence of
+    its last event, written in the transaction that appends the command's
+    events. Before it decides a command, the server reads the receipt for
+    its id. An accepted receipt for the same aggregate answers with the
+    receipt's sequence and appends nothing. A rejected receipt answers with
+    a rejection that names the first rejection. A receipt for another
+    aggregate answers with a rejection that refuses to replay it. Receipts
+    are never deleted. Evidence status, measured against `t3` 0.0.45
+    started on a loopback port with its own data directory: `thread.create`
+    sent twice with one command id answered the same sequence both times,
+    and the thread kept the first title; `thread.turn.start` sent three
+    times with one command id answered the same sequence each time, and
+    the thread held one user message and one turn; a turn start with a
+    command id already used for another thread was rejected; a rejected
+    command sent again was rejected as previously rejected; both commands
+    sent again after the server was killed with `SIGKILL` and restarted on
+    the same data directory answered their first sequences, and the thread
+    held one user message. Reading the 0.0.45 source agrees: the
+    orchestration engine checks the receipt before the decider runs, and
+    no statement deletes a receipt. The live test repeats the measurement
+    against the server release the environment source targets.
+  thread-create: >-
+    `thread-create` takes a T3code project id, a title template, the
+    values the templates render against, a model selection, a runtime
+    mode, and optionally an interaction mode, a branch, and a worktree
+    path. It reads the invoking actor through `actorOf`, refuses an actor
+    with no environment, or whose binding is archived, renders the title,
+    and sends `thread.create` with the derived command id and thread id.
+    It resolves with `{ threadId }`. The blueprint takes the output in the
+    invoke's `onDone`: the `follow-thread` action appends the id to
+    `context.manifold.threads`, so the actor's subscription follows the
+    thread's topic from that save, and an `expression.assign` may store it
+    at any other path the blueprint names. The runtime mode is required,
+    since it is the permission the thread's agent runs with, and Manifold
+    sets no permission a process did not declare.
+  turn-start: >-
+    `turn-start` takes a thread id, a prompt template path, the values the
+    template renders against, and optionally a model selection, a runtime
+    mode, and an interaction mode. A mode it is not given is the thread's
+    current mode, read from the server's shell before the command. It
+    renders the prompt and sends `thread.turn.start` with the derived
+    command id and message id, a user message holding the rendered text and
+    no attachments. It resolves with `{ threadId, messageId }`. The thread
+    is one the actor follows, so the turn's changes reach the actor through
+    routing by the thread's topic.
+  follow-thread: >-
+    `follow-thread` is an assign action that appends `event.output.threadId`
+    to `context.manifold.threads` when the list does not hold it already, so
+    taking it twice follows the thread once. It is written in the `onDone`
+    of a `thread-create` invoke. Written anywhere else, where the event has
+    no `output.threadId` string, it throws and the actor errors.
+  following-the-turn: >-
+    The actor follows a thread from the save that appends it to
+    `context.manifold.threads`. From then on the router writes every change
+    the environment source publishes for the thread to the actor's inbox,
+    whatever state the actor is in. A turn's changes can be taken before
+    `turn-start` resolves: live, when the server starts the turn before the
+    actor takes the command's result, and after a restart, when resume
+    drains the actor's pending rows while the restarted promise is still
+    sending. A blueprint therefore takes a turn's changes on a state that
+    encloses the invoking state, so a change taken while the invoke runs
+    exits it like one taken after. A change that exits the invoking state
+    stops the promise, and its result is not taken; the command it sent is
+    already accepted. T3 Code links no message to its turn, so the turn the
+    actor started is the first turn in the thread whose start the actor
+    takes after it entered the invoking state. A thread the actor alone
+    drives has no other.
+  templates: >-
+    Templates are Nunjucks. The title is an inline template in the input.
+    The prompt is the repository-relative path of a template file. Both are
+    rendered against the input's `values`, which the blueprint maps from
+    the actor's context. Templates are read from the process repository at
+    the commit of the actor's blueprint version, through `revisionAt`, so a
+    restored actor renders the templates its blueprint was written with.
+    Each render uses a Nunjucks environment whose loader reads only that
+    revision, so an `include`, `import`, or `extends` resolves to another
+    repository-relative path at the same commit. Autoescape is off, since
+    the output is a prompt, not HTML, and an undefined value throws. A
+    template that is missing, does not parse, reads an undefined value, or
+    renders to text that is empty after trimming fails the invoke with a
+    `template` error. Templates are trusted as the process repository is:
+    they render in the service process, and a template can run whatever
+    Nunjucks lets a template run.
+  clients: >-
+    The module holds one `T3Client` per environment, created on the first
+    command for the environment, with the environment's `url`, `reconnect`
+    backoff, `heartbeat`, and `openTimeoutMs`, and a credential store that
+    reads the token file of the environment's `t3code-token` credential each
+    time it is asked and refuses every write, as the environment source
+    does. Commands go through the client's `threads.dispatcher.dispatch`,
+    which sends over the socket and falls back to
+    `POST /api/orchestration/dispatch` when the socket cannot open. The
+    module adds no client release: `dispatch` takes a command with the ids
+    the module derived.
+  credentials: >-
+    The token of an environment's `t3code-token` credential needs the
+    `orchestration:operate` scope for `thread.create` and
+    `thread.turn.start`, and the `orchestration:read` scope the environment
+    source and the mode read use. One credential per environment serves
+    both modules.
+  failures: >-
+    A failure that leaves the command's fate unknown is retried, and every
+    other failure fails the invoke. A connection that is lost or cannot
+    open is retried with the same command and the same ids after the next
+    delay of the environment's `reconnect` backoff, with no limit, until
+    the server answers or the invoke is stopped; the receipt makes a retry
+    of a command the server already accepted answer its first result.
+    Otherwise the promise rejects with an agent thread error, a plain
+    object so that it survives a snapshot save and expression evaluation,
+    whose `kind` is one of: `input`, an input that fails its schema;
+    `environment`, an actor with no environment or one service
+    configuration does not declare; `archived`, a `thread-create` through
+    an archived binding; `template`, a template error; `rejected`, a
+    command the server rejects, with the server's message, including a
+    command rejected before and sent again; and `unauthorized`, a token the
+    server or the client refuses, or one without the scope the command
+    needs. A rejected command stays rejected for its state entry, since its
+    ids are the same, so a blueprint that retries leaves the state and
+    enters it again.
+  public-interface: |-
+    `packages/service/src/agent-threads/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { Logger } from "@wyrd-company/t3code-client";
+    import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
+    import type { Invocation } from "../actor-host/index.ts";
+    import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
+    import type { EnvironmentsConfiguration } from "../t3code-source/index.ts";
+
+    export function openAgentThreads(options: AgentThreadsOptions): AgentThreads;
+
+    export interface AgentThreadsOptions {
+      /** The loaded `environments` section, defaults applied. */
+      readonly environments: EnvironmentsConfiguration;
+      /** Resolves a `t3code-token` credential name to its token file path. */
+      readonly tokenFile: (credential: string) => string;
+      /** What the actor host holds for the invoking actor; undefined for an actor it does not hold. */
+      readonly actorOf: (invocation: Invocation) => InvokingActor | undefined;
+      readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
+      /** Called after the server answers a command and before the promise resolves. */
+      readonly probe?: (accepted: AcceptedCommand) => void;
+      readonly logger?: Logger;
+    }
+
+    export interface InvokingActor {
+      /** `context.manifold.environment`. */
+      readonly environment: string | undefined;
+      /** The commit of the actor's blueprint version. */
+      readonly commit: string;
+      /** Whether the binding of the actor's GitHub Project is archived. */
+      readonly archived: boolean;
+    }
+
+    export interface AcceptedCommand {
+      readonly implementation: "thread-create" | "turn-start";
+      readonly commandId: string;
+      readonly sequence: number;
+    }
+
+    export interface AgentThreads {
+      /** `thread-create`, `turn-start`, and `follow-thread`. */
+      readonly implementations: ImplementationRegistry;
+      /** Stops retries, closes every client; resolves when they are closed. */
+      stop(): Promise<void>;
+    }
+
+    export type { AgentThreadError, AgentThreadErrorKind } from "./types.ts";
+    ```
+
+    `actorOf` answers from what the actor host holds before it starts or
+    restores an actor: the `context.manifold` of its input or snapshot and
+    the version of the blueprint it loaded, so an invoke in an initial
+    state reads the same answer as any other.
+  module-layout: >-
+    `index.ts` re-exports the public names. `ids.ts` holds the pure id
+    derivation. `inputs.ts` validates each input against its schema at the
+    boundary. `templates.ts` renders a title and a prompt from a revision.
+    `commands.ts` builds each command from the ids, the input, and the
+    rendered text, and maps a client error to a kind. `clients.ts` holds the
+    client per environment. `dispatch.ts` sends a command and retries a
+    connection failure. `implementations.ts` builds the registry part.
+    Tests import only `index.ts`.
+  convergence: >-
+    `thread-create` run twice for one state entry sends one command id with
+    one thread id, so the server creates one thread and answers both with
+    the first sequence. A crash before the server records the command
+    leaves nothing on the server, and the restarted promise sends it as the
+    first time. A crash after the server records it and before the actor
+    saves the result restarts the promise, which sends it again and is
+    answered with the first receipt. `turn-start` converges the same way:
+    one user message and one turn per state entry. `follow-thread` twice
+    follows the thread once. A command the server rejected is rejected
+    again with the same kind. A stop during a retry sends nothing more. A
+    promise stopped by a state exit while its command is in flight leaves
+    the command's fate to the server; a later entry sends new ids.
+  dependencies: >-
+    `@wyrd-company/t3code-client` 0.5.0, the release the environment source
+    uses: `T3Client`, `threads.dispatcher.dispatch`, `threads.get`,
+    `commandId`, `threadId`, and `messageId`. `nunjucks` for templates, with
+    its own type declarations from `@types/nunjucks`. The module reads the
+    process repository through the `revisionAt` its options give it.
+  tests: >-
+    Tests run against the fake T3 Code server of the environment source's
+    test suite, which also answers `orchestration.dispatchCommand` and
+    `POST /api/orchestration/dispatch` with receipts that behave as the
+    server receipts measured above: the same command id for the same
+    aggregate answers the first sequence and appends nothing, a rejected id
+    is rejected again, and an id used for another aggregate is rejected.
+    Behaviours proved, each red before green, through a real router, store,
+    and actor host: a blueprint that invokes `thread-create` and then
+    `turn-start` creates one thread with the rendered title, starts one
+    turn with the rendered prompt, and takes the turn's `t3.turn.started`
+    and `t3.turn.settled` from the environment source; ids are the same for
+    one entry and differ for a second entry of the same state; `thread-create`
+    through an archived binding, for an actor with no environment, and with
+    an input that fails its schema each fail with their kind; a missing
+    template, a template that does not parse, an undefined value, an
+    `include` of a missing path, and an empty render each fail with
+    `template`; a command the server rejects fails with `rejected` and the
+    server's message, and fails the same way when the state is entered
+    again with the same ids replayed; a token without
+    `orchestration:operate` fails with `unauthorized`; a connection that
+    drops after the server accepts and before it answers is retried and the
+    server holds one turn; and `follow-thread` taken twice follows once.
+    The fault tests run the service in a child Node process, which kills
+    itself with `SIGKILL` from the `probe` after the server answers and
+    before the result is saved, and the test asserts the signal, starts it
+    again on the same file, and checks the fake server: after a kill in
+    `turn-start`, the thread holds exactly one user message and one turn,
+    and the actor reaches the state its blueprint enters on that turn's
+    `t3.turn.settled`; after a kill in `thread-create`, the project holds
+    one thread, and the actor follows it. The live test, run by the service
+    package's `test:live` script and not by `task check`, starts the `t3`
+    release the environment source targets, pinned as a devDependency, on a
+    loopback port with its own data directory and a provider instance that
+    is not configured, so no agent runs, and repeats the receipt
+    measurement: `thread.create` and `thread.turn.start` each sent twice
+    with one command id, and again after the server is killed with `SIGKILL`
+    and restarted, give one thread and one user message. Values are generic
+    and never drawn from Manifold's own domain.
