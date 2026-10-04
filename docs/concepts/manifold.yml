@@ -44,9 +44,10 @@ properties:
     interaction, in or out of Manifold, is an event an actor can subscribe to.
   event-source: >-
     A shared origin of events Manifold owns and routes: GitHub webhooks and
-    polling, usage from each host CLI, and one thread stream per
-    environment. An answer to an escalation is not routed: it reaches the
-    actor through the state that asked. A blueprint declares event names; Manifold
+    polling, and one thread stream per environment. An answer to an
+    escalation is not routed: it reaches the actor through the state that
+    asked. Usage is not routed either: each host CLI pushes it to
+    Manifold's usage endpoint, which posts it to the ledger. A blueprint declares event names; Manifold
     derives the subscriptions from the actor's identity, its issue and
     thread ids, over hierarchical topics.
   durability: >-
