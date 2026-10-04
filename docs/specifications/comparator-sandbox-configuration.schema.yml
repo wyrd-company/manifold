@@ -5,8 +5,9 @@
 #   asset-of: comparator-sandbox-configuration
 # ---
 $schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/comparator-sandbox-configuration
 title: Comparator sandbox configuration
-description: The value of the `comparatorSandbox` key of the service configuration.
+description: The value of the `comparatorSandbox` section of the service configuration.
 type: object
 additionalProperties: false
 properties:

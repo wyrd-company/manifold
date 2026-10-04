@@ -117,7 +117,7 @@ proposed-design:
   limits: >-
     `timeoutMs` is the per-evaluation timeout, default 100.
     `memoryLimitMiB` is the maximum linear memory per loaded comparator,
-    default 32. The service reads both from the `comparatorSandbox` key of its
+    default 32. The service reads both from the `comparatorSandbox` section of its
     configuration, per `comparator-sandbox-configuration`, and passes them to
     `createComparatorSandbox`. Each loaded comparator owns one
     `WebAssembly.Memory` whose maximum is `memoryLimitMiB`. This bound includes

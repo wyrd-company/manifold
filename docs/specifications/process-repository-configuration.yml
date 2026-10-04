@@ -1,0 +1,37 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design this contract serves.
+  realizes:
+    - process-repository
+description: >-
+  Defines the `processRepository` section of the service configuration,
+  specified by `service-configuration`: which repository the service clones,
+  which branch it follows, how it authenticates, and where it keeps the
+  clone. `docs/specifications/process-repository-configuration.schema.yml`
+  is the machine-readable definition of the section's value.
+
+  `url` is the smart HTTP URL of the remote, `https://` or `http://`. A
+  URL with `http://` is valid only when `credential` is absent, so that a
+  credential is never sent in clear text. Required.
+
+  `branch` is the branch the service follows. Each pull moves the current
+  commit to the branch's commit on the remote. Default `main`.
+
+  `credential` is the name of a credential in the `credentials` section.
+  The service uses it to authenticate when the remote asks for
+  authentication. A `github-app` credential authenticates with an
+  installation token scoped to this one repository with `contents: read`.
+  Absent for a repository that needs no authentication.
+
+  `directory` is the directory that holds the bare clone and the current
+  commit. A relative path resolves against the directory of the
+  configuration file. The service creates it when absent, and one service
+  process uses it at a time. Required.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/process-repository-configuration.schema.yml` is a
+  valid JSON Schema 2020-12 document. The service rejects a configuration
+  whose `processRepository` value the schema rejects, naming the property;
+  rejects a `credential` that `credentials` does not define, naming it; and
+  rejects an `http://` URL with a credential, at `/processRepository/url`.

@@ -4,11 +4,17 @@ relationships:
   # design; `realizes` is the best fit for the design whose limits this is.
   realizes:
     - comparator-sandbox
+  # GAP-EDGE: no edge names the specification that composes this section;
+  # `references` is the best fit for the root it is a section of.
+  references:
+    - service-configuration
 description: >-
-  Defines the `comparatorSandbox` key of the service configuration: the
-  limits every comparator evaluation runs under.
+  Defines the `comparatorSandbox` section of the service configuration,
+  whose root is specified by `service-configuration`: the limits every
+  comparator evaluation runs under.
   `docs/specifications/comparator-sandbox-configuration.schema.yml` is the
-  machine-readable definition of the key's value.
+  machine-readable definition of the section's value, with the `$id` the
+  root references.
 
   `timeoutMs` is the per-evaluation timeout in milliseconds. An evaluation
   whose duration exceeds it fails with kind `timeout`. It is an integer of
@@ -21,8 +27,8 @@ description: >-
   lies within the 16 MiB to 2 GiB memory the QuickJS wasm binary imports.
   Default 32.
 
-  The key and each property are optional; an absent value takes its
-  default. The service reads the key when it starts, and the limits apply to
+  The section and each property are optional; an absent value takes its
+  default. The service reads the section when it starts, and the limits apply to
   every comparator it loads.
 format: json-schema
 validation-criteria: >-

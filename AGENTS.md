@@ -94,6 +94,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **promise** an invoked implementation actor that finishes once, with an output or an error.
 - **provider** means the agent runtime or harness T3 Code talks to, such as Codex, Claude, Cursor, Grok, or OpenCode.
 - **reservation** an estimate held against a portfolio item's available balance from a task's release until settlement.
+- **revision** the process repository's declared files at one commit, read-only.
 - **router** delivers an event from a source to the actors whose identity matches its topic.
 - **service** the running Manifold service
 - **session** the entire end-to-end conversation or workflow containing multiple agent turns

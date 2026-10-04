@@ -1,0 +1,39 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: process-repository-configuration
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/process-repository-configuration
+title: Process repository configuration
+description: The value of the `processRepository` section of the service configuration.
+type: object
+additionalProperties: false
+required:
+  - url
+  - directory
+properties:
+  url:
+    description: >-
+      The smart HTTP URL of the process repository's remote. An `http://`
+      URL is accepted only without a credential.
+    type: string
+    pattern: "^https?://[^\\s]+$"
+  branch:
+    description: The branch the service follows.
+    type: string
+    minLength: 1
+    default: main
+  credential:
+    description: >-
+      The name of the credential, in the `credentials` section, that
+      authenticates to the remote. Absent for a public repository.
+    $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+  directory:
+    description: >-
+      The directory that holds the service's bare clone and its current
+      commit. A relative path resolves against the directory of the
+      configuration file. Created when absent.
+    type: string
+    minLength: 1

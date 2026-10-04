@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Revision
+description: >-
+  The process repository's declared files at one commit, read-only.
