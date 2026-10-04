@@ -4,7 +4,12 @@
 // ---
 import { setup, enqueueActions } from "xstate";
 import type { AnyActorLogic, AnyActorRef, AnyStateMachine, Snapshot } from "xstate";
-import { blueprintVersionKey, lintBlueprint, ExpressionError, compileStateGuards } from "@wyrd-company/manifold-shared";
+import {
+  blueprintVersionKey,
+  lintBlueprint,
+  ExpressionError,
+  compileStateGuards,
+} from "@wyrd-company/manifold-shared";
 import type {
   TokenLintResult,
   BlueprintDocument,

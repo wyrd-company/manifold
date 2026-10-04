@@ -634,7 +634,9 @@ it("rejects child path registry names and duplicate module names", () => {
 });
 
 it("matches raised-event declarations in the shipped registry", () => {
-  expect(new Map(Object.entries(serviceImplementations().raises ?? {}))).toEqual(manifoldImplementationNames.raises);
+  expect(new Map(Object.entries(serviceImplementations().raises ?? {}))).toEqual(
+    manifoldImplementationNames.raises,
+  );
 });
 
 it("loads unknown token lint warnings at the configured bound and exposes runtime keys", async () => {

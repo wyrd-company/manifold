@@ -426,21 +426,25 @@ test("passes the service lint bound to revision loading and reports warnings", a
   const f = await fixture();
   const { writeFile } = await import("node:fs/promises");
   const { stringify } = await import("yaml");
-  const commit = await f.commit(60, {}, {
-    machine: {
-      initial: "queued",
-      states: {
-        queued: {
-          meta: { gate: { comparator: "comparators/order.ts", return: { state: "returned" } } },
-          on: { token: "broken" },
+  const commit = await f.commit(
+    60,
+    {},
+    {
+      machine: {
+        initial: "queued",
+        states: {
+          queued: {
+            meta: { gate: { comparator: "comparators/order.ts", return: { state: "returned" } } },
+            on: { token: "broken" },
+          },
+          broken: {},
+          returned: {},
+          done: { type: "final" },
         },
-        broken: {},
-        returned: {},
-        done: { type: "final" },
       },
+      schemas: { input: true, output: true, context: true, events: {} },
     },
-    schemas: { input: true, output: true, context: true, events: {} },
-  });
+  );
   await writeFile(
     f.file,
     stringify({ ...f.configuration, blueprintLint: { configurationBound: 1 } }),

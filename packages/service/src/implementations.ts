@@ -10,7 +10,10 @@ export function serviceImplementations(
   parts: ServiceImplementationParts = {},
 ): ImplementationRegistry {
   const composed = { actors: {}, actions: {}, guards: {}, delays: {} } as {
-    [Kind in "actors" | "actions" | "guards" | "delays"]: Record<string, ImplementationRegistry[Kind][string]>;
+    [Kind in "actors" | "actions" | "guards" | "delays"]: Record<
+      string,
+      ImplementationRegistry[Kind][string]
+    >;
   } & { raises?: Record<string, readonly string[]> };
   for (const part of Object.values(parts)) {
     for (const kind of ["actors", "actions", "guards", "delays"] as const) {

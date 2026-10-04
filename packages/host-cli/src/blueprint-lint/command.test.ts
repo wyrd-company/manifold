@@ -63,7 +63,7 @@ it("prints exactly the loader findings and warnings for every fixture with shipp
       const commit = "a".repeat(40),
         path = "blueprints/sample.yml";
       const loader = createBlueprintLoader({
-        implementations: serviceImplementations,
+        implementations: serviceImplementations(),
         revisionAt: async () => memoryRevision(commit, { [path]: text }),
         onExpressionError: () => {},
       });
@@ -89,7 +89,7 @@ it("prints exactly the loader findings and warnings for every fixture with shipp
       );
     }
     expect(manifoldImplementationNames.raises).toEqual(
-      new Map(Object.entries(serviceImplementations.raises ?? {})),
+      new Map(Object.entries(serviceImplementations().raises ?? {})),
     );
   } finally {
     log.mockRestore();
