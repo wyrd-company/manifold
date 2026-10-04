@@ -60,13 +60,7 @@ usage.saveHook({
   },
 });
 const http = createHttpHost({
-  configuration: { host: "127.0.0.1", port: 0, operatorCredential: undefined },
-  credentials: {
-    names: [],
-    resolve: () => {
-      throw Error("No credentials");
-    },
-  },
+  configuration: { host: "127.0.0.1", port: 0 },
   onError: (error) => {
     throw error;
   },

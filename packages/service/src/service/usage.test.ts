@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { stringify } from "yaml";
 import { startService } from "./index.ts";
 import { serviceFixture } from "./test-fixtures/repository.ts";
+import { memoryRevision } from "@wyrd-company/manifold-shared";
 import type { UsageCall } from "@wyrd-company/manifold-shared";
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -76,26 +77,15 @@ test("assembles unauthenticated usage and follows declarations through pulls", a
   const service = await startService({
     configurationFile: f.file,
     log: (entry) => logs.push(entry.event),
-    actorHost: (parts) => {
-      expect(parts.usage).toBeDefined();
-      // Save-hook stand-in retained until the actor host merges.
-      parts.usage.saveHook({
-        actorId: "actor-one",
-        snapshot: {
-          status: "active",
-          value: "working",
-          context: {
-            manifold: { environment: "env-one", portfolioItem: "alpha", threads: ["thread-one"] },
-          },
-        },
-      });
-      return {
-        subscription: () => ({ topics: [] }),
-        restore: () => ({ status: "held", reason: "stand-in" }),
-      };
-    },
   });
   cleanup.push(service.stop);
+  service.actorHost.start({
+    actorId: "actor-one",
+    blueprint: service.revisions.latest()!.blueprints.get("blueprints/counter.yml")!,
+    input: {
+      manifold: { environment: "env-one", portfolioItem: "alpha", threads: ["thread-one"] },
+    },
+  });
   const { host, port } = service.http.address();
   const url = `http://${host}:${port}/api/usage/push`;
   const request = (key: string) =>
@@ -203,5 +193,72 @@ test("attributes unowned usage through the assembled T3 Code source and portfoli
     item: "beta",
     account: "acct",
     amount: 2,
+  });
+});
+
+test("the registered usage hook settles a real actor only after it reaches done", async () => {
+  const f = await fixture();
+  const service = await startService({ configurationFile: f.file, log: () => {} });
+  cleanup.push(service.stop);
+  const revision = memoryRevision("b".repeat(40), {
+    "blueprints/parcel.yml": stringify({
+      machine: {
+        initial: "waiting",
+        states: { waiting: { on: { delivered: "complete" } }, complete: { type: "final" } },
+      },
+      schemas: { input: true, output: true, context: true, events: { delivered: true } },
+    }),
+  });
+  const loaded = await service.blueprints.loadRevision(revision);
+  const blueprint = loaded.blueprints.get("blueprints/parcel.yml");
+  expect(blueprint).toBeDefined();
+  service.portfolio.ledger.credit({
+    key: "credit-one",
+    account: "acct",
+    window: "window-one",
+    opensAt: 0,
+    closesAt: 1000,
+    amount: 100,
+  });
+  service.portfolio.ledger.reserve({
+    key: "reserve-one",
+    actor: "actor-one",
+    item: "alpha",
+    account: "acct",
+    amount: 1,
+  });
+  service.actorHost.start({
+    actorId: "actor-one",
+    blueprint: blueprint!,
+    input: {
+      manifold: {
+        issue: "parcel-node",
+        environment: "env-one",
+        portfolioItem: "alpha",
+        threads: ["thread-one"],
+      },
+    },
+  });
+  expect(service.portfolio.ledger.actorUsage("actor-one").accounts[0]?.estimate).toBe(1);
+  service.usage.push({
+    environment: "env-one",
+    threads: [{ provider: "codex", providerSessionId: "session-one", threadId: "thread-one" }],
+    records: [call("first")],
+  });
+  expect(service.portfolio.ledger.actorUsage("actor-one")).toMatchObject({
+    settled: false,
+    accounts: [{ actual: 2 }],
+  });
+  service.router.publish({
+    source: "github",
+    eventId: "delivered-one",
+    topics: ["github.issue.parcel-node"],
+    event: { type: "delivered" },
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(service.store.loadSnapshot("actor-one")?.snapshot.status).toBe("done");
+  expect(service.portfolio.ledger.actorUsage("actor-one")).toMatchObject({
+    settled: true,
+    accounts: [{ estimate: 1, actual: 2, variance: 1 }],
   });
 });
