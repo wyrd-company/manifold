@@ -11,6 +11,7 @@ title: Custom JSONata cell node implementation may not match the specified seman
 relationships:
   mitigated-by:
     - zen-jsonata
+    - decision-models
 
 description: >-
   The expressions.yml design specifies exact cell semantics: input cells are
@@ -33,12 +34,12 @@ response-strategy: mitigate
 # Mitigation: zen-jsonata proves strict true-only matching, present and missing
 # column bindings, whole-input access, blank input matching, nested object
 # outputs, parse rejection, conservative AST warnings, and structured failing
-# cell traces supplied by the host. All 69 tests and the spike typecheck pass.
-# The decision-models specification names host enrichment as the source of
-# rule and column in a failing cell's trace, and fixes blank and no-result
-# output cells as writing nothing.
-# Residual limits: never-boolean classification is conservative; Zen
-# error-envelope enrichment needs an upgrade contract test. Production
-# adoption remains implementation work.
+# cell traces supplied by the host. The decision-models module implements the
+# same semantics on the pinned engine, with table-driven tests under `first`
+# and `collect`, host enrichment that names the node, rule, and column of a
+# failing cell, and an engine contract test over the error envelope and trace
+# shapes the enrichment reads.
+# Residual limit: never-boolean classification is conservative; a cell it
+# cannot classify is left to strict matching at run time.
 
-status: open
+status: mitigated

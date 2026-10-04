@@ -4,6 +4,8 @@ relationships:
     - durable-event-delivery
     - portfolio
     - expressions
+    - store
+    - gate-xstate
 objective: >-
   Let a process decide which tasks may proceed past a state, in what order,
   and with what budget, without a state machine above the task and without
@@ -91,9 +93,15 @@ proposed-design:
     that every granted token is returned. It checks that the declared return
     point is the guarded transition out of the gated state or a state
     reachable from it, and that every path from that transition reaches the
-    return point or a final state; any other path is an error. At run time
-    the gate records, per token, the state in which it was returned, so a
-    held token can be traced to the actor and state holding it.
+    return point or a final state; any other path is an error, named by its
+    states. A path is a sequence of configurations, the sets of states active
+    together, not of single states: from each configuration the lint follows
+    every transition XState v5 can take there, including transitions declared
+    in other parallel regions and on ancestors, eventless transitions,
+    history targets, and multi-target transitions, and it treats a guarded
+    transition as one that may or may not be taken. At run time the gate
+    records, per token, the state in which it was returned, so a held token
+    can be traced to the actor and state holding it.
   reservation: >-
     When the comparator's output carries reservations, the gate writes them
     to the ledger in the same transaction that records the token, under an
@@ -109,8 +117,11 @@ proposed-design:
     none while any holder exists. None of these is known to Manifold.
   restore: >-
     After a restart, actors are restored from snapshots and inboxes are
-    drained before any gate runs. A gate rebuilds its population by querying
-    snapshots for actors in its state, and its holders from token rows. It
-    does not learn the population by replaying invocations, since a
-    replayed callback cannot see region state and a renamed implementation
-    joins no one without error.
+    drained before any gate runs. A gate rebuilds its population with the
+    store's state query over persisted snapshot state values, and its holders
+    from unconsumed and consumed token rows, without loading an actor; only
+    the actors an event is delivered to are loaded. The persisted state value
+    and context carry everything membership and the comparator input need,
+    so no derived column is required. It does not learn the population by
+    replaying invocations, since a replayed callback cannot see region state
+    and a renamed implementation joins no one without error.

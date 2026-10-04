@@ -1,0 +1,41 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged
+# rather than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: A blueprint expression worker that exits mid-evaluation stalls the service thread
+
+# GAP-EDGE: the risk schema declares no relationship-types; these edges connect
+# the decision that accepts the exposure and the design it governs.
+relationships:
+  related-to:
+    - evaluate-blueprint-expressions-in-a-worker-thread
+    - expressions
+    - blueprint-expressions
+
+description: >-
+  Blueprint guards, matches, assignments, and mappings evaluate in one worker
+  thread per service process, and the calling thread blocks on
+  `Atomics.wait` until the result arrives. The wait has no timeout. A worker
+  that exits or hangs during an evaluation leaves the calling thread, and
+  every actor it runs, waiting with no error and no recovery short of a
+  service restart. JSONata itself has no loop construct, but a recursive
+  user-defined function can run until it exhausts the worker's stack or
+  memory. A bounded wait is a new timeout mechanic and needs the user's
+  approval.
+
+categories:
+  - technical
+
+likelihood: 2
+impact: 4
+
+response-strategy: mitigate
+# Mitigation candidates: a bounded wait in service configuration with a
+# shipped default that fails the evaluation as an expression error and
+# restarts the worker; or detection of worker exit that releases the wait
+# with an error. Either is a timeout or failure-handling mechanic that needs
+# the user's approval before it is designed.
+
+status: open
