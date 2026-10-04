@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - t3code-environment-source
+title: Thread State
+description: >-
+  What the T3 Code environment source keeps of a thread to decide its
+  changes: the thread's latest turn and its state, its open approval and
+  user-input requests, and its session's status.

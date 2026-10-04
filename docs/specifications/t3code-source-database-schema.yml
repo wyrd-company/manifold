@@ -1,0 +1,46 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - t3code-environment-source
+  references:
+    - store-database-schema
+    - t3code-thread-events
+description: >-
+  Defines the tables the T3 Code environment source owns in Manifold's
+  SQLite database file. `docs/specifications/t3code-source-database-schema.sql`
+  is the machine-readable definition: the schema the source's migrations
+  produce. The source receives the connection from the store and migrates
+  its tables with `migrate("t3", steps)`, so every table it creates is named
+  `t3_<name>`.
+
+  Environments. `t3_environment` holds one row per environment the source
+  has connected to, keyed by its declared name. `environment_id` is the
+  `environmentId` the server's descriptor reported at the first connection.
+  `origin_sequence` is the shell snapshot sequence at that connection, before
+  which nothing is published. `shell_sequence` is the shell cursor: the
+  highest sequence of a shell item the source has handled.
+
+  Threads. `t3_thread` holds one row per thread the source has seen on an
+  environment, keyed by environment and thread id, and deleted with its
+  environment. `status` is `followed` while the shell lists the thread,
+  `archived` after the shell removed it and the server still has it, and
+  `deleted` after the server no longer has it. `cursor` is the highest
+  sequence whose effect the row holds: the last applied event, the last
+  snapshot, or the shell sequence that reopened a thread caught up while
+  idle. `thread` is the compact thread as JSON, `NULL` until the thread's
+  first snapshot. `pre_existing` is 1 for a thread listed in the
+  environment's first shell snapshot, whose first snapshot is stored
+  without publishing. A row is written in the transaction that publishes
+  the changes it reflects.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/t3code-source-database-schema.sql` runs without error
+  on an empty SQLite database. A test starts the source on a store over an
+  empty file and compares the `type`, `name`, `tbl_name`, and `sql` of every
+  `sqlite_schema` row whose name starts with `t3_` with the rows the same
+  file's statements produce on a second empty database, with each run of
+  whitespace in `sql` read as one space; they are equal. After the source
+  starts, `schema_migration` holds the row `('t3', n)`, where n is the number
+  of the source's migration steps.

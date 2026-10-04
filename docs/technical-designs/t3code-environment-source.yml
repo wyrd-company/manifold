@@ -1,0 +1,284 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - durable-event-delivery
+    - store
+  mitigates:
+    - t3code-thread-resume-bounded
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  references:
+    - router-events
+    - t3code-thread-events
+    - t3code-environments-configuration
+    - t3code-source-database-schema
+objective: >-
+  Turn the activity of every thread on every configured T3 Code environment
+  into thread changes published through the router, so that an actor hears
+  its thread through routing by thread id alone, a restart or a lost
+  connection resumes where the source stopped, and an environment that is
+  down holds back no other environment.
+background:
+  problems:
+    - >-
+      T3 Code 0.0.45 has no stream of every thread's events. The shell
+      subscription covers the environment and sends thread summaries; the
+      thread subscription sends one thread's detail events. Thread creation,
+      turn start, archive, and delete reach a client only as shell state.
+    - >-
+      Resume is bounded. A thread replays from `afterSequence` only while the
+      range holds at most 1000 of its stored events and 8 MiB of payload and
+      holds no `thread.created`; the shell replays only while the head is at
+      most 1000 events past the cursor. Past a bound the server sends a
+      snapshot of current state in place of the events.
+    - >-
+      Assistant text is stored as one event per paragraph and every tool
+      update is an activity, so raw events are many, and the live stream
+      coalesces tool updates that the replay sends one by one.
+design-challenges:
+  completeness: >-
+    Every change in a thread's turn, requests, and session that the server
+    lets a client observe is published once, across restarts, lost
+    connections, and replays the server replaces with a snapshot.
+  identity: >-
+    A change reached through a replay, through a snapshot, and live must
+    carry one event id, so that the router's replay rule removes the
+    duplicate.
+  following: >-
+    The source follows every non-archived thread without holding a
+    subscription open for each idle one.
+  isolation: >-
+    One environment that is down, rejects the credential, or sends what the
+    source cannot use stops nothing on another environment.
+proposed-design:
+  high-level-overview: >-
+    The T3 Code environment source is one module,
+    `packages/service/src/t3code-source/`, started once per service with the
+    store, the router, the `environments` section of service configuration,
+    and the credentials. For each configured environment it holds one
+    `T3Client` from `@wyrd-company/t3code-client`, so one socket carries the
+    environment's shell subscription and one thread subscription per thread
+    it is catching up. For each followed thread it keeps a compact thread in
+    the store: the client's projected `OrchestrationThread` reduced to what
+    decides the thread state. Each stream item the client delivers is
+    applied to the compact thread, the thread state before and after are
+    compared, and each thread change is published under the thread's topic
+    with an event id drawn from the change itself, in the transaction that
+    stores the new compact thread and cursor. The source name is `t3`. The
+    events, topics, and ids are specified in `t3code-thread-events`, the
+    configuration in `t3code-environments-configuration`, and the tables in
+    `t3code-source-database-schema`.
+  thread-state: >-
+    A thread state is a pure function of a compact thread: the thread's
+    project id; its latest turn, with turn id, state (`running`,
+    `completed`, `interrupted`, or `error`), and assistant message id; its
+    open requests, each with request id, kind (`approval` or `user-input`),
+    and the opening activity's payload, in activity order, as the client's
+    `pendingRequests` returns them; and its session's status, last error,
+    and update time. A turn state or session status the client decodes as
+    unknown counts as no turn and no session.
+  compact-thread: >-
+    The compact thread is the `OrchestrationThread` with `messages` and
+    `proposedPlans` empty, each checkpoint's `files` empty, and `activities`
+    holding only the activities that open a request still open. It is
+    reduced after every applied event. The client's `applyThreadEvent` reads
+    from the thread only what the compact thread keeps, so applying an event
+    to the compact thread and reducing it gives the same thread state as
+    applying it to the full thread, a revert included, since a revert reads
+    the checkpoints' turn ids and statuses.
+  thread-changes: >-
+    `threadChanges(before, after)` is a pure function from two thread
+    states, `before` possibly empty, to the thread changes between them, in
+    this order: a turn started when `after` has a turn whose id `before`
+    does not; a turn settled when `after`'s turn is settled and `before`
+    has a different turn or the same turn running; a request resolved for
+    each request open in `before` and not in `after`; a request opened for
+    each request open in `after` and not in `before`; and a session failed
+    when `after`'s session is `error` with no running turn and `before` has
+    no session with the same status and update time. A turn first seen
+    already settled gives started and then settled. Removal of a thread is
+    a change the shell decides, described under following.
+  publishing: >-
+    The source handles one stream item at a time and pulls the next only
+    after the transaction for the current one commits, so the client's
+    acknowledgement holds the server back. For a thread item, in one
+    `store.connection.transaction`, it applies the item to the stored
+    compact thread, computes the thread changes, calls `router.publish` once
+    per change, and updates the thread's row with the reduced compact thread
+    and the new cursor. A `snapshot` item replaces the compact thread with
+    the reduced snapshot and sets the cursor to its `snapshotSequence`; an
+    `event` item at or below the cursor changes nothing. A `rejected`
+    outcome from the router is a defect in the source: the transaction
+    rolls back and the environment stops, as described under failures.
+  following: >-
+    The shell subscription decides which threads are followed. A thread in
+    the shell is followed; a thread the shell removes is archived or
+    deleted. A followed thread whose thread subscription is closed is
+    opened again from its cursor when a shell item for it carries a sequence
+    above the cursor. A thread subscription runs until its `synchronized`
+    item has been handled and the thread is idle, with no running turn, no
+    session `starting` or `running`, and no open request; then the source
+    sets the cursor to the higher of the cursor and the shell sequence that
+    opened it, and closes the subscription. The shell sends an item for
+    every event of a thread, detail or not, so the next event reopens it,
+    and an event that is not a detail event advances the cursor through
+    this rule. When the shell removes a thread, the source reads the thread
+    over HTTP. A thread that is found is archived: the source catches its
+    subscription up to `synchronized`, publishes thread archived with the
+    thread's `archivedAt`, and marks the row archived. A thread that is not
+    found is deleted: the source publishes thread deleted and marks the row
+    deleted. A shell item that brings an archived thread back marks it
+    followed and opens it from its cursor.
+  start: >-
+    An environment with no row is new. The source subscribes to the shell
+    with no `afterSequence`, records the server's `environmentId`, and takes
+    the snapshot's `snapshotSequence` as both the environment's origin and
+    its shell cursor. Each thread in that snapshot gets a row with no
+    compact thread, marked pre-existing. A thread with no compact thread is
+    subscribed with no `afterSequence`, and its first snapshot is its
+    baseline: stored with nothing published for a pre-existing thread, and
+    compared with the empty state for any other thread, so its
+    running turn, open requests, and a turn it already settled are
+    published. Nothing that happened in the environment before its origin
+    is published.
+  resume: >-
+    `startT3CodeSource` reads every environment row, and for each configured
+    environment connects, reads the environment descriptor, and compares its
+    `environmentId` with the stored one. A different id means the name now
+    points at another server: in one transaction the source deletes the
+    environment's rows, and the environment starts as new. Otherwise the
+    source subscribes to the shell from the stored shell cursor and opens a
+    thread subscription from its cursor for every followed thread, so each
+    catches up and closes once idle. A server that replays sends the events
+    after the cursor; a server past its bound sends a snapshot, which
+    replaces the compact thread, and the comparison with the stored state
+    publishes every change still visible in it. A change that opened and
+    closed inside a gap past the bound, such as a request answered while
+    the service was down, is not published.
+  connection: >-
+    The client resubscribes after its socket reconnects, deduplicates the
+    replay overlap by sequence, and keeps retrying a watch whose first
+    connection fails while the failure is transient. The source passes the
+    environment's `reconnect` backoff, `heartbeat`, and `openTimeoutMs` to
+    `T3Client.create`. A credential rejection ends the watches with the
+    client's error: the source closes that environment's client, waits the
+    next backoff delay, and creates the client again, reading the credential
+    file again, so a replaced token applies without a restart. The source
+    adds no wait of its own beyond the configured values.
+  credentials: >-
+    The client's credential store for an environment reads the bearer access
+    token from the `tokenFile` of the environment's `t3code-token`
+    credential each time it is asked, and refuses every write, so the token
+    the operator places in the file is the only one used. The token needs
+    the `orchestration:read` scope.
+  failures: >-
+    Each environment runs its own loop, and an error in one is caught at
+    that loop: it is logged with the environment name, and the environment's
+    status records it. A transient connection failure and a credential
+    rejection retry as described under connection. An item the client
+    reports as `decode-error` is logged with the environment and thread and
+    skipped; the next item moves the cursor past it. A `rejected` publish,
+    and an error the store or the router throws, stops the environment: its
+    status becomes `stopped` with the error, its client closes, and it
+    stays stopped until the service restarts. No other environment changes.
+  public-interface: |-
+    `packages/service/src/t3code-source/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { Logger } from "@wyrd-company/t3code-client";
+    import type { Router } from "../router/index.ts";
+    import type { Store } from "../store/index.ts";
+
+    export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource;
+
+    export interface T3CodeSourceOptions {
+      readonly store: Store;
+      readonly router: Router;
+      /** The loaded `environments` section, defaults applied. */
+      readonly environments: EnvironmentsConfiguration;
+      /** Resolves a `t3code-token` credential name to its token file path. */
+      readonly tokenFile: (credential: string) => string;
+      readonly logger?: Logger;
+    }
+
+    export interface T3CodeSource {
+      status(): readonly EnvironmentStatus[];
+      /** Closes every client; resolves when every environment loop has ended. */
+      stop(): Promise<void>;
+    }
+
+    export interface EnvironmentStatus {
+      readonly environment: string;
+      readonly state: "connecting" | "following" | "retrying" | "stopped";
+      readonly error?: string;
+      readonly followedThreads: number;
+      readonly openSubscriptions: number;
+    }
+
+    /** `t3.environment.<environment>.thread.<encoded thread id>`. */
+    export function threadTopic(environment: string, threadId: string): string;
+
+    export type { EnvironmentsConfiguration, ThreadChangeEvent } from "./types.ts";
+    ```
+  module-layout: >-
+    `index.ts` re-exports the public names. `state.ts` holds the pure
+    functions: `compactThread`, `threadState`, and `threadChanges`.
+    `events.ts` holds the pure functions that build a source event from a
+    thread change, the topic, and the event id. `follow.ts` holds the pure
+    decision of which subscription to open or close from a shell item, the
+    stored rows, and the open subscriptions. `environment.ts` runs one
+    environment's loop: client, shell subscription, thread subscriptions,
+    and transactions. `source.ts` implements `startT3CodeSource`.
+    `migrations.ts` holds the migration steps under the owner `t3`. Tests
+    import only `index.ts`, the router's `index.ts`, and the store's
+    `index.ts`.
+  convergence: >-
+    Handling one item twice publishes the same changes with the same ids and
+    writes the same row, so the router accepts them once. A crash inside an
+    item's transaction rolls back the publish and the row together, and the
+    resumed subscription delivers the item again from the old cursor. A
+    crash after the commit resumes from the new cursor. Starting the source
+    twice on the same file opens the same subscriptions from the same
+    cursors. Resetting an environment whose `environmentId` changed deletes
+    its rows in one transaction, so a crash leaves either the old rows,
+    which reset again, or none. `stop` twice does nothing more.
+  dependencies: >-
+    `@wyrd-company/t3code-client` 0.5.0 or later, the release whose
+    `T3ClientOptions` accepts `backoff`, `pingIntervalMs`,
+    `missedPongLimit`, and `openTimeoutMs`, and whose watches retry a first
+    connection that fails transiently. The source uses its `T3Client`,
+    `shell.watch`, `threads.watch`, `threads.detail`,
+    `server.environment`, `applyThreadEvent`, and `pendingRequests`.
+  tests: >-
+    Tests run against a fake T3 Code server in the test suite that speaks
+    the 0.0.45 wire protocol over a real socket: the environment descriptor,
+    the WebSocket ticket, `GET /api/orchestration/threads/:id`, and
+    `orchestration.subscribeShell` and `orchestration.subscribeThread` with
+    `afterSequence`, `requestCompletionMarker`, Ack flow control, and the
+    replay bounds, each bound set lower by the test so that the snapshot
+    path runs on a small fixture. The fake keeps a log of every event it has
+    stored, and a test script appends events to it: threads created,
+    turns started and settled, requests opened and answered, sessions
+    failed, threads archived, unarchived, and deleted, with generic ids.
+    Behaviours proved, each red before green: `threadChanges` gives each
+    change in its order for every pair of states in a fixture table, and
+    the compact thread gives the same thread state as the full projection
+    across every fixture stream, revert included; each change is published
+    under `threadTopic` with the id `t3code-thread-events` defines; a
+    replayed stream segment writes no second inbox row; a thread whose
+    replay passes the bound resumes from a snapshot and publishes each
+    change visible in it once, and none that it already published; a new
+    environment publishes nothing from before its origin, and publishes a
+    thread created after it; an idle thread's subscription closes after
+    `synchronized` and reopens on the next event; an archived thread
+    publishes thread archived once, after its last change; a deleted thread
+    publishes thread deleted; a changed `environmentId` resets the
+    environment; two environments run at once, and one whose server is down
+    or rejects the token leaves the other publishing; a dropped socket
+    resumes and publishes every change once; and a replaced token file is
+    used on the next connection. The fault test runs the source in a child
+    Node process against the fake server, kills it with `SIGKILL` mid-stream
+    and asserts the signal, starts it again on the same file, and checks the
+    published changes against the changes the fake server's log implies: no
+    change missing and none twice.

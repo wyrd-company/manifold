@@ -67,7 +67,8 @@ proposed-design:
     issue's node id because Project item deliveries carry no issue number
     and no repository; `github.project.<id>` carries Project-level events
     and every Project item event, beside the item's issue topic;
-    `t3.environment.<id>.thread.<id>` carries thread events;
+    `t3.environment.<name>.thread.<id>` carries thread changes, the thread
+    id encoded so that it holds no `.`;
     `notify.action.<id>` carries notification actions;
     `usage.environment.<id>.session.<id>` carries usage; and
     `deadline.<deadline-id>` carries a fired deadline. What happened is the
@@ -202,7 +203,8 @@ proposed-design:
     again with its actor.
   idempotency: >-
     Every event carries an id from its source: the GitHub mirror revision,
-    the thread event sequence, the notification action id, the token id. The
+    the thread change's own identity, a turn id or a request id within its
+    environment and thread, the notification action id, the token id. The
     inbox holds one row per actor and namespaced event id, consumed rows
     included, so a source event delivered twice reaches an actor once. A
     delivery replayed after a crash runs against the snapshot saved before
@@ -379,10 +381,17 @@ proposed-design:
     errors and errors the host throws propagate unchanged. Inputs are
     trusted otherwise.
   environment-streams: >-
-    One connection per environment carries every thread's events. The
-    source handler stamps each event with its thread id and publishes under
-    the thread topic. No actor holds a subscription to T3 Code of its own,
-    so re-attaching after a restart is routing by thread id and nothing else.
+    One connection per environment carries every thread's changes: the
+    environment's shell subscription decides which threads are followed, and
+    a thread subscription per thread being caught up carries its events over
+    the same socket. The source publishes thread changes, the changes in a
+    thread's turn, requests, and session, under the thread topic, each with
+    an id drawn from the change, so a replay and a snapshot the server sends
+    in place of a replay publish the same events. No actor holds a
+    subscription to T3 Code of its own, so re-attaching after a restart is
+    routing by thread id and nothing else. The source is designed in
+    `t3code-environment-source` and its events specified in
+    `t3code-thread-events`.
   github-source: >-
     The GitHub event source, `github-event-source`, receives organization
     and repository webhook deliveries and accepts each GUID once, so a

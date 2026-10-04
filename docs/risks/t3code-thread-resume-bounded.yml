@@ -7,12 +7,14 @@ $schema: https://refinery.systems/ontology/risk
 title: The stable T3 Code server resumes a thread's events only within a bounded gap
 
 # GAP-EDGE: the risk schema declares no relationship-types; these edges connect
-# the design whose environment streams the risk constrains and the seam its
-# source publishes through.
+# the design whose environment streams the risk constrains, the seam its
+# source publishes through, and the source design that mitigates it.
 relationships:
   related-to:
     - durable-event-delivery
     - router-events
+  mitigated-by:
+    - t3code-environment-source
 
 description: >-
   T3 Code 0.0.45, the stable release, has no stream that carries every
@@ -48,11 +50,10 @@ likelihood: 3
 impact: 4
 
 response-strategy: mitigate
-# Mitigation candidate: the source keeps a durable projection per thread and
-# publishes the transitions of that projection (turn settled, request opened
-# or resolved, session status changed), each with an event id drawn from the
-# transition's own identity. A replay and a snapshot then yield the same
-# transitions with the same ids, so the router's replay rule applies to both,
-# and a snapshot loses only transitions that opened and closed inside the gap.
+# Mitigation: the t3code-environment-source design keeps a compact thread per
+# followed thread and publishes thread changes whose event ids come from the
+# change itself, so a replay and a snapshot yield the same events. The
+# decision publish-thread-state-changes accepts the residual: a change that
+# opened and closed inside a gap past the server's bound is not published.
 
-status: open
+status: mitigated
