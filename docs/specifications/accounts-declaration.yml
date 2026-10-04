@@ -1,0 +1,79 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` names the design that reads this declaration.
+  realizes:
+    - usage-intake
+  references:
+    - portfolio-declaration
+    - price-table
+    - usage-record
+    - service-configuration
+description: |-
+  Defines `accounts.yml`, the file at the root of the process repository
+  that declares the accounts usage is charged to: each account's unit and
+  the usage that charges it.
+  `docs/specifications/accounts-declaration.schema.yml` is the
+  machine-readable definition of its document. An absent file and an empty
+  document declare no accounts.
+
+  Accounts. `accounts` maps account names to accounts. An account name is
+  a declared name, as `service-configuration` defines it, and is the name
+  `portfolio.yml` allocates by and the ledger keys entries by.
+
+  Unit. `unit` is the account's native unit. The unit `usd` counts every
+  ledger amount of the account, credit, reservation, and actual, as an
+  integer number of millionths of a US dollar, and prices its calls from
+  the price table, whose unit is `usd`.
+
+  Usage. `usage` lists the usage that charges the account. Each entry
+  names an `environment`, as service configuration names it, a `provider`
+  of the `usage-record` specification, and, optionally, an `instance`, the
+  id of a T3 Code provider instance on that environment. A call charges
+  the account of the entry with its environment, its provider, and the
+  instance of the thread that ran it; when no entry names that instance,
+  it charges the account of the entry with its environment and provider
+  and no instance. A call matched by no entry has no account.
+
+  ```yaml
+  accounts:
+    acct:
+      unit: usd
+      usage:
+        - environment: env-one
+          provider: claude
+        - environment: env-one
+          provider: codex
+    acct-alt:
+      unit: usd
+      usage:
+        - environment: env-one
+          provider: claude
+          instance: claude-alt
+  ```
+
+  Findings. `lintUsageDeclaration` in `packages/shared` lints this file
+  with `prices.yml`. Each finding has a kind, the file, a location that is
+  the RFC 6901 JSON Pointer of the offending value, and a message. The
+  kinds for this file:
+
+  - `syntax`: the file does not parse as one YAML document. The location
+    is the empty pointer and the message is the parser's, with its line
+    and column. No other finding is reported for the file.
+
+  - `schema`: the document does not validate against the schema. The
+    message is the validator's. No other finding is reported for the
+    file.
+
+  - `duplicate-usage`: a usage entry names the same environment,
+    provider, and instance, or the same environment and provider with no
+    instance, as an earlier entry in any account. The location is the
+    later entry.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/accounts-declaration.schema.yml` is a valid JSON
+  Schema 2020-12 document, and equals the schema `packages/shared` embeds,
+  which a test shows. Tests of `lintUsageDeclaration` show an empty
+  document, each finding kind with its location, a digit-leading account
+  name as a `schema` finding, and the account a call resolves to with and
+  without an instance entry.

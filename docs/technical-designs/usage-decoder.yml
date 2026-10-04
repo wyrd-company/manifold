@@ -75,7 +75,12 @@ proposed-design:
     }`. `type UsageRecord = UsageCall | UsageSourceError`, the two shapes of
     the `usage-record` specification as TypeScript types.
     `decodeUsage(roots: readonly UsageRoot[]): AsyncIterable<UsageRecord>`.
-    `defaultUsageRoots(env: Readonly<Record<string, string | undefined>>,
+    `decodeUsageBatches(roots: readonly UsageRoot[], options?: { skip?:
+    (source: UsageSourceStamp) => boolean }): AsyncIterable<UsageBatch>`,
+    with `type UsageSourceStamp = { provider: UsageProvider; path: string;
+    files: readonly { path: string; size: number; modifiedMs: number }[] }`
+    and `type UsageBatch = { sources: readonly UsageSourceStamp[]; records:
+    readonly UsageRecord[] }`. `defaultUsageRoots(env: Readonly<Record<string, string | undefined>>,
     home: string): UsageRoot[]`. `runUsageCommand(args: readonly string[],
     io: { stdout: Writable; stderr: Writable; env; home }):
     Promise<number>`, which parses the command line, runs the decode, writes
@@ -148,6 +153,31 @@ proposed-design:
     from the current copy, whatever the order of the roots. The order fixes
     which unit owns a duplicated call, so the same files always give the
     same records.
+  source-batches: >-
+    `decodeUsageBatches` yields the records `decodeUsage` yields, in the
+    same order, grouped by the sources that complete them, and
+    `decodeUsage` yields the records of its batches with no `skip`. A
+    source's stamp names its real path and every file the decode of that
+    source reads, with each file's size and modification time in epoch
+    milliseconds: the transcript and its `.meta.json` for `claude`, the
+    rollout for `codex`, the transcript and the tracking database for
+    `cursor`, the session directory's files for `grok`, and the session,
+    message, and part files, or the database, for `opencode`; a database's
+    stamp includes its `-wal` file when one exists. The decoder takes each
+    stamp before it reads the source, so a file that grows during the read
+    has a stamp that differs at the next decode. Each source gives one
+    batch holding its source error records and its call records of
+    granularity `call`. After every source of a provider has decoded, one
+    batch holds the provider's `session-total` records. The batch of a
+    source names it, unless the source held a copy of a `session-total`
+    record, in which case the provider's `session-total` batch names it,
+    so a batch names exactly the sources whose records it completes. A
+    root that cannot be read gives a batch that names no source. A source for which `skip` answers true is
+    not read: it gives no batch, adds nothing to the dedup set, and holds
+    no `session-total` copy, while its Codex `session_meta` record still
+    orders the rollouts. A replay of a skipped origin's call then decodes
+    on its fork or child unit under the key the origin's call had, as the
+    convergence paragraph states.
   unit-identity: >-
     Every call carries `providerSessionId`, the session id the library
     assigns the call, which is the id the harness and T3 Code know, and a
@@ -273,4 +303,8 @@ proposed-design:
     hold a copy of one Grok session and one OpenCode session, one copy
     older with smaller totals and one newer with larger totals, in both
     root orders, and checks that each order yields one record per key with
-    the newer totals.
+    the newer totals. A batch test drives `decodeUsageBatches` over the
+    fixture roots and checks that its records, in order, equal
+    `fixtures/expected.jsonl`, that every source is named by exactly one
+    batch, and that a `skip` answering true for a source leaves its calls
+    out and its stamp's files unread.

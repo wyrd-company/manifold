@@ -1,0 +1,109 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `realizes` names the design this
+  # contract serves and `references` the record format it carries.
+  realizes:
+    - usage-intake
+  references:
+    - usage-record
+    - host-cli-usage
+terms:
+  - call
+description: |-
+  Defines the usage push: the HTTP request that carries usage records and
+  session mappings from the host CLI on one environment to the service,
+  and the service's answer. `docs/specifications/usage-push.schema.yml` is
+  the machine-readable definition of the request body and the 200 response
+  body. It references the `usage-record` schema by its `$id`.
+
+  Request. `POST /api/usage/push` on the service, with the header
+  `Authorization: Bearer <operator token>` and the header
+  `Content-Type: application/json`, and a body of at most 8 MiB holding
+  one JSON object. `environment` is the name of the environment the host
+  runs on, as service configuration's `environments` section names it.
+  `records` holds at most 1000 usage records, call records and source
+  error records, in the order the decoder yielded them. `threads` holds
+  at most 1000 session mappings: each names a `provider`, a
+  `providerSessionId`, the T3 Code `threadId` that runs that session, and,
+  when T3 Code records one, the `providerInstance` that runs it.
+
+  ```json
+  {
+    "environment": "env-one",
+    "threads": [
+      {
+        "provider": "claude",
+        "providerSessionId": "session-1",
+        "threadId": "thread-1",
+        "providerInstance": "claude-alt"
+      }
+    ],
+    "records": [
+      {
+        "type": "call",
+        "key": "claude/message-1",
+        "provider": "claude",
+        "providerSessionId": "session-1",
+        "unit": { "id": "session-1", "kind": "session" },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "model": "model-a",
+        "tokens": {
+          "input": 1000,
+          "output": 200,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "cacheWriteOneHour": 0,
+          "reasoning": 0,
+          "webSearchRequests": 0
+        },
+        "speed": "standard",
+        "granularity": "call",
+        "estimated": false
+      }
+    ]
+  }
+  ```
+
+  Answers. The service answers 200 only after every mapping and record of
+  the request is committed to its store, with a body of counts. `calls`
+  counts the call records: `accepted`, new or grown, whose posting posted;
+  `pending`, new or grown, whose posting waits for an account, a price,
+  or a ledger window; and `replayed`, already held. `threads` counts the
+  mappings: `accepted`, new; `replayed`, held with the same thread; and
+  `conflicting`, held with a different thread, which keeps the thread it
+  was first recorded with. `sourceErrors` counts the source error records.
+
+  ```json
+  {
+    "calls": { "accepted": 1, "pending": 0, "replayed": 0 },
+    "threads": { "accepted": 1, "replayed": 0, "conflicting": 0 },
+    "sourceErrors": 0
+  }
+  ```
+
+  Every other answer means the service holds nothing of the request. The
+  body of a 400, 413, 415, 422, or 500 answer is `#/$defs/error`, a JSON
+  object with an `error` code and a `message`. 400
+  `invalid-request`: the body does not parse as JSON or does not validate
+  against the schema; `issues` lists each failure with its JSON Pointer.
+  401: the operator token is absent or wrong. 404: a path under
+  `/api/usage` other than `/push`. 405: a method other than `POST`. 413
+  `too-large`: the body exceeds 8 MiB. 415 `unsupported-media-type`: the
+  content type is not `application/json`. 422 `unknown-environment`: the
+  environment is not in service configuration. 500 `internal`: the
+  service failed while writing, and rolled the request back.
+
+  Idempotency. A request may be sent any number of times. Each call is
+  held once per environment by its key; a call record of granularity
+  `session-total` posts only what its totals grew by since the copy held.
+  A mapping is held once per environment, provider, and provider session.
+  The host sends a request again whenever it did not see its 200.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/usage-push.schema.yml` is a valid JSON Schema
+  2020-12 document, and equals the schema `packages/shared` embeds, which
+  a test shows. The service's endpoint tests send each answer's case and
+  check its status and body, and check that a 200 body validates against
+  `#/$defs/response`. The host tests check that every request the host
+  sends validates against the schema.

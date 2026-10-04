@@ -1,0 +1,77 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables these are.
+  realizes:
+    - usage-intake
+  references:
+    - store-database-schema
+    - portfolio-ledger-tables
+    - usage-record
+terms:
+  - call
+  - state-visit
+description: >-
+  Defines the tables the usage intake module holds in Manifold's store
+  database. `docs/specifications/usage-tables.sql` is the machine-readable
+  definition: the schema that the module's migration steps produce. The
+  module's owner name is `usage`, and every table, index, and trigger it
+  creates is named `usage_<name>`. Its steps are applied by the store's
+  `migrate("usage", steps)`; the module never runs DDL itself. Step 1 is
+  this file's script. Steps are append-only: a change to the tables is a
+  new step, and this file is rewritten to the schema all steps produce.
+
+  Declarations. `usage_declarations` holds one row per accepted
+  declaration of `accounts.yml` and `prices.yml` whose content differs
+  from the one in force. `commit_id` is the full commit id of the process
+  repository revision it was read from, and `declaration` the canonical
+  JSON, keys sorted, of the normalized declaration `lintUsageDeclaration`
+  returns. The row with the greatest `seq` is in force. A trigger aborts
+  every `UPDATE` and `DELETE`.
+
+  Sessions. `usage_sessions` holds the T3 Code thread of each provider
+  session on an environment, and the provider instance that runs it when
+  T3 Code records one, as first pushed. A row is never changed.
+
+  Actors and threads. `usage_actors` holds the environment and portfolio
+  item of each actor as of its latest save, and the time of its first
+  save with status `done` or `stopped`. `usage_threads` holds the actor
+  that owns each thread of an environment, the first whose save listed
+  it. A row of `usage_threads` is never changed.
+
+  Visits. `usage_visits` holds an actor's state visits, numbered from 1 in
+  the order they were entered, each with its state value as canonical
+  JSON and the time of the save that entered it.
+
+  Calls. `usage_calls` holds one call record per call key of an
+  environment: the first record of granularity `call`, and the greatest
+  copy of granularity `session-total`. `revision` is the number of
+  postings made for the key.
+
+  Postings. `usage_postings` holds what each call record adds to the
+  ledger: one posting for a record of granularity `call`, and one for
+  each growth of a `session-total`, with `revision` counting from 1.
+  `tokens` is the usage-record `tokens` object of what the posting adds.
+  `used_at` is the record's timestamp in epoch milliseconds. `actor`,
+  `item`, and `visit` are its attribution, fixed when the posting is made;
+  `visit` is null for the ledger actors of unowned usage. A posting is
+  `pending` with a `reason`, `unaccounted` with no `account`, `unpriced`,
+  or `no-window`, or `posted` with its `account`, its `amount` in the
+  account's unit, its `ledger_key`, and `posted_at`. A pending posting
+  changes only to `posted`, or to pending with another reason and
+  account; a posted one never changes.
+
+  Source errors. `usage_source_errors` holds the latest source error
+  record of each code for each source of an environment.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/usage-tables.sql` runs without error on an empty
+  SQLite database. A test applies the module's exported migration steps in
+  order to an empty database and compares the `type`, `name`, `tbl_name`,
+  and `sql` of every `sqlite_schema` row whose name starts with `usage_`
+  with the rows this file produces on a second empty database, with each
+  run of whitespace in `sql` read as one space; they are equal. An
+  `UPDATE` or `DELETE` on `usage_declarations` fails with its append-only
+  message. A posted posting without a ledger key, a pending posting
+  without a reason, and an unaccounted posting with an account each fail
+  a CHECK constraint.

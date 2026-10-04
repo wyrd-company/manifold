@@ -5,6 +5,8 @@ relationships:
   references:
     - usage-decoder
     - usage-record
+    - usage-intake
+    - usage-push
 description: >-
   Defines the `usage` commands of the host CLI, `manifold-host`, the Bun
   binary installed on each environment.
@@ -26,6 +28,22 @@ description: >-
   the decode continues. Standard error carries only messages about the
   command line and about a failure that ends the decode. The command reads
   files and changes none.
+
+  `manifold-host usage push` runs one decode of the same roots and sends
+  its records to the service at `--service`, as the environment named
+  `--environment`, by the `usage-push` protocol, with the T3 Code thread of
+  each provider session read from T3 Code's database under `--t3-home`. It
+  authenticates with the service's operator token, read from the file
+  `--token-file` names, else from the environment variable
+  `MANIFOLD_OPERATOR_TOKEN`, surrounding whitespace ignored. It keeps the
+  stamps of the sources the service has acknowledged in its push state
+  under `--state-dir`, and decodes only sources whose stamps changed. It
+  sends one request at a time and stops at the first that does not answer
+  200. On standard output it writes one JSON object when it ends: the
+  counts `batches`, `requests`, and `skippedSources`, and the sums of the
+  service's `calls` and `threads` counts. Standard error carries messages
+  about the command line and the failure that ends the run. The command
+  writes only its push state.
 format: cli
 validation-criteria: >-
   The command surface conforms to
@@ -35,3 +53,8 @@ validation-criteria: >-
   standard output validates against
   `docs/specifications/usage-record.schema.yml` and equals the golden
   fixture output, and that the exit code is 0.
+  The binary test also runs `manifold-host usage push` against a test HTTP
+  server and a T3 Code database built from SQL, and checks that every
+  request validates against `docs/specifications/usage-push.schema.yml`,
+  that the summary on standard output is one JSON object, and that a run
+  with no token exits 2.

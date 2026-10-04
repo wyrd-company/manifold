@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `related-to`
+  # is the best fit.
+  related-to:
+    - usage-intake
+    - usage-tables
+title: State visit
+description: >-
+  One run of a state machine actor's saves with the same state value,
+  from the save that entered it until the next save with another value.

@@ -59,3 +59,98 @@ commands:
         examples:
           - manifold-host usage decode
           - manifold-host usage decode --root codex=/srv/agents/codex-home --root claude=/home/example/.claude
+      - name: push
+        summary: Decode provider session files and push the usage records to the service.
+        mode: non-interactive
+        options:
+          - name: service
+            flags: [--service]
+            kind: option
+            description: The base URL of the Manifold service, `http` or `https`.
+            required: true
+            repeatable: false
+            value:
+              type: string
+            examples:
+              - http://127.0.0.1:8080
+          - name: environment
+            flags: [--environment]
+            kind: option
+            description: >-
+              The name of this environment, as the service configuration's
+              `environments` section names it.
+            required: true
+            repeatable: false
+            value:
+              type: string
+            examples:
+              - env-one
+          - name: token-file
+            flags: [--token-file]
+            kind: option
+            description: >-
+              A file holding the service's operator token as its only
+              content. When absent, the token is the value of
+              `MANIFOLD_OPERATOR_TOKEN`.
+            required: false
+            repeatable: false
+            value:
+              type: string
+          - name: root
+            flags: [--root]
+            kind: option
+            description: >-
+              A provider and the directory where it keeps its sessions, as
+              for `usage decode`. When absent, every provider's default root
+              decodes.
+            required: false
+            repeatable: true
+            value:
+              type: string
+          - name: t3-home
+            flags: [--t3-home]
+            kind: option
+            description: >-
+              T3 Code's data directory, whose `userdata/state.sqlite` holds
+              each thread's provider session. When absent, `T3CODE_HOME`,
+              else `~/.t3`.
+            required: false
+            repeatable: false
+            value:
+              type: string
+          - name: state-dir
+            flags: [--state-dir]
+            kind: option
+            description: >-
+              The directory of the host CLI's state. When absent,
+              `XDG_STATE_HOME/manifold-host`, else
+              `~/.local/state/manifold-host`.
+            required: false
+            repeatable: false
+            value:
+              type: string
+        output:
+          modes:
+            - name: json
+              description: >-
+                One JSON object on standard output when the run ends, with
+                the counts `batches`, `requests`, and `skippedSources`, and
+                the summed `calls` and `threads` counts the service
+                answered.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: Every batch was acknowledged by the service.
+            - code: 1
+              meaning: >-
+                The run ended before every batch was acknowledged: a request
+                did not answer 200, the connection failed, or T3 Code's
+                database could not be read. The push state holds the
+                batches acknowledged before the failure, and standard error
+                names it.
+            - code: 2
+              meaning: >-
+                The command line is invalid, or no operator token is given.
+                Nothing is decoded or sent.
+        examples:
+          - manifold-host usage push --service http://127.0.0.1:8080 --environment env-one --token-file /etc/example/operator.token

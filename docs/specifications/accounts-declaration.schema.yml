@@ -1,0 +1,54 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no schema declares an edge from an asset to its
+#   # specification; `asset-of` names it.
+#   asset-of: accounts-declaration
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/accounts-declaration
+title: Accounts declaration
+description: >-
+  The document in `accounts.yml` at the root of the process repository:
+  the accounts usage is charged to. An empty document declares no
+  accounts.
+type: object
+additionalProperties: false
+properties:
+  accounts:
+    description: Accounts, keyed by account name, a declared name.
+    type: object
+    propertyNames:
+      $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+    additionalProperties:
+      $ref: "#/$defs/account"
+$defs:
+  account:
+    type: object
+    additionalProperties: false
+    required:
+      - unit
+    properties:
+      unit:
+        description: The account's native unit.
+        type: string
+        enum: [usd]
+      usage:
+        description: The usage that charges the account.
+        type: array
+        items:
+          $ref: "#/$defs/usage"
+  usage:
+    type: object
+    additionalProperties: false
+    required:
+      - environment
+      - provider
+    properties:
+      environment:
+        $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+      provider:
+        $ref: https://manifold.wyrd.company/schemas/usage-record#/$defs/provider
+      instance:
+        description: The id of a T3 Code provider instance on the environment.
+        type: string
+        minLength: 1

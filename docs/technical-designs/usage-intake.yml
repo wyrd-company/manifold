@@ -1,0 +1,452 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - usage-decoder
+    - portfolio
+    - portfolio-ledger
+    - store
+    - durable-event-delivery
+    - t3code-environment-source
+  mitigates:
+    - task-usage-unattributable
+  # GAP-EDGE: the technical-design schema declares no edge to a spike or a
+  # specification; `references` is the best fit.
+  references:
+    - t3code-session-mapping
+    - usage-push
+    - accounts-declaration
+    - price-table
+    - usage-tables
+    - usage-record
+    - host-cli-usage
+terms:
+  - actual
+  - call
+  - estimate
+  - reservation
+  - settlement
+  - state-visit
+  - usage-unit
+  - variance
+  - window
+objective: >-
+  Carry the calls the usage decoder yields on each environment to the
+  service, attribute each call to the actor and state visit that made it,
+  price it in its account's native unit, post it to the ledger as an
+  actual, and settle each actor's reservations when it ends, so that every
+  task has an estimate, an actual, and a variance, and no call is lost or
+  counted twice.
+background:
+  current-design: >-
+    The usage decoder in the host CLI turns provider session files into
+    usage records and prices nothing. The portfolio ledger takes actuals,
+    reservations, and settlements keyed by actor, item, and account, in
+    the account's native unit. The actor host runs save hooks inside each
+    snapshot save's transaction, and every actor's engine-owned identity,
+    its environment, threads, and portfolio item, is at
+    `context.manifold`. The T3 Code environment source keeps every
+    followed thread with its T3code project id. The service mounts
+    operator endpoints with `mountOperator(pathPrefix, listener)`, which
+    answers 401 to a request without the operator token.
+  problems:
+    - >-
+      A call names only its provider session. The thread that ran it is
+      known only to T3 Code on the environment, and the actor and state
+      visit that ran the thread are known only to the service.
+    - >-
+      The host and the service each restart without notice, and a provider
+      session file is read again on every decode.
+    - >-
+      A call counts tokens. The ledger counts an account's native unit, and
+      a model can appear before any price for it.
+    - >-
+      Two providers report one running total for a session, which grows
+      after it is first posted.
+design-challenges:
+  exactly-once: >-
+    A record crosses a process boundary that either side can leave at any
+    point, and the ledger must hold each call once.
+  attribution: >-
+    The mapping from session to thread lives on the environment, and the
+    mapping from thread to actor and state visit lives in the service, and
+    the two meet only in a push.
+  late-facts: >-
+    A call can arrive before its account, its price, or a ledger window
+    exists, and it must wait without being dropped or posted wrong.
+proposed-design:
+  high-level-overview: >-
+    `manifold-host usage push` runs one decode on the environment and sends
+    its records to the service, with the T3 Code thread of each provider
+    session, read from T3 Code's database in process. The service
+    validates the request at the endpoint, then, in one store transaction,
+    records the mappings and the calls, attributes each call, prices it,
+    and posts it to the ledger. The host records which sources the service
+    has acknowledged, so the next run decodes only sources that changed.
+    The service owns three facts the host does not have: which actor owns
+    each thread, the actor's state visits, and the declarations in force,
+    which are `accounts.yml` and `prices.yml` in the process repository.
+    An actor's save hook keeps the first two and settles the actor when it
+    ends. A call that lacks an account, a price, or a ledger window waits
+    as a pending posting and posts when the missing fact arrives. The
+    push protocol is `usage-push`, the declarations are
+    `accounts-declaration` and `price-table`, the tables are
+    `usage-tables`, the command is `host-cli-usage`, and the evidence for
+    the session-to-thread mapping is the `t3code-session-mapping` spike.
+  push-run: >-
+    One `usage push` run decodes with `decodeUsageBatches` of the usage
+    decoder, passing a `skip` predicate that answers true for a source
+    whose stamp equals the stamp the host's push state holds for it. For
+    each batch it splits the records into requests of at most 1000
+    records, in batch order. Before each request it reads the session
+    mappings from T3 Code's database and includes the mapping of every
+    provider session among the request's call records that has one. It
+    sends each request and waits for its response before the next. When
+    every request of a batch answers 200, it writes the stamps of the
+    sources the batch names into the push state; a batch with no records
+    writes its stamps with no request. A response other than 200, or a
+    failed connection, ends the run with exit code 1 and leaves the push
+    state as the last completed batch left it. The mapping is read after
+    the records it covers were decoded, so a session whose calls are in a
+    request has its mapping in that request whenever T3 Code holds it.
+  push-state: >-
+    The push state is one JSON file,
+    `<state-dir>/usage-push/<sha256 of the service URL and the environment
+    name>.json`, holding the source stamps keyed by provider and source
+    path. `<state-dir>` is `--state-dir`, else `XDG_STATE_HOME/manifold-host`,
+    else `<home>/.local/state/manifold-host`. The host writes it to a
+    temporary file in the same directory and renames it over the old one,
+    so a reader sees the old file or the new one. A missing or unparsable
+    file is an empty state. The file only saves work: an empty state
+    decodes and pushes every source, and the service replays every call
+    it already holds. Two runs at once each write a complete state; the
+    one that renames last wins, and a source it does not name is pushed
+    again by the next run.
+  session-mapping-read: >-
+    The host opens `<t3-home>/userdata/state.sqlite` with `node:sqlite`
+    `DatabaseSync` and `readOnly: true`, where `<t3-home>` is `--t3-home`,
+    else `T3CODE_HOME`, else `<home>/.t3`, runs one statement, and closes
+    the database. The statement reads `thread_id`, `provider_name`,
+    `provider_instance_id`, and `resume_cursor_json` from
+    `provider_session_runtime`, the table where T3 Code persists each
+    thread's provider session so it can resume it. The provider session
+    id is a field of the resume cursor, by provider: `claudeAgent` is
+    `claude`, with the id in `resume`, else in `sessionId`; `codex` is
+    `codex`, with the id in `threadId`; `cursor`, `grok`, and `opencode`
+    keep their names, with the id in `sessionId`. A row whose provider is
+    none of these, or whose cursor holds no such string, gives no
+    mapping. The host reads no other table and no other column. An absent
+    database file gives no mappings: the environment runs no T3 Code. A
+    database that cannot be opened or read, or that has no such table or
+    column, ends the run with exit code 1 before the request is sent, so
+    no call is pushed without the mapping it has. The host sets no busy
+    timeout. The `t3code-session-mapping` spike records, per provider,
+    the evidence that this id equals the `providerSessionId` the decoder
+    gives the session's calls.
+  endpoint: >-
+    The service mounts the module's listener with
+    `mountOperator("/api/usage", listener)`, so the operator token guards
+    it. The listener serves `POST /api/usage/push`. It reads the body up
+    to 8 MiB, parses it as JSON, and validates it against
+    `usage-push.schema.yml`, which references `usage-record.schema.yml`.
+    It answers 413 to a larger body, 415 to a content type other than
+    `application/json`, 400 to a body that does not parse or validate,
+    422 to an environment that service configuration does not name, 405
+    to another method, and 404 to another path. A valid request calls
+    `push`, which commits before the listener answers 200 with the
+    counts. A failure inside `push` rolls its transaction back and
+    answers 500. Nothing past the listener validates the request again.
+  push-transaction: >-
+    `push` runs in one `connection.transaction`. It records each mapping
+    first, then each record in request order. A source error record
+    replaces the row for its environment, provider, source, and code. A
+    call record of granularity `call` whose key the environment already
+    holds is replayed and writes nothing. A new one is stored, and one
+    posting is made for it with revision 1. A call record of granularity
+    `session-total` whose key is new is stored with one posting of
+    revision 1. One whose key is held is compared with the stored record
+    by the decoder's rule for copies: the later timestamp, then the
+    greater sum of token classes, then the greater classes in the order
+    of the record's `tokens` object. When the new record is greater it
+    replaces the stored one and gets a posting with the next revision,
+    whose tokens are each class's increase, never below 0. Otherwise it
+    is replayed. Each posting is attributed, then posted as the
+    `posting` paragraph states.
+  attribution: >-
+    `attribute` is a pure function of a posting and four lookups read in
+    the push transaction. The thread is the mapping of the call's
+    environment, provider, and provider session. The actor is the actor
+    that owns that thread. A call whose thread has an actor posts to that
+    actor, on the actor's portfolio item, else on the item of its
+    thread's T3code project, else on `other`, in the state visit its
+    timestamp falls in. A call whose thread has no actor posts on the item
+    `portfolio.t3codeProject` gives the thread's T3code project, or on
+    `other` when the T3 Code environment source holds no project for the
+    thread, under the ledger actor `thread:<environment>:<thread id>`. A
+    call whose session has no mapping posts on `other` under the ledger
+    actor `session:<environment>:<provider>:<provider session id>`. The
+    attribution is fixed when the posting is made. The ledger actors of
+    unowned usage take actuals only and are never settled, so an operator
+    can later move their usage to an item or a task.
+  thread-ownership: >-
+    The module's save hook runs inside every snapshot save, as the actor
+    host's save hooks do. It reads `context.manifold` from the snapshot,
+    narrowing each member to a string, or to a list of strings for
+    `threads`, and ignoring a member of another type. It writes the
+    actor's row with its environment and portfolio item. For each thread
+    in `threads`, when the actor has an environment, it inserts the
+    ownership of that environment and thread unless a row for them
+    exists, so the first actor to list a thread owns it. A mapping
+    recorded for a thread and an ownership recorded for it may arrive in
+    either order; attribution reads both when a posting is made.
+  state-visits: >-
+    A state visit is one run of an actor's saves with the same state
+    value. The save hook compares the canonical JSON of the snapshot's
+    `value`, keys sorted, with the value of the actor's latest visit, and
+    when they differ it inserts the next visit with that value and the
+    module's `now()`. A call falls in the visit with the greatest entry
+    time not after the call's timestamp, or in the first visit when every
+    visit was entered after it. A visit holds every active state of the
+    actor at once, parallel regions included.
+  settlement: >-
+    When a save's snapshot status is `done` or `stopped`, the save hook
+    sets the actor's end time when it is unset and calls
+    `ledger.settle({ actor })`, inside the save's transaction, so the save
+    and its settlement commit together. A save with status `error` is a
+    held actor, which has not ended, and settles nothing. A call that
+    reaches the service after its actor ended posts to that actor in full,
+    as the ledger posts an actual for a settled actor, so the actor's
+    actual and variance include it. `ledger.actorUsage(actor)` reads the task's estimate,
+    actual, and variance.
+  posting: >-
+    A posting resolves its account, then its amount, then posts. The
+    account is the one the accounts declaration in force gives the call's
+    environment, provider, and provider instance, the instance read from
+    the call's mapping. With no account, the posting is pending with
+    reason `unaccounted`. The amount is the price of the posting's tokens
+    for the call's model and speed in the account's unit, by the
+    `price-table` rule. With no price, it is pending with reason
+    `unpriced`. It then calls `ledger.postActual` with key
+    `usage:<environment>:<call key>:<revision>`, the attributed actor and
+    item, the account, the amount, and `usedAt` the call's timestamp in
+    epoch milliseconds. The ledger nests the write as a savepoint and
+    rolls it back alone when it throws; a `no-window` error leaves the
+    posting pending with reason `no-window`, and any other error fails
+    the push. A posted posting records its amount and the ledger key. The
+    posting holds its tokens and attribution whether it is posted or
+    pending, so no call is dropped and the tokens of a call on a model
+    with no price are recorded.
+  pending: >-
+    `retryPending()` resolves every pending posting again, oldest first,
+    in one transaction, and returns how many it posted and how many stay
+    pending by reason. `apply` calls it after it accepts a declaration.
+    The service calls it after it writes a ledger credit, so a window
+    that covers a pending posting's time lets it post.
+  declarations: >-
+    `apply(revision)` reads `accounts.yml` and `prices.yml` through the
+    revision and lints them with `lintUsageDeclaration` from
+    `packages/shared`. A declaration with findings is rejected and the
+    one in force stays. A declaration equal to the one in force, as
+    canonical JSON, is unchanged and writes nothing. Any other is
+    appended to the module's declaration table and takes effect for every
+    later posting, then `retryPending` runs. `openUsage` reads the
+    declaration with the greatest sequence, or the empty declaration,
+    with no accounts and no price overrides, when there is none. `apply`
+    calls run one at a time in call order. The service calls `apply` with
+    every revision the process repository pulls, as it calls the
+    portfolio's.
+  prices: >-
+    The price in force for a model is its entry in `prices.yml`, else its
+    entry in the bundled price table. The bundled price table is a
+    constant in `packages/shared` in the `price-table` format, generated
+    by `packages/shared/scripts/generate-prices.mjs` from LiteLLM's
+    `model_prices_and_context_window.json` at the commit the script names,
+    and checked against `price-table.schema.yml` by a test. Its unit is
+    `usd`. A new LiteLLM commit is a change to that commit and the
+    regenerated constant, kept current by the same upkeep that keeps
+    `@codeburn/core` current, and it ships with a release. An operator
+    prices a model sooner, or at a negotiated price, by adding its entry
+    to `prices.yml`, which applies at the next pull with no release.
+    A price that changes applies to postings made after it is in force;
+    postings already posted keep their amounts.
+  units: >-
+    Every account has a unit, declared in `accounts.yml`. The unit `usd`
+    counts amounts in the ledger as integer millionths of a US dollar, and
+    every credit, reservation, and actual of a `usd` account is in that
+    unit. A subscription account declared with unit `usd` is charged the
+    API price of its calls.
+  module-layout: |-
+    The service module is `packages/service/src/usage/`, owner `usage`,
+    whose tables are named `usage_<name>`. It reaches the store, the
+    ledger, the portfolio, and the T3 Code environment source through the
+    structural members it uses, as the ledger takes `LedgerConnection`.
+    `index.ts` holds the public surface. `usage.ts` holds `openUsage`,
+    `listener.ts` the endpoint, `push.ts` the push transaction,
+    `attribution.ts` and `pricing.ts` pure functions, `hooks.ts` the save
+    hook, and `migrations.ts` the steps, whose step 1 is the script of
+    `docs/specifications/usage-tables.sql`.
+
+    ```ts
+    /** Migration steps for owner `usage`, applied by the store's migrate. */
+    export const usageMigrationSteps: readonly string[];
+
+    export interface UsageRevision {
+      readonly commit: string;
+      read(path: string): Promise<string | undefined>;
+    }
+
+    export interface UsageActorSave {
+      readonly actorId: string;
+      readonly snapshot: {
+        readonly status: string;
+        readonly value: unknown;
+        readonly context?: unknown;
+      };
+    }
+
+    export function openUsage(options: {
+      connection: LedgerConnection;
+      ledger: Pick<Ledger, "postActual" | "settle">;
+      portfolio: Pick<Portfolio, "t3codeProject">;
+      threadProject(environment: string, threadId: string): string | undefined;
+      environments: ReadonlySet<string>;
+      now?: () => number; // defaults to Date.now
+    }): Usage;
+
+    export interface Usage {
+      readonly listener: (request: IncomingMessage, response: ServerResponse) => void;
+      push(request: UsagePushRequest): UsagePushResult;
+      saveHook(save: UsageActorSave): void;
+      apply(revision: UsageRevision): Promise<UsageApplyResult>;
+      retryPending(): UsageRetryResult;
+    }
+
+    export type UsageApplyResult =
+      | { status: "applied"; commit: string }
+      | { status: "unchanged"; commit: string }
+      | { status: "rejected"; commit: string; findings: readonly UsageFinding[] };
+
+    export type UsageRetryResult = {
+      posted: number;
+      pending: { unaccounted: number; unpriced: number; noWindow: number };
+    };
+    ```
+
+    `UsagePushRequest` and `UsagePushResult` are the request and the 200
+    response body of `usage-push`. `UsageActorSave` is the part of the
+    actor host's save the hook reads; the actor host's save satisfies it,
+    and the service registers `usage.saveHook` with the actor host.
+    `threadProject` reads the T3code project id the T3 Code environment
+    source holds for a thread; the T3 Code environment source exports it
+    from its `index.ts` as `readThreadProject(connection, environment,
+    threadId)`, a read of `t3_thread.project_id`.
+
+    The host module is `packages/host-cli/src/usage-push/`. Its
+    `index.ts` exports `runUsagePush(args, io)`, which `runUsageCommand`
+    calls for `usage push`, and `readSessionMappings(databasePath)`, the
+    read of T3 Code's database. It sends requests with the runtime's
+    `fetch`.
+
+    `packages/shared` exports `lintUsageDeclaration`, the generated
+    constants of `usage-push.schema.yml`, `accounts-declaration.schema.yml`,
+    and `price-table.schema.yml`, and `bundledPriceTable`.
+  decoder-batches: >-
+    The decoder exports `decodeUsageBatches(roots, options)`, which yields
+    the records of `decodeUsage` grouped by the sources that complete
+    them, with a stamp for each source and a `skip` predicate the host
+    uses to leave a source unread. Its contract is in `usage-decoder`.
+    The record format does not change.
+  convergence: >-
+    A request sent twice posts once: every call key is held once per
+    environment, every ledger write is keyed, and a session total posts
+    only what it grew by. A service killed before its transaction commits
+    holds nothing of the request, and the host, which saw no 200, sends
+    it again on its next run. A service killed after the commit and before
+    its answer holds the request, and the host's next run replays it. A
+    host killed before it writes the push state decodes the same sources
+    again and the service replays them. `apply` twice with one revision
+    writes once. The save hook run twice for one save inserts no second
+    visit and no second ownership, and `ledger.settle` retires nothing the
+    second time. `retryPending` twice posts each pending posting at most
+    once, by its ledger key. A crash inside any of these rolls its
+    transaction back whole.
+  tests: |-
+    Service tests live in `packages/service/src/usage/usage.test.ts` and
+    drive `openUsage`, its listener on an HTTP server the test opens, and
+    a `Ledger` on the same database file, which each test opens in a
+    temporary directory. Values are generic: environment `env-one`,
+    account `acct`, items `alpha` and `beta`, actor `actor-1`, threads
+    `thread-1` and `thread-2`, sessions `session-1` to `session-3`,
+    T3code project `t3-project-1` bound to `beta`, model `model-a` priced
+    at 2 USD per million input tokens and 8 per million output tokens, and
+    `model-b` with no price. The scenarios, each written red before green:
+
+    - Price: a call of 1,000,000 input and 500,000 output tokens on
+      `model-a` posts an actual of 6,000,000.
+
+    - Classes: a call with cache reads, cache writes, one-hour cache
+      writes, and a web search request posts the sum of each class at its
+      price; a `codex` call's reasoning tokens add nothing.
+
+    - Unpriced: a call on `model-b` is recorded with its tokens and pending
+      `unpriced`, and the actor's actual is 0; after `apply` of a revision
+      whose `prices.yml` prices `model-b`, it posts.
+
+    - Unaccounted: a call from a provider no account names is pending
+      `unaccounted`, and posts after a revision declares its account.
+
+    - Replay: the same request twice answers `accepted` then `replayed`
+      for every call, and the ledger holds one actual per call.
+
+    - Session total: totals of 100 then 150 input tokens post two actuals
+      whose sum prices 150; a copy with an earlier timestamp is replayed.
+
+    - Attribution: after a save of `actor-1` listing `thread-1`, a call on
+      `session-1` mapped to `thread-1` posts to `actor-1` on its item, in
+      the visit its timestamp falls in when the actor has two; a call on
+      `session-2` mapped to `thread-2`, which no actor owns, in
+      `t3-project-1`, posts on `beta`; a call on unmapped `session-3`
+      posts on `other`.
+
+    - Settlement: `actor-1` reserves 10 on `alpha`; a call priced 15 posts
+      to it; a save with status `done` settles it. A second
+      `DatabaseSync` opened on the store's file reads, through a new
+      `Ledger`, estimate 10, actual 15, and variance 5.
+
+    - Held: a save with status `error` settles nothing, and the
+      reservation stays outstanding.
+
+    - Late usage: a call posted after `actor-1` ended counts in its actual.
+
+    - No window: a call before the account's first window is pending
+      `no-window`; after a credit opens a window before it, `retryPending`
+      posts it.
+
+    - Endpoint: an invalid record answers 400 and writes nothing; an
+      unknown environment answers 422; a body above 8 MiB answers 413.
+
+    - Hook convergence: the same save twice leaves one visit, one
+      ownership, and one settlement.
+
+    - Schema: the steps applied to an empty database produce the schema of
+      `docs/specifications/usage-tables.sql`.
+
+    The recovery test lives in `packages/service/src/usage/recovery.test.ts`.
+    It starts a fixture service process on a database file, with the
+    usage listener behind a structural `mountOperator` stand-in, and runs
+    the host CLI's `src/cli.ts` with Node as `usage push` over fixture
+    roots that give several requests. The fixture writes a line and
+    waits after the commit of the second request; the test kills it with
+    `SIGKILL`, sees the host exit 1, restarts the service on the same
+    file, and runs the push again. It then kills the host with `SIGKILL`
+    after a batch is acknowledged and before its push state is written,
+    and runs it again. Every call key is posted once, and the actuals
+    equal those of one uninterrupted push.
+
+    Host tests in `packages/host-cli/src/usage-push/` drive
+    `runUsagePush` against a test HTTP server and a T3 Code database the
+    test builds from SQL in a temporary directory: a mapping per provider
+    cursor shape, the push state skipping unchanged sources, a source
+    that grows being pushed again, a locked or tableless database ending
+    the run with exit 1 before any request, and a 500 leaving the push
+    state unchanged. Shared tests cover `lintUsageDeclaration` and check
+    the bundled price table against its schema.

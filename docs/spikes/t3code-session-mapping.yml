@@ -1,0 +1,167 @@
+$schema: https://refinery.systems/ontology/spike
+title: Provider session to T3 Code thread, read from T3 Code's database
+
+relationships:
+  mitigates:
+    - task-usage-unattributable
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the design and specification these findings inform.
+  references:
+    - usage-intake
+    - usage-decoder
+    - usage-record
+
+objective:
+  - Where does T3 Code keep the provider session that runs each thread, and can the host CLI read it in process and read-only?
+  - For each provider the usage decoder covers, does that session id equal the `providerSessionId` the decoder gives the session's calls?
+
+background:
+  current-design: >-
+    The usage decoder gives every call a `providerSessionId`, the session id
+    the decoding library assigns it. Attribution needs the T3 Code thread
+    that ran each session. T3 Code persists, for each thread, the provider
+    session it resumes, so that a thread continues its conversation after
+    the server restarts.
+  problems:
+    - >-
+      T3 Code keeps the provider session in a provider-specific resume
+      cursor, and its projection columns for the provider session are
+      empty.
+    - >-
+      Each provider names its session in its own field, and two providers
+      run through the Agent Client Protocol, whose session store the
+      decoder may not read.
+
+ideas:
+  - >-
+    Read `provider_session_runtime` from T3 Code's SQLite database with
+    `node:sqlite` in read-only mode, and take the session id from the
+    resume cursor by provider.
+  - >-
+    Compare each id with the session files the decoder reads on the same
+    environment.
+
+environment:
+  location: a development environment running T3 Code, read-only
+  tools:
+    - "node:sqlite DatabaseSync with readOnly: true (Node 24)"
+    - "T3 Code source at commit b0ae3f3 (v0.0.36-nightly.20260828.1208)"
+    - "@codeburn/core 0.9.20"
+  resources:
+    - "T3 Code database `~/.t3/userdata/state.sqlite` while the server ran"
+    - "Provider session files under `~/.claude`, `~/.codex`, and `~/.cursor`"
+
+findings:
+  database-read:
+    verdict: "confirmed: one read-only table read, while the server writes"
+    measurements:
+      table: provider_session_runtime
+      columns-read: "thread_id, provider_name, provider_instance_id, resume_cursor_json"
+      rows-by-provider: "claudeAgent 38, codex 108, cursor 37"
+      projection-provider-session-columns-filled: "0 of 183"
+    notes: >-
+      Measured: `DatabaseSync` opened the database with `readOnly: true`
+      while the T3 Code server ran and wrote to it, and read every row of
+      `provider_session_runtime`. T3 Code writes that table from
+      `ProviderSessionRuntimeRepository.upsert`, one row per thread keyed
+      by `thread_id`, holding the cursor each adapter returns. The
+      `provider_session_id` and `provider_thread_id` columns of
+      `projection_thread_sessions` were empty on every row, so the resume
+      cursor is the only place the session id is kept. The row holds the
+      thread's current session only: a session a thread replaces is
+      mapped only by a push read before the replacement.
+
+  cursor-shapes:
+    verdict: "confirmed: one field per provider"
+    measurements:
+      claudeAgent-keys: "threadId, resume, resumeSessionAt, turnCount, turnStartMessageIds"
+      codex-keys: "threadId"
+      cursor-keys: "schemaVersion, sessionId"
+      grok-keys-from-source: "schemaVersion, sessionId"
+      opencode-keys-from-source: "schemaVersion, sessionId"
+    notes: >-
+      Measured on the database: the Claude cursor holds the Claude session
+      id in `resume`, and its `threadId` is the T3 Code thread id. The
+      Codex cursor holds the Codex thread id in `threadId`. The Cursor
+      cursor holds the ACP session id in `sessionId`. Read from T3 Code's
+      adapters: `readClaudeResumeState` accepts `resume`, else `sessionId`;
+      the Grok and OpenCode adapters write `{ schemaVersion, sessionId }`,
+      the OpenCode id being the OpenCode session's id.
+
+  claude:
+    verdict: "confirmed: 36 of 38 resume ids name a session transcript"
+    measurements:
+      cursors: 38
+      matching-transcript-stems: 36
+      transcripts-on-environment: 392
+    notes: >-
+      Measured: 36 cursors' `resume` equals the stem of a session
+      transcript under `~/.claude/projects`, which is the
+      `providerSessionId` the decoder gives every call of the session and
+      of its subagents. The other two name no transcript on the
+      environment; their files are gone. A Claude instance with its own
+      configuration directory keeps its transcripts there.
+
+  codex:
+    verdict: "confirmed: 108 of 108 thread ids name a rollout"
+    measurements:
+      cursors: 108
+      matching-rollout-session-meta-ids: 108
+      rollouts-on-environment: 2708
+    notes: >-
+      Measured: every cursor's `threadId` equals the `payload.id` of the
+      first `session_meta` record of a rollout under `~/.codex/sessions`
+      or `~/.codex/archived_sessions`. The decoder gives the calls of that
+      rollout, and of the child threads whose library calls carry the root
+      session id, that id as `providerSessionId`.
+
+  cursor:
+    verdict: "falsified: 0 of 37 ACP session ids name a transcript the decoder reads"
+    measurements:
+      cursors: 37
+      matching-transcripts: 0
+      acp-session-directories: 573
+      transcripts-in-decoder-layout: 0
+      transcripts-in-nested-layout: 242
+    notes: >-
+      Measured: T3 Code runs Cursor through the Agent Client Protocol. Each
+      cursor's `sessionId` names a directory `~/.cursor/acp-sessions/<id>/`
+      holding `meta.json` and a SQLite `store.db` of blobs, and names no
+      agent transcript. The decoder reads
+      `projects/*/agent-transcripts/*.{txt,jsonl}`; on this environment the
+      transcripts are at `agent-transcripts/<id>/<id>.jsonl`, which that
+      pattern does not reach. The mapping holds, but no call of a T3 Code
+      Cursor thread is decoded, so Cursor usage under T3 Code is not
+      attributed until the decoder reads the ACP session store.
+
+  grok-and-opencode:
+    verdict: "inferred from T3 Code source; not observed on an environment"
+    measurements:
+      grok-cursors: 0
+      opencode-cursors: 0
+    notes: >-
+      Read from source: the Grok adapter stores the ACP session id the
+      Grok agent returns, and the OpenCode adapter stores the OpenCode
+      session id. The decoder gives a Grok call the library's session id
+      for its session directory, and an OpenCode call the session id of
+      its session row or file. No Grok or OpenCode thread ran on this
+      environment, so neither equality is observed.
+
+conclusion: >-
+  The host CLI reads the session of every T3 Code thread from one table,
+  `provider_session_runtime`, read-only and in process, and takes the id
+  from the resume cursor by provider. For Claude and Codex the id equals
+  the decoder's `providerSessionId`, observed on every session whose files
+  remain. For Cursor the mapping is read but the sessions it names are in
+  the ACP session store, which the decoder does not read. For Grok and
+  OpenCode the equality follows from T3 Code's source and is not yet
+  observed. The table keeps only each thread's current session.
+
+next-steps:
+  - >-
+    Extend the usage decoder to read Cursor ACP sessions
+    (`~/.cursor/acp-sessions/<id>/store.db`) and nested agent transcripts,
+    and add their fixtures.
+  - >-
+    Observe the Grok and OpenCode equality on an environment that runs
+    those providers under T3 Code, and record it here.

@@ -11,6 +11,9 @@ title: Provider session files cannot be reliably attributed to individual tasks
 relationships:
   mitigated-by:
     - cost-history
+    - usage-decoder
+    - usage-intake
+    - t3code-session-mapping
 
 description: >-
   Manifold's gates request estimates from the user's process, which intends to build
