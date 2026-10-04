@@ -9,13 +9,6 @@ export async function consoleHost() {
     configuration: {
       host: "127.0.0.1",
       port: 0,
-      operatorCredential: undefined,
-    },
-    credentials: {
-      names: [],
-      resolve: (name) => {
-        throw new Error(`Unexpected credential: ${name}`);
-      },
     },
     onError: (error) => {
       throw error;
