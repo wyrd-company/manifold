@@ -491,8 +491,9 @@ proposed-design:
 
     - Reallocation: `alpha` and `beta` at 50%; `actor-1` posts 20 on
       `alpha`; after `setPortfolio` archives `alpha` and sets `beta` to
-      100%, `beta` allocation is 80 and reservable is 80; after `beta`
-      reserves 80, it is 0; the same holds when `alpha` is dropped from the
+      100%, `beta` allocation is 100, available 100, and reservable 80;
+      after `beta` reserves 80, available is 20 and reservable is 0; the
+      same holds when `alpha` is dropped from the
       portfolio instead of archived; after a credit of 100 opens `w2` at
       1000 and `beta`'s actor settles, `beta` reservable is 100.
 
