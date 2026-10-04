@@ -4,16 +4,14 @@
 //   references: [portfolio-declarations-table, portfolio-ledger]
 // ---
 import { lintPortfolioDeclaration, parseLedgerPortfolio } from "@wyrd-company/manifold-shared";
-import type { PortfolioDeclaration } from "@wyrd-company/manifold-shared";
+import type {
+  PortfolioDeclaration,
+  ProcessRepositoryRevision,
+} from "@wyrd-company/manifold-shared";
 import { createLedger } from "../ledger/index.ts";
 import type { LedgerConnection } from "../ledger/index.ts";
 import { resolvePortfolio } from "./resolution.ts";
-import type {
-  Portfolio,
-  PortfolioApplyResult,
-  PortfolioInForce,
-  PortfolioRevision,
-} from "./types.ts";
+import type { Portfolio, PortfolioApplyResult, PortfolioInForce } from "./types.ts";
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -58,7 +56,7 @@ export function openPortfolio(options: {
   });
   let pending: Promise<unknown> = Promise.resolve();
 
-  async function apply(revision: PortfolioRevision): Promise<PortfolioApplyResult> {
+  async function apply(revision: ProcessRepositoryRevision): Promise<PortfolioApplyResult> {
     const [portfolio, bindings] = await Promise.all([
       revision.read("portfolio.yml"),
       revision.read("bindings.yml"),

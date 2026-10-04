@@ -19,16 +19,7 @@ describe("compiled portfolio lint", () => {
     mkdirSync(cache, { recursive: true });
     buildDirectory = mkdtempSync(join(cache, "portfolio-build-"));
     binary = join(buildDirectory, "manifold-host");
-    // The actual CLI is bundled; only the schema dependency is supplied by this fixture
-    // until task 1135 merges. Replace the wrapper with src/cli.ts on rebase.
-    const entry = join(buildDirectory, "entry.ts");
-    writeFileSync(
-      entry,
-      `import { portfolioDeclarationAjv } from "@wyrd-company/manifold-shared";
-portfolioDeclarationAjv.addSchema({ $id: "https://manifold.wyrd.company/schemas/service-configuration", $defs: { "declared-name": { type: "string", pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$", maxLength: 64 } } });
-await import(${JSON.stringify(resolve("src/cli.ts"))});`,
-    );
-    const build = spawnSync("bun", ["build", entry, "--compile", "--outfile", binary], {
+    const build = spawnSync("bun", ["build", "src/cli.ts", "--compile", "--outfile", binary], {
       encoding: "utf8",
     });
     expect(build.status, build.stderr).toBe(0);

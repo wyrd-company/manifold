@@ -7,37 +7,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { portfolioDeclarationAjv } from "@wyrd-company/manifold-shared";
+import { memoryRevision } from "@wyrd-company/manifold-shared";
 import { stringify } from "yaml";
 import { openStore } from "../store/index.ts";
 import { ledgerMigrationSteps } from "../ledger/index.ts";
 import { openPortfolio, portfolioMigrationSteps } from "./index.ts";
-import type { PortfolioRevision } from "./index.ts";
 
-portfolioDeclarationAjv.addSchema({
-  $id: "https://manifold.wyrd.company/schemas/service-configuration",
-  $defs: {
-    "declared-name": { type: "string", pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$", maxLength: 64 },
-  },
-});
 const cleanup: (() => void)[] = [];
 afterEach(() => {
   for (const close of cleanup.splice(0).toReversed()) close();
 });
-const revision = (
-  portfolio: unknown,
-  bindings: unknown = {},
-  commit = "a".repeat(40),
-): PortfolioRevision => ({
-  commit,
-  async read(path) {
-    return path === "portfolio.yml"
-      ? stringify(portfolio)
-      : path === "bindings.yml"
-        ? stringify(bindings)
-        : undefined;
-  },
-});
+const revision = (portfolio: unknown, bindings: unknown = {}, commit = "a".repeat(40)) =>
+  memoryRevision(commit, {
+    "portfolio.yml": stringify(portfolio),
+    "bindings.yml": stringify(bindings),
+  });
 const split = (alpha = 50, beta = 50, archived = false) => ({
   items: {
     alpha: { archived, allocations: { acct: { guarantee: alpha } } },
@@ -277,7 +261,7 @@ describe("portfolio module", () => {
     const first = revision(split(30, 70));
     const reads: string[] = [];
     const one = s.portfolio.apply({
-      commit: first.commit,
+      ...first,
       async read(path) {
         reads.push("first");
         await blocked;
@@ -286,7 +270,7 @@ describe("portfolio module", () => {
     });
     const second = revision(split(60, 40), {}, "b".repeat(40));
     const two = s.portfolio.apply({
-      commit: second.commit,
+      ...second,
       async read(path) {
         reads.push("second");
         return second.read(path);
@@ -306,7 +290,7 @@ describe("portfolio module", () => {
     await s.portfolio.apply(revision(split(), binding()));
     await expect(
       s.portfolio.apply({
-        commit: "b".repeat(40),
+        ...revision(split(), {}, "b".repeat(40)),
         async read() {
           throw new Error("read failed");
         },

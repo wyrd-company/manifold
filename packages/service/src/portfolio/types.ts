@@ -2,12 +2,12 @@
 // relationships:
 //   implements: portfolio
 // ---
-import type { PortfolioDeclaration, PortfolioFinding } from "@wyrd-company/manifold-shared";
+import type {
+  PortfolioDeclaration,
+  PortfolioFinding,
+  ProcessRepositoryRevision,
+} from "@wyrd-company/manifold-shared";
 import type { Ledger } from "../ledger/index.ts";
-export interface PortfolioRevision {
-  readonly commit: string;
-  read(path: string): Promise<string | undefined>;
-}
 export type PortfolioApplyResult =
   | { status: "applied"; commit: string }
   | { status: "unchanged"; commit: string }
@@ -25,7 +25,7 @@ export type T3codeProjectResolution =
   | { item: "other"; via: "unbound" };
 export interface Portfolio {
   readonly ledger: Ledger;
-  apply(revision: PortfolioRevision): Promise<PortfolioApplyResult>;
+  apply(revision: ProcessRepositoryRevision): Promise<PortfolioApplyResult>;
   current(): PortfolioInForce;
   githubProject(project: { owner: string; number: number }): GitHubProjectResolution | undefined;
   t3codeProject(project: { environment: string; id: string }): T3codeProjectResolution;

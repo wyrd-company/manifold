@@ -5,19 +5,12 @@
 import { readFileSync } from "node:fs";
 import { parse, stringify } from "yaml";
 import { describe, expect, it } from "vite-plus/test";
-import { lintPortfolioDeclaration, portfolioDeclarationAjv } from "./portfolio-declaration.ts";
+import { lintPortfolioDeclaration } from "./portfolio-declaration.ts";
 import {
   portfolioDeclarationSchema,
   bindingsDeclarationSchema,
 } from "./portfolio-declaration-schema.ts";
 
-// Task 1135 owns the real root and section schemas. Replace this registration on rebase.
-portfolioDeclarationAjv.addSchema({
-  $id: "https://manifold.wyrd.company/schemas/service-configuration",
-  $defs: {
-    "declared-name": { type: "string", pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$", maxLength: 64 },
-  },
-});
 const lint = (portfolio: unknown, bindings: unknown = {}) =>
   lintPortfolioDeclaration({ portfolio: stringify(portfolio), bindings: stringify(bindings) });
 const findings = (portfolio: unknown, bindings: unknown = {}) => {

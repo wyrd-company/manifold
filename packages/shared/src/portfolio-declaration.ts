@@ -3,6 +3,7 @@
 //   implements: [portfolio-declaration, bindings-declaration]
 //   references: [portfolio-ledger, service-configuration]
 // ---
+import { serviceConfigurationSchemas } from "./service-configuration-schemas.ts";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 import { parse } from "yaml";
@@ -21,9 +22,8 @@ import type {
 import { pointerSegment, normalizePortfolio } from "./portfolio-normalization.ts";
 import { lintBindings } from "./portfolio-bindings.ts";
 
-// Task 1135 supplies root and section schemas. Tests register its declared-name stand-in
-// here until rebase; production registration belongs here once those constants land.
-export const portfolioDeclarationAjv = new Ajv2020({ allErrors: true, strict: false });
+const portfolioDeclarationAjv = new Ajv2020({ allErrors: true, strict: false });
+for (const schema of serviceConfigurationSchemas) portfolioDeclarationAjv.addSchema(schema);
 let portfolioValidator: ValidateFunction<PortfolioDocument> | undefined;
 let bindingsValidator: ValidateFunction<BindingsDocument> | undefined;
 

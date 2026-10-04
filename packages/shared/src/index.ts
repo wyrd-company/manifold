@@ -56,7 +56,7 @@ export type {
   PortfolioItem,
 } from "./ledger-portfolio.ts";
 
-export { lintPortfolioDeclaration, portfolioDeclarationAjv } from "./portfolio-declaration.ts";
+export { lintPortfolioDeclaration } from "./portfolio-declaration.ts";
 export {
   portfolioDeclarationSchema,
   bindingsDeclarationSchema,
