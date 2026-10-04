@@ -9,6 +9,8 @@ relationships:
   mitigated-by:
     - escalations
     - escalations-configuration
+  related-to:
+    - serve-the-api-without-authentication
 
 description: >-
   An ntfy notification carries the escalation's key in its buttons and its
@@ -17,8 +19,11 @@ description: >-
   anyone who knows or guesses its name; on any topic, the server's
   operator and anything that reads the server's message cache while it
   keeps the message. Whoever holds the key can answer while the
-  escalation is open. An answer from the wrong person moves an actor,
-  releases a held actor, or returns a stranded token.
+  escalation is open. Manifold's API answers an escalation by its id with
+  no key, so anyone who can reach the API can answer any open escalation;
+  the key matters where only the answer endpoint is reachable. An answer
+  from the wrong person moves an actor, releases a held actor, or returns
+  a stranded token.
 
 categories:
   - security

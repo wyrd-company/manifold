@@ -1,0 +1,42 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - escalations
+    - escalations-configuration
+    - escalation-contract
+description: >-
+  An escalation must reach a person away from the console and let them
+  answer it there. Manifold is installed by one operator, so every service
+  it needs beside T3 Code and GitHub is one more thing that operator must
+  install, run, and secure.
+considered-options:
+  "1": >-
+    ntfy directly. Manifold publishes to an ntfy topic on ntfy.sh or a
+    self-hosted server, with an action button per choice that answers by
+    key, a link to an answer page, and a replacement message when the
+    escalation ends.
+  "2": >-
+    apprise-api. Manifold posts to an apprise-api server that fans out to
+    any of Apprise's services, with a link per choice to an answer page on
+    Manifold, since Apprise has no action buttons.
+  "3": >-
+    A notification library in process. Manifold sends to each channel
+    through a library, with a configuration and credentials per channel.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 needs nothing installed beyond an ntfy app: ntfy.sh is hosted,
+    and a self-hosted server is optional. Its action buttons answer from the
+    notification, and its sequence IDs replace the question with how it
+    ended on every client. Option 2 makes every user install and run
+    apprise-api, and its messages carry links only. Option 3 puts each
+    channel's credentials and failure modes into Manifold, and most
+    channels have no buttons either.
+expected-outcomes:
+  positive:
+    - An operator gets escalations on a phone with an ntfy app and no other install.
+    - A choice is answered with one tap, and every client shows when an escalation has ended.
+    - Each destination declares how its topic is secured, open, reserved, or self-hosted.
+  negative:
+    - Channels other than ntfy, such as chat or email, are not reached.
+    - On an open topic, anyone who knows its name reads the escalations and can answer them.

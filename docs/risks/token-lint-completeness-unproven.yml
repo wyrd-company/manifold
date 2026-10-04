@@ -10,6 +10,7 @@ relationships:
     - gate-xstate
     - gates
     - token-lint
+    - gate-runtime
   related-to:
     - blueprint-loader
 
@@ -30,11 +31,11 @@ description: >-
   behind it is released.
   The shared lint is exercised through XState's exported microstep functions,
   including persisted history keys, transient returns, invocations, delays,
-  wildcard events, opaque choices, and repeated grants. The remaining proof is
-  the gate runtime's holder check: a persisted holder in a trap must raise the
-  stranded-token escalation without returning a different token. A trap
-  whose only exit ends the actor loads with a warning and remains subject
-  to the holder check.
+  wildcard events, opaque choices, and repeated grants. The gate runtime
+  checks each holder's saved configuration against its gate's trap set, and
+  a holder in a trap raises a `stranded-token` escalation whose `return`
+  answer gives back that token alone. A trap whose only exit ends the actor
+  loads with a warning and stays in the trap set.
 
 categories:
   - technical
@@ -45,8 +46,10 @@ response-strategy: mitigate
 # reachable on fixed choices, warns on a potential or unknown verdict, and checks each holder's
 # saved configuration against the trap configurations of its gate at run
 # time, raising an escalation for a stranded token. The trap set is sound
-# because the graph over-approximates the actor. The risk closes when the
-# token lint built from the design passes the spike's fixtures, including
-# the history counterexample, and the run-time check raises an escalation
-# for a holder in a trap.
-status: open
+# because the graph over-approximates the actor. The token lint passes the
+# spike's fixtures, including the history counterexample, and a service
+# started on restored holders raises the escalation for a holder in a trap
+# and grants the next member after a `return` answer. A trap behind an
+# expression or named guard, and a gate past the configuration bound, stay
+# warnings that only the run-time check covers.
+status: mitigated

@@ -34,5 +34,11 @@ likelihood: 3
 impact: 4
 
 response-strategy: mitigate
+# Mitigation: the host CLI maps each provider session to its T3 Code thread
+# from T3 Code's own database, and the service maps the thread to its actor
+# and state visit, or to its T3code project's binding, or to the top-level
+# Other. Cursor sessions under T3 Code are stored as ACP agent transcripts
+# in a nested layout the usage decoder does not read, so their usage is
+# not decoded.
 
 status: mitigated
