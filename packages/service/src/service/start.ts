@@ -22,6 +22,7 @@ import type { GitHubSource } from "../github-source/index.ts";
 import { startT3CodeSource } from "../t3code-source/index.ts";
 import type { T3CodeSource } from "../t3code-source/index.ts";
 import { createHttpHost } from "../http-host/index.ts";
+import { mountConsole } from "../console/index.ts";
 import type { HttpHost } from "../http-host/index.ts";
 import { createRevisions } from "./revisions.ts";
 import { stderrLog } from "./log.ts";
@@ -194,6 +195,16 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         }),
     });
     http.mount(githubWebhookPath, github.requestListener);
+    mountConsole(http, {
+      store: parts.store,
+      log: (entry) =>
+        parts.log({
+          level: entry.level,
+          event: "console-read-failed",
+          message: entry.error,
+          detail: { path: entry.path },
+        }),
+    });
     const address = await http.listen();
     step("listening", "start");
     log({ level: "info", event: "started", message: "Service started", detail: address });

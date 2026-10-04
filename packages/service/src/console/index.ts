@@ -5,22 +5,18 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { HttpHost } from "../http-host/index.ts";
 import { actorsApiPath } from "@wyrd-company/manifold-shared/actors-api";
 import type { Store } from "../store/index.ts";
 import { actorsListener } from "./actors-api.ts";
 import { staticListener } from "./static-files.ts";
-export type RequestListener = (request: IncomingMessage, response: ServerResponse) => void;
-export interface ConsoleHttpHost {
-  mount(pathPrefix: string, listener: RequestListener): void;
-  mountOperator(pathPrefix: string, listener: RequestListener): void;
-}
+export type { HttpListener as RequestListener } from "../http-host/index.ts";
 export interface ConsoleOptions {
   readonly store: Pick<Store, "activeSnapshots">;
   readonly root?: string;
   readonly log?: (entry: { level: "error"; path: string; error: string }) => void;
 }
-export function mountConsole(host: ConsoleHttpHost, options: ConsoleOptions): void {
+export function mountConsole(host: HttpHost, options: ConsoleOptions): void {
   const root =
     options.root ??
     dirname(fileURLToPath(import.meta.resolve("@wyrd-company/manifold-console/dist/index.html")));
