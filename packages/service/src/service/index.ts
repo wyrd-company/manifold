@@ -9,6 +9,7 @@ export type {
   ServiceProbes,
   ServiceStep,
   ServiceParts,
+  ServiceActorHost,
   Service,
   Revisions,
   AppliedRevision,

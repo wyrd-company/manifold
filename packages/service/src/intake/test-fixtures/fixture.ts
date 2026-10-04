@@ -36,7 +36,8 @@ export const issue = (id = "I1"): TrackedIssue => ({
   items: [
     {
       project: { nodeId: "P1", owner: "example-org", number: 1 },
-      item: { nodeId: "ITEM1", archived: false },
+      nodeId: "ITEM1",
+      archived: false,
       fields: { Track: { kind: "single-select", optionId: "gear", name: "Gears" } },
     },
   ],

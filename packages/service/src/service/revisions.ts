@@ -2,7 +2,8 @@
 // relationships:
 //   implements: service-assembly
 // ---
-import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
+import type { BlueprintLoader } from "../blueprint-loader/index.ts";
+import type { IntakeRevision } from "../intake/index.ts";
 import type { Usage } from "../usage/index.ts";
 import type { Portfolio } from "../portfolio/index.ts";
 import type { ProcessRepository } from "../process-repository/index.ts";
@@ -16,14 +17,13 @@ export function createRevisions(options: {
   readonly applied?: (revision: AppliedRevision) => void;
 }): Revisions & { close(): Promise<void> } {
   let followed: string | undefined;
-  let latest: RevisionLoad | undefined;
+  let current: IntakeRevision | undefined;
   let queue: Promise<void> = Promise.resolve();
   let closed = false;
   async function apply() {
     const revision = options.repository.current();
     if (!revision || revision.commit === followed) return;
     const loaded = await options.blueprints.loadRevision(revision);
-    latest = loaded;
     for (const [path, findings] of loaded.failures)
       options.log({
         level: "warn",
@@ -66,6 +66,7 @@ export function createRevisions(options: {
         message: "Usage declaration rejected",
         detail: { commit: revision.commit, findings: usageResult.findings.map((f) => ({ ...f })) },
       });
+    current = { revision, blueprints: loaded, portfolio: options.portfolio.current() };
     followed = revision.commit;
     options.log({
       level: "info",
@@ -90,7 +91,8 @@ export function createRevisions(options: {
     return operation;
   }
   return {
-    latest: () => latest,
+    latest: () => current?.blueprints,
+    current: () => current,
     follow: () => enqueue(apply),
     pull: (request) =>
       enqueue(async () => {

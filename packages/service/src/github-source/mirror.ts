@@ -239,7 +239,8 @@ export function createMirror(store: Store, now: () => number) {
       const state = read();
       return [...state.issues.values()]
         .filter((row) => row.baselined && row.present && isTracked(state, bound, row.issue.nodeId))
-        .map((row) => row.issue.nodeId);
+        .map((row) => row.issue.nodeId)
+        .sort();
     },
     trackedIssue(id: string, bound: ReadonlyMap<string, GitHubProject>): TrackedIssue | undefined {
       const state = read();
@@ -258,7 +259,8 @@ export function createMirror(store: Store, now: () => number) {
           )
           .map((r) => ({
             project: bound.get(r.projectId)!,
-            item: { nodeId: r.item.nodeId, archived: r.archived },
+            nodeId: r.item.nodeId,
+            archived: r.archived,
             fields: Object.fromEntries(
               [...state.fields.values()]
                 .filter((f) => f.itemId === r.item.nodeId)

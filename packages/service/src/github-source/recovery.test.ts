@@ -883,10 +883,78 @@ test("discovery follows the committed baseline and enumerates item facts only fo
     { ids: ["I_A"], baselined: { baselined: 1 }, events: { count: 1 } },
   ]);
   expect(s.source.trackedIssueIds()).toEqual(["I_A"]);
-  expect(s.source.trackedIssue("I_A")?.items).toMatchObject([
-    { project: { nodeId: "P_one" }, item: { nodeId: "IT_A", archived: false }, fields: {} },
+  expect(s.source.trackedIssue("I_A")?.items).toEqual([
+    {
+      project: { nodeId: "P_one", owner: "sample", number: 1 },
+      nodeId: "IT_A",
+      archived: false,
+      fields: {},
+    },
   ]);
+  const tracked = s.source.trackedIssue("I_A")!;
+  expect(tracked.items.map((item) => item.project)).toEqual(tracked.projects);
   s.source.requestSweep();
   await s.idle();
   expect(s.discoveries).toHaveLength(1);
+});
+
+test("enumerates two tracked issue node ids in code point order regardless of SQL read order", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_B", "I_B");
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  s.store.connection.database.exec("PRAGMA reverse_unordered_selects=ON");
+  expect(s.source.trackedIssueIds()).toEqual(["I_A", "I_B"]);
+});
+
+test("exports flat item facts in the same order as the issue's Projects", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_Z", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  await s.source.stop();
+  const db = s.store.connection.database;
+  db.prepare("INSERT INTO github_project VALUES (?, ?, ?, ?, ?)").run("P_two", "sample", 2, 0, 1);
+  db.prepare("INSERT INTO github_item VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    "IT_A",
+    "P_two",
+    "issue",
+    "I_A",
+    1,
+    1,
+    1,
+  );
+  db.prepare("INSERT INTO github_field_value VALUES (?, ?, ?, ?, ?)").run(
+    "IT_A",
+    "F_track",
+    "Track",
+    JSON.stringify({ kind: "text", text: "Packages" }),
+    1,
+  );
+  const source = startGitHubSource({
+    ...s.options,
+    boundProjects: () => [
+      { owner: "sample", number: 1 },
+      { owner: "sample", number: 2 },
+    ],
+  });
+  cleanup.push(() => source.stop());
+  const tracked = source.trackedIssue("I_A")!;
+  const expected: readonly import("./index.ts").TrackedItem[] = [
+    {
+      project: { nodeId: "P_two", owner: "sample", number: 2 },
+      nodeId: "IT_A",
+      archived: true,
+      fields: { Track: { kind: "text", text: "Packages" } },
+    },
+    {
+      project: { nodeId: "P_one", owner: "sample", number: 1 },
+      nodeId: "IT_Z",
+      archived: false,
+      fields: {},
+    },
+  ];
+  expect(tracked.items).toEqual(expected);
+  expect(tracked.items.map((item) => item.project)).toEqual(tracked.projects);
 });

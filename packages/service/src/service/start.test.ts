@@ -2,6 +2,10 @@
 // relationships:
 //   verifies: service-assembly
 // ---
+import * as fs from "node:fs/promises";
+import git from "isomorphic-git";
+import { stringify } from "yaml";
+import { model } from "../intake/test-fixtures/fixture.ts";
 import { afterEach, expect, test } from "vite-plus/test";
 import { startService, githubWebhookPath } from "./index.ts";
 import type { Service, ServiceStep } from "./index.ts";
@@ -28,6 +32,7 @@ const startSteps: ServiceStep[] = [
   "router-started",
   "escalations-started",
   "github-started",
+  "intake-started",
   "t3code-started",
   "listening",
 ];
@@ -36,6 +41,7 @@ const stopSteps: ServiceStep[] = [
   "sources-stopped",
   "escalations-stopped",
   "revisions-idle",
+  "intake-stopped",
   "router-stopped",
   "store-closed",
 ];
@@ -363,7 +369,7 @@ test("stop continues through a failed step and rejects after closing the store",
     },
   });
   await expect(service.stop()).rejects.toBe(failure);
-  expect(steps.slice(-6)).toEqual(stopSteps);
+  expect(steps.slice(-stopSteps.length)).toEqual(stopSteps);
 });
 
 test("the default actor host holds restored actors with their inbox intact", async () => {
@@ -673,4 +679,106 @@ test("service startup starts ntfy delivery and shutdown aborts it before closing
   await service.stop();
   await expect.poll(() => requestClosed).toBe(true);
   expect(() => service.store.connection.database.prepare("SELECT 1")).toThrow();
+});
+
+async function publishIntake(
+  f: Awaited<ReturnType<typeof serviceFixture>>,
+  expression = '{"blueprint":"blueprints/counter.yml","portfolioItem":"alpha"}',
+) {
+  const parent = await git.resolveRef({ fs, gitdir: f.remote.gitdir, ref: "refs/heads/main" });
+  const { commit } = await git.readCommit({ fs, gitdir: f.remote.gitdir, oid: parent });
+  const { tree } = await git.readTree({ fs, gitdir: f.remote.gitdir, oid: commit.tree });
+  async function blob(path: string, value: unknown) {
+    return {
+      path,
+      mode: "100644",
+      type: "blob" as const,
+      oid: await git.writeBlob({
+        fs,
+        gitdir: f.remote.gitdir,
+        blob: Buffer.from(stringify(value)),
+      }),
+    };
+  }
+  const models = await git.writeTree({
+    fs,
+    gitdir: f.remote.gitdir,
+    tree: [await blob("quote.yml", model(expression))],
+  });
+  const next = await git.writeTree({
+    fs,
+    gitdir: f.remote.gitdir,
+    tree: [
+      ...tree.filter((entry) => !["bindings.yml", "manifold.yml", "models"].includes(entry.path)),
+      await blob("bindings.yml", {
+        githubProjects: {
+          first: { owner: "sample", number: 1, environment: "env-one", item: "alpha" },
+        },
+      }),
+      await blob("manifold.yml", { intake: { decisionModel: "models/quote.yml" } }),
+      { path: "models", mode: "040000", type: "tree", oid: models },
+    ],
+  });
+  const oid = await git.writeCommit({
+    fs,
+    gitdir: f.remote.gitdir,
+    commit: { ...commit, tree: next, parent: [parent], message: "Example intake declaration" },
+  });
+  await f.remote.force(oid);
+  return oid;
+}
+
+test("wires discovery, revision retry, actor start and drained shutdown through service parts", async () => {
+  const f = await fixture();
+  await publishIntake(f, '{"blueprint":"blueprints/counter.yml","portfolioItem":"unknown"}');
+  f.api.addItem("IT_A", "I_A");
+  const inputs: unknown[] = [];
+  const logs: { event: string; message: string }[] = [];
+  const service = await startService({
+    configurationFile: f.file,
+    log: (entry) => logs.push(entry),
+    actorHost: (parts) => ({
+      subscription: () => ({ topics: [] }),
+      restore: () => ({ status: "held", reason: "fixture" }),
+      start(request) {
+        inputs.push(request.input);
+        parts.store.saveSnapshot({
+          actorId: request.actorId,
+          machine: request.blueprint.key,
+          snapshot: {
+            status: "active",
+            value: "counting",
+            context: { manifold: request.input["manifold"]! },
+          },
+        });
+      },
+    }),
+  });
+  cleanup.push(service.stop);
+  await expect.poll(() => service.intake.record("I_A")?.status).toBe("failed");
+  expect(service.intake.record("I_A")?.failure?.detail).toEqual({ item: "unknown" });
+  expect(logs).toContainEqual(
+    expect.objectContaining({ event: "intake-failed", message: "Intake failed: item-unknown" }),
+  );
+  expect(inputs).toEqual([]);
+  const next = await publishIntake(f);
+  await service.revisions.pull();
+  await service.intake.idle();
+  expect(service.intake.record("I_A")).toMatchObject({
+    status: "started",
+    commit: next,
+    attempts: 2,
+  });
+  expect(inputs).toMatchObject([
+    {
+      manifold: { issue: "I_A", project: "P_one", environment: "env-one", portfolioItem: "alpha" },
+      task: { item: { nodeId: "IT_A", archived: false } },
+    },
+  ]);
+  f.api.addItem("IT_B", "I_B");
+  service.github.requestSweep();
+  await expect.poll(() => service.intake.record("I_B")?.status).toBe("started");
+  expect(inputs).toHaveLength(2);
+  await service.stop();
+  expect(() => service.intake.discovered(["I_C"])).toThrow(TypeError);
 });

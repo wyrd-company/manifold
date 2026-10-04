@@ -96,11 +96,13 @@ export interface TrackedIssue {
   readonly subIssues: readonly GitHubIssue[];
   readonly parent: GitHubIssue | undefined;
   readonly projects: readonly GitHubProject[];
-  readonly items: readonly {
-    readonly project: GitHubProject;
-    readonly item: { readonly nodeId: string; readonly archived: boolean };
-    readonly fields: Readonly<Record<string, GitHubFieldValue>>;
-  }[];
+  readonly items: readonly TrackedItem[];
+}
+export interface TrackedItem {
+  readonly project: GitHubProject;
+  readonly nodeId: string;
+  readonly archived: boolean;
+  readonly fields: Readonly<Record<string, GitHubFieldValue>>;
 }
 export interface ObservedIssue extends Omit<TrackedIssue, "projects" | "items"> {}
 export interface ItemReference {

@@ -13,6 +13,11 @@ import {
   githubEventsSchema,
   serviceConfigurationSchemas,
 } from "@wyrd-company/manifold-shared";
+import { stringify } from "yaml";
+import { createRevisions } from "../service/revisions.ts";
+import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
+import { ledgerMigrationSteps } from "../ledger/index.ts";
+import type { IntakeRevision } from "./index.ts";
 import { decisionModelSchema } from "../../../shared/src/decision-model-schema.ts";
 import { createDecisionModels } from "../decision-models.ts";
 import { startIntake, intakeMigrationSteps } from "./index.ts";
@@ -45,6 +50,7 @@ it("records once, starts one actor and hands off mirror state and later issue ev
     blueprintVersion: first + ":blueprints/parcel.yml",
   });
   expect(s.host.starts).toEqual(["task:I1"]);
+  expect(s.host.inputs).toMatchObject([{ task: { item: { nodeId: "ITEM1", archived: false } } }]);
   expect(s.store.loadSnapshot("task:I1")).toMatchObject({
     machine: first + ":blueprints/parcel.yml",
     snapshot: {
@@ -120,21 +126,69 @@ it("defaults a parent item to its Other and chooses the first binding by name", 
   });
 });
 it.each([
-  ["manifest", undefined],
-  ["decision-model", '($error("bad quote"))'],
-  ["output", '{"blueprint":"blueprints/parcel.yml","extra":7}'],
-  ["blueprint-unloaded", '{"blueprint":"blueprints/missing.yml"}'],
-  ["item-unknown", '{"blueprint":"blueprints/parcel.yml","portfolioItem":"unknown"}'],
-  ["item-outside-binding", '{"blueprint":"blueprints/parcel.yml","portfolioItem":"other"}'],
-  ["item-outside-binding", '{"blueprint":"blueprints/parcel.yml","portfolioItem":"delta"}'],
-  ["input-invalid", '{"blueprint":"blueprints/parcel.yml"}'],
-] as const)("records %s without starting", async (kind, expression) => {
+  [
+    "manifest",
+    undefined,
+    {
+      findings: [
+        {
+          file: "manifold.yml",
+          location: "",
+          kind: "manifest-missing",
+          message: "Missing process manifest.",
+          severity: "error",
+        },
+      ],
+    },
+  ],
+  ["decision-model", '($error("bad quote"))', undefined],
+  [
+    "output",
+    '{"blueprint":"blueprints/parcel.yml","extra":7}',
+    { errors: [{ instancePath: "", message: "must NOT have additional properties" }] },
+  ],
+  [
+    "blueprint-unloaded",
+    '{"blueprint":"blueprints/missing.yml"}',
+    { path: "blueprints/missing.yml", findings: [] },
+  ],
+  [
+    "item-unknown",
+    '{"blueprint":"blueprints/parcel.yml","portfolioItem":"unknown"}',
+    { item: "unknown" },
+  ],
+  [
+    "item-outside-binding",
+    '{"blueprint":"blueprints/parcel.yml","portfolioItem":"other"}',
+    { item: "other", binding: "first", bindingItem: "alpha" },
+  ],
+  [
+    "item-outside-binding",
+    '{"blueprint":"blueprints/parcel.yml","portfolioItem":"delta"}',
+    { item: "delta", binding: "first", bindingItem: "alpha" },
+  ],
+  [
+    "input-invalid",
+    '{"blueprint":"blueprints/parcel.yml"}',
+    { errors: [{ instancePath: "", message: "boolean schema is false" }] },
+  ],
+] as const)("records %s without starting", async (kind, expression, detail) => {
   const source = files(expression, kind !== "input-invalid");
   if (kind === "manifest") delete (source as Record<string, string>)["manifold.yml"];
   const s = await fixture(source);
   s.intake.revisionLoaded();
   await s.intake.idle();
   expect(s.intake.record("I1")).toMatchObject({ status: "failed", failure: { kind } });
+  const record = s.intake.record("I1")!;
+  if (kind === "decision-model") {
+    expect(record.failure?.detail).toEqual((record.evaluation as { error: unknown }).error);
+    expect(record.failure?.detail).toMatchObject({
+      kind: "evaluation",
+      model: "models/quote.yml",
+      nodeId: "quote",
+      message: "bad quote",
+    });
+  } else expect(record.failure?.detail).toEqual(detail);
   expect(s.host.starts).toEqual([]);
 });
 it.each(["binding-missing", "binding-archived", "item-archived"] as const)(
@@ -164,6 +218,13 @@ it.each(["binding-missing", "binding-archived", "item-archived"] as const)(
     s.intake.revisionLoaded();
     await s.intake.idle();
     expect(s.intake.record("I1")).toMatchObject({ status: "failed", failure: { kind } });
+    expect(s.intake.record("I1")?.failure?.detail).toEqual(
+      kind === "binding-missing"
+        ? {}
+        : kind === "binding-archived"
+          ? { bindings: ["first"] }
+          : { item: "beta" },
+    );
     expect(s.host.starts).toEqual([]);
   },
 );
@@ -316,9 +377,17 @@ it("preserves the recorded version and item through input-invalid and unavailabl
   const record = s.intake.record("I1")!;
   expect(record).toMatchObject({
     status: "recorded",
-    startFailure: { kind: "input-invalid" },
+    startFailure: {
+      kind: "input-invalid",
+      detail: {
+        errors: [{ instancePath: "/task/issue/state", message: "must be equal to constant" }],
+      },
+    },
     startAttempts: 1,
     attempts: 1,
+  });
+  expect(record.startFailure?.detail).toEqual({
+    errors: [{ instancePath: "/task/issue/state", message: "must be equal to constant" }],
   });
   await s.intake.stop();
   const base = {
@@ -337,9 +406,16 @@ it("preserves the recorded version and item through input-invalid and unavailabl
   await unavailable.idle();
   expect(unavailable.record("I1")).toMatchObject({
     status: "recorded",
-    startFailure: { kind: "version-unavailable" },
+    startFailure: {
+      kind: "version-unavailable",
+      detail: { version: record.blueprintVersion, reason: "commit" },
+    },
     blueprintVersion: record.blueprintVersion,
     portfolioItem: record.portfolioItem,
+  });
+  expect(unavailable.record("I1")?.startFailure?.detail).toEqual({
+    version: record.blueprintVersion,
+    reason: "commit",
   });
   await unavailable.stop();
   s.tracked.set("I1", issue());
@@ -391,57 +467,141 @@ it("waits for the first basis and leaves unreadable revisions queued until a wak
   expect(() => s.intake.revisionLoaded()).toThrow(TypeError);
 });
 it("captures the previous whole publication while the follower awaits load and apply", async () => {
-  const s = await fixture();
-  const a = s.current()!;
-  const revision = memoryRevision(
-    second,
-    files('{"blueprint":"blueprints/parcel.yml","portfolioItem":"gamma"}'),
-  );
-  s.revisions.set(second, revision);
-  let loadDone!: () => void, applyDone!: () => void;
-  const loading = new Promise<void>((r) => (loadDone = r)),
-    applying = new Promise<void>((r) => (applyDone = r));
-  let applyingStarted!: () => void;
-  const inApply = new Promise<void>((r) => (applyingStarted = r));
-  // A stand-in for the serialized revision follower. The production publication
-  // is added after service assembly merges, at the same ruled boundary.
-  const job = (async () => {
-    await loading;
-    const blueprints = await s.loader.loadRevision(revision);
-    applyingStarted();
-    await applying;
-    s.setCurrent({ revision, blueprints, portfolio: portfolio(second, "gamma") });
-    s.intake.revisionLoaded();
-  })();
-  s.intake.discovered(["I1"]);
+  let follower: ReturnType<typeof createRevisions> | undefined;
+  const s = await fixture(files(), { current: () => follower?.current() });
+  s.store.connection.migrate("ledger", ledgerMigrationSteps);
+  s.store.connection.migrate("portfolio", portfolioMigrationSteps);
+  const realPortfolio = openPortfolio({ connection: s.store.connection });
+  const declarations = {
+    "portfolio.yml": stringify({ items: { alpha: { items: { beta: {}, gamma: {} } }, delta: {} } }),
+    "bindings.yml": stringify({
+      githubProjects: {
+        first: { owner: "example-org", number: 1, environment: "env-one", item: "alpha" },
+      },
+    }),
+  };
+  const a = memoryRevision(first, { ...files(), ...declarations });
+  const b = memoryRevision(second, {
+    ...files('{"blueprint":"blueprints/parcel.yml","portfolioItem":"gamma"}'),
+    ...declarations,
+    "portfolio.yml": stringify({
+      items: { alpha: { title: "Packages", items: { beta: {}, gamma: {} } }, delta: {} },
+    }),
+  });
+  s.revisions.set(first, a);
+  s.revisions.set(second, b);
+  let revision = a;
+  let loadDone!: () => void,
+    applyDone!: () => void,
+    loadStarted!: () => void,
+    applyStarted!: () => void;
+  const loading = new Promise<void>((r) => (loadDone = r));
+  const applying = new Promise<void>((r) => (applyDone = r));
+  const inLoad = new Promise<void>((r) => (loadStarted = r));
+  const inApply = new Promise<void>((r) => (applyStarted = r));
+  const published: IntakeRevision[] = [];
+  follower = createRevisions({
+    repository: {
+      current: () => revision,
+      revisionAt: async (commit) => s.revisions.get(commit),
+      pull: async () => ({ kind: "unchanged", commit: revision.commit }),
+    },
+    blueprints: {
+      ...s.loader,
+      async loadRevision(r) {
+        if (r.commit === second) {
+          loadStarted();
+          await loading;
+        }
+        return s.loader.loadRevision(r);
+      },
+    },
+    portfolio: {
+      ...realPortfolio,
+      async apply(r) {
+        const result = await realPortfolio.apply(r);
+        if (r.commit === second) {
+          applyStarted();
+          await applying;
+        }
+        return result;
+      },
+    },
+    log: () => {},
+    applied: () => {
+      published.push(follower!.current()!);
+      s.intake.revisionLoaded();
+    },
+  });
+  cleanup.push(() => {
+    loadDone();
+    applyDone();
+    return follower!.close();
+  });
+  expect(follower.current()).toBeUndefined();
+  await follower.follow();
   await s.intake.idle();
-  expect(s.intake.record("I1")).toMatchObject({
+  revision = b;
+  const job = follower.follow();
+  await inLoad;
+  s.tracked.set("I2", issue("I2"));
+  s.intake.discovered(["I2"]);
+  await s.intake.idle();
+  expect(s.intake.record("I2")).toMatchObject({
     commit: first,
     portfolioCommit: first,
     portfolioItem: "beta",
   });
   loadDone();
   await inApply;
-  s.tracked.set("I2", issue("I2"));
-  s.intake.discovered(["I2"]);
+  expect(realPortfolio.current().commit).toBe(second);
+  expect(follower.current()?.revision.commit).toBe(first);
+  expect(follower.latest()?.commit).toBe(first);
+  s.tracked.set("I3", issue("I3"));
+  s.intake.discovered(["I3"]);
   await s.intake.idle();
-  expect(s.intake.record("I2")).toMatchObject({
-    commit: a.revision.commit,
+  expect(s.intake.record("I3")).toMatchObject({
+    commit: first,
     portfolioCommit: first,
     portfolioItem: "beta",
   });
   applyDone();
   await job;
-  s.tracked.set("I3", issue("I3"));
-  s.intake.discovered(["I3"]);
+  s.tracked.set("I4", issue("I4"));
+  s.intake.discovered(["I4"]);
   await s.intake.idle();
-  expect(s.intake.record("I3")).toMatchObject({
+  expect(s.intake.record("I4")).toMatchObject({
     status: "started",
     commit: second,
     portfolioCommit: second,
     blueprintVersion: second + ":blueprints/parcel.yml",
     portfolioItem: "gamma",
   });
+  expect(
+    published.map((r) => [r.revision.commit, r.blueprints.commit, r.portfolio.commit]),
+  ).toEqual([
+    [first, first, first],
+    [second, second, second],
+  ]);
+  const rejected = "c".repeat(40);
+  revision = memoryRevision(rejected, {
+    ...files(),
+    ...declarations,
+    "portfolio.yml": "items: [invalid]",
+  });
+  s.revisions.set(rejected, revision);
+  await follower.follow();
+  s.tracked.set("I5", issue("I5"));
+  s.intake.discovered(["I5"]);
+  await s.intake.idle();
+  expect(s.intake.record("I5")).toMatchObject({
+    status: "started",
+    commit: rejected,
+    portfolioCommit: second,
+    portfolioItem: "beta",
+  });
+  expect(published.at(-1)?.portfolio.commit).toBe(second);
+  expect(follower.current()?.blueprints.commit).toBe(rejected);
 });
 it("stop waits for the active evaluation, discards queued work, then disposes models once", async () => {
   let release!: () => void;

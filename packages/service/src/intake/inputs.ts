@@ -25,7 +25,7 @@ export function facts(issue: TrackedIssue, projectId: string) {
   return {
     issue: issue.issue,
     project: item.project,
-    item: item.item,
+    item: { nodeId: item.nodeId, archived: item.archived },
     fields: item.fields,
     blockedBy: issue.blockedBy,
     blocking: issue.blocking,

@@ -2,6 +2,8 @@
 // relationships:
 //   implements: service-assembly
 // ---
+import { startIntake, intakeMigrationSteps } from "../intake/index.ts";
+import type { Intake } from "../intake/index.ts";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { loadServiceConfiguration } from "../service-configuration/index.ts";
@@ -47,6 +49,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
   let t3code: T3CodeSource | undefined;
   let http: HttpHost | undefined;
   let revisions: ReturnType<typeof createRevisions> | undefined;
+  let intake: Intake | undefined;
   let stopping: Promise<void> | undefined;
   function step(name: ServiceStep, phase: "start" | "stop") {
     log({ level: "info", event: `${phase}-step`, message: name, detail: { step: name } });
@@ -74,6 +77,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         });
       if (escalations) await finish("escalations-stopped", () => escalations!.stop());
       if (revisions) await finish("revisions-idle", () => revisions!.close());
+      if (intake) await finish("intake-stopped", () => intake!.stop());
       if (router) await finish("router-stopped", () => router!.stop());
       if (store) await finish("store-closed", () => store!.close());
       log({ level: "info", event: "stopped", message: "Service stopped" });
@@ -94,6 +98,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     store.connection.migrate("ledger", ledgerMigrationSteps);
     store.connection.migrate("portfolio", portfolioMigrationSteps);
     store.connection.migrate("usage", usageMigrationSteps);
+    store.connection.migrate("intake", intakeMigrationSteps);
     step("store-opened", "start");
     escalations = openEscalations({
       store,
@@ -174,7 +179,10 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       portfolio,
       usage,
       log,
-      ...(options.probes?.applied ? { applied: options.probes.applied } : {}),
+      applied: (revision) => {
+        intake?.revisionLoaded();
+        options.probes?.applied?.(revision);
+      },
     });
     await revisions.follow();
     step("revision-followed", "start");
@@ -236,6 +244,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         branch: configuration.processRepository.branch,
         pull: revisions.pull,
       },
+      onTracked: (ids) => intake?.discovered(ids),
       onError: (error) =>
         log({
           level: "error",
@@ -245,6 +254,35 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         }),
     });
     step("github-started", "start");
+    intake = startIntake({
+      store: parts.store,
+      tracked: github,
+      blueprints: parts.blueprints,
+      current: parts.revisions.current,
+      actors: {
+        start(request) {
+          if (!parts.actorHost.start) throw new TypeError("No actor host start implementation");
+          parts.actorHost.start(request);
+        },
+      },
+      onFailed: (record) => {
+        const failure = record.failure ?? record.startFailure!;
+        parts.log({
+          level: "warn",
+          event: "intake-failed",
+          message: failure.message,
+          detail: { issueNodeId: record.issueNodeId, kind: failure.kind, detail: failure.detail },
+        });
+      },
+      onError: (error) =>
+        parts.log({
+          level: "error",
+          event: "intake-error",
+          message: error.message,
+          detail: { issueNodeId: error.issueNodeId, kind: error.kind },
+        }),
+    });
+    step("intake-started", "start");
     const sourceLog = (level: "info" | "warn" | "error") => (message: string) =>
       log({ level, event: "t3code-log", message });
     t3code = startT3CodeSource({
@@ -291,7 +329,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     const address = await http.listen();
     step("listening", "start");
     log({ level: "info", event: "started", message: "Service started", detail: address });
-    return { ...parts, router, github, t3code, http, stop };
+    return { ...parts, router, github, intake, t3code, http, stop };
   } catch (error) {
     await stop().catch(() => {});
     throw error;
