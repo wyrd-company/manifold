@@ -149,7 +149,9 @@ proposed-design:
     and which has no pending inbox row. A member with a pending row waits,
     so that no earlier event moves it out of the gated state before its
     token arrives; a held actor keeps its pending row and so is never
-    granted a token.
+    granted a token. A child state machine has no stored snapshot of its
+    own, so a gate declared in a blueprint that runs only as a child has no
+    members and grants nothing.
   comparator-input: >-
     The module builds each evaluation's input from rows and from the
     snapshot JSON the state query returns. For each member given to the
@@ -254,7 +256,10 @@ proposed-design:
     `onMirrorChanged`, which the source calls after each transaction it
     commits that changes a mirror row, whatever it publishes, as
     `github-event-source` states. The pass runs in a later `setImmediate`
-    callback, after that transaction has committed.
+    callback, after that transaction has committed. Time is not an input
+    change: pacing that grows an item's reservable amount as its window
+    elapses runs no pass by itself, and the gate sees the larger amount at
+    its next input change.
   grant: >-
     A grant for selection `s` runs in one `store.connection.transaction`.
     Its token id is `token:<entry_id>` of the selected member's entry row,
