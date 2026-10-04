@@ -31,10 +31,12 @@ likelihood: 3
 impact: 4
 
 response-strategy: mitigate
-# Mitigation: the gate-xstate spike (prototyping / proof of concept — reduce
-# technical uncertainty) exercises crash recovery at three gate loop points
-# (after-inbox-write, after-send, after-save) and real process SIGKILL,
-# confirms population rebuilds from snapshot rows alone without loading actor
-# instances, and profiles rebuild cost at scales from 20 to 2000 actors.
+# Mitigation: gate-xstate exercises three grant crash points and real SIGKILL,
+# two independent gates with later returns, final-state return of every token,
+# reconciliation after a return snapshot is saved, and lazy rebuild of 2000
+# snapshot rows plus outstanding consumed or pending token rows with zero
+# actors loaded. The measured host assumes one writer and does not prove
+# ledger settlement, power-loss durability, or concurrent service instances.
+# General token lint is tracked by token-lint-completeness-unproven.
 
 status: mitigated

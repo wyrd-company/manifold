@@ -4,17 +4,23 @@ title: Gate as XState meta.gate with durable tokens and crash recovery
 relationships:
   mitigates:
     - gate-durability-unproven
+    - token-lint-completeness-unproven
   # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
   # best fit for the technical design these findings inform.
   references:
     - gates
     - durable-event-delivery
+    - sandbox
 
 objective:
   - Can a gate be declared as meta.gate on an XState v5 state, with many task actors sharing one gate and guarded transitions reading orthogonal regions?
   - Does a gate implementation in plain TypeScript hold a population of 20+ actors, call a comparator once per grant, grant one token per call with no double-grants, and remove holders from the population?
   - Do tokens written to SQLite inbox survive a crash between write and consumption, deliver exactly once when the inbox is drained before the gate rebuilds, and rebuild the population correctly from stored snapshots?
   - How does the gate learn the population after restore, and what does that cost?
+  - Can two gates hold independent tokens through later states and return them after a crash or actor completion?
+  - Can 2000 snapshot rows and consumed or pending token rows rebuild a gate without loading actors?
+  - Can blueprint-only lint prove every post-grant path returns its token, including cycles, parallel regions, history, and always transitions?
+  - What does the grant loop cost with the comparator executed inside a capped QuickJS wasm instance?
 
 background:
   current-design: >-
@@ -51,10 +57,13 @@ environment:
     - YAML 2.9.1
     - Vitest 5.0.2
     - Node 26.5.1
-    - SQLite 3.53.4 via node:sqlite
+    - SQLite 3.53.4 via node:sqlite for the single-gate fixture
+    - Node 24.21.0 and its bundled node:sqlite for the two-gate and QuickJS probes
+    - quickjs-emscripten 0.32.0 and TypeScript 5.9.3 for comparator transpilation
   resources:
     - docs/technical-designs/gates.yml
     - docs/technical-designs/durable-event-delivery.yml
+    - docs/spikes/sandbox.yml
 
 findings:
   blueprint-shape:
@@ -210,16 +219,16 @@ findings:
       records a reservation when the gate grants, a replayed grant would hold
       two reservations.
   comparator-overhead:
-    verdict: stub comparator is negligible relative to real implementation
+    verdict: sandbox overhead requires a measured grant loop
     notes: >-
-      Assumed: The grant loop is cheap next to what a real comparator will add.
-      At N = 2000, a grant costs 0.26-0.29 ms including XState send, four
-      SQLite statements, and the stub comparator's population sort. A sandboxed
-      comparator or complex decision logic would add more.
+      Measured: The stub fixture costs 0.26-0.29 ms per grant at N=2000.
+      The paired QuickJS probe below measures serialization and wasm evaluation
+      inside the grant loop. These populations carry three fields per candidate;
+      the cost of a complete production comparator input remains unmeasured.
   assumptions:
-    verdict: five constraints assumed for this spike
+    verdict: five constraints assumed for the single-gate fixture
     notes: >-
-      Assumed: (1) Balance is a fixed allocation less reservations read from
+      Assumed for the single-gate fixture: (1) Balance is a fixed allocation less reservations read from
       snapshots; real available balance comes from a ledger not built here. (2)
       A token holder that ends (done or closed state) releases its reservation
       at once; settlement with an actual is not modeled. (3) One gate, one
@@ -229,21 +238,248 @@ findings:
       are 20 generic actors; creation times are permuted so oldest-first order
       matches neither id order nor spawn order.
 
+  later-return-and-final:
+    verdict: independent tokens remain held until a declared later state or actor completion
+    measurements:
+      live-actors: 2
+      real-process-kill: SIGKILL after first and second tokens are consumed, while the actor is in packing
+      restored-holders: one per gate, same actor, zero actors loaded
+      premature-grants: 0
+      first-return-state: released
+      second-return-state: done
+      cancellation-return-state: closed, recorded on both token rows
+      first-token-crash-points: after-write, after-send, after-save
+      second-token-crash-points: after-write, after-send, after-save
+      return-event-crash-points: after-send, after-save
+    notes: >-
+      Measured: later.machine.yml is a YAML XState v5 blueprint with root open,
+      parallel flow, firstToken, and secondToken regions, and root done and
+      closed final states. Flow is queued -> working -> review -> packing ->
+      released -> done. queued declares meta.gate {name: first, comparator:
+      oneAtATime, token: token, return: released}; review declares {name: second,
+      comparator: reverseOneAtATime, token: token, return: '#parcel.done'}. The two
+      guarded always transitions read their own orthogonal token-holding state. Named
+      implementations accept token events only in the matching token region,
+      remember event ids, remove first from context on entry to released, and
+      remove every token on final entry. advance events move working to review,
+      packing to released, and released to done; cancel from open reaches
+      closed. A one-at-a-time host returns none while that gate has any holder.
+      With two generic parcel actors, the first token moves item-1 to working;
+      advance moves it to review, where first remains held and second has no
+      holder. Granting second moves it to packing with two held tokens. A real
+      child process kills itself with SIGKILL at that point. A fresh host reads
+      snapshots and token rows with zero actor instances; both holders remain
+      counted and repeated gate runs grant nothing. advance to released returns
+      first only, allowing item-2 through queued; second remains held and blocks
+      item-2 in review. advance to done returns second and permits its next
+      grant. Cancellation from packing bypasses released and returns both
+      tokens, allowing both next grants. followup.test.ts and two-pending.test.ts
+      assert populations, holders, state values, loaded counts, token counts,
+      and return-state audit values. A token for second delivered while queued
+      sets only secondToken.held and leaves queued and firstToken.empty intact.
+      This proves gate-specific guards; ordinary gate membership prevents that
+      premature second grant in the host. Mutating firstHeld to read
+      secondToken.held fails the named test "a second gate token cannot satisfy
+      the first guard": actual flow becomes working instead of queued. Restoring
+      the correct state read passes it.
+  durable-token-row-reconciliation:
+    verdict: pending and consumed tokens count per gate; return repair converges after a snapshot-save crash
+    notes: >-
+      Measured: The two-gate host uses snapshots and inbox plus a tokens table
+      {token_id primary key, actor_id, gate, return_state nullable}. The grant
+      transaction inserts a token and its inbox event with the same id. All
+      rows whose return_state is null count as held, whether the corresponding
+      inbox event is pending or consumed. Rebuild reads snapshots, repairs
+      returns for actors at a declared return state or final state, then reads
+      outstanding token rows. Delivery loads only its recipient, sends an
+      event, saves its snapshot, consumes the inbox row, and reconciles returns.
+      Faults after write, send, and snapshot save retain exactly one token per
+      gate; rebuild counts it before delivery and drain loads only the granted
+      recipient. Faults after send or save of the return event converge to one
+      returned first token while second remains held. Deduplication of advance
+      events by event id is necessary: without it, replay after snapshot save
+      moves released to done and returns second early. The named test "pending
+      token counts on lazy restore; replay after snapshot save does not lose
+      return" fails its second-holder assertion when deduplication is absent. Inferred:
+      snapshot persistence and a later return-row update need a transaction or
+      deterministic repair from the saved state. Repair at released or final
+      is sufficient for this fixture, whose next event is delivered only after
+      reconciliation. Assumed: one writer, one connection; no power-loss,
+      ledger settlement, concurrent host, or blueprint-edit behavior is tested.
+  lazy-rebuild:
+    verdict: 2000 actors rebuilt from rows with zero actor instances
+    measurements:
+      snapshot-rows: 2000
+      consumed-outstanding-token-rows: 1
+      population-size: 1999
+      holders: 1
+      rebuild-ms-observations:
+        - 4.228
+        - 3.425
+      loaded-at-rebuild: 0
+      loaded-after-blocked-grant-attempt: 0
+      loaded-after-holder-cancellation-and-next-grant: 2
+    notes: >-
+      Measured: followup.test.ts seeds 2000 snapshots, grants first to item-1,
+      closes that host, and times a fresh host's SELECT and JSON.parse of every
+      snapshot, return reconciliation, and token query. No XState createActor
+      call occurs during rebuild. Reads use the existing actor_id and snapshot
+      JSON columns; no derived column is added. An active status plus the
+      open.flow state value identifies membership (queued for first, review
+      for second). The host obtains candidate identity from actor_id; region
+      values firstToken and secondToken and context.tokens are persisted but
+      holder identity comes from token rows. The richer comparator fixture
+      reads context.taskId, context.createdAt, and open.dependencies from the
+      same persisted JSON. Thus full snapshot JSON suffices for these queries;
+      a derived state column is an indexing optimization, not a correctness
+      requirement. Rows for both consumed and pending tokens are independently
+      exercised by the crash tests. Only event recipients are loaded: after
+      return and next grant these are the previous holder and next holder.
+      The two rebuild observations are individual runs, not percentile estimates.
+      Inferred: arbitrary blueprint membership needs a state-value matcher that
+      includes ancestor and parallel-region configurations. The measured matcher
+      handles this fixture's flat flow region only.
+  token-lint-paths:
+    verdict: flat flow path analysis works; general XState token-return proof remains unproven
+    measurements:
+      accepted-gates: 2, with the declared return states released and '#parcel.done'
+      missing-return-diagnostic: "queued: missing return declaration"
+      unreachable-return-diagnostic: "queued -> working: unreachable return queued"
+      dead-end-diagnostic: "queued -> working -> trap: no return or final"
+      cycle-diagnostic: "queued -> working -> working: cycle permits token retention"
+      history-diagnostic: "queued -> working -> history: no return or final"
+      unsafe-parallel-blueprint-accepted: true
+    notes: >-
+      Measured: lintFlow reads loaded YAML and projects its flow region to a
+      directed graph. For each meta.gate it takes the guarded always target,
+      requires a return declaration, checks return reachability, and performs
+      depth-first traversal until the return or a root final state. A node
+      without outgoing edges reports its complete path; a node repeated on the
+      current path reports a cycle. Both gated flows pass. Missing declaration,
+      unreachable return, an added trap state, a closed self-cycle, and a
+      self-cycle with an exit to review are rejected. A cycle with an exit is
+      still an infinite path that need not take the exit. Parallel incompleteness
+      is falsified by a runnable counterexample: add flow.trap with no outgoing
+      transitions and add firstToken.held.on.strand targeting
+      '#parcel.open.flow.trap'. The projection accepts both gates, but after
+      first is granted, strand moves the actor from working into trap while
+      context.tokens.first remains held. lint-limits.test.ts asserts both the
+      acceptance and the stranded actor. History is not expanded into its
+      possible remembered configurations: a history target is treated as a
+      dead end and rejected, which cannot establish validity or invalidity of
+      history blueprints. always targets are included as edges; guard predicates,
+      transition ordering, actions, and cross-region state reads are not modeled.
+      An always self-cycle guarded by an unavailable or always-false predicate
+      is conservatively rejected. Compound initial states, inherited transitions,
+      invoke completion, and multi-target transitions are also outside this
+      graph projection. The acyclic accepted fixtures themselves use parallel
+      token regions, but their full configuration graph is not proved by lint.
+      Inferred: a universal structural proof needs the complete reachable
+      configuration graph, plus sound treatment of guards and history. It does
+      not prove external events arrive or work terminates. The design's token-lint
+      guarantee is not established by a lifecycle-only graph; the unsafe parallel
+      example is a concrete contradiction to treating that graph as the proof.
+  quickjs-grant-loop:
+    verdict: capped QuickJS comparator grants the same actors in the same order with measurable overhead
+    measurements:
+      actors:
+        - 20
+        - 200
+        - 2000
+      grants:
+        - 10
+        - 100
+        - 1000
+      repetitions-per-size-and-engine: 3
+      comparator-calls:
+        - 11
+        - 101
+        - 1001
+      single-gate-stub-artifact-ms:
+        - "3.0-3.6"
+        - "16.8-32.9"
+        - "257-293"
+      paired-stub-ms:
+        - "1.568-2.464"
+        - "38.946-41.868"
+        - "472.450-534.963"
+      paired-quickjs-ms:
+        - "2.407-5.604"
+        - "66.428-72.320"
+        - "2797.007-2884.338"
+      paired-quickjs-per-grant-at-two-thousand-ms: "2.797-2.884"
+      wasm-load-and-transpile-first-ms: 30.604
+      wasm-load-and-transpile-warm-ms: "3.842-5.176"
+      wasm-cap-mib: 64
+      runtime-memory-limit-mib: 32
+      stack-limit-mib: 1
+      interrupt-deadline-ms: 100
+      sqlite-benchmark-synchronous: NORMAL
+      sqlite-crash-test-synchronous: FULL
+    notes: >-
+      Measured: quick-cost.test.ts runs the same oldest-first comparator body
+      with fixed reservation 10 as host TypeScript and as TypeScript transpiled
+      in-process to JavaScript inside QuickJS 0.32.0. Each grant serializes the
+      full current population (taskId, createdAt, dependencies) and balance,
+      parses it in wasm, sorts by createdAt, and returns a selection or none.
+      Both loops use the single-gate host's XState send, inbox insert, snapshot
+      save, and consume update. Their grant order is asserted equal. Each
+      comparator load gets a fresh wasm instance with WebAssembly.Memory capped
+      at 1024 pages (64 MiB), runtime memory limit 32 MiB, stack 1 MiB, and the
+      sandbox spike's 100 ms interrupt deadline. A context lives for one pass;
+      the pure body reparses its input on every call and keeps no application
+      state. Date and Math.random are blocked; this body uses no random. Module
+      initialization and transpilation are reported separately and excluded
+      from loop times. Three paired runs per population size grant half the
+      actors, with one final none call. These ranges are observed minima and
+      maxima, not percentiles. SQLite WAL files live under the spike worktree;
+      NORMAL is used for both benchmark engines so filesystem flush cost does
+      not hide evaluation cost. Crash tests retain FULL. The single-gate artifact
+      figures are included for reference and are not a controlled comparison:
+      Node version, filesystem location, SQLite build, and synchronization differ.
+      FULL exploratory runs on this worktree cost roughly 193-207 ms at 20
+      actors and 1041-1994 ms at 200; these are storage-dominated observations,
+      not the paired NORMAL benchmark. Inferred: at 2000 actors the paired wasm
+      loop costs about 5-6 times the stub loop; serializing each shrinking
+      population per grant is material. Assumed: a production comparator's full
+      fields, holders, account balances, seeded random, and worker messaging
+      may change costs; this probe does not benchmark that complete contract.
+
+  verification:
+    verdict: spike tests, typecheck, and artifact checks pass
+    measurements:
+      vitest-test-files: 10
+      vitest-tests: 40
+      failing-tests: 0
+      gate-identity-mutation: named guard-isolation assertion failed
+    notes: >-
+      Measured: npx vitest run passes all 40 tests in the disposable spike
+      worktree. npx tsc --noEmit passes. The gate-identity mutation changes
+      firstHeld to read secondToken.held, and fails exactly the intended test
+      "a second gate token cannot satisfy the first guard". The correct guard
+      is restored for the passing suite. Prettier, git diff --check, YAML error
+      lint, and AJV validation pass for the artifact change. Risk validation
+      applies the two documented WIP schema exceptions: artifact identity comes
+      from the filename, and response-strategy uses the declared property
+      spelling. General XState token-lint correctness is not claimed by these
+      passing checks; its executable counterexample remains a reported finding.
+
 conclusion: >-
-  A gate declared as meta.gate on an XState v5 state works with the guarded
-  transition reading orthogonal regions via in-state conditions. Tokens
-  written to SQLite inbox deliver exactly once at all three crash points
-  (after-inbox-write, after-send, after-save) and survive a real process
-  SIGKILL. The gate's population and balance rebuild from stored snapshot rows
-  alone with no invoked callback needed; population discovery via snapshot
-  query is fast (0.1-5.6 ms for 20-2000 actors), small next to restoring
-  actors (0.8-44 ms for restore-drain-rebuild). The restore must drain inbox
-  before running the gate (or the gate must count unconsumed token rows as
-  held), preventing double-grants. The grant loop costs 0.26-0.29 ms per grant
-  at scale, cheap relative to a real comparator.
+  YAML XState v5 gates can hold independent tokens through later states,
+  count pending and consumed tokens after SIGKILL, return every held token
+  when an actor ends, and rebuild 2000 snapshot rows with zero loaded actors.
+  Token rows keyed by gate and actor, idempotent inbox events, and reconciliation
+  of returns from persisted snapshots are sufficient for the tested single-writer
+  host. Lazy rebuild takes 3.425-4.228 ms in two observations. A QuickJS
+  comparator produces the same grants as the stub and costs 2.797-2.884 ms per
+  grant at 2000 actors under the stated benchmark conditions. Blueprint lint
+  rejects dead ends and cycles in a flat flow graph, but that graph accepts a
+  runnable parallel transition that strands a token. A complete XState
+  token-return proof, including parallel regions, history, and guard semantics,
+  remains unproven and is tracked separately from gate durability.
 
 next-steps:
-  - Probe behavior with more than one gate on a single task machine to confirm token routing and population isolation.
-  - Test lazy loading of actors, where not every actor is loaded into memory at restore time and the gate rebuilds from snapshot rows without loading actor instances.
-  - Verify that a token held past the gated state to a declared later return point is delivered to the correct actor and released at the return point.
-  - Profile the grant loop cost with a real sandboxed comparator, not the stub.
+  - Implement gate holder queries from outstanding token rows and population queries from persisted snapshot state values, with lazy recipient loading.
+  - Preserve grant-and-inbox atomicity and event-id deduplication; make return recording atomic with snapshot persistence or repairable before another event is delivered.
+  - Resolve the token-lint completeness risk with a sound configuration-graph analysis and explicit treatment of parallel regions, history, guarded always transitions, and inherited transitions.
+  - Measure production comparator payloads, worker messaging, evaluation frequency, and the chosen store synchronization on deployment storage.

@@ -1,0 +1,32 @@
+# GAP-SCHEMA: the WIP risk schema requires slug despite filename identity,
+# and requires response while declaring response-strategy. Follow the same
+# documented conventions as gate-durability-unproven.
+$schema: https://refinery.systems/ontology/risk
+title: Blueprint token lint may accept a path that never returns a token
+# GAP-EDGE: the risk schema declares no relationships; these edges connect
+# the evidence and governing technical design.
+relationships:
+  mitigated-by:
+    - gate-xstate
+  related-to:
+    - gates
+
+description: >-
+  The gate design requires blueprint lint to prove that every path after a
+  guarded transition reaches the declared token return point or a final state.
+  A flow-region graph checks dead ends, cycles, and return reachability but
+  omits transitions declared in other parallel regions. The gate-xstate probe
+  accepts a blueprint whose token region moves the flow into a dead-end trap
+  while the token stays held. A one-at-a-time gate then blocks subsequent
+  actors indefinitely. History targets, guard predicates, always ordering,
+  compound entry, inherited transitions, and multi-target transitions also
+  require configuration-level analysis. The flat graph does not establish
+  the promised proof for these supported XState shapes. A sound analysis and
+  its limits need to be established before the loader relies on this guarantee.
+
+categories:
+  - technical
+likelihood: 4
+impact: 4
+response-strategy: mitigate
+status: open
