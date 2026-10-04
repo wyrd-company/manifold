@@ -6,7 +6,8 @@ relationships:
     - service-configuration
 description: |-
   Defines the service configuration file: one YAML document holding what is
-  host-local to a Manifold service, which is where the process repository is
+  host-local to a Manifold service: where the process repository and the
+  store are, where the service listens, how it reaches GitHub and T3 Code,
   and the credentials behind each name the repository uses.
   `docs/specifications/service-configuration.schema.yml` is the
   machine-readable definition of the root document and of the `credentials`
@@ -22,9 +23,17 @@ description: |-
 
   - `processRepository`, required, specified by
     `process-repository-configuration`.
+  - `store`, required, specified by `store-configuration`.
   - `credentials`, optional, default `{}`, specified here.
   - `comparatorSandbox`, optional, default `{}`, specified by
     `comparator-sandbox-configuration`.
+  - `expressions`, optional, default `{}`, specified by
+    `expressions-configuration`.
+  - `github`, optional, default `{}`, specified by
+    `github-source-configuration`.
+  - `environments`, optional, default `{}`, specified by
+    `t3code-environments-configuration`.
+  - `http`, optional, default `{}`, specified by `http-host-configuration`.
 
   An optional section that is absent takes `{}` and then the defaults of
   its own properties, so the loaded configuration has every section and
@@ -39,7 +48,11 @@ description: |-
   `credentials` maps a credential name to a credential. The process repository and
   other sections refer to a credential only by its name, and the credential
   itself exists only in this file and the files it points to. A credential
-  has a `kind`, and the kind fixes its other properties.
+  has a `kind`, and the kind fixes its other properties. Kind `github-app`
+  is specified here; kind `t3code-token` by
+  `t3code-environments-configuration`; and kind `operator-token` by
+  `http-host-configuration`. The root lists each kind and composes the
+  kind's schema by `$ref`.
 
   Kind `github-app` is a GitHub App installation. `appId` is the App's
   numeric app ID. `installationId` is the numeric installation ID on the
@@ -57,6 +70,8 @@ description: |-
     url: https://github.com/example-org/example-process.git
     credential: example-app
     directory: /var/lib/example/process-repository
+  store:
+    file: /var/lib/example/manifold.sqlite
   credentials:
     example-app:
       kind: github-app

@@ -1,0 +1,49 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: http-host-configuration
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/http-host-configuration
+title: HTTP host configuration
+description: >-
+  The value of the `http` section of the service configuration: where the
+  service's HTTP host listens and which credential authenticates an
+  operator.
+type: object
+additionalProperties: false
+properties:
+  host:
+    description: The address the HTTP host binds.
+    type: string
+    minLength: 1
+    default: 127.0.0.1
+  port:
+    description: The TCP port the HTTP host binds; 0 binds a free port.
+    type: integer
+    minimum: 0
+    maximum: 65535
+    default: 7480
+  operatorCredential:
+    description: The name of an `operator-token` credential.
+    $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+$defs:
+  operator-token-credential:
+    description: >-
+      A bearer token an operator presents, read from a file at each
+      operator request.
+    type: object
+    additionalProperties: false
+    required:
+      - kind
+      - tokenFile
+    properties:
+      kind:
+        const: operator-token
+      tokenFile:
+        description: >-
+          Path of the file holding the token. A relative path resolves
+          against the directory of the configuration file.
+        type: string
+        minLength: 1

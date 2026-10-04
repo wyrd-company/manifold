@@ -2,6 +2,7 @@ $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
     - durable-event-delivery
+    - service-assembly
     - service-configuration
     - process-repository
     - portfolio
@@ -501,8 +502,9 @@ proposed-design:
     `404` for `unknown-hook`, and `401` for `signature`. A throw answers
     `500` and is sent to `onError`. Every answer is sent after `receive`
     returns, so a `2xx` answer means the delivery's GUID and pending rows are
-    committed. The service's HTTP server mounts the listener at the path the
-    hooks deliver to.
+    committed. The service mounts the listener on its HTTP host at
+    `/webhooks/github`, as `service-assembly` states, so each hook's payload
+    URL reaches the service at that path.
   tracked-issue: >-
     `trackedIssue(nodeId)` reads the mirror: the issue, the present
     dependencies in each direction, the present sub-issues and parent, and

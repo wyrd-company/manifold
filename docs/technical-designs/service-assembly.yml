@@ -1,0 +1,464 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - service-configuration
+    - store
+    - durable-event-delivery
+    - process-repository
+    - blueprint-loader
+    - portfolio
+    - github-event-source
+    - t3code-environment-source
+objective: >-
+  Run the service as one process from one service configuration file, with
+  one HTTP host that every module mounts its endpoints on, a start order
+  that resumes durable delivery before any source publishes, a stop order
+  that leaves every module closed, and a path by which each new process
+  repository commit reaches the blueprint loader and the portfolio, so that
+  a pushed commit takes effect with no restart and a crash at any point
+  converges on the next start.
+background:
+  current-design: >-
+    Each module is built and tested alone. `loadServiceConfiguration` loads
+    the file, `openStore` opens the database, `startRouter` resumes
+    delivery, `openProcessRepository` and `pull` keep the clone,
+    `createBlueprintLoader` builds machines from a revision, `openPortfolio`
+    and `apply` keep the declaration in force, and `startGitHubSource` and
+    `startT3CodeSource` publish events. The GitHub source exports a
+    `requestListener` and calls a `ProcessRepositoryTrigger` on a push and
+    at each sweep.
+  problems:
+    - >-
+      No process starts the modules together, so a push reaches the
+      process repository and no loader, and the GitHub source's listener is
+      served by nothing.
+    - >-
+      A pull publishes the new commit before any loader reads it. A crash
+      between the two leaves a current commit whose portfolio declaration
+      is not in force.
+    - >-
+      Modules of later waves serve HTTP endpoints and start beside these
+      ones, and each needs one place to join.
+design-challenges:
+  order: >-
+    Every live event must reach an actor after its pending rows, so no
+    source may hold the router before `startRouter` returns. Stop must run
+    the reverse, so no source publishes into a stopped router or a closed
+    store.
+  convergence: >-
+    The commit in force for the loaders must catch up with the current
+    commit whatever ran before: a crash after publish, a failed read, a
+    pull no one awaited.
+  one-host: >-
+    One listener serves endpoints that need no authentication, such as
+    signed webhooks, and operator endpoints that do, under prefixes owned
+    by different modules.
+proposed-design:
+  high-level-overview: >-
+    `packages/service/src/service/` is the assembly. `startService` loads
+    the service configuration, opens the store, the portfolio, the process
+    repository, and the blueprint loader, brings the loaders up to the
+    current commit and pulls, starts the router, starts the GitHub and T3
+    Code sources, mounts the GitHub source's listener, and listens.
+    `Service.stop` undoes the same steps in reverse. The revision follower
+    sits between every pull and the loaders: after each pull it loads the
+    current revision into the blueprint loader and applies it to the
+    portfolio, one revision at a time. `packages/service/src/http-host/`
+    is the HTTP host: one `node:http` server whose request handler
+    dispatches by path prefix to the listeners mounted on it, with operator
+    prefixes behind a bearer token. `packages/service/src/main.ts` is the
+    process entry point: it starts the service from the file named on its
+    command line and stops it on `SIGTERM` and `SIGINT`.
+  public-interface: |-
+    `packages/service/src/service/index.ts` exports exactly these names.
+
+    ```ts
+    import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
+    import type { ActorHost, Router } from "../router/index.ts";
+    import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
+    import type { Portfolio } from "../portfolio/index.ts";
+    import type {
+      ProcessRepository,
+      PullOutcome,
+      PullProbe,
+      PullRequest,
+    } from "../process-repository/index.ts";
+    import type { GitHubSource } from "../github-source/index.ts";
+    import type { T3CodeSource } from "../t3code-source/index.ts";
+    import type { HttpListener } from "../http-host/index.ts";
+    import type { ServiceConfiguration } from "../service-configuration/index.ts";
+
+    export function startService(options: StartServiceOptions): Promise<Service>;
+
+    export interface StartServiceOptions {
+      /** Path of the service configuration file. */
+      readonly configurationFile: string;
+      /** Builds the router's actor host from the parts started before the router. */
+      readonly actorHost?: (parts: ServiceParts) => ActorHost;
+      /** Receives every log entry. Defaults to one JSON line per entry on stderr. */
+      readonly log?: (entry: ServiceLogEntry) => void;
+      readonly probes?: ServiceProbes;
+    }
+
+    export interface ServiceProbes {
+      /** Called after each start and stop step completes. */
+      readonly step?: (step: ServiceStep) => void;
+      /** Passed to the process repository. */
+      readonly pull?: PullProbe;
+      /** Passed to the store. */
+      readonly delivery?: DeliveryProbe;
+      /** Called after the revision follower applies a revision. */
+      readonly applied?: (applied: AppliedRevision) => void;
+    }
+
+    export type ServiceStep =
+      | "configuration-loaded"
+      | "store-opened"
+      | "portfolio-opened"
+      | "process-repository-opened"
+      | "revision-followed"
+      | "pulled"
+      | "router-started"
+      | "github-started"
+      | "t3code-started"
+      | "listening"
+      | "http-closed"
+      | "sources-stopped"
+      | "revisions-idle"
+      | "router-stopped"
+      | "store-closed";
+
+    export interface ServiceParts {
+      readonly configuration: ServiceConfiguration;
+      readonly store: Store;
+      readonly portfolio: Portfolio;
+      readonly processRepository: ProcessRepository;
+      readonly blueprints: BlueprintLoader;
+      readonly revisions: Revisions;
+      readonly log: (entry: ServiceLogEntry) => void;
+    }
+
+    export interface Service extends ServiceParts {
+      readonly router: Router;
+      readonly github: GitHubSource;
+      readonly t3code: T3CodeSource;
+      readonly http: ServiceHttp;
+      /** Stops the service; every call returns the first call's promise. */
+      stop(): Promise<void>;
+    }
+
+    export interface Revisions {
+      /** The blueprint load of the latest revision the follower applied. */
+      latest(): RevisionLoad | undefined;
+      /** Pulls, then follows the current commit; resolves after both. */
+      pull(request?: PullRequest): Promise<PullOutcome>;
+      /** Follows the current commit; resolves when it is applied. */
+      follow(): Promise<void>;
+    }
+
+    export interface AppliedRevision {
+      readonly commit: string;
+      readonly blueprints: RevisionLoad;
+      readonly portfolio: "applied" | "unchanged" | "rejected";
+    }
+
+    export interface ServiceHttp {
+      mount(pathPrefix: string, listener: HttpListener): void;
+      mountOperator(pathPrefix: string, listener: HttpListener): void;
+      /** The address the host listens on. */
+      address(): { readonly host: string; readonly port: number };
+    }
+
+    export interface ServiceLogEntry {
+      readonly level: "info" | "warn" | "error";
+      /** A kebab-case name of what happened, such as `pull-failed`. */
+      readonly event: string;
+      readonly message: string;
+      readonly detail?: Readonly<Record<string, JsonValue>>;
+    }
+
+    /** The path the GitHub source's listener is mounted at. */
+    export const githubWebhookPath = "/webhooks/github";
+    ```
+
+    `packages/service/src/http-host/index.ts` exports exactly these names.
+
+    ```ts
+    import type { IncomingMessage, ServerResponse } from "node:http";
+    import type { Credentials, HttpHostConfiguration } from "../service-configuration/index.ts";
+
+    export type HttpListener = (request: IncomingMessage, response: ServerResponse) => void;
+
+    export function createHttpHost(options: HttpHostOptions): HttpHost;
+
+    export interface HttpHostOptions {
+      readonly configuration: HttpHostConfiguration;
+      readonly credentials: Credentials;
+      /** Called for a listener that throws and for an operator token that cannot be read. */
+      readonly onError: (error: Error, request: { readonly method: string; readonly path: string }) => void;
+    }
+
+    export interface HttpHost {
+      mount(pathPrefix: string, listener: HttpListener): void;
+      mountOperator(pathPrefix: string, listener: HttpListener): void;
+      /** Binds the configured address; resolves with the bound address. */
+      listen(): Promise<{ readonly host: string; readonly port: number }>;
+      /** The bound address; throws a TypeError before `listen` resolves. */
+      address(): { readonly host: string; readonly port: number };
+      /** Stops accepting, waits for requests in progress, and resolves; every call returns the first call's promise. */
+      close(): Promise<void>;
+    }
+    ```
+  module-layout: >-
+    In `packages/service/src/service/`, `index.ts` re-exports the public
+    names and nothing else. `start.ts` implements `startService` and
+    `stop`: the start steps and their reverse, as one ordered list.
+    `revisions.ts` implements the revision follower. `log.ts` holds the
+    default log sink. In `packages/service/src/http-host/`, `index.ts`
+    re-exports the public names, `routes.ts` holds the pure prefix
+    validation and longest-prefix match over the mounts, and `host.ts`
+    implements `createHttpHost` over `node:http`.
+    `packages/service/src/main.ts` is the entry point and holds no logic
+    beyond the argument, the signals, and the exit code. The service
+    package's `build` emits it as `dist/main.js`, and the package's
+    `start` script runs `node dist/main.js`. Tests import only each
+    module's `index.ts`, and the entry point test runs the compiled file.
+  start: >-
+    `startService` runs these steps in order and calls the `step` probe
+    after each. (1) `configuration-loaded`: `loadServiceConfiguration` with
+    the file, then `configureBlueprintExpressions` with its `expressions`
+    section. (2) `store-opened`: creates the directory of `store.file`
+    when absent, calls `openStore` with the file and the `delivery` probe,
+    and applies `ledgerMigrationSteps` and `portfolioMigrationSteps` with
+    the store's `migrate`; the router and each source migrate their own
+    owners when they start. (3) `portfolio-opened`: `openPortfolio` with
+    the store's connection. (4) `process-repository-opened`:
+    `openProcessRepository` with the `processRepository` section, the
+    credentials, and the `pull` probe, then `createBlueprintLoader` with
+    `serviceImplementations`, the repository's `revisionAt`, and an
+    `onExpressionError` that logs `expression-error`. (5)
+    `revision-followed`: creates the revision follower and awaits
+    `follow()`, so a commit published before a crash is in force before
+    anything reads the portfolio or the blueprints. (6) `pulled`: awaits
+    `revisions.pull()`; a pull that fails logs `pull-failed` and start
+    continues on the current commit, or with no revision when there is
+    none, since every sweep pulls again. (7) `router-started`: calls
+    `startRouter` with the store, the actor host the `actorHost` option
+    builds from the parts of steps 1 to 6, and an `onHeld` that logs
+    `actor-held`. `startRouter` restores and drains every stored actor and
+    returns. (8) `github-started`: `startGitHubSource` with the `github`
+    section, the credentials, the store, the router, `boundProjects` read
+    from `portfolio.current()`, a `processRepository` trigger whose `url`
+    and `branch` are the section's and whose `pull` is `revisions.pull`,
+    and an `onError` that logs `github-error`. (9) `t3code-started`:
+    `startT3CodeSource` with the store, the router, the `environments`
+    section, a `tokenFile` that resolves the credential name to its
+    `t3code-token` credential's file, and a `logger` that writes to the
+    log. (10) `listening`: creates the HTTP host from the `http` section,
+    mounts the GitHub source's `requestListener` at `githubWebhookPath`
+    with `mount`, awaits `listen`, and logs `started` with the address.
+    Sources start after the router returns, and the host listens after the
+    sources start, so no source and no request holds the router before
+    resume ends.
+  start-failure: >-
+    A step that throws or rejects stops every step already started, in the
+    stop order, and `startService` rejects with the step's error. A
+    configuration error is a `ServiceConfigurationError` with every issue;
+    an address in use is the `listen` error with its system code. A failed
+    start therefore leaves no timer, socket, or open database behind.
+  joining: >-
+    A module joins the service by adding its start to `start.ts` at the
+    step its dependencies fix, its stop at the mirrored point of the stop
+    order, its member to `Service` when other modules read it, and its
+    endpoints with `mount` or `mountOperator` before step 10's `listen`. A
+    module that publishes starts after step 7. A module whose state the
+    actor host reads, such as the implementations a blueprint binds, is
+    built before step 7 and reaches the host through `ServiceParts`.
+  actor-host: >-
+    The router's actor host comes from the `actorHost` option. Without the
+    option, the host derives no topics from a snapshot, and its `restore`
+    returns `held` with the reason `no actor host`, so the service holds
+    every stored actor with its inbox intact and runs no actor until a
+    host is given.
+  stop: >-
+    `stop` runs these steps in order, each after the one before it
+    resolves, and calls the `step` probe after each. (1) `http-closed`:
+    closes the HTTP host, which stops accepting connections and waits for
+    the requests in progress. (2) `sources-stopped`: awaits the GitHub
+    source's and the T3 Code source's `stop` together. (3)
+    `revisions-idle`: awaits the revision follower's queue, so no apply is
+    running when the store closes. (4) `router-stopped`: `router.stop()`.
+    (5) `store-closed`: `store.close()`, and logs `stopped`. The first call
+    starts the steps, and every later call returns the same promise, so a
+    second stop does nothing more. A step that rejects is logged and the
+    remaining steps still run, and the promise rejects with the first
+    error once the store is closed.
+  revision-follower: >-
+    The follower keeps one serial queue and one in-memory `followed`
+    commit, unset at start. `follow()` enqueues one job and returns its
+    promise. A job reads `processRepository.current()`; when there is no
+    revision, or its commit equals `followed`, it does nothing. Otherwise
+    it awaits `blueprints.loadRevision(revision)`, keeps the result as
+    `latest`, logs `blueprint-invalid` for each path in its `failures`,
+    awaits `portfolio.apply(revision)`, logs `portfolio-rejected` with the
+    findings of a rejected result, sets `followed` to the commit, logs
+    `revision-applied`, and calls the `applied` probe. `pull(request)`
+    awaits `processRepository.pull(request)`, then awaits `follow()`, and
+    resolves with the pull's outcome; a pull that rejects still calls
+    `follow()` and then rejects with the pull's error, so the GitHub source
+    reports it as kind `pull`. Each job reads the current commit when it
+    runs, and the process repository only moves it forward through
+    serialized pulls, so revisions are applied in pull order and never an
+    older one after a newer one.
+  convergence: >-
+    A job that finds its commit already followed does nothing, and
+    `portfolio.apply` of a declaration equal to the one in force writes
+    nothing, so `follow` twice applies once. A job whose read rejects
+    leaves `followed` unchanged and rejects its caller, and the next
+    `follow` retries the same commit, taking the blueprint load from the
+    loader's cache. A crash after a pull publishes and before the
+    portfolio applies leaves that commit current in the repository and the
+    previous declaration in force in the store; the next start's step 5
+    applies it once. A crash after the portfolio's row commits leaves the
+    new declaration in force, and step 5 finds it equal and writes nothing.
+    `startService` twice on the same files, with a stop or a crash between,
+    resumes the same router, inbox, clone, and declaration, as each
+    module's own convergence states.
+  http-host: >-
+    `createHttpHost` creates one `node:http` server with Node's defaults
+    for `requestTimeout`, `headersTimeout`, and `keepAliveTimeout`.
+    `listen` binds `http.host` and `http.port`; port `0` binds a free port,
+    which `address` reports. `close` calls `server.close()`, which stops
+    accepting and closes each connection when its request in progress
+    ends, then `server.closeIdleConnections()`, and resolves when the
+    server's `close` event fires. `mount` and `mountOperator` may be called
+    before or after `listen`.
+  mounts: >-
+    A path prefix is `/`, or `/` followed by one or more segments joined by
+    `/`, each non-empty and holding no `?`, `#`, or `%`, with no trailing
+    `/`. `mount` and `mountOperator` throw a `TypeError` naming the prefix
+    for any other string, and for a prefix already mounted by either. A
+    request's path is the path of its request target, before the query,
+    compared as sent with no decoding. A prefix matches a path that equals
+    it or continues it with `/`, and `/` matches every path, so
+    `/webhooks/github` matches `/webhooks/github` and
+    `/webhooks/github/1` and never `/webhooks/githubx`. The longest
+    matching prefix takes the request. The listener receives the request
+    and response unchanged, with `request.url` as sent. A request whose
+    path no prefix matches answers `404` with an empty body. A listener
+    that throws before it writes headers answers `500`; either way the
+    error goes to `onError`, which the service logs as
+    `http-listener-error`. A listener owns its method checks, body limits,
+    and answers.
+  operator-authentication: >-
+    A prefix mounted with `mountOperator` answers `404` for every request
+    when `http.operatorCredential` is absent, as an unmounted prefix does.
+    Otherwise the request's `Authorization` header must be `Bearer`, one
+    space, and the token; the host passes the presented token to the
+    `operator-token` credential's `verify`, and a missing header, another
+    scheme, or a token that does not verify answers `401` with
+    `WWW-Authenticate: Bearer` and an empty body, without calling the
+    listener. `verify` reads the credential's token file at each call, so
+    a replaced token applies to the next request, and compares the SHA-256
+    digests of the presented and stored tokens with
+    `crypto.timingSafeEqual`, so the comparison takes the same time
+    whatever the tokens hold. A token file that cannot be read, or holds
+    only whitespace, answers `500` and goes to `onError` naming the
+    credential, never the token. The host writes no token to a log, an
+    error, or a response.
+  entry-point: >-
+    `node dist/main.js <configuration-file>` starts the service. With no
+    argument or more than one, it writes a usage line to stderr and exits
+    with code 2. It awaits `startService` with the file; a start that
+    rejects writes the error, and for a `ServiceConfigurationError` every
+    issue, to stderr and exits with code 1. After start resolves it
+    installs one handler for `SIGTERM` and `SIGINT`: the first signal calls
+    `service.stop()`, and the process exits with code 0 when stop
+    resolves and code 1 when it rejects. Every later signal calls the
+    same `stop` and so does nothing more. A signal that arrives during
+    start takes Node's default action and ends the process, which every
+    module recovers from as a crash. Neither start nor stop is bounded by
+    a time; `SIGKILL` ends a process whose stop does not finish.
+  log: >-
+    Modules log through `ServiceParts.log`. The default sink writes each
+    entry to stderr as one JSON line holding `time`, an ISO 8601 string,
+    and the entry's fields. A credential value reaches no entry: errors
+    carry a `SecretValue` only as its credential name, as
+    `service-configuration` states.
+  configuration: >-
+    Two sections join the service configuration root. `http`, specified
+    by `http-host-configuration`, sets the listen address, default
+    `127.0.0.1` port 7480, and names the operator credential;
+    `http-host-configuration` also specifies the `operator-token`
+    credential kind. `store`, specified by `store-configuration`, sets the
+    path of the store's database file and is required. `ServiceConfiguration`
+    gains `http: HttpHostConfiguration` and `store: StoreConfiguration`,
+    `Credential` gains `OperatorTokenCredential`, and
+    `service-configuration`'s module exports the three types.
+
+    ```ts
+    export interface HttpHostConfiguration {
+      readonly host: string;
+      readonly port: number;
+      readonly operatorCredential: string | undefined;
+    }
+
+    export interface StoreConfiguration {
+      /** Absolute; resolved against the configuration file's directory. */
+      readonly file: string;
+    }
+
+    export interface OperatorTokenCredential {
+      readonly kind: "operator-token";
+      readonly name: string;
+      /** Resolves true when the presented token equals the token file's content. */
+      verify(presented: string): Promise<boolean>;
+    }
+    ```
+  tests: >-
+    Each behaviour is written red before green, through the modules'
+    `index.ts` and the compiled entry point. Values are generic: a remote
+    fixture repository, owner `example-org`, items `alpha` and `beta`,
+    account `acct`, blueprint `blueprints/counter.yml`. HTTP host tests
+    run a host on port 0 with listeners that echo their prefix: the
+    longest prefix takes a request; `/a` does not take `/ab`; `/` takes
+    every unmatched path; a path under no prefix answers 404; a malformed
+    or repeated prefix throws; a listener that throws answers 500 and
+    reaches `onError`; an operator prefix answers 404 with no operator
+    credential, 401 with `WWW-Authenticate` for no header, another scheme,
+    and a wrong token, and reaches its listener with the token; a replaced
+    token file takes effect on the next request; a token file holding only
+    whitespace answers 500 and the error names the credential and holds
+    no token; `close` resolves after a request in progress is answered,
+    refuses new connections, and returns the same promise twice. Service
+    tests write a configuration file to a temporary directory naming a
+    fixture repository served over smart HTTP by the process repository's
+    test server, the GitHub API fake with one organization hook, extended
+    to mint installation tokens for a key the test generates with
+    `node:crypto`, no environments, and `http.port` 0. Start: the `step`
+    probe sees the start steps in order; with a stored active actor and a
+    pending row, a test actor host records the restore and the drain
+    before `github-started`; the portfolio's commit and `latest()` equal
+    the remote's commit. Push: the test commits a changed blueprint and a
+    changed portfolio, POSTs a signed `push` delivery for that commit to
+    `githubWebhookPath` on the bound address, receives 202, and on the
+    `applied` probe for the new commit finds the new blueprint version's
+    key in `latest()` and the new allocation in force in
+    `portfolio.ledger`. Stop: the `step` probe sees the stop steps in
+    order; a second `stop` returns the same promise; the port refuses
+    connections; `github.receive` throws a `TypeError`. Start failure: a
+    second service configured with the first's port rejects with
+    `EADDRINUSE`, and its child process exits on its own. Crash: a child
+    process runs `startService` with a `pull` probe that sends the process
+    `SIGKILL` at `published` for the pushed commit; the parent asserts the
+    kill signal, starts the service again on the same files without the
+    probe, and finds that commit's declaration in force and exactly one
+    `portfolio` declaration row for it. Entry point: the compiled
+    `main.js` with no argument exits 2; with an invalid file exits 1 and
+    prints each issue; with a valid file it logs `started`, and on
+    `SIGTERM`, and in a second run on `SIGINT`, logs `stopped` once and
+    exits 0; a second `SIGTERM` sent after the first logs nothing more.
+    `foundation.integration.test.ts` keeps every behaviour it proves. Its
+    SIGKILL worker starts through `startService` with a configuration file,
+    a test actor host built from `ServiceParts`, and the `delivery` probe,
+    and reads the portfolio, router, and sources from the `Service`.

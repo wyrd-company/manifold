@@ -2,6 +2,7 @@ $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
     - service-configuration
+    - service-assembly
     - store
   mitigates:
     - process-repository-pull-unbounded
@@ -297,10 +298,12 @@ proposed-design:
     an older blueprint version for an actor started at that commit.
   trigger: >-
     `pull` is the one function that moves the current commit. The service
-    calls it once after `openProcessRepository`, and the GitHub event source
-    calls it with the pushed head as `request.commit` when a push to the
-    configured branch arrives. A caller that needs to act on a new commit
-    reads the `advanced` outcome.
+    calls it once at start, and the GitHub event source calls it with the
+    pushed head as `request.commit` when a push to the configured branch
+    arrives and with no request at each sweep. Both calls go through the
+    service's revision follower, which after each pull loads the current
+    revision into the blueprint loader and applies it to the portfolio, as
+    `service-assembly` states.
   tests: >-
     Tests serve fixture repositories over smart HTTP from an in-test
     `node:http` server that runs `git http-backend` as a CGI program on a
