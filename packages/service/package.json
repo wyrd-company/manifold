@@ -13,12 +13,18 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "test": "vp test run"
+    "typecheck": "pnpm --filter @wyrd-company/manifold-shared build && tsc --noEmit",
+    "test": "pnpm --filter @wyrd-company/manifold-shared build && vp test run"
+  },
+  "dependencies": {
+    "@wyrd-company/manifold-shared": "workspace:*",
+    "synckit": "^0.11.13",
+    "xstate": "^5.33.2"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "yaml": "^2.9.1"
   }
 }

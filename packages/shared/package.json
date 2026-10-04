@@ -16,6 +16,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "json-schema-faker": "^0.6.3",
+    "jsonata": "^2.2.2"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:",
