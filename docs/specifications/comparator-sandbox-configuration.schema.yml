@@ -17,10 +17,11 @@ properties:
     default: 100
   memoryLimitMiB:
     description: >-
-      QuickJS runtime memory limit in mebibytes. Linear memory per loaded
-      comparator is capped at twice this value, which must lie within the
-      16 MiB to 2 GiB memory the QuickJS wasm binary imports.
+      Maximum linear memory per loaded comparator in mebibytes, including
+      the engine's allocations. The comparator's heap cannot grow beyond this
+      bound. The maximum lies within the 16 MiB to 2 GiB memory the QuickJS
+      wasm binary imports.
     type: integer
-    minimum: 8
-    maximum: 1024
+    minimum: 16
+    maximum: 2048
     default: 32

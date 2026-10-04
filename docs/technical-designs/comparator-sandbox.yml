@@ -23,8 +23,8 @@ background:
   problems:
     - >-
       The QuickJS runtime memory limit alone is not the bound on host
-      memory: a shared wasm module grows its linear memory to the package
-      default of 2 GiB before the runtime limit is reached.
+      memory: a hoard of small arrays can exceed that quota and grow linear
+      memory to the package default of 2 GiB.
     - >-
       A long native builtin, such as `join` over two million elements, runs
       to completion past the deadline because the builtin does not poll the
@@ -116,18 +116,20 @@ proposed-design:
     repository.
   limits: >-
     `timeoutMs` is the per-evaluation timeout, default 100.
-    `memoryLimitMiB` is the QuickJS runtime memory limit, default 32. The
-    service reads both from the `comparatorSandbox` key of its configuration,
-    per `comparator-sandbox-configuration`, and passes them to
+    `memoryLimitMiB` is the maximum linear memory per loaded comparator,
+    default 32. The service reads both from the `comparatorSandbox` key of its
+    configuration, per `comparator-sandbox-configuration`, and passes them to
     `createComparatorSandbox`. Each loaded comparator owns one
-    `WebAssembly.Memory` whose maximum is twice `memoryLimitMiB`, so the
-    runtime limit trips before linear memory can fail to grow and the
-    engine's own allocations have headroom. That maximum is the host bound
-    for one loaded comparator: linear memory never shrinks, so a loaded
-    comparator holds the most it has used until it is disposed. The wasm
-    binary imports its memory with a minimum of 256 pages (16 MiB) and a
-    maximum of 32768 pages (2 GiB), and a memory links only between those
-    bounds, so `memoryLimitMiB` is an integer from 8 to 1024. `timeoutMs` is
+    `WebAssembly.Memory` whose maximum is `memoryLimitMiB`. This bound includes
+    the engine's allocations, so the comparator's heap cannot grow beyond the
+    configured bound. The QuickJS runtime memory limit is also set to this
+    value. This QuickJS build's runtime quota rejects some allocations but
+    does not reject a hoard of small arrays; the linear-memory maximum is the
+    enforcing bound. Linear memory never shrinks, so a loaded comparator
+    holds the most it has used until it is disposed. The wasm binary imports
+    its memory with a minimum of 256 pages (16 MiB) and a maximum of 32768
+    pages (2 GiB), and a memory links only between those bounds, so
+    `memoryLimitMiB` is an integer from 16 to 2048. `timeoutMs` is
     an integer of at least 1. `createComparatorSandbox` throws a
     `RangeError` naming the limit for a value outside its range, because the
     service has already validated its configuration against
@@ -209,11 +211,15 @@ proposed-design:
   failures: >-
     Each outcome maps to one failure kind. The interrupt raises an
     uncatchable `InternalError: interrupted`, kind `timeout`. The runtime
-    memory limit raises `InternalError: out of memory`; when it reaches the
-    host it is kind `memory`. An exception the comparator throws or lets
-    escape, including a stack overflow, is kind `thrown`, with the error's
-    name and message. A result that is not valid JSON of the `selection`
-    definition in `comparator-contract`, or whose `task` is not the `id` of a
+    memory quota or the linear-memory maximum raises `InternalError: out of
+    memory`; when it reaches the host it is kind `memory`. An exception the
+    comparator throws or lets escape, including a QuickJS
+    `InternalError: stack overflow`, is kind `thrown`, with the error's name
+    and message. Tight recursion can instead exhaust the host call stack and
+    abort runtime disposal. That failure is kind `engine` and marks the
+    instance spent; the next evaluation returns kind `engine` at once, and
+    the caller must load a new comparator. A result that is not valid JSON of
+    the `selection` definition in `comparator-contract`, or whose `task` is not the `id` of a
     task in the input's population, is kind `invalid-output`. A wasm trap or
     any other exception from the engine itself is kind `engine`; it marks
     the loaded comparator spent, and every later `evaluate` returns kind
@@ -339,10 +345,15 @@ proposed-design:
     loop that pushes those arrays into one array returns `memory`; a `join`
     and a default `sort` over two million numbers each return `timeout`.
     For each, the evaluation returns within one second, the host's
-    `process.memoryUsage().rss` grows by less than twice the memory limit
+    `process.memoryUsage().rss` grows by less than the memory limit
     plus 64 MiB, and the next evaluation of a well-behaved comparator on the
-    same sandbox succeeds. Configuration: `memoryLimitMiB` 8 and 1024 each
-    load and evaluate a well-behaved comparator, and 7, 1025, and a
+    same sandbox succeeds. A finite hoard of 45,000 arrays of 100 numbers
+    under `memoryLimitMiB` 32 and `timeoutMs` 500 returns `memory` instead of
+    a selection, and the next well-behaved evaluation of that loaded
+    comparator succeeds. Tight recursion returns `engine`, the next
+    evaluation on that instance returns `engine` with duration zero, and
+    loading a well-behaved comparator on the same sandbox succeeds.
+    Configuration: `memoryLimitMiB` 16 and 2048 each load and evaluate a well-behaved comparator, and 15, 2049, and a
     `timeoutMs` of 0 each make `createComparatorSandbox` throw a
     `RangeError`. World access: a static import, a re-export from a module,
     a top-level `import("external")`, and an `import("external")` inside the

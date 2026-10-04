@@ -61,10 +61,10 @@ export async function createComparatorSandbox(
     throw new RangeError("timeoutMs must be an integer of at least 1");
   if (
     !Number.isInteger(limits.memoryLimitMiB) ||
-    limits.memoryLimitMiB < 8 ||
-    limits.memoryLimitMiB > 1024
+    limits.memoryLimitMiB < 16 ||
+    limits.memoryLimitMiB > 2048
   )
-    throw new RangeError("memoryLimitMiB must be an integer from 8 to 1024");
+    throw new RangeError("memoryLimitMiB must be an integer from 16 to 2048");
   const wasm = await WebAssembly.compile(
     await readFile(new URL(import.meta.resolve("@jitl/quickjs-wasmfile-release-sync/wasm"))),
   );
@@ -79,7 +79,7 @@ export async function createComparatorSandbox(
             wasmModule: wasm,
             wasmMemory: new WebAssembly.Memory({
               initial: 256,
-              maximum: limits.memoryLimitMiB * 32,
+              maximum: limits.memoryLimitMiB * 16,
             }),
           }),
         );
