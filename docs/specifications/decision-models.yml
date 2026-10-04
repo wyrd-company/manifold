@@ -70,8 +70,9 @@ description: |-
   fails with a `result` error.
 
   Bindings. Every expression a custom node evaluates has three bindings
-  beside `$`: `$input` is the node input, `$nodes` is the `$nodes` value Zen
-  supplied, and JSONata's own functions are available unchanged.
+  beside `$`: `$input` is the node input, `$nodes` is the authored
+  projection of the `$nodes` value Zen supplied, and JSONata's own functions
+  are available unchanged.
 
   - An input column `field`: `$` is the node input. Its result is the column
     value. An absent or blank `field` makes the column value the node input.
@@ -236,8 +237,14 @@ description: |-
     process repository.
 
   `__manifoldSwitch` exists only at the top level of a node's input or
-  output: every custom node removes it from its whole input, as it removes
-  `$nodes`, and the service removes it from the result. Creating fails
+  output. The authored projection of a value removes it: a node map, such as
+  `$nodes`, loses every `~route` entry, and every remaining node output and
+  every node input or output loses its top-level `__manifoldSwitch`, so a
+  switch's projected output is its node input. Every custom node takes the
+  authored projection of its whole input and of `$nodes` before it
+  evaluates anything, and the service takes the authored projection of the
+  result and of every trace entry. No expression, result, or record sees a
+  generated node or `__manifoldSwitch`, at any depth. Creating fails
   with a `duplicate-id` error when a model already holds a node id equal to
   a generated `S~route`.
 
@@ -245,8 +252,9 @@ description: |-
   `result` record with the model's result and the full trace, or to an
   `error` record with the error detail and the partial trace; it rejects only
   for a key that is not in the set. The record shows the model as written:
-  the service removes each `S~route` entry from the trace and
-  `__manifoldSwitch` from every trace entry's input and output. `dispose`
+  on success and on failure, the trace holds no `S~route` entry, and each
+  entry's input and output, including any `$nodes` within them, is its
+  authored projection. `dispose`
   releases the engine.
 
   Errors. `DecisionModelErrorDetail` is
@@ -281,8 +289,12 @@ validation-criteria: >-
   service tests evaluate a model that joins input, a JSONata decision table,
   a JSONata expression node, a JSONata switch with two branches, and output
   through `createDecisionModels`, and assert that only the taken branch's
-  nodes run and that the record's trace holds no `~route` entry and no
-  `__manifoldSwitch` property. Table-driven tests run, under both `first` and
+  nodes run. Downstream of the switch, an expression node returning
+  `{ "previous": $nodes.<switchId>, "ids": $keys($nodes) }` gives the
+  switch's node input with no `__manifoldSwitch` at any depth, and node ids
+  with no `~route` id; the result, and the trace of that run and of a run
+  failing in a later cell, hold no `~route` entry and no
+  `__manifoldSwitch` property at any depth. Table-driven tests run, under both `first` and
   `collect`, an input cell for each result in `true`, `false`, `null`, `0`,
   `""`, no result, `[1,2]`, `[]`, `{"x":1}`, `7`, and `"sample"`, with the
   column value set equal to the result, and assert that only `true`
