@@ -1,0 +1,34 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: A GitHub App installation token may not read a Project a user account owns
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the design that holds the measured check.
+relationships:
+  mitigated-by:
+    - intake
+
+description: >-
+  The GitHub event source reads a bound Project's items with the
+  installation token of the credential of the Project's owner. GitHub
+  Apps take Projects permission as an organization permission, and
+  GitHub's REST endpoints for user-owned Projects refuse installation
+  tokens. When the GraphQL API refuses them too, a binding of a Project a
+  user account owns resolves no Project, its sweep reports
+  `unresolved-project` or an API failure, and no issue on it is tracked or
+  taken in.
+
+categories:
+  - technical
+
+likelihood: 3
+impact: 2
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: the measured check in `intake` runs the source's own queries
+# against a user-owned Project before one is bound. Its result is recorded
+# in `github-event-source`.

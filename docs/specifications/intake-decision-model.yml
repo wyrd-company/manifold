@@ -1,0 +1,158 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose contract this is.
+  realizes:
+    - intake
+  references:
+    - process-manifest
+    - decision-models
+    - github-events
+    - portfolio-declaration
+    - bindings-declaration
+    - blueprint
+terms:
+  - intake
+  - decision-model
+  - tracked-issue
+  - binding
+  - portfolio-item
+description: |-
+  Defines the contract between Manifold and the intake decision model: the
+  input Manifold evaluates the model over, the output the model returns,
+  how Manifold resolves the output to a blueprint version and a portfolio
+  item, the input the task actor starts with, and the intake record and
+  failure kinds Manifold keeps.
+  `docs/specifications/intake-decision-model.schema.yml` is the
+  machine-readable definition of the decision input, the decision output,
+  the task facts, the task input, the intake failure, and the intake
+  record. The model is the decision model the manifest names, as
+  `process-manifest` states, and it evaluates as `decision-models` defines.
+
+  Task facts. The facts of one tracked issue on one Project, read from the
+  GitHub mirror, in the shapes `github-events` defines:
+
+  - `issue`: the issue reference: `nodeId`, `repository`, `number`,
+    `state`, and `stateReason`.
+  - `project`: the Project reference: `nodeId`, `owner`, and `number`.
+  - `item`: the issue's item on that Project: `nodeId` and `archived`.
+  - `fields`: the item's custom field values, keyed by field name, each a
+    field value of `github-events` or `null`. A field the item has no
+    value for is `null` when the mirror holds it and absent otherwise.
+  - `blockedBy`, `blocking`, `subIssues`: issue references, in the
+    mirror's order.
+  - `parent`: the parent issue's reference, or `null`.
+
+  Decision input. The model evaluates over one object:
+
+  - `task`: the task facts on the Project of the chosen binding.
+  - `binding`: `name`, `item`, and `environment` of the GitHub Project
+    binding intake chose.
+  - `portfolio`: `items`, every item of the portfolio declaration in force
+    in the subtree of the binding's item, that item included, that is not
+    archived, each with `id`, `parent`, `title`, and `other`, in the
+    declaration's order.
+
+  ```yaml
+  task:
+    issue: { nodeId: I_kwDOA1, repository: example-org/widgets, number: 7, state: open, stateReason: null }
+    project: { nodeId: PVT_kwDOB2, owner: example-org, number: 1 }
+    item: { nodeId: PVTI_lADOC3, archived: false }
+    fields:
+      Track: { kind: single-select, optionId: a1b2c3d4, name: Gears }
+      Size: { kind: number, number: 3 }
+    blockedBy: []
+    blocking: []
+    subIssues: []
+    parent: null
+  binding: { name: widgets, item: alpha, environment: env-one }
+  portfolio:
+    items:
+      - { id: alpha, parent: null, title: Alpha, other: false }
+      - { id: beta, parent: alpha, title: Beta, other: false }
+      - { id: gamma, parent: alpha, title: Gamma, other: false }
+      - { id: alpha/other, parent: alpha, title: Other, other: true }
+  ```
+
+  Decision output. The model's result is an object:
+
+  - `blueprint`, required: the path of a blueprint in the process
+    repository, under `blueprints/`, ending in `.yml` or `.yaml`.
+  - `portfolioItem`, optional: the id of a portfolio item.
+  - `data`, optional: an object handed to the task actor as `intake`.
+
+  No other property is allowed, so a misspelled output column fails intake
+  instead of being dropped. A decision table with hit policy `first` and
+  output fields `blueprint` and `portfolioItem` returns this shape.
+
+  Resolution. The blueprint is the version at the intake's commit:
+  `blueprint` is a path the blueprint loader loaded at that commit. The
+  portfolio item is resolved against the portfolio declaration in force:
+
+  1. An absent `portfolioItem` is the binding's item.
+  2. An id that names no item is `item-unknown`.
+  3. An archived item is `item-archived`.
+  4. An item that is neither the binding's item nor a descendant of it is
+     `item-outside-binding`. The top-level `other` is outside every
+     binding.
+  5. An item with sub-items resolves to its Other, `<id>/other`, since a
+     task that matches none of an item's sub-items belongs to that item's
+     Other. An item with no sub-items is itself.
+
+  The resolved item is therefore the single lowest-level item, within the
+  subtree of the binding's item, that the task belongs to.
+
+  Task input. The task actor starts with one input object:
+
+  - `manifold`: the actor's identity: `project`, the Project node id;
+    `issue`, the issue node id; `environment`, the binding's environment;
+    `portfolioItem`, the resolved item; and `blueprintPath`. The actor
+    host places it at `context.manifold`.
+  - `task`: the task facts, read from the mirror when the actor starts.
+  - `intake`: the output's `data`, or `{}`.
+
+  The task input validates against the blueprint's `schemas.input`; an
+  input it refuses is `input-invalid`. A blueprint for tasks therefore
+  declares an input schema that accepts these three properties, and reads
+  the issue's state at start from `task`.
+
+  Intake record. Manifold keeps one record per issue with `status`
+  `failed`, `recorded`, or `started`. `recorded` and `started` records
+  hold the chosen binding, Project, environment, blueprint path, blueprint
+  version key, portfolio item, the commit of the portfolio declaration in
+  force, and the evaluation record of `decision-models`. A `recorded` or
+  `started` record never changes its decision. A `failed` record holds the
+  commit it failed at, the failure, the evaluation when the model ran, and
+  the number of attempts.
+
+  Failure kinds. Each failure has a kind, a message, and a detail:
+
+  | Kind | When | Detail |
+  |---|---|---|
+  | `binding-missing` | no item of the issue is on a Project with a binding | `{}` |
+  | `binding-archived` | every binding of the issue's Projects is archived | `{ "bindings": [<name>] }` |
+  | `manifest` | the manifest is absent or has an error finding | `{ "findings": [<finding>] }` |
+  | `decision-model` | the evaluation resolved to an `error` record | the evaluation's `error` |
+  | `output` | the result does not validate against the decision output | `{ "errors": [<error>] }` |
+  | `blueprint-unloaded` | no version of the path is loaded at the intake's commit | `{ "path", "findings": [<finding>] }` |
+  | `item-unknown` | the item names no item | `{ "item" }` |
+  | `item-archived` | the item is archived | `{ "item" }` |
+  | `item-outside-binding` | the item is outside the binding's subtree | `{ "item", "binding", "bindingItem" }` |
+  | `input-invalid` | the blueprint's input schema refuses the task input | `{ "errors": [<error>] }` |
+
+  An `<error>` is `{ "instancePath", "message" }` from the validator. A
+  failed record is retried once at each later commit of the process
+  repository; a failure at the current commit is not retried.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/intake-decision-model.schema.yml` is a valid JSON
+  Schema 2020-12 document, and equals the schema `packages/shared` embeds,
+  which a test shows. Every decision input the intake tests evaluate, and
+  the example above, validates against `#/$defs/decision-input`. Every
+  task input an intake test starts an actor with validates against
+  `#/$defs/task-input`, and every record `record` returns validates against
+  `#/$defs/intake-record`. An output with an unknown property, a
+  `blueprint` outside `blueprints/`, and a `portfolioItem` that is a number
+  are each refused by `#/$defs/decision-output`. Each resolution rule and
+  each failure kind has a test with its detail. Fixtures use a domain
+  unrelated to Manifold.

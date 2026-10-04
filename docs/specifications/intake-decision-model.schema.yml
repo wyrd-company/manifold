@@ -1,0 +1,293 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: intake-decision-model
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/intake-decision-model
+title: Intake decision model
+description: >-
+  The input Manifold evaluates the intake decision model over, the output
+  the model returns, the input a task actor starts with, and the intake
+  record Manifold keeps per issue.
+$defs:
+  issue:
+    $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/issue
+  item-id:
+    description: A portfolio item id, an Other item's id included.
+    type: string
+    minLength: 1
+  blueprint-path:
+    description: The repository-relative path of a blueprint.
+    type: string
+    pattern: "^blueprints/([^/]+/)*[^/]+\\.ya?ml$"
+  version-key:
+    description: A blueprint version key, `<commit>:<path>`.
+    type: string
+    pattern: "^[0-9a-f]{40}:blueprints/.+$"
+  commit:
+    type: string
+    pattern: "^[0-9a-f]{40}$"
+
+  task-facts:
+    description: The facts of one tracked issue on one Project, read from the GitHub mirror.
+    type: object
+    required: [issue, project, item, fields, blockedBy, blocking, subIssues, parent]
+    additionalProperties: false
+    properties:
+      issue:
+        $ref: "#/$defs/issue"
+      project:
+        $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/project
+      item:
+        type: object
+        required: [nodeId, archived]
+        additionalProperties: false
+        properties:
+          nodeId:
+            $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/node-id
+          archived:
+            type: boolean
+      fields:
+        description: The item's custom field values, keyed by field name.
+        type: object
+        additionalProperties:
+          $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/field-value
+      blockedBy:
+        type: array
+        items:
+          $ref: "#/$defs/issue"
+      blocking:
+        type: array
+        items:
+          $ref: "#/$defs/issue"
+      subIssues:
+        type: array
+        items:
+          $ref: "#/$defs/issue"
+      parent:
+        oneOf:
+          - $ref: "#/$defs/issue"
+          - type: "null"
+
+  decision-input:
+    description: The object the intake decision model evaluates over.
+    type: object
+    required: [task, binding, portfolio]
+    additionalProperties: false
+    properties:
+      task:
+        $ref: "#/$defs/task-facts"
+      binding:
+        type: object
+        required: [name, item, environment]
+        additionalProperties: false
+        properties:
+          name:
+            $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+          item:
+            $ref: "#/$defs/item-id"
+          environment:
+            $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+      portfolio:
+        type: object
+        required: [items]
+        additionalProperties: false
+        properties:
+          items:
+            description: >-
+              The items of the binding item's subtree, that item included,
+              that are not archived, in declaration order.
+            type: array
+            items:
+              type: object
+              required: [id, parent, title, other]
+              additionalProperties: false
+              properties:
+                id:
+                  $ref: "#/$defs/item-id"
+                parent:
+                  oneOf:
+                    - $ref: "#/$defs/item-id"
+                    - type: "null"
+                title:
+                  type: string
+                other:
+                  type: boolean
+
+  decision-output:
+    description: The intake decision model's result.
+    type: object
+    required: [blueprint]
+    additionalProperties: false
+    properties:
+      blueprint:
+        $ref: "#/$defs/blueprint-path"
+      portfolioItem:
+        $ref: "#/$defs/item-id"
+      data:
+        description: Handed to the task actor as `intake`.
+        type: object
+
+  task-input:
+    description: The input a task actor starts with.
+    type: object
+    required: [manifold, task, intake]
+    additionalProperties: false
+    properties:
+      manifold:
+        description: The actor's identity, which the actor host places at `context.manifold`.
+        type: object
+        required: [project, issue, environment, portfolioItem, blueprintPath]
+        additionalProperties: false
+        properties:
+          project:
+            $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/node-id
+          issue:
+            $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/node-id
+          environment:
+            $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+          portfolioItem:
+            $ref: "#/$defs/item-id"
+          blueprintPath:
+            $ref: "#/$defs/blueprint-path"
+      task:
+        $ref: "#/$defs/task-facts"
+      intake:
+        type: object
+
+  validation-error:
+    type: object
+    required: [instancePath, message]
+    additionalProperties: false
+    properties:
+      instancePath:
+        type: string
+      message:
+        type: string
+
+  intake-failure:
+    type: object
+    required: [kind, message, detail]
+    additionalProperties: false
+    properties:
+      kind:
+        enum:
+          - binding-missing
+          - binding-archived
+          - manifest
+          - decision-model
+          - output
+          - blueprint-unloaded
+          - item-unknown
+          - item-archived
+          - item-outside-binding
+          - input-invalid
+      message:
+        type: string
+      detail: true
+
+  intake-record:
+    description: The one record Manifold keeps per issue.
+    type: object
+    required:
+      - issueNodeId
+      - status
+      - commit
+      - binding
+      - project
+      - environment
+      - blueprintPath
+      - blueprintVersion
+      - portfolioItem
+      - portfolioCommit
+      - actorId
+      - failure
+      - evaluation
+      - attempts
+      - createdAt
+      - updatedAt
+    additionalProperties: false
+    properties:
+      issueNodeId:
+        $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/node-id
+      status:
+        enum: [failed, recorded, started]
+      commit:
+        $ref: "#/$defs/commit"
+      binding:
+        oneOf:
+          - $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+          - type: "null"
+      project:
+        oneOf:
+          - $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/project
+          - type: "null"
+      environment:
+        oneOf:
+          - $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+          - type: "null"
+      blueprintPath:
+        oneOf:
+          - $ref: "#/$defs/blueprint-path"
+          - type: "null"
+      blueprintVersion:
+        oneOf:
+          - $ref: "#/$defs/version-key"
+          - type: "null"
+      portfolioItem:
+        oneOf:
+          - $ref: "#/$defs/item-id"
+          - type: "null"
+      portfolioCommit:
+        oneOf:
+          - $ref: "#/$defs/commit"
+          - type: "null"
+      actorId:
+        description: "`task:<issueNodeId>`."
+        type: string
+        pattern: "^task:"
+      failure:
+        oneOf:
+          - $ref: "#/$defs/intake-failure"
+          - type: "null"
+      evaluation:
+        oneOf:
+          - $ref: https://manifold.wyrd.company/schemas/decision-models#/$defs/decision-model-evaluation
+          - type: "null"
+      attempts:
+        description: The number of failed attempts.
+        type: integer
+        minimum: 0
+      createdAt:
+        type: integer
+      updatedAt:
+        type: integer
+    allOf:
+      - if:
+          properties:
+            status:
+              const: failed
+        then:
+          properties:
+            failure:
+              $ref: "#/$defs/intake-failure"
+        else:
+          properties:
+            failure:
+              type: "null"
+            binding:
+              type: string
+            project:
+              type: object
+            environment:
+              type: string
+            blueprintPath:
+              type: string
+            blueprintVersion:
+              type: string
+            portfolioItem:
+              type: string
+            evaluation:
+              type: object

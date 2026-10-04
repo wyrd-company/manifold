@@ -1,0 +1,106 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design that reads this file.
+  realizes:
+    - intake
+  references:
+    - decision-models
+    - intake-decision-model
+    - process-repository
+terms:
+  - intake
+  - decision-model
+description: |-
+  Defines `manifold.yml`, the manifest at the root of the process
+  repository, which names the intake decision model, and the lint that
+  checks the manifest and the decision models it reaches.
+  `docs/specifications/process-manifest.schema.yml` is the machine-readable
+  definition of the manifest document and of a manifest finding.
+
+  Document. The file is one YAML 1.2 document under the core schema with
+  unique mapping keys. It is a mapping with one key:
+
+  - `intake`, required: a mapping with `decisionModel`, required, the
+    repository-relative path of the intake decision model, a `.yml` file.
+
+  ```yaml
+  intake:
+    decisionModel: decision-models/intake.yml
+  ```
+
+  A path is `/`-separated, with no empty, `.`, or `..` segment and no
+  leading `/`, as the process repository's revision reads it.
+
+  Decision model set. A decision model's key is its repository-relative
+  path. The set the manifest reaches is the intake decision model and,
+  through each `decisionNode`'s `content.key`, every model it names, to any
+  depth, each read once. The service evaluates the set with
+  `createDecisionModels` over those keys, and the intake decision model's
+  key is the manifest's `decisionModel`.
+
+  Lint. `packages/shared` exports the lint:
+
+  ```ts
+  function lintProcessManifest(read: (path: string) => Promise<string | undefined>): Promise<ProcessManifestLint>;
+
+  type ProcessManifestLint =
+    | {
+        readonly ok: true;
+        readonly manifest: ProcessManifest;
+        readonly models: Readonly<Record<string, unknown>>; // parsed, by path
+        readonly findings: readonly ProcessManifestFinding[]; // warnings only
+      }
+    | { readonly ok: false; readonly findings: readonly ProcessManifestFinding[] };
+
+  interface ProcessManifest {
+    readonly intake: { readonly decisionModel: string };
+  }
+  ```
+
+  `read` answers a file's text, or `undefined` when no file is at the
+  path. The service passes the revision's `read`, and the host CLI a reader
+  over a checkout directory. The lint reads nothing else, and the same
+  answers give the same result. A `read` that rejects rejects the lint.
+  `ProcessManifestFinding` is `#/$defs/finding`: the file's path, an RFC
+  6901 JSON Pointer location in that file's document, a severity, a kind,
+  and a message. The lint checks, in this order:
+
+  1. `manifest-missing`: no file is at `manifold.yml`. The location is
+     the root. No other rule runs.
+  2. `syntax`: `manifold.yml` does not parse as one YAML document under
+     the rules above. The location is the root, and the message is the
+     parser's, with its line and column. No other rule runs.
+  3. `schema`: the document does not validate against
+     `#/$defs/manifest`, one finding per failing location with the
+     validator's message. No other rule runs.
+  4. Per model of the set, in the order the set is reached, breadth first
+     from the intake decision model: `model-missing`, at `/intake/decisionModel` in
+     `manifold.yml` for the intake decision model, or at the `decisionNode`'s
+     `/nodes/<index>/content/key` in the model that names it, when no file
+     is at the path; `model-syntax`, at the model's root, when its text
+     does not parse as one YAML document; and otherwise every finding of
+     `lintDecisionModel(model, path)`, as kind `decision-model`, with the
+     decision model finding as `finding`, its severity as the finding's
+     severity, and its `location` after `#` as the location.
+
+  Every finding but a `decision-model` warning is an error. The lint
+  returns `ok: true` with the manifest, every model of the set parsed, and
+  the warnings when there is no error; otherwise `ok: false` with every
+  finding.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/process-manifest.schema.yml` is a valid JSON Schema
+  2020-12 document, and equals the schema `packages/shared` embeds, which a
+  test shows. Every finding the lint tests produce validates against
+  `#/$defs/finding`. The lint tests in `packages/shared` call
+  `lintProcessManifest` with an in-memory reader and check each finding's
+  file, location, kind, and order for: no `manifold.yml`; text that is not
+  YAML; a manifest with no `intake`, with an unknown key, and with a
+  `decisionModel` path holding `..`; a named model that is absent; a
+  `decisionNode` naming an absent model; a model that is not YAML; a model
+  with a `syntax` cell; and a `never-boolean` warning, which leaves
+  `ok: true`. A clean manifest whose intake model names a second model
+  through a `decisionNode` returns both models by path, and the same call
+  twice returns the same result. Fixtures use a domain unrelated to
+  Manifold.

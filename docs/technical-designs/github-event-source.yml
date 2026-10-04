@@ -98,6 +98,8 @@ proposed-design:
       readonly onError?: (error: GitHubSourceError) => void;
       /** Called after each reconcile's read, before its transaction. */
       readonly probe?: () => void;
+      /** Called after each transaction that publishes an item addition commits, with the content issues' node ids. */
+      readonly onTracked?: (issueNodeIds: readonly string[]) => void;
     }
 
     /** The `github` section of the service configuration, defaults applied. */
@@ -141,6 +143,8 @@ proposed-design:
       requestSweep(): void;
       /** The mirror's view of a tracked issue, or undefined when it is not tracked. */
       trackedIssue(nodeId: string): TrackedIssue | undefined;
+      /** The node id of every issue trackedIssue answers for, sorted by code point. */
+      trackedIssueIds(): readonly string[];
       stop(): Promise<void>;
     }
 
@@ -187,7 +191,32 @@ proposed-design:
       readonly subIssues: readonly GitHubIssue[];
       readonly parent: GitHubIssue | undefined;
       readonly projects: readonly GitHubProject[];
+      /** The issue's present items on bound Projects, in the order of `projects`. */
+      readonly items: readonly TrackedItem[];
     }
+
+    export interface TrackedItem {
+      readonly project: GitHubProject;
+      readonly nodeId: string;
+      readonly archived: boolean;
+      /** The item's field values in the mirror, keyed by field name. */
+      readonly fields: Readonly<Record<string, GitHubFieldValue>>;
+    }
+
+    /** A field value of `github-events`, or null. */
+    export type GitHubFieldValue =
+      | { readonly kind: "text"; readonly text: string }
+      | { readonly kind: "number"; readonly number: number }
+      | { readonly kind: "date"; readonly date: string }
+      | { readonly kind: "single-select"; readonly optionId: string; readonly name: string }
+      | {
+          readonly kind: "iteration";
+          readonly iterationId: string;
+          readonly title: string;
+          readonly startDate: string;
+          readonly duration: number;
+        }
+      | null;
     ```
   module-layout: >-
     `index.ts` re-exports the public names and nothing else. `verify.ts`
@@ -441,7 +470,12 @@ proposed-design:
     the issue's baseline commit together, so no consumer takes
     `github.project-item.added` before `trackedIssue` answers with the
     issue's complete dependencies, sub-issues, and parent; a failed read of
-    the issue leaves the item pending with nothing written. A present item observed absent is
+    the issue leaves the item pending with nothing written. After a
+    transaction that publishes one or more `github.project-item.added`
+    events whose content is an issue commits, the runner calls `onTracked`
+    once with those issues' node ids, so intake takes each issue in as soon
+    as `trackedIssue` answers for it. A throw from `onTracked` is sent to
+    `onError` and changes nothing the transaction wrote. A present item observed absent is
     a removal. A change of `isArchived` is an archive or a restore. Each
     field whose value differs from its row, a field with no value read as
     `null`, is one `field-changed` event; a field with no row whose value is
@@ -511,7 +545,13 @@ proposed-design:
     the bound Projects with a present item for it. It returns `undefined`
     for an issue that is not tracked, not yet baselined, or observed absent, so every answer
     it gives holds the issue's complete relationship lists. Intake and gates read the dependency
-    graph through it.
+    graph through it. `items` lists the issue's present item on each bound
+    Project, with its `archived` flag and every field value row the mirror
+    holds for it, keyed by the field's latest name, a row with no value as
+    `null`. `trackedIssueIds()` reads the node id of every issue for which
+    `trackedIssue` answers. Both read the mirror synchronously, so a caller
+    that reads them and acts in the same turn of the event loop sees no
+    reconcile between. Intake reconciles against `trackedIssueIds`.
   stop: >-
     `stop()` clears both timers, aborts the request in flight, and resolves
     when the runner has returned; the aborted work stays pending. `receive`
@@ -587,7 +627,12 @@ proposed-design:
     tick, leaves the row pending and is read again. A `502`, a
     rate limit answer, and a request that never answers, past
     `requestTimeoutMs` on the fake clock, each leave the work pending and
-    report `api`, and the next wake completes it. A matching push calls
+    report `api`, and the next wake completes it. Each transaction that
+    publishes an item addition with issue content calls `onTracked` once,
+    after its commit, with those issues' node ids; a field change, a
+    removal, and a sweep that finds nothing new do not call it.
+    `trackedIssue` lists an item's field values by name, and
+    `trackedIssueIds` lists exactly the issues `trackedIssue` answers for. A matching push calls
     `pull` with its head once, a push to another branch or repository does
     not, and each sweep calls `pull()`. Every published event validates
     against `github-events.schema.yml`. The source's tables match

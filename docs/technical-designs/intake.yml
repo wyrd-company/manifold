@@ -1,0 +1,437 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - github-event-source
+    - portfolio
+    - blueprint-loader
+    - durable-event-delivery
+    - process-repository
+    - store
+  mitigates:
+    - user-owned-projects-unreadable
+objective: >-
+  Give every issue on a bound GitHub Project one task actor, whose blueprint
+  and portfolio item the process repository's intake decision model chooses
+  once, so that the user's process takes hold of each issue the moment
+  Manifold tracks it, across restarts, replays, and process changes.
+background:
+  current-design: >-
+    The GitHub event source tracks every issue that is the content of a
+    present item on a bound Project. When an issue becomes tracked, it
+    publishes `github.project-item.added` and records the issue's complete
+    relationships as its baseline in one transaction, and `trackedIssue`
+    answers from then on. The first sweep of a newly bound Project publishes
+    `added` for every item already on it. The router delivers an event only
+    to actors whose subscription it reaches when the event is first
+    accepted. The blueprint loader keeps every loaded blueprint version by
+    commit and path, and the caller that pulls keeps the latest
+    `RevisionLoad`. The portfolio module resolves a GitHub Project to its
+    binding and keeps the portfolio declaration in force. Decision models
+    evaluate through `createDecisionModels` with JSONata cells.
+  problems:
+    - >-
+      Nothing decides which blueprint an issue runs and which portfolio item
+      it is charged to, so no task actor starts.
+    - >-
+      Intake is asynchronous, since a decision model evaluates in the
+      expressions worker and a blueprint version loads from git, so an event
+      published for an issue while its intake runs reaches no actor.
+    - >-
+      One issue is discovered through a webhook, a sweep, a restart, and a
+      second bound Project, and must get one intake and one actor.
+design-challenges:
+  once: >-
+    Every path that discovers an issue, in any order and any number of
+    times, gives one intake record and at most one actor.
+  crash-between: >-
+    A crash after intake is recorded and before the actor starts must start
+    the actor on restart, on the version recorded, and never start a second.
+  handoff: >-
+    The actor must hear every change to its issue committed after the state
+    it was started with, and must start with every change committed before.
+  failure: >-
+    A process repository that cannot decide, or decides something that
+    cannot run, must leave the issue visibly untaken, and must take it once
+    the process is fixed, without an operator forcing it.
+proposed-design:
+  high-level-overview: >-
+    Intake is one module, `packages/service/src/intake/`, whose only public
+    file is `index.ts`. `startIntake` returns an intake that keeps one
+    record per issue in its table, `intake-records-table`, and one serial
+    runner. The runner takes an issue when the GitHub event source commits
+    it as tracked, and reconciles every tracked issue at start and after
+    each process repository revision is loaded. For an issue with no
+    record, or a failed record from an earlier commit, it reads the
+    manifest of the current revision, `process-manifest`, evaluates the
+    intake decision model over the issue as `intake-decision-model`
+    defines, checks the blueprint and the portfolio item it chose, and
+    commits a `recorded` record holding them. It then starts the task actor
+    through the actor host, in one synchronous step that reads the issue
+    from the mirror and attaches the actor to the router, and marks the
+    record `started`. A record that is `started` is final. A failure is a
+    `failed` record with a typed kind and no actor, retried once at each
+    later commit.
+  public-interface: |-
+    `packages/service/src/intake/index.ts` exports exactly these names.
+
+    ```ts
+    import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
+    import type { LoadedBlueprint, RevisionLoad, VersionLoad } from "../blueprint-loader/index.ts";
+    import type { GitHubProject, TrackedIssue } from "../github-source/index.ts";
+    import type { GitHubProjectResolution, PortfolioInForce } from "../portfolio/index.ts";
+    import type { JsonValue, Store } from "../store/index.ts";
+    import type { BlueprintVersion } from "@wyrd-company/manifold-shared";
+
+    /** Migration steps for owner `intake`, applied by the store's migrate. */
+    export const intakeMigrationSteps: readonly string[];
+
+    export function startIntake(options: IntakeOptions): Intake;
+
+    export interface IntakeOptions {
+      readonly store: Store;
+      /** The GitHub event source satisfies it. */
+      readonly tracked: TrackedIssues;
+      /** The portfolio module satisfies it. */
+      readonly portfolio: IntakePortfolio;
+      /** The blueprint loader satisfies it. */
+      readonly blueprints: { version(version: BlueprintVersion): Promise<VersionLoad> };
+      /** The current revision and the blueprints loaded from it, or undefined before the first pull. */
+      current(): IntakeRevision | undefined;
+      readonly actors: TaskActorStarter;
+      /** Called for each record that becomes `failed`. */
+      readonly onFailed?: (record: IntakeRecord) => void;
+      /** Called for each failure the runner recovers from by itself. */
+      readonly onError?: (error: IntakeError) => void;
+      /** Called after each step commits. */
+      readonly probe?: (step: IntakeStep, issueNodeId: string) => void;
+    }
+
+    export interface TrackedIssues {
+      trackedIssue(nodeId: string): TrackedIssue | undefined;
+      trackedIssueIds(): readonly string[];
+    }
+
+    export interface IntakePortfolio {
+      current(): PortfolioInForce;
+      githubProject(project: { owner: string; number: number }): GitHubProjectResolution | undefined;
+    }
+
+    export interface IntakeRevision {
+      readonly revision: ProcessRepositoryRevision;
+      /** Loaded from `revision`; its commit equals the revision's. */
+      readonly blueprints: RevisionLoad;
+    }
+
+    /** The start member of the actor host. */
+    export interface TaskActorStarter {
+      start(request: TaskActorStart): void;
+    }
+
+    export interface TaskActorStart {
+      readonly actorId: string;
+      readonly blueprint: LoadedBlueprint;
+      /** `#/$defs/task-input` of `intake-decision-model`. */
+      readonly input: { readonly [key: string]: JsonValue };
+    }
+
+    export interface Intake {
+      /** Takes in each issue the GitHub event source has committed as tracked. */
+      discovered(issueNodeIds: readonly string[]): void;
+      /** Reconciles every tracked issue against the revision `current` now answers. */
+      revisionLoaded(): void;
+      record(issueNodeId: string): IntakeRecord | undefined;
+      /** Resolves when nothing is queued or running. */
+      idle(): Promise<void>;
+      stop(): Promise<void>;
+    }
+
+    /** `#/$defs/intake-record` of `intake-decision-model`. */
+    export interface IntakeRecord {
+      readonly issueNodeId: string;
+      readonly status: "failed" | "recorded" | "started";
+      readonly commit: string;
+      readonly binding: string | null;
+      readonly project: GitHubProject | null;
+      readonly environment: string | null;
+      readonly blueprintPath: string | null;
+      readonly blueprintVersion: string | null;
+      readonly portfolioItem: string | null;
+      readonly portfolioCommit: string | null;
+      readonly actorId: string;
+      readonly failure: IntakeFailure | null;
+      readonly evaluation: JsonValue | null;
+      readonly attempts: number;
+      readonly createdAt: number;
+      readonly updatedAt: number;
+    }
+
+    export interface IntakeFailure {
+      readonly kind: IntakeFailureKind;
+      readonly message: string;
+      readonly detail: JsonValue;
+    }
+
+    export type IntakeFailureKind =
+      | "binding-missing"
+      | "binding-archived"
+      | "manifest"
+      | "decision-model"
+      | "output"
+      | "blueprint-unloaded"
+      | "item-unknown"
+      | "item-archived"
+      | "item-outside-binding"
+      | "input-invalid";
+
+    export type IntakeStep = "recorded" | "started" | "failed";
+
+    export class IntakeError extends Error {
+      readonly kind: "read" | "start" | "store";
+      readonly issueNodeId: string;
+    }
+    ```
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `intake.ts`
+    implements `startIntake`: the queue, the runner, and the two steps.
+    `decide.ts` holds the pure function from a decision model result, the
+    portfolio declaration in force, the binding, and the revision's
+    blueprints to a decision or a failure. `inputs.ts` holds the pure
+    functions that build the decision input and the task input from a
+    tracked issue and a binding. `models.ts` holds the decision models of
+    the current commit and replaces them when the commit changes.
+    `records.ts` holds every SQL read and write of the intake table.
+    `migrations.ts` holds the migration steps; step 1 is the script of
+    `intake-records-table`. Tests live beside the module and import only
+    `index.ts` and the `index.ts` of the store, the router, the blueprint
+    loader, and the portfolio module. The manifest lint and the schemas
+    live in `packages/shared`, in `process-manifest.ts` and the generated
+    schema constants, as `process-manifest` states. The host CLI command
+    lives in `packages/host-cli/src/manifest-lint/command.ts`.
+  discovery: >-
+    The GitHub event source calls `onTracked` with the node ids of the
+    content issues of the item additions a transaction published, after
+    that transaction, which also records each issue's baseline, commits, as
+    `github-event-source` states. The service passes it to
+    `discovered`. Every issue a sweep finds already on a newly bound
+    Project, on the service's first start and later, arrives the same way.
+    `discovered` adds each id to the queue and wakes the runner. The queue
+    is in memory and is a hint: the mirror and the intake table are the
+    truth, and a reconcile rebuilds the queue from them, so a discovery
+    lost to a crash after the source's commit is taken at the next start.
+  reconcile: >-
+    A reconcile queues every issue that needs intake: each id of
+    `tracked.trackedIssueIds()` with no record, or with a `failed` record
+    whose `commit` is not the commit `current()` answers, and each
+    `recorded` record. `startIntake` runs a reconcile, and so does
+    `revisionLoaded`. Before the first revision, `current()` answers
+    `undefined`, the runner takes nothing, and the reconcile after the
+    first load queues every tracked issue. Intake adds no timer: its only
+    wakes are `discovered`, `revisionLoaded`, and `startIntake`.
+  runner: >-
+    One runner takes queued issues one at a time, in the order they were
+    queued, so no two intakes of one issue overlap and no two writes to the
+    intake table race. For each issue it reads the record. `started` is
+    done. `recorded` goes to the start step. No record, or a `failed`
+    record from another commit, goes to the decision step. A `failed`
+    record at the current commit is done: the same commit, binding, and
+    portfolio decide the same way.
+  decision-step: |-
+    The decision step reads `current()`, then:
+
+    1. `tracked.trackedIssue(nodeId)`. `undefined` means the issue is not
+       tracked, not yet baselined, or observed absent; the issue leaves the
+       queue with no record, and the discovery or reconcile that follows
+       its baseline takes it again.
+    2. The binding. Each entry of the tracked issue's `items` names a
+       Project, which `portfolio.githubProject` resolves to a binding or
+       to nothing. The binding is the resolved binding that is not
+       archived whose name sorts first by code point. When every resolved
+       binding is archived the failure is `binding-archived`; when none
+       resolves it is `binding-missing`.
+    3. The models. `models.ts` holds the `DecisionModels` built from the
+       manifest at `current().revision.commit`, as `process-manifest`
+       states, and builds them again when the commit changes, disposing the
+       old. A manifest that is absent, or a lint with an error finding, is
+       the failure `manifest` with the findings as its detail.
+    4. The evaluation. `evaluate(<intake model path>, decisionInput)` with
+       the decision input of `intake-decision-model`. An `error` record is
+       the failure `decision-model`, with the record as its detail.
+    5. `decide`: the result validates against `#/$defs/decision-output`,
+       else `output`; the blueprint path is a key of
+       `current().blueprints.blueprints`, else `blueprint-unloaded`, with
+       the path's findings from `failures` when it has any; the portfolio
+       item resolves as `intake-decision-model` states, else
+       `item-unknown`, `item-archived`, or `item-outside-binding`.
+    6. The task input of `intake-decision-model`, built from the same
+       tracked issue, validates against the blueprint's `schemas.input`,
+       else `input-invalid` with the validator's errors.
+
+    Every failure writes the `failed` record, as described under records,
+    calls `probe("failed")` and `onFailed`, and ends the issue's turn. A
+    decision with no failure writes the `recorded` record and calls
+    `probe("recorded")`, and the runner goes on to the start step. A
+    `read` of the revision that rejects is an `IntakeError` of kind
+    `read`; the issue stays queued for the next wake, and the runner goes
+    on to the next issue.
+  start-step: >-
+    The start step loads the recorded version with
+    `blueprints.version(parseBlueprintVersionKey(record.blueprintVersion))`,
+    so an actor recorded before a restart starts on the version it was
+    recorded with, whatever commit is current after the restart. A version
+    that is not `loaded` writes the record `failed` with kind
+    `blueprint-unloaded`. Then, with no `await` between its reads and its
+    writes: when the store holds a snapshot for the record's actor id, the
+    actor started before a crash, and the step only marks the record
+    `started`. Otherwise it reads `tracked.trackedIssue`, builds the task
+    input, validates it against the blueprint's input schema, calls
+    `actors.start`, and marks the record `started` in its own transaction,
+    then calls `probe("started")`. An issue no longer tracked leaves the
+    record `recorded`, and the discovery that tracks it again starts it.
+    An input that no longer validates writes the record `failed` with kind
+    `input-invalid`. A throw from `actors.start` is
+    an `IntakeError` of kind `start`; the record stays `recorded` and the
+    next reconcile starts it.
+  handoff: >-
+    The start step reads the mirror and attaches the actor in one
+    synchronous run of the event loop. The GitHub event source writes the
+    mirror and publishes in one synchronous transaction, so every change it
+    committed before the read is in the task input, and every change it
+    commits after is published while the actor's subscription is in the
+    router's index and reaches the actor's inbox. The task input is the
+    issue's state as of the actor's start; the blueprint reads it from its
+    input and takes every later change as an event. The actor never takes
+    the `github.project-item.added` that made its issue tracked, since that
+    event was accepted before the actor existed.
+  actor-start: >-
+    The actor id is `task:<issueNodeId>`. `actors.start` is the actor
+    host's member that creates an actor for a blueprint version with an
+    input and attaches it through the router's `attach`, which saves its
+    first snapshot with `machine` set to the version key, indexes its
+    subscription, and drains it. The task input carries the identity under
+    `manifold`: `project`, the Project node id; `issue`, the issue node id;
+    `environment`, the binding's environment; `portfolioItem`; and
+    `blueprintPath`. The actor host places it at `context.manifold`, from
+    which it derives the actor's subscription, as the actor host design
+    states. Until the actor host merges, the tests start actors through a
+    fixture host that implements the router's `ActorHost` and
+    `TaskActorStarter` with XState's `createActor`.
+  records: >-
+    `records.ts` writes the record in four ways, each in one
+    `store.connection.transaction`. A failure of the decision step inserts
+    the row, or updates a `failed` row, setting `status` to `failed`, the
+    commit, the failure, the evaluation when there was one, and the
+    binding, Project, and environment when step 2 found them; it raises
+    `attempts` by one. A decision inserts the row, or updates a `failed`
+    row, setting `status` to `recorded` with every field of the decision;
+    the statement's `WHERE status = 'failed'` leaves a `recorded` or
+    `started` row unchanged. A start sets `status` to `started` where it
+    is `recorded`. A failure of the start step sets `status` to `failed`,
+    the failure, and `attempts` where it is `recorded`, and keeps the
+    commit and every decision column, so the issue is decided again at the
+    next commit. No statement moves a row out of `started`, and no
+    statement deletes a row; the table's triggers refuse both, so a
+    decision once recorded never changes and an issue with an actor is
+    never decided again.
+  intake-once: >-
+    Intake runs once per issue: a `recorded` or `started` record is the
+    issue's one decision for the life of the store. An issue removed from
+    its Project and added again, an issue on a second bound Project, and a
+    replayed `added` event each find the record and change nothing. The
+    actor's Project is the Project of the binding its intake chose.
+  convergence: >-
+    `discovered` twice with one id queues it once while it is queued, and
+    a second turn finds the record and does nothing. A webhook and a sweep
+    that both discover an issue give the source one `added` event and at
+    most two `onTracked` calls, which converge the same way. A crash before
+    the `recorded` commit leaves no record, or the earlier `failed` one,
+    and the next reconcile decides again. A crash after the `recorded`
+    commit and before `actors.start` leaves a `recorded` record and no
+    snapshot; the reconcile at the next start starts the actor once, on
+    the recorded version. A crash after the actor's first snapshot commits
+    and before the `started` commit leaves a snapshot; the start step finds
+    it and marks the record `started` without a second actor. A decision
+    twice at one commit writes the same `failed` record with `attempts`
+    raised, or finds a `recorded` record and writes nothing. `stop` twice
+    does nothing more.
+  errors: >-
+    A process repository's faults are intake failures, recorded as data
+    and never thrown. A failed read of the revision, and a throw from the
+    actor host, are `IntakeError`s sent to `onError`; the runner leaves the
+    issue for the next wake. SQLite errors stop the runner's wake, are sent
+    to `onError` as kind `store`, and leave the work queued. `discovered`
+    and `revisionLoaded` after `stop` throw a `TypeError`. Inputs from
+    service code are trusted otherwise.
+  stop: >-
+    `stop()` empties the queue and resolves when the issue in hand has
+    finished its step; an evaluation in the expressions worker runs to its
+    end, and nothing is written after `stop` resolves. It disposes the
+    decision models.
+  wiring: >-
+    The service migrates `intake` with `intakeMigrationSteps`, starts the
+    router, starts the GitHub event source with `onTracked` calling the
+    intake's `discovered`, and then calls `startIntake` with the store,
+    the source as `tracked`, the portfolio module, the blueprint loader,
+    and `current` answering the revision and `RevisionLoad` the service
+    keeps. After each pull that advances, the service applies the revision
+    to the portfolio module, loads it with `loadRevision`, keeps both, and
+    calls `revisionLoaded`. Intake starts after `startRouter` returns, so
+    every resumed actor is indexed before an actor starts.
+  permissions: >-
+    Intake reads only the store, the mirror through `trackedIssue`, and
+    the process repository revision. It calls no GitHub API and needs no
+    permission beyond those the GitHub event source and the process
+    repository hold.
+  user-owned-projects: >-
+    The GitHub event source reads a bound Project's items with the
+    installation token of the credential of the Project's owner, and a
+    Project a user account owns has no organization hook, so the sweep
+    alone reads it. Whether an installation token reads the items of a
+    Project a user account owns is established by a measured check before
+    any user-owned Project is bound. The check runs the source's
+    `GitHubProjectByNumber` and `GitHubProject` queries, with the
+    installation token of an App installed on a user account with
+    `Projects: read`, against a Project that account owns holding one
+    issue, and records each query's HTTP status, the GraphQL errors, and
+    whether the issue's item is listed. The result is recorded in
+    `github-event-source` under `permissions` and on the task.
+  tests: >-
+    Tests run against a real store file in a temporary directory, with the
+    router started on it and a fixture actor host that restores and starts
+    actors with XState's `createActor` and derives subscriptions from
+    `context.manifold`. A structural fake of `TrackedIssues` holds tracked
+    issues with their items and field values and can publish an issue
+    event through the router in the transaction that changes them, as the
+    source does. The process repository is `memoryRevision` at two
+    commits, holding `manifold.yml`, an intake decision model with a JSONata
+    decision table over a single-select field, two blueprints of a generic
+    domain, `portfolio.yml` with `alpha` holding `beta` and `gamma`, and
+    `bindings.yml` binding Project 1 of `example-org` to `alpha` on
+    `env-one`, loaded through `openPortfolio` and `createBlueprintLoader`.
+    Behaviours proved, each written red before green: a discovered issue
+    gets a `recorded` and then `started` record, and an actor whose
+    snapshot's machine is the version key and whose context holds the
+    identity; the decision input the model receives validates against
+    `#/$defs/decision-input`; an output with no item assigns `alpha/other`
+    and one naming `beta` assigns `beta`; each failure kind is recorded
+    with no actor, for a Project with no binding, an archived binding, an
+    absent manifest, a cell that throws, an output with an unknown
+    property, a blueprint path with a lint finding, an item absent from the
+    portfolio, an archived item, the top-level `other`, and an input the
+    blueprint's schema refuses; a failure at the first commit is not
+    retried by a second `revisionLoaded` at that commit and is retried and
+    started at the second commit; `discovered` twice and `discovered` with
+    a reconcile give one record and one actor; an issue on two bound
+    Projects is taken once, through the binding whose name sorts first;
+    a reconcile at start takes every tracked issue with no record; an
+    issue event the fake publishes in the turn after `actors.start` reaches
+    the actor, and a change committed before the start step is in its
+    input; a `recorded` record from the first commit starts on the first
+    commit's version after the second commit is current; an evaluation
+    that never resolves holds only its issue's turn until `stop`. The
+    table matches `intake-records-table`. Fault tests, in a child Node
+    process that sends itself `SIGKILL` from `probe` and whose kill signal
+    the parent asserts before it reopens the file: a kill at `recorded`,
+    and a kill after the fixture host's first snapshot commits and before
+    `started`; after a restart on the same file each issue has one
+    `started` record and one snapshot, and the actor's version is the one
+    recorded.

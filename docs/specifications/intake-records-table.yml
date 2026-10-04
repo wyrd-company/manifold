@@ -1,0 +1,39 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose table this is.
+  realizes:
+    - intake
+  references:
+    - store-database-schema
+    - intake-decision-model
+description: >-
+  Defines the table the intake module holds in Manifold's store database.
+  `docs/specifications/intake-records-table.sql` is the machine-readable
+  definition: the schema that the module's migration steps produce. The
+  module's owner name is `intake`, and every table it creates is named
+  `intake_<name>`. Its steps are applied by the store's
+  `migrate("intake", steps)`; the module never runs DDL itself. Step 1 is
+  this file's script. Steps are append-only: a change to the table is a new
+  step, and this file is rewritten to the schema all steps produce.
+
+  `intake_record` holds one row per issue that intake has decided or failed
+  to decide, keyed by the issue's node id. Its columns hold the fields of
+  `#/$defs/intake-record` of `intake-decision-model`: `project_node_id`,
+  `project_owner`, and `project_number` hold the Project reference;
+  `failure` and `evaluation` hold JSON; times are epoch milliseconds.
+  `status` moves from `failed` to `failed` or `recorded`, and from
+  `recorded` to `started` or `failed`; a trigger aborts every other change
+  of `status`, every change of the decision columns of a row that is not
+  `failed` before the update, and every `DELETE`.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/intake-records-table.sql` runs without error on an
+  empty SQLite database. A test applies the module's exported migration
+  steps in order to an empty database and compares the `type`, `name`,
+  `tbl_name`, and `sql` of every `sqlite_schema` row whose name starts with
+  `intake_` with the rows this file produces on a second empty database,
+  with each run of whitespace in `sql` read as one space; they are equal.
+  An update from `started` to any status, from `recorded` to `recorded`
+  with another blueprint, and a `DELETE` each fail with the table's
+  message.
