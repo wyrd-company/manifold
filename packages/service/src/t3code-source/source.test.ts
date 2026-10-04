@@ -444,7 +444,17 @@ test("SIGKILL inside publishing rolls back the inbox and cursor, and restart rep
       stderr += String(value);
     });
     const messages = new Set<unknown>();
-    child.on("message", (message) => messages.add(message));
+    // Await IPC readiness; Node startup must not race expect.poll's 1 s limit.
+    const following = new Promise<void>((resolve, reject) => {
+      child.on("message", (message) => {
+        messages.add(message);
+        if (message === "following") resolve();
+      });
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        reject(new Error(`Worker exited before readiness (${code}, ${signal}): ${stderr}`));
+      });
+    });
     cleanup.push(async () => {
       if (child.exitCode === null && child.signalCode === null) {
         const exit = once(child, "exit");
@@ -452,12 +462,10 @@ test("SIGKILL inside publishing rolls back the inbox and cursor, and restart rep
         await exit;
       }
     });
-    return { child, messages, stderr: () => stderr };
+    return { child, messages, following };
   }
   const first = worker(true);
-  await expect
-    .poll(() => ({ ready: first.messages.has("following"), error: first.stderr() }))
-    .toMatchObject({ ready: true });
+  await first.following;
   const opened = {
     id: "activity-open",
     kind: "approval.requested",
@@ -483,6 +491,7 @@ test("SIGKILL inside publishing rolls back the inbox and cursor, and restart rep
   thread.activities.push(resolved as (typeof thread.activities)[number]);
   server.change(thread, "thread.activity-appended", { threadId: thread.id, activity: resolved });
   const resumed = worker(false);
+  await resumed.following;
   await expect.poll(() => store.pendingInbox("reader").length).toBe(2);
   expect(server.log).toHaveLength(2);
   expect(store.pendingInbox("reader").map((r) => (r.payload as { type: string }).type)).toEqual([
@@ -493,12 +502,12 @@ test("SIGKILL inside publishing rolls back the inbox and cursor, and restart rep
   resumed.child.send("stop");
   await stopped;
   const again = worker(false);
-  await expect.poll(() => again.messages.has("following")).toBe(true);
+  await again.following;
   expect(store.pendingInbox("reader")).toHaveLength(2);
   const stoppedAgain = once(again.child, "exit");
   again.child.send("stop");
   await stoppedAgain;
-});
+}, 30000);
 test("a rejected environment credential does not delay another environment", async () => {
   const { server, store, options } = await setup();
   const unavailable = await fakeServer();
