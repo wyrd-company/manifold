@@ -589,3 +589,32 @@ test("persist errors keep the last subscription and attach errors retain the sto
   expect(seen()).toEqual([]);
   expect(store.loadSnapshot("counter-00")?.snapshot.status).toBe("active");
 });
+
+test("persist during send is deferred to the delivery save", async () => {
+  let writes = 0;
+  const restore = host.restore;
+  host.restore = (stored, r) => {
+    const outcome = restore(stored, r);
+    if (outcome.status === "held" || stored.actorId !== "counter-00") return outcome;
+    const target = outcome.target;
+    return {
+      status: "restored",
+      target: {
+        actorId: stored.actorId,
+        send(row) {
+          target.send(row);
+          r.persist(stored.actorId);
+        },
+        persist() {
+          writes++;
+          return target.persist();
+        },
+      },
+    };
+  };
+  const r = start();
+  r.publish(event());
+  await idle();
+  expect(writes).toBe(1);
+  expect(seen()).toEqual(["weather:reading"]);
+});
