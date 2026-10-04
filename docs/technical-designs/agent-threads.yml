@@ -113,7 +113,10 @@ proposed-design:
     invoke's `onDone`: the `follow-thread` action appends the id to
     `context.manifold.threads`, so the actor's subscription follows the
     thread's topic from that save, and an `expression.assign` may store it
-    at any other path the blueprint names. The runtime mode is required,
+    at any other path the blueprint names. The thread topic the actor host
+    derives for each id in `context.manifold.threads` is
+    `threadTopic(context.manifold.environment, threadId)`, so the thread is
+    created on that environment and on no environment an input names. The runtime mode is required,
     since it is the permission the thread's agent runs with, and Manifold
     sets no permission a process did not declare.
   turn-start: >-
@@ -252,7 +255,8 @@ proposed-design:
     ```
 
     `actorOf` answers from what the actor host holds before it starts or
-    restores an actor: the `context.manifold` of its input or snapshot and
+    restores an actor: `input.manifold` of the host's `start({ actorId,
+    blueprint, input })`, or `context.manifold` of a restored snapshot, and
     the version of the blueprint it loaded, so an invoke in an initial
     state reads the same answer as any other.
   module-layout: >-
