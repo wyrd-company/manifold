@@ -183,8 +183,9 @@ description: |-
   `never-boolean` is a warning. Every finding names the model, and the
   node, rule, column, statement, and location that apply.
 
-  Never-boolean. The lint reads the AST of the compiled expression and
-  classifies it without evaluating it. An expression is never-boolean when
+  Never-boolean. The lint reads the AST of the compiled expression,
+  `compiled.expression.ast()` on the `CompiledExpression` that
+  `compileExpression` returns, and classifies it without evaluating it. An expression is never-boolean when
   its AST root, with no predicate, stage, group, or focus attached, is:
 
   - a number, string, or `null` literal;

@@ -40,9 +40,9 @@ proposed-design:
     JSONata is the expression language everywhere an expression appears:
     inline in a blueprint for guards, input and output mappings, and event
     matches, and inside decision models through three custom Zen nodes whose
-    cells, expressions, and conditions are JSONata. TypeScript, run in a QuickJS wasm
-    sandbox, is used only for the comparator, the one function whose input is
-    a set. Decision models remain GoRules JDM files edited in the JDMEditor
+    cells, expressions, and conditions are JSONata. TypeScript, run in a
+    QuickJS wasm sandbox, is used only for the comparator, the one function
+    whose input is a set. Decision models remain GoRules JDM files edited in the JDMEditor
     and evaluated by the Zen engine.
   blueprint-expressions: >-
     A guard is a JSONata expression over the actor's context and the event,
@@ -104,9 +104,9 @@ proposed-design:
     boolean per statement the handler computed. Hit policy, pass-through,
     input field, output path, and loop mode are controls on the node card. A
     setting that reads a value is JSONata; a setting that names a place is a
-    dotted path. The service evaluates a set of models through one
-    Zen engine whose custom handler runs the three kinds over JSONata compiled
-    once at load, and the lint in `packages/shared` checks a model without
+    dotted path. The service evaluates a set of models through one Zen engine
+    whose custom handler runs the three kinds over JSONata compiled once at
+    load, and the lint in `packages/shared` checks a model without
     evaluating it. The engine and editor versions are pinned; a contract test
     guards the engine's error envelope and a browser check guards the
     undocumented editor behaviour the table relies on. The specification
