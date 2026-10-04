@@ -5,13 +5,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createActor, fromPromise } from "xstate";
 import { stringify } from "yaml";
-import { manifoldImplementationNames } from "@wyrd-company/manifold-shared";
+import { manifoldImplementationNames, memoryRevision } from "@wyrd-company/manifold-shared";
+import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
+import type { ProcessRepository } from "../process-repository/index.ts";
 import { createBlueprintLoader } from "./index.ts";
-import type {
-  ImplementationRegistry,
-  ProcessRepositoryRevision,
-  LoadedBlueprint,
-} from "./index.ts";
+import type { ImplementationRegistry, LoadedBlueprint } from "./index.ts";
 import { serviceImplementations } from "../implementations.ts";
 
 const first = "a".repeat(40),
@@ -32,11 +30,8 @@ const document = (state = "sorting") => ({
   schemas: { input: true, output: true, context: { type: "object" }, events: {} },
 });
 function revision(commit: string, files: Record<string, string>): ProcessRepositoryRevision {
-  return {
-    commit,
-    read: vi.fn(async (path) => files[path]),
-    list: vi.fn(async (prefix) => Object.keys(files).filter((path) => path.startsWith(prefix))),
-  };
+  const revision = memoryRevision(commit, files);
+  return { ...revision, read: vi.fn(revision.read), list: vi.fn(revision.list) };
 }
 function fixture() {
   const files = (state: string) => ({
@@ -56,12 +51,15 @@ function fixture() {
     [first, revision(first, files("sorting"))],
     [second, revision(second, files("routing"))],
   ]);
+  const repository: Pick<ProcessRepository, "revisionAt"> = {
+    revisionAt: async (commit) => revisions.get(commit),
+  };
   const loader = createBlueprintLoader({
     implementations: registry(),
-    revisionAt: async (commit) => revisions.get(commit),
+    revisionAt: repository.revisionAt,
     onExpressionError: vi.fn(),
   });
-  return { loader, revisions };
+  return { loader, revisions, repository };
 }
 async function loaded(
   loader: ReturnType<typeof createBlueprintLoader>,
@@ -101,7 +99,7 @@ describe("blueprint loader", () => {
     expect(revisions.get(first)!.read).toHaveBeenCalledTimes(4);
   });
   it("restores an old version after a push and after a service restart", async () => {
-    const { loader, revisions } = fixture();
+    const { loader, revisions, repository } = fixture();
     const old = await loaded(loader);
     const actor = createActor(old.machine).start();
     const snapshot = actor.getPersistedSnapshot();
@@ -110,7 +108,7 @@ describe("blueprint loader", () => {
     expect((await loaded(loader)).machine).toBe(old.machine);
     const restarted = createBlueprintLoader({
       implementations: registry(),
-      revisionAt: async (commit) => revisions.get(commit),
+      revisionAt: repository.revisionAt,
       onExpressionError: () => {},
     });
     const restoredVersion = await loaded(restarted);

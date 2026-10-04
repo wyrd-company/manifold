@@ -10,6 +10,6 @@ export type {
   RevisionLoad,
   VersionLoad,
   LoadedBlueprint,
-  ProcessRepositoryRevision,
 } from "./loader.ts";
 export type { RestoreCheck, RestoreMismatch } from "./restore-check.ts";
+export type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";

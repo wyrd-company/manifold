@@ -10,17 +10,12 @@ import type {
   BlueprintFinding,
   BlueprintVersion,
   ImplementationNames,
+  ProcessRepositoryRevision,
 } from "@wyrd-company/manifold-shared";
 import { createBlueprintExpressions } from "../blueprint-expressions.ts";
 import { checkRestore } from "./restore-check.ts";
 import type { RestoreCheck } from "./restore-check.ts";
 
-// Structural seam until the process repository module lands; that module owns the type.
-export interface ProcessRepositoryRevision {
-  readonly commit: string;
-  read(path: string): Promise<string | undefined>;
-  list(prefix: string): Promise<readonly string[]>;
-}
 type SetupImplementations = Parameters<
   typeof setup<
     Record<string, unknown>,
@@ -168,7 +163,7 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
     async loadRevision(revision) {
       const blueprints = new Map<string, LoadedBlueprint>(),
         failures = new Map<string, readonly BlueprintFinding[]>();
-      const paths = [...new Set(await revision.list("blueprints/"))]
+      const paths = [...new Set(await revision.list("blueprints"))]
         .filter((path) => /\.ya?ml$/.test(path))
         .sort(compareBlueprintPaths);
       for (const path of paths) {
