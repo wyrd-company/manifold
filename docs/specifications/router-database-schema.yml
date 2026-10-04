@@ -1,0 +1,34 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - durable-event-delivery
+  references:
+    - store-database-schema
+    - router-events
+description: >-
+  Defines the tables the router owns in Manifold's SQLite database file.
+  `docs/specifications/router-database-schema.sql` is the machine-readable
+  definition: the schema that the router's migrations produce. The router
+  receives the connection from the store and migrates its tables with
+  `migrate("router", steps)`; its owner is `router`, so every table it
+  creates is named `router_<name>`.
+
+  Source events. `router_source_event` holds one row per source event the
+  router has accepted, keyed by `source` and `event_id` as the source event
+  gives them. `accepted_at` is the time of the first acceptance, in
+  milliseconds since the Unix epoch. The row is written in the transaction
+  that writes the event's inbox rows, including for an event that reached no
+  actor, and is never updated or deleted, so a second publish of the same
+  source event finds it and is a replay.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/router-database-schema.sql` runs without error on an
+  empty SQLite database. A test starts a router on a store over an empty
+  file and compares the `type`, `name`, `tbl_name`, and `sql` of every
+  `sqlite_schema` row whose name starts with `router_` with the rows the same
+  file's statements produce on a second empty database, with each run of
+  whitespace in `sql` read as one space; they are equal. After the router
+  starts, `schema_migration` holds the row `('router', n)`, where n is the
+  number of the router's migration steps.

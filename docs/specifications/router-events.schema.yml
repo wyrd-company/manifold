@@ -112,7 +112,7 @@ $defs:
       eventId:
         description: "`<source>:<eventId>`."
         type: string
-        pattern: "^[a-z][a-z0-9-]{0,62}:.+$"
+        pattern: "^[a-z][a-z0-9-]{0,62}:[\\s\\S]+$"
       actorId:
         type: string
         minLength: 1
@@ -129,11 +129,14 @@ $defs:
       - type: object
         required:
           - status
+          - replay
           - rows
         additionalProperties: false
         properties:
           status:
             const: accepted
+          replay:
+            type: boolean
           rows:
             type: array
             items:

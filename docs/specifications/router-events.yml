@@ -59,10 +59,17 @@ description: |-
   never share an inbox event id. A fired deadline's inbox event id is
   `deadline:<deadlineId>` and its topic `deadline.<deadlineId>`.
 
-  Outcome. `publish` returns a publish outcome. `accepted` carries the inbox
-  rows the call wrote, one per target that did not already hold a row with
-  the same inbox event id; an event published again, or with no target,
-  is accepted with no rows. `rejected` carries one event issue per rule the
+  Acceptance. The router records each source event it accepts, by `source`
+  and `eventId`, durably and in the transaction that writes its inbox rows.
+  The first acceptance fixes the event's targets: the actors whose
+  subscriptions it reached at that moment. A later publish of the same
+  source and id is a replay, writes nothing, and reaches no actor, even when
+  an actor that subscribes to its topic has appeared since. An event that
+  reached no actor is accepted and recorded all the same.
+
+  Outcome. `publish` returns a publish outcome. `accepted` carries `replay`,
+  true when the source event was accepted before, and the inbox rows the
+  call wrote, one per target; a replay carries no rows. `rejected` carries one event issue per rule the
   event breaks, each with the RFC 6901 JSON Pointer of the failing value in
   the source event and a message; a rejected event writes nothing and
   reaches no actor. `publish` never throws for an event that breaks a rule.
@@ -88,4 +95,7 @@ validation-criteria: >-
   same failing paths; the rule that a topic's first segment is the event's
   source and the rule that every value is a JSON value are checked by the
   router beyond the schema, and have their own fixtures. Every publish
-  outcome the router returns validates against `#/$defs/publish-outcome`.
+  outcome the router returns validates against `#/$defs/publish-outcome`,
+  across fixtures whose event ids hold any character a source event
+  permits, a newline included, so that every accepted source event has a
+  valid accepted outcome.

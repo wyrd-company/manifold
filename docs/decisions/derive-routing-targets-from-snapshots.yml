@@ -32,8 +32,8 @@ decision-outcome:
   justification: >-
     Option 3 names every target before any delivery, held actors included,
     from the one source of truth for an actor's identity, its snapshot, and
-    it adds no table and no dependency. Option 1 writes rows only for loaded
-    subscribers, so an event for a held actor is lost, and its global state
+    it adds no subscription table and no dependency. Option 1 writes rows
+    only for loaded subscribers, so an event for a held actor is lost, and its global state
     allows one router per process. Option 2 stores a second copy of what
     the snapshot already holds, and its rows must be rewritten in every
     delivery's save transaction, which the store's delivery order does not
