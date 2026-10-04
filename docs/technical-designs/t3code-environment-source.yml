@@ -100,14 +100,23 @@ proposed-design:
     is cleared; this is the server's own rule, under which each turn start
     request replaces the pending one and the next turn to start takes it,
     so a message sent while a turn runs goes to the next turn that starts.
-    A `snapshot` item carries no order of events, so a new latest turn in a
-    snapshot takes the last user message whose `createdAt` equals the
-    turn's `requestedAt`, or none, since the server sets both from the
-    `createdAt` of the command that requested the turn, and the pending
-    message becomes the last user message created after that time, or
-    none. The baselines at the origin take their attribution from the read
-    model by the same rule. A turn first observed with no attribution has
-    none, and its changes carry `null`.
+    A `snapshot` item carries no order of events, so it attributes by
+    time, since the server sets a turn's `requestedAt` and its user
+    message's `createdAt` from the `createdAt` of the command that
+    requested the turn. A new latest turn in a snapshot takes the user
+    message whose `createdAt` equals the turn's `requestedAt` only when
+    exactly one user message has that time; with none or more than one it
+    takes none. The pending message from a snapshot is the user message
+    with the latest `createdAt` after the turn's `requestedAt`, or after
+    no time when the thread has no turn, only when exactly one user message
+    has that latest time; otherwise there is none. Two messages with one
+    time are never told apart by a guess, so an attribution is either the
+    message that requested the turn or none, and a turn with none is
+    published with `null`, which no actor's guard takes; that actor waits
+    on the deadline or escalation its blueprint gives the turn. The
+    baselines at the origin take their attribution from the read model by
+    the same rule. A turn first observed with no attribution has none, and
+    its changes carry `null`.
   thread-changes: >-
     `threadChanges(before, after)` is a pure function from two thread
     states, `before` possibly empty, to the thread changes between them, in
@@ -361,8 +370,11 @@ proposed-design:
     used on the next connection; a turn is published with the id of the
     user message that requested it, live, on replay, and from a snapshot
     past the bound, a turn whose message was sent while another turn ran is
-    published with that message, and a turn first seen in a baseline with
-    no matching message is published with `null`; `ready` waits while the
+    published with that message, a turn first seen in a baseline with no
+    matching message is published with `null`, and a turn first seen in a
+    snapshot where two user messages share its `requestedAt`, one of them
+    a later message steered into it, is published with `null`, as is the
+    next turn when two pending messages share the latest time; `ready` waits while the
     first connection is held back and resolves after the origin commits,
     resolves at once afterwards, waits again in a run that starts after a
     kill before the first transaction committed, and rejects when the

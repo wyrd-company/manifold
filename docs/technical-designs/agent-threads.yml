@@ -181,7 +181,11 @@ proposed-design:
     that was already running when it arrived requests no turn of its own,
     so its message id is on no turn: a blueprint sends a turn when its
     thread has no running turn, and gives its waiting state a deadline or
-    an escalation for a turn that never settles.
+    an escalation for a turn that never settles. The source publishes
+    `null` where it cannot tell which message requested a turn, such as two
+    user messages with the same time in a snapshot, so the guard never
+    takes a change it cannot attribute, and the same deadline or
+    escalation covers it.
   readiness: >-
     Every command waits until the environment source reports the actor's
     environment ready: its row is committed with an origin, and its
@@ -369,7 +373,9 @@ proposed-design:
     `t3.turn.settled`; ids are the same for one entry and differ for a
     second entry of the same state; a settlement of an earlier turn of the
     same thread delivered after the next turn is prepared, and a settlement
-    of a turn in a second followed thread, each leave the actor waiting,
+    of a turn in a second followed thread, and a settlement the source
+    publishes with a `null` message id because two user messages in a
+    snapshot share the turn's `requestedAt`, each leave the actor waiting,
     and the actor then takes its own turn's settlement; a turn the fake
     server settles before `turn-start` resolves is taken from the
     enclosing state; with the source's first connection held back, a
