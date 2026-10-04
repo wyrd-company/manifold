@@ -15,6 +15,8 @@ import { ledgerMigrationSteps } from "../ledger/index.ts";
 import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
 import { openProcessRepository } from "../process-repository/index.ts";
 import { createBlueprintLoader } from "../blueprint-loader/index.ts";
+import { openAgentThreads } from "../agent-threads/index.ts";
+import type { AgentThreads, AgentThreadError } from "../agent-threads/index.ts";
 import { serviceImplementations } from "../implementations.ts";
 import {
   openEscalations,
@@ -39,6 +41,7 @@ import { createRevisions } from "./revisions.ts";
 import { stderrLog } from "./log.ts";
 import { githubWebhookPath } from "./types.ts";
 import type { Service, ServiceParts, ServiceStep, StartServiceOptions } from "./types.ts";
+import type { ActorHost } from "../actor-host/index.ts";
 export async function startService(options: StartServiceOptions): Promise<Service> {
   const log = options.log ?? stderrLog;
   let store: Store | undefined;
@@ -47,6 +50,12 @@ export async function startService(options: StartServiceOptions): Promise<Servic
   let actorHost: ActorHost | undefined;
   let github: GitHubSource | undefined;
   let t3code: T3CodeSource | undefined;
+  let actorHost: ActorHost | undefined;
+  let agentThreads: AgentThreads | undefined;
+  let sourceStarted!: (source: T3CodeSource) => void;
+  const sourceStarting = new Promise<T3CodeSource>((resolve) => {
+    sourceStarted = resolve;
+  });
   let http: HttpHost | undefined;
   let revisions: ReturnType<typeof createRevisions> | undefined;
   let intake: Intake | undefined;
@@ -69,6 +78,18 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         }
       }
       if (http) await finish("http-closed", () => http!.close());
+      if (agentThreads) {
+        try {
+          await agentThreads.stop();
+        } catch (error) {
+          errors.push(error);
+          log({
+            level: "error",
+            event: "stop-failed",
+            message: "Failed stopping agent thread commands",
+          });
+        }
+      }
       if (github || t3code)
         await finish("sources-stopped", async () => {
           const outcomes = await Promise.allSettled([github?.stop(), t3code?.stop()]);
@@ -157,9 +178,59 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       credentials: configuration.credentials,
       ...(options.probes?.pull ? { probe: options.probes.pull } : {}),
     });
+    const tokenFile = (name: string) => {
+      const credential = configuration.credentials.resolve(name);
+      if (credential.kind !== "t3code-token")
+        throw new TypeError(`Credential ${name}: requires t3code-token`);
+      return credential.tokenFile;
+    };
+    const commandLog = (level: "info" | "warn" | "error") => (message: string) =>
+      log({ level, event: "agent-threads-log", message });
+    agentThreads = openAgentThreads({
+      environments: configuration.environments,
+      tokenFile,
+      actorOf: (id) => actorHost?.actorOf?.(id),
+      invocationOf: (args) => {
+        if (!actorHost?.invocationOf)
+          throw {
+            name: "AgentThreadError",
+            kind: "environment",
+            message: "Actor host has no invocation identity",
+          } satisfies AgentThreadError;
+        return actorHost.invocationOf(args);
+      },
+      bindingArchived: (project) =>
+        portfolio.current().declaration.githubProjects.find((binding) => binding.name === project)
+          ?.archived ?? false,
+      revisionAt: processRepository.revisionAt,
+      sourceReady: async (environment, signal) => {
+        const source =
+          t3code ??
+          (await new Promise<T3CodeSource>((resolve, reject) => {
+            if (signal?.aborted) {
+              reject(signal.reason);
+              return;
+            }
+            const aborted = () => reject(signal?.reason);
+            signal?.addEventListener("abort", aborted, { once: true });
+            void sourceStarting.then((source) => {
+              signal?.removeEventListener("abort", aborted);
+              resolve(source);
+            });
+          }));
+        await source.ready(environment, signal);
+      },
+      logger: {
+        debug: commandLog("info"),
+        info: commandLog("info"),
+        warn: commandLog("warn"),
+        error: commandLog("error"),
+      },
+    });
     const blueprints = createBlueprintLoader({
       implementations: serviceImplementations({
         escalations: escalationImplementations(escalations),
+        agentThreads: agentThreads.implementations,
       }),
       onStateEntry: recordStateEntry,
       configurationBound: configuration.blueprintLint.configurationBound,
@@ -195,6 +266,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     const beforeHost = {
       escalations,
       configuration,
+      agentThreads,
       store,
       portfolio,
       usage,
@@ -284,12 +356,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       store,
       router,
       environments: configuration.environments,
-      tokenFile: (name) => {
-        const credential = configuration.credentials.resolve(name);
-        if (credential.kind !== "t3code-token")
-          throw new TypeError(`Credential ${name}: requires t3code-token`);
-        return credential.tokenFile;
-      },
+      tokenFile,
       logger: {
         debug: sourceLog("info"),
         info: sourceLog("info"),
@@ -297,6 +364,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         error: sourceLog("error"),
       },
     });
+    sourceStarted(t3code);
     step("t3code-started", "start");
     http = createHttpHost({
       configuration: configuration.http,
