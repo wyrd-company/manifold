@@ -17,8 +17,7 @@ CREATE TABLE t3_thread (
   thread_id TEXT NOT NULL CHECK (length(thread_id) > 0),
   status TEXT NOT NULL CHECK (status IN ('followed', 'archived', 'deleted')),
   cursor INTEGER NOT NULL CHECK (cursor >= 0),
-  thread TEXT CHECK (thread IS NULL OR json_valid(thread)),
-  pre_existing INTEGER NOT NULL CHECK (pre_existing IN (0, 1)),
+  thread TEXT NOT NULL CHECK (json_valid(thread)),
   PRIMARY KEY (environment, thread_id)
 ) STRICT, WITHOUT ROWID;
 

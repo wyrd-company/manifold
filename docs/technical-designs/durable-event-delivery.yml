@@ -204,7 +204,8 @@ proposed-design:
   idempotency: >-
     Every event carries an id from its source: the GitHub mirror revision,
     the thread change's own identity, a turn id or a request id within its
-    environment and thread, the notification action id, the token id. The
+    environment, server, and thread, the notification action id, the token
+    id. The
     inbox holds one row per actor and namespaced event id, consumed rows
     included, so a source event delivered twice reaches an actor once. A
     delivery replayed after a crash runs against the snapshot saved before

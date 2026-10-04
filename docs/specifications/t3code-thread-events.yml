@@ -33,20 +33,23 @@ description: |-
   // "t3.environment.workstation.thread.a1%2Eb2"
   ```
 
-  Event ids. An event id is the environment name, the encoded thread id,
-  and the change's own identity, joined by `/`, each id inside it encoded
-  the same way, so that a change reached through a live stream, a replay,
-  or a snapshot has one id, and the router accepts it once:
+  Event ids. An event id is the environment name, the server's
+  `environmentId` from its environment descriptor, the thread id, and the
+  change's own identity, joined by `/`, each id inside it encoded the same
+  way. A change reached through a live stream, a replay, or a snapshot has
+  one id, so the router accepts it once; two servers configured under one
+  name in turn, or one server under two names, never share an id, even
+  when they reuse thread, turn, and request ids:
 
   | Event type | Event id |
   | --- | --- |
-  | `t3.turn.started` | `<environment>/<thread>/turn/<turnId>/started` |
-  | `t3.turn.settled` | `<environment>/<thread>/turn/<turnId>/settled` |
-  | `t3.request.opened` | `<environment>/<thread>/request/<requestId>/opened` |
-  | `t3.request.resolved` | `<environment>/<thread>/request/<requestId>/resolved` |
-  | `t3.session.failed` | `<environment>/<thread>/session-failed/<failedAt>` |
-  | `t3.thread.archived` | `<environment>/<thread>/archived/<archivedAt>` |
-  | `t3.thread.deleted` | `<environment>/<thread>/deleted` |
+  | `t3.turn.started` | `<environment>/<environmentId>/<thread>/turn/<turnId>/started` |
+  | `t3.turn.settled` | `<environment>/<environmentId>/<thread>/turn/<turnId>/settled` |
+  | `t3.request.opened` | `<environment>/<environmentId>/<thread>/request/<requestId>/opened` |
+  | `t3.request.resolved` | `<environment>/<environmentId>/<thread>/request/<requestId>/resolved` |
+  | `t3.session.failed` | `<environment>/<environmentId>/<thread>/session-failed/<failedAt>` |
+  | `t3.thread.archived` | `<environment>/<environmentId>/<thread>/archived/<archivedAt>` |
+  | `t3.thread.deleted` | `<environment>/<environmentId>/<thread>/deleted` |
 
   Payload. Every event carries `type`, `environment`, `threadId`, and
   `projectId`, the id of the T3code project the thread belongs to on that
@@ -86,11 +89,10 @@ description: |-
   observed already settled is published as started and then settled.
 
   Coverage. Every change in a thread's latest turn, open requests, and
-  failed session that is visible in what the server sends is published
-  once. When the server replaces a replay with a snapshot, a change that
-  opened and closed inside the replaced range is not published. A thread
-  that existed when its environment was first connected publishes only
-  changes after that moment.
+  failed session after the environment's origin, the sequence of the
+  server's read model at the source's first connection, is published once.
+  When the server replaces a replay with a snapshot, a change that opened
+  and closed inside the replaced range is not published.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/t3code-thread-events.schema.yml` compiles with Ajv in
@@ -98,7 +100,8 @@ validation-criteria: >-
   event of `router-events`. Every source event the source publishes in its
   test suite validates against `#/$defs/thread-change-event`, has source
   `t3`, one topic equal to `threadTopic` of its environment and thread id,
-  and the event id the table above gives for its type. `threadTopic` of a
+  and the event id the table above gives for its type, with the
+  `environmentId` of the server it came from. `threadTopic` of a
   fixture set of thread ids, including ids holding `.`, `%`, `/`, spaces,
   and non-ASCII characters, gives topics the router accepts, and two
   different ids give two different topics.

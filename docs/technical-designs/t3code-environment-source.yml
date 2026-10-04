@@ -98,18 +98,31 @@ proposed-design:
     no session with the same status and update time. A turn first seen
     already settled gives started and then settled. Removal of a thread is
     a change the shell decides, described under following.
+  subscriptions: >-
+    A thread subscription is the client's exported `watchThread(client.rpc,
+    threadId, { afterSequence })`, called with no `snapshotLoader`. Without
+    one, the client never reads a thread snapshot over HTTP, so every
+    `snapshot` item the source handles is one the server sent: for a thread
+    subscribed with no cursor, or in place of a replay past the server's
+    bound. Within the bound the server replays each event after the cursor,
+    and the source applies each in turn. `client.threads.watch`, which
+    seeds its projection from the current thread over HTTP before the
+    replay, is not used.
   publishing: >-
     The source handles one stream item at a time and pulls the next only
     after the transaction for the current one commits, so the client's
     acknowledgement holds the server back. For a thread item, in one
     `store.connection.transaction`, it applies the item to the stored
     compact thread, computes the thread changes, calls `router.publish` once
-    per change, and updates the thread's row with the reduced compact thread
-    and the new cursor. A `snapshot` item replaces the compact thread with
-    the reduced snapshot and sets the cursor to its `snapshotSequence`; an
-    `event` item at or below the cursor changes nothing. A `rejected`
-    outcome from the router is a defect in the source: the transaction
-    rolls back and the environment stops, as described under failures.
+    per change, and writes the thread's row with the reduced compact thread
+    and the new cursor. An `event` item above the cursor is applied with
+    `applyThreadEvent` and sets the cursor to its sequence; one at or below
+    the cursor changes nothing. A `snapshot` item replaces the compact
+    thread with the reduced snapshot, compared with the stored compact
+    thread, or with the empty state for a thread with no row, and sets the
+    cursor to its `snapshotSequence`. A `rejected` outcome from the router
+    is a defect in the source: the transaction rolls back and the
+    environment stops, as described under failures.
   following: >-
     The shell subscription decides which threads are followed. A thread in
     the shell is followed; a thread the shell removes is archived or
@@ -128,25 +141,36 @@ proposed-design:
     thread's `archivedAt`, and marks the row archived. A thread that is not
     found is deleted: the source publishes thread deleted and marks the row
     deleted. A shell item that brings an archived thread back marks it
-    followed and opens it from its cursor.
+    followed and opens it from its cursor. A thread the shell lists that
+    has no row was created after the environment's origin; it is subscribed
+    with no cursor, and its first snapshot is compared with the empty
+    state, so its running turn, its open requests, and a turn it already
+    settled are published.
   start: >-
-    An environment with no row is new. The source subscribes to the shell
-    with no `afterSequence`, records the server's `environmentId`, and takes
-    the snapshot's `snapshotSequence` as both the environment's origin and
-    its shell cursor. Each thread in that snapshot gets a row with no
-    compact thread, marked pre-existing. A thread with no compact thread is
-    subscribed with no `afterSequence`, and its first snapshot is its
-    baseline: stored with nothing published for a pre-existing thread, and
-    compared with the empty state for any other thread, so its
-    running turn, open requests, and a turn it already settled are
-    published. Nothing that happened in the environment before its origin
-    is published.
+    An environment with no row is new. The source reads the environment
+    descriptor and the client's full orchestration snapshot, the read model
+    of every project and thread taken in one server transaction at one
+    `snapshotSequence`. That sequence is the environment's origin. In one
+    transaction the source writes the environment's row, with the server's
+    `environmentId`, the origin, and the origin as shell cursor, and one
+    thread row per thread in the read model that is not deleted: the
+    reduced compact thread at the origin, the origin as cursor, and status
+    `archived` for an archived thread and `followed` otherwise. Nothing is
+    published for these baselines. The source then subscribes to the shell
+    from the origin and opens a thread subscription from the origin for
+    every followed thread, so every change after the origin is published,
+    by replay or by the comparison with a server snapshot, and none at or
+    before it. A crash before the transaction commits leaves no row, and the
+    next start takes a new origin; nothing was published from the first.
   resume: >-
     `startT3CodeSource` reads every environment row, and for each configured
     environment connects, reads the environment descriptor, and compares its
     `environmentId` with the stored one. A different id means the name now
     points at another server: in one transaction the source deletes the
-    environment's rows, and the environment starts as new. Otherwise the
+    environment's rows, and the environment starts as new. Every event id
+    holds the `environmentId`, so a change on the new server is never a
+    replay of one the router accepted from the old server, even when the
+    two reuse thread, turn, and request ids. Otherwise the
     source subscribes to the shell from the stored shell cursor and opens a
     thread subscription from its cursor for every followed thread, so each
     catches up and closes once idle. A server that replays sends the events
@@ -247,13 +271,16 @@ proposed-design:
     `@wyrd-company/t3code-client` 0.5.0 or later, the release whose
     `T3ClientOptions` accepts `backoff`, `pingIntervalMs`,
     `missedPongLimit`, and `openTimeoutMs`, and whose watches retry a first
-    connection that fails transiently. The source uses its `T3Client`,
-    `shell.watch`, `threads.watch`, `threads.detail`,
+    connection that fails transiently, and which reads the full
+    orchestration snapshot, `GET /api/orchestration/snapshot`, as
+    `shell.readModel()`. The source uses its `T3Client`, `shell.watch`,
+    `shell.readModel`, `watchThread`, `threads.detail`,
     `server.environment`, `applyThreadEvent`, and `pendingRequests`.
   tests: >-
     Tests run against a fake T3 Code server in the test suite that speaks
     the 0.0.45 wire protocol over a real socket: the environment descriptor,
-    the WebSocket ticket, `GET /api/orchestration/threads/:id`, and
+    the WebSocket ticket, `GET /api/orchestration/snapshot`,
+    `GET /api/orchestration/threads/:id`, and
     `orchestration.subscribeShell` and `orchestration.subscribeThread` with
     `afterSequence`, `requestCompletionMarker`, Ack flow control, and the
     replay bounds, each bound set lower by the test so that the snapshot
@@ -266,15 +293,23 @@ proposed-design:
     the compact thread gives the same thread state as the full projection
     across every fixture stream, revert included; each change is published
     under `threadTopic` with the id `t3code-thread-events` defines; a
-    replayed stream segment writes no second inbox row; a thread whose
+    replayed stream segment writes no second inbox row; a request opened
+    and resolved while the source was stopped, inside the replay bound,
+    publishes request opened and request resolved after the restart; a
+    thread whose
     replay passes the bound resumes from a snapshot and publishes each
     change visible in it once, and none that it already published; a new
-    environment publishes nothing from before its origin, and publishes a
-    thread created after it; an idle thread's subscription closes after
+    environment publishes nothing from before its origin, publishes a
+    request a pre-existing thread opened after the origin and before its
+    thread subscription first delivered, and publishes a thread created
+    after it; a kill before the first connection's transaction commits
+    leaves no row and publishes nothing, and the next start takes its own
+    origin; an idle thread's subscription closes after
     `synchronized` and reopens on the next event; an archived thread
     publishes thread archived once, after its last change; a deleted thread
     publishes thread deleted; a changed `environmentId` resets the
-    environment; two environments run at once, and one whose server is down
+    environment, and the new server's changes are accepted though it reuses
+    the old server's thread, turn, and request ids; two environments run at once, and one whose server is down
     or rejects the token leaves the other publishing; a dropped socket
     resumes and publishes every change once; and a replaced token file is
     used on the next connection. The fault test runs the source in a child
