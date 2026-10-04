@@ -307,11 +307,14 @@ proposed-design:
     keeps one serial queue and one in-memory `followed` commit, unset at
     start. `pull(request)` and `follow()` each add one job to the queue
     when they are called and return the job's promise, so jobs run one at a
-    time in call order. A pull job awaits `processRepository.pull(request)`
-    and then runs the apply step; a pull that rejects still runs the apply
-    step, then rejects with the pull's error, so the GitHub source reports
-    it as kind `pull`, and otherwise the job resolves with the pull's
-    outcome. A follow job runs the apply step alone. The apply step reads
+    time in call order. A pull job first runs the apply step, so a
+    published commit whose apply failed is applied before a pull can move
+    the current commit past it; when that apply step rejects, the job
+    rejects with its error and does not pull. It then awaits
+    `processRepository.pull(request)` and runs the apply step again; a
+    pull that rejects still runs the apply step, then rejects with the
+    pull's error, and otherwise the job resolves with the pull's outcome.
+    The GitHub source reports a rejected job as kind `pull`. A follow job runs the apply step alone. The apply step reads
     `processRepository.current()`; when there is no revision, or its
     commit equals `followed`, it does nothing. Otherwise it awaits
     `blueprints.loadRevision(revision)`, keeps the result as `latest`,
@@ -319,9 +322,11 @@ proposed-design:
     `portfolio.apply(revision)`, logs `portfolio-rejected` with the
     findings of a rejected result, sets `followed` to the commit, logs
     `revision-applied`, and calls the `applied` probe. No other pull runs
-    between a pull and its apply step, so the apply step reads the commit
-    that pull published, and every commit a pull publishes is applied, in
-    pull order, before the next pull starts. `close()`, which stop calls,
+    between a pull and its apply step, and no pull starts while the current
+    commit is unapplied, so at most one published commit is ever unapplied,
+    and it is the current commit. Every commit a pull publishes is
+    therefore applied, in pull order, before the next pull moves the
+    current commit. `close()`, which stop calls,
     makes every later `pull` and `follow` reject with a `TypeError` and
     returns a promise that resolves when the queue is empty.
   convergence: >-
@@ -329,8 +334,8 @@ proposed-design:
     `portfolio.apply` of a declaration equal to the one in force writes
     nothing, so a follow twice applies once. An apply step whose read
     rejects leaves `followed` unchanged and rejects its job, and the next
-    job of either kind retries the same commit, taking the blueprint load
-    from the loader's cache. A crash after a pull publishes and before the
+    job of either kind retries the same commit before anything else,
+    taking the blueprint load from the loader's cache. A crash after a pull publishes and before the
     portfolio applies leaves that commit current in the repository and the
     previous declaration in force in the store; the next start's step 5
     applies it once. A crash after the portfolio's row commits leaves the
@@ -463,9 +468,13 @@ proposed-design:
     `applied` probe for the new commit finds the new blueprint version's
     key in `latest()` and the new allocation in force in
     `portfolio.ledger`. Pull order: with the apply of commit A held by a
-    blueprint read the test delays, pulls requested after the test pushes
-    commit B and then commit C are queued, and the `applied` probe sees A,
-    B, and C once each, in that order. Stop during a pull: with the
+    blueprint read the test delays, the test pushes commit B and requests a
+    pull, which queues; it releases A, waits for the `applied` probe for
+    B, then pushes commit C and requests a pull; the `applied` probe sees
+    A, B, and C once each, in that order. Retry before pull: the first
+    blueprint read of commit A rejects once, so A's pull job rejects; the
+    test pushes commit B and requests a pull; the `applied` probe sees A
+    before B, and the pull of B starts after A is applied. Stop during a pull: with the
     fixture server holding the response of a pull a signed push started,
     `stop` stays pending after `sources-stopped`; when the server releases
     the response, the pulled commit's declaration is in force and then
