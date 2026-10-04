@@ -64,15 +64,27 @@ export function createGates(options: GatesOptions): Gates {
     const loaded = await options.version(version);
     return loaded.status === "loaded" ? add(loaded.blueprint) : undefined;
   }
-  async function loadComparator(gate: string, key: string, revision: GateRevision | undefined) {
-    comparators.get(gate)?.comparator.dispose();
-    comparators.delete(gate);
+  async function loadComparator(
+    gate: string,
+    key: string,
+    commit: string,
+    revision: GateRevision | undefined,
+  ) {
+    function current() {
+      const declared = tables.declarations().find((row) => row.gate === gate);
+      return !stopped && declared?.version === key && declared.revision_commit === commit;
+    }
+    function replace() {
+      comparators.get(gate)?.comparator.dispose();
+      comparators.delete(gate);
+    }
     const version = await view(key),
       statePath = gate.slice(gate.lastIndexOf("#") + 1),
       declaration = version?.declarations.find((d) => d.statePath === statePath);
     const source = declaration ? await revision?.read(declaration.comparator) : undefined;
-    if (stopped) return;
+    if (!current()) return;
     if (!declaration || source === undefined) {
+      replace();
       options.onError?.({
         gate,
         version: key,
@@ -81,10 +93,13 @@ export function createGates(options: GatesOptions): Gates {
       return;
     }
     const loaded = await options.sandbox.load({ name: declaration.comparator, text: source });
-    if (stopped) {
+    // A spent-engine reload runs outside the revision queue. Its source may
+    // cease to be the durable declaration while the sandbox loads.
+    if (!current()) {
       if (loaded.ok) loaded.comparator.dispose();
       return;
     }
+    replace();
     if (!loaded.ok) {
       options.onError?.({ gate, version: key, message: loaded.failure.message });
       return;
@@ -187,7 +202,7 @@ export function createGates(options: GatesOptions): Gates {
         const declaration = tables.declarations().find((d) => d.gate === gate)!;
         void options
           .revisionAt(declaration.revision_commit)
-          .then((r) => loadComparator(gate, declaration.version, r))
+          .then((r) => loadComparator(gate, declaration.version, declaration.revision_commit, r))
           .catch((error) =>
             options.onError?.({ gate, version: declaration.version, message: String(error) }),
           );
@@ -206,13 +221,18 @@ export function createGates(options: GatesOptions): Gates {
       options.store.connection.transaction(() => {
         for (const row of writes) tables.declare(row.gate, row.key, revision.commit);
       });
-      for (const row of writes) await loadComparator(row.gate, row.key, revision);
+      for (const row of writes) await loadComparator(row.gate, row.key, revision.commit, revision);
     },
     async prepare() {
       requireRunning();
       for (const snapshot of options.store.activeSnapshots()) await view(snapshot.machine);
       for (const row of tables.declarations())
-        await loadComparator(row.gate, row.version, await options.revisionAt(row.revision_commit));
+        await loadComparator(
+          row.gate,
+          row.version,
+          row.revision_commit,
+          await options.revisionAt(row.revision_commit),
+        );
     },
     afterDrain(next) {
       requireRunning();

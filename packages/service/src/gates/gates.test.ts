@@ -10,6 +10,7 @@ import { blueprintVersionKey } from "@wyrd-company/manifold-shared";
 import type { BlueprintDocument } from "@wyrd-company/manifold-shared";
 import { openStore } from "../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../ledger/index.ts";
+import type { ComparatorLoad } from "../comparator-sandbox/index.ts";
 import { createComparatorSandbox } from "../comparator-sandbox/index.ts";
 import { createGates, gatesMigrationSteps } from "./index.ts";
 import type { GateSave, GateTokenLint, GatesOptions } from "./index.ts";
@@ -867,4 +868,127 @@ it("restores trap flags without reraising and ignores trap sets for unknown lint
   unknown.save("parcel-00", "working");
   expect(unknown.raised).toEqual([]);
   expect(unknown.rows("gates_token")[0]?.["returned_at"]).toBeNull();
+});
+
+it("discards a spent-engine reload that loses to a newer declaring revision", async () => {
+  let loads = 0;
+  let release!: () => void;
+  let entered!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const disposed: number[] = [];
+  const f = await fixture("old", {
+    sandbox: {
+      load: async ({ text }) => {
+        const id = ++loads;
+        const loaded: ComparatorLoad = {
+          ok: true,
+          comparator: {
+            dispose: () => {
+              disposed.push(id);
+            },
+            evaluate: (input) =>
+              id === 2
+                ? {
+                    ok: false,
+                    failure: { kind: "engine", message: "example failure" },
+                    durationMs: 0,
+                  }
+                : {
+                    ok: true,
+                    selection: input.holders.length
+                      ? null
+                      : {
+                          task: (text === "new" ? input.population.at(-1)! : input.population[0]!)
+                            .id,
+                          reservations: [{ account: "acct", amount: text === "new" ? 7 : 5 }],
+                        },
+                    durationMs: 0,
+                  },
+          },
+        };
+        if (id !== 3) return loaded;
+        const pending = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        entered();
+        await pending;
+        return loaded;
+      },
+    },
+  });
+  await f.start();
+  f.gates.inputChanged();
+  await reached;
+  const nextCommit = "b".repeat(40);
+  const next = { key: blueprintVersionKey({ commit: nextCommit, path }), document: document() };
+  f.versions.set(next.key, next);
+  await f.gates.revision(
+    { blueprints: new Map([[path, next]]) },
+    { commit: nextCommit, read: async () => "new" },
+  );
+  release();
+  await expect.poll(() => f.rows("gates_token").length).toBe(1);
+  expect(f.rows("gates_token")[0]?.["actor_id"]).toBe("parcel-19");
+  expect(
+    f.rows("gates_evaluation").find((row) => row["outcome"] === "selection")?.["version"],
+  ).toBe(next.key);
+  expect(f.ledger.balance({ item: "left", account: "acct", waiting: ["left"] }).outstanding).toBe(
+    7,
+  );
+  expect(disposed).toContain(3);
+  expect(disposed).not.toContain(4);
+  f.gates.stop();
+  expect(disposed.toSorted()).toEqual([1, 2, 3, 4]);
+});
+
+it("keeps the mapped comparator alive until its replacement finishes loading", async () => {
+  let loads = 0;
+  let release!: () => void;
+  let entered!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reached = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const disposed: number[] = [];
+  const f = await fixture(single, {
+    sandbox: {
+      load: async () => {
+        const id = ++loads;
+        return {
+          ok: true,
+          comparator: {
+            dispose: () => {
+              disposed.push(id);
+            },
+            evaluate: () => ({ ok: true, selection: null, durationMs: 0 }),
+          },
+        };
+      },
+    },
+  });
+  await f.start();
+  const nextCommit = "b".repeat(40);
+  const next = { key: blueprintVersionKey({ commit: nextCommit, path }), document: document() };
+  const replacing = f.gates.revision(
+    { blueprints: new Map([[path, next]]) },
+    {
+      commit: nextCommit,
+      read: async () => {
+        entered();
+        await blocked;
+        return single;
+      },
+    },
+  );
+  await reached;
+  expect(disposed).toEqual([1]);
+  release();
+  await replacing;
+  expect(disposed).toEqual([1, 2]);
+  f.gates.stop();
+  expect(disposed).toEqual([1, 2, 3]);
 });
