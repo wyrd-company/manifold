@@ -211,7 +211,7 @@ proposed-design:
     item is the account's capacity. An item with no allocation row for an
     account has a guarantee of 0 and the default ceiling for that account.
     An archived item keeps its place in the tree, so that its history stays
-    charged to its parent: it has no guarantee, it is never waiting, and it
+    charged to its parent: its guarantee is 0, it is never waiting, and it
     takes no new reservation and no move. Validation rejects, with code `invalid-portfolio`: an empty or duplicate
     item id, a parent that is not an item, a cycle, two rows for one item and
     account, a row for an unknown or archived item, an item that is not
@@ -320,9 +320,9 @@ proposed-design:
     `balance` reads the account's current window at `now()`, its capacity,
     and, for the item and every descendant, actuals in that window and
     outstanding reservations, by the fold in `entries`. `allocation` is
-    the item's guarantee amount,
-    `available` is allocation less actual less outstanding, and `reservable`
-    is the sharing rule's answer for that item. Before the account's first
+    the item's guarantee amount, `available` is allocation less actual
+    less outstanding, and `reservable` is the sharing rule's answer for
+    that item, never above the account's unspent capacity. Before the account's first
     credit, `window` is null and every amount is 0. An item the portfolio
     does not hold throws `invalid-input`.
   actor-usage-read: >-
@@ -338,34 +338,36 @@ proposed-design:
     the usage of every item (actual in the window plus outstanding,
     descendants included, archived items included), the usage on items the
     portfolio does not hold, and the set of waiting items, and returns what
-    an item could reserve now. It is computed top down along the path from
-    the top level to the item. The live children of a node are its children
-    that are not archived; `U` is usage. For each node `c` with parent `P`:
+    an item could reserve now. Usage on an item the portfolio does not hold
+    counts as the usage of one extra top-level child with a guarantee of 0
+    that is never waiting.
+
+    The account's unspent capacity is `capacity` less every actual in the
+    window and every outstanding reservation, on any item: live, archived,
+    or not held by the portfolio. It is a ceiling on every answer.
+    Guarantees and sharing decide each item's share of it.
+
+    The share is computed top down along the path from the top level to the
+    item. For each node `c` with parent `P`:
 
     - `G(top) = capacity` and `L(top) = capacity` stand for the account's
       capacity as the parent of top-level items.
 
-    - `D(P)` is the usage at `P` outside the live tree: the usage of `P`'s
-      archived children and, at the top level, the usage on items the
-      portfolio does not hold.
+    - `G(c) = part(G(P), guarantee(c))` is the guarantee amount.
 
-    - `A(P) = max(0, G(P) - D(P))` is the amount `P`'s guarantees share:
-      `P`'s guarantee amount less the usage outside the live tree.
+    - `R(P) = L(P) - sum of G(s) over the children s of P` is the unallocated
+      remainder at `P`, measured from `P`'s limit so that room `P` borrows
+      passes to its sub-items.
 
-    - `G(c) = part(A(P), guarantee(c))` is the guarantee amount.
+    - `B(s) = max(0, U(s) - G(s))` is what child `s` already borrows, where
+      `U` is usage.
 
-    - `R(P) = L(P) - D(P) - sum of G(s) over the live children s of P` is
-      the unallocated remainder at `P`, measured from `P`'s limit so that
-      room `P` borrows passes to its sub-items.
-
-    - `B(s) = max(0, U(s) - G(s))` is what live child `s` already borrows.
-
-    - `F(P) = max(0, R(P) - sum of B(s) over the live children of P)` is
-      the free remainder.
+    - `F(P) = max(0, R(P) - sum of B(s) over the children of P)` is the free
+      remainder.
 
     - `share(c) = floor(F(P) * weight(c) / sum of weight(s))`, over the
-      live children of `P` that are waiting or have a waiting descendant,
-      with `c` always counted as waiting.
+      children of `P` that are waiting or have a waiting descendant, with `c`
+      always counted as waiting.
 
     - `ceil(c) = part(L(P), ceiling(c))`.
 
@@ -373,24 +375,26 @@ proposed-design:
       max(G(c), U(c))))`.
 
     - With pacing, `elapsed = clamp(now - opensAt, 0, closesAt - opensAt)`,
-      `paced(c) = floor(G(c) * elapsed / (closesAt - opensAt)) + part(A(P),
+      `paced(c) = floor(G(c) * elapsed / (closesAt - opensAt)) + part(G(P),
       burst(c))`, and `room(c)` becomes `min(room(c), max(0, paced(c) -
       U(c)))`.
 
     - `L(c) = U(c) + room(c)` is the most the node's subtree may use now.
 
-    The answer for the item is the least `room` along the path. An item
-    never borrows a sibling's guarantee, since borrowing draws only on
-    `F(P)`, which excludes every child's guarantee and what siblings already
-    borrow. Usage outside the live tree comes off `P`'s amount before its
-    live children share it, so at every level the live children's usage
-    plus `D(P)` stays within `L(P)`, and a portfolio change never hands
-    spent capacity back; a new window, whose actuals start at 0, does.
-    Weight divides only the free remainder, and only among items with
-    waiting work, which the caller supplies. Pacing restarts at a reset
-    because `elapsed` and usage are read from the current window. With
-    guarantees totalling 100% and no ceiling, `R` is 0 up to rounding and the
-    rule is a fixed split.
+    The answer for the item is the least of the account's unspent capacity
+    and every `room` along the path. An item never borrows a sibling's
+    guarantee, since borrowing draws only on `F(P)`, which excludes every
+    child's guarantee and what siblings already borrow. An archived item
+    has a guarantee of 0 and its usage counts in its ancestors' `U`, so it
+    is borrowed room at its parent. A guarantee reads the current
+    portfolio, so a portfolio change can give an item a guarantee larger
+    than what is left; the unspent capacity bounds it, so the window's total
+    usage never exceeds its capacity through the rule, and a new window,
+    whose actuals start at 0, frees it. Weight divides only the free
+    remainder, and only among items with waiting work, which the caller
+    supplies. Pacing restarts at a reset because `elapsed` and usage are
+    read from the current window. With guarantees totalling 100% and no
+    ceiling, `R` is 0 up to rounding and the rule is a fixed split.
   convergence: >-
     Every write runs in one transaction, so a crash leaves it wholly written
     or not at all. Running a write twice: credit, reserve, actual, and an
@@ -498,6 +502,20 @@ proposed-design:
       `beta` reservable is 80 and `alpha` reservable is 80; a late actual
       of 10 on `gamma` with `usedAt` in `w1` makes both 70; a second
       `Ledger` on the same file with the same portfolio reads 70.
+
+    - Live reallocation: `alpha` and `beta` at 50%; `actor-1` posts 20 on
+      `alpha`; after `setPortfolio` keeps `alpha` live at 0% and sets
+      `beta` to 100%, `beta` balance has allocation 100, available 100, and
+      reservable 80, and `alpha` reservable is 0; after `beta` reserves 80,
+      `beta` reservable is 0 and the window's usage is 100.
+
+    - Move under live reallocation: `alpha` and `beta` at 50%; `actor-1`
+      posts 20 on `alpha` and `actor-2` reserves 30 on `alpha`; after
+      `setPortfolio` keeps `alpha` live at 0% and sets `beta` to 100%, a
+      move of `actor-2` to `beta` moves 30; `beta` reservable is then 50;
+      after `actor-3` reserves 50 on `beta`, a move of `actor-1`'s zero
+      outstanding returns `amount: 0`, and `beta` reservable is 0 with the
+      window's usage at 100.
 
     - Windows: reserve 40 and actual 30 in `w1`; after a credit of 100 opens
       `w2` at 1000, `w1` keeps the 30 and `w2` holds the outstanding 10; an actual of 10 with `usedAt`

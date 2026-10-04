@@ -71,9 +71,7 @@ proposed-design:
     chooses: move it up to the parent, where it lands on the parent's Other
     by the same rule as intake; reassign it to a sibling; or archive the
     project. An archived item keeps its history, and its usage stays
-    charged to its parent: the parent's guarantees to its remaining
-    sub-items are shares of the parent's amount less that usage, so
-    archiving never returns capacity already spent in the window.
+    charged to its parent and to the account.
   sharing-rule: >-
     An item may reserve while its usage counted as it arrives plus the new
     reservation stays within its guarantee, or within its guarantee plus the
@@ -81,7 +79,10 @@ proposed-design:
     the remainder among items that have waiting work, and the gate supplies
     which items have waiting work. Pacing, when set, spreads the window's
     capacity across the window and restarts at a reset. Room an item borrows
-    from its parent's remainder is room its sub-items may use. With
+    from its parent's remainder is room its sub-items may use. No item may
+    reserve beyond the account's unspent capacity in the window: capacity
+    less every actual and outstanding reservation in it, on any item,
+    archived or removed included, whatever the current guarantees. With
     allocations at 100% and no ceiling the rule is a fixed split.
   ledger: >-
     One append-only table with signed entries keyed by actor, item, and
