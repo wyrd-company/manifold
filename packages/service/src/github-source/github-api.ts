@@ -357,26 +357,23 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
       return values;
     },
     async deliveries(owner: string, hook: GitHubHookConfiguration, page: number) {
-      return call(
-        owner,
-        async (token, signal) =>
-          (
-            await request(
-              `GET ${hook.repository ? "/repos/{owner}/{repo}" : "/orgs/{org}"}/hooks/{hook_id}/deliveries`,
-              {
-                baseUrl: options.configuration.apiUrl,
-                owner,
-                org: owner,
-                repo: hook.repository,
-                hook_id: hook.id,
-                per_page: 100,
-                page,
-                headers: { authorization: `token ${token}` },
-                request: { signal },
-              },
-            )
-          ).data as { id: number; guid: string; delivered_at: string; status_code: number }[],
-      );
+      return call(owner, async (token, signal) => {
+        const { data } = await request(
+          `GET ${hook.repository ? "/repos/{owner}/{repo}" : "/orgs/{org}"}/hooks/{hook_id}/deliveries`,
+          {
+            baseUrl: options.configuration.apiUrl,
+            owner,
+            org: owner,
+            repo: hook.repository,
+            hook_id: hook.id,
+            per_page: 100,
+            page,
+            headers: { authorization: `token ${token}` },
+            request: { signal },
+          },
+        );
+        return hookAttempts(data);
+      });
     },
     async redeliver(owner: string, hook: GitHubHookConfiguration, attempt: number) {
       await call(owner, async (token, signal) =>
@@ -396,4 +393,37 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
       );
     },
   };
+}
+
+interface HookAttempt {
+  id: number;
+  guid: string;
+  delivered_at: string;
+  status_code: number;
+}
+function hookAttempts(value: unknown): HookAttempt[] {
+  if (!Array.isArray(value)) throw new GitHubSourceError("api", "Invalid GitHub delivery list");
+  return value.map((entry: unknown) => {
+    if (typeof entry !== "object" || entry === null)
+      throw new GitHubSourceError("api", "Invalid GitHub delivery attempt");
+    const row = entry as Record<string, unknown>;
+    if (
+      typeof row["id"] !== "number" ||
+      !Number.isSafeInteger(row["id"]) ||
+      row["id"] <= 0 ||
+      typeof row["guid"] !== "string" ||
+      !row["guid"] ||
+      typeof row["delivered_at"] !== "string" ||
+      !Number.isFinite(Date.parse(row["delivered_at"])) ||
+      typeof row["status_code"] !== "number" ||
+      !Number.isInteger(row["status_code"])
+    )
+      throw new GitHubSourceError("api", "Invalid GitHub delivery attempt");
+    return {
+      id: row["id"],
+      guid: row["guid"],
+      delivered_at: row["delivered_at"],
+      status_code: row["status_code"],
+    };
+  });
 }

@@ -199,7 +199,7 @@ proposed-design:
     holds the GraphQL queries and the REST calls, and nothing else talks to
     GitHub. `runner.ts` holds the serial runner, the sweep, the redelivery
     scan, and the timers. `migrations.ts` holds the migration steps.
-    `fixtures/` holds the synthetic delivery payloads. Tests live beside the
+    `test-fixtures/` holds the synthetic delivery payloads. Tests live beside the
     module and import only `index.ts`, the router's and the store's
     `index.ts`, and the service configuration's `index.ts`.
   library: >-

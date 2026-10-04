@@ -50,6 +50,8 @@ export function startGitHubSource(options: GitHubSourceOptions): GitHubSource {
         if (size > 26214400) {
           oversized = true;
           chunks.length = 0;
+          request.pause();
+          response.once("finish", () => request.destroy());
           response.writeHead(413).end();
           return;
         }

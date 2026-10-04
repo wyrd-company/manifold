@@ -80,6 +80,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **event match** a JSONata expression over an event that decides whether a transition takes it.
 - **event source** a shared origin of events that Manifold routes to actors.
 - **gate** an implementation on a blueprint state that decides which waiting tasks may leave it.
+- **GitHub mirror** the last state the GitHub event source read of each entity it follows, against which it compares current GitHub state.
 - **holder** a task actor holding a token from a gate.
 - **implementation** a named piece of code a blueprint binds: actor logic, an action, a guard, or a delay.
 - **inbox** the per-actor store of routed events not yet consumed.
@@ -93,6 +94,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **project** an adaptable table, board, and roadmap that integrates with your issues and pull requests on GitHub to help you plan and track your work
 - **promise** an invoked implementation actor that finishes once, with an output or an error.
 - **provider** means the agent runtime or harness T3 Code talks to, such as Codex, Claude, Cursor, Grok, or OpenCode.
+- **redelivery** a webhook delivery GitHub sends again with its original GUID when the source asks for a failed delivery.
 - **reservation** an estimate held against a portfolio item's available balance from a task's release until settlement.
 - **revision** the process repository's declared files at one commit, read-only.
 - **router** delivers an event from a source to the actors whose identity matches its topic.
@@ -105,14 +107,17 @@ We need to be on the same page with terminology. When communicating, use this la
 - **state machine actor** an actor running a blueprint.
 - **subscription** (events) the topics an actor hears and the event types it takes, derived from its snapshot and its blueprint.
 - **T3code project** means an environment-local workspace record rooted at a directory.
+- **sweep** a periodic comparison of bound GitHub Projects and tracked issue relationships with the GitHub mirror.
 - **task** a specific piece of work that needs to be completed, documented as an issue and executed as an actor
 - **thread** means the durable conversation and work history for a T3code project.
 - **token** what a gate grants a task actor so it may leave the gated state.
 - **topic** a path of segments joined by `.` that names where an event comes from, whose first segment is its event source.
+- **tracked issue** an issue that is the content of a present item on a bound GitHub Project.
 - **turn** a single, complete cycle of work executed by an agent in response to a user prompt
 - **unallocated remainder** the part of a parent's limit that no child's allocation guarantees, which its children borrow up to their ceiling.
 - **usage unit** a session, subagent, or child thread whose calls one provider session file records.
 - **variance** actual less estimate for one task.
+- **webhook delivery** one signed HTTP request from a GitHub webhook, identified by its GUID across hooks and redeliveries.
 - **weight** a portfolio item's share of the unallocated remainder among its siblings with waiting work.
 - **window** the period from one reset of an account's capacity to the next.
 - **you** means the agent reading this file and changing Manifold Code.

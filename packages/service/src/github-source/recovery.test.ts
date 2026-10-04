@@ -16,7 +16,7 @@ import { startRouter } from "../router/index.ts";
 import type { JsonValue } from "../store/index.ts";
 import { startGitHubSource } from "./index.ts";
 import type { GitHubSourceError } from "./index.ts";
-import { githubFake, FakeClock, signedDelivery } from "./fixtures/api.ts";
+import { githubFake, FakeClock, signedDelivery } from "./test-fixtures/api.ts";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -456,13 +456,20 @@ test("SIGKILL after a read leaves pending work and restart publishes the change 
   const child = spawn(
     process.execPath,
     [
-      new URL("./fixtures/fault-process.ts", import.meta.url).pathname,
+      new URL("./test-fixtures/fault-process.ts", import.meta.url).pathname,
       s.path,
       s.fake.url,
       s.options.configuration.owners.sample.hooks[0]!.secretFile,
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
+  cleanup.push(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill("SIGKILL");
+      await exited;
+    }
+  });
   let stderr = "";
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
@@ -610,4 +617,32 @@ test("invalid API node ids leave the mirror unchanged and work pending", async (
   await expect.poll(() => s.errors.length).toBe(1);
   expect(s.errors[0]?.kind).toBe("api");
   expect(s.source.trackedIssue("I_A")?.blockedBy).toEqual([]);
+});
+test("invalid REST delivery rows fail before any redelivery request", async () => {
+  const s = await setup();
+  await s.idle();
+  s.fake.setTarget(undefined);
+  s.fake.deliveries.push({
+    id: 1,
+    guid: "",
+    delivered_at: new Date(s.clock.now() + 1).toISOString(),
+    status_code: 502,
+    event: "ping",
+    payload: {},
+  });
+  s.clock.advance(60000);
+  await expect.poll(() => s.errors.length).toBe(1);
+  expect(s.errors[0]?.kind).toBe("api");
+  expect(s.fake.redeliveries).toEqual([]);
+});
+test("HTTP rejects bodies beyond the GitHub payload limit without recording a delivery", async () => {
+  const s = await setup();
+  await s.idle();
+  const response = await fetch(s.url, { method: "POST", body: Buffer.alloc(26214401) });
+  expect(response.status).toBe(413);
+  expect(
+    s.store.connection.database.prepare("SELECT count(*) AS count FROM github_delivery").get()?.[
+      "count"
+    ],
+  ).toBe(0);
 });
