@@ -2,12 +2,14 @@
 // relationships:
 //   verifies: blueprint-expressions
 // ---
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 import { parse } from "yaml";
-import { createSyncFn } from "synckit";
-vi.mock("synckit", { spy: true });
 import { createActor, setup, fromPromise } from "xstate";
-import { createBlueprintExpressions } from "./blueprint-expressions.ts";
+import {
+  configureBlueprintExpressions,
+  expressionsDefaults,
+  createBlueprintExpressions,
+} from "./blueprint-expressions.ts";
 import type { ExpressionBlueprint, ExpressionError } from "@wyrd-company/manifold-shared";
 
 const object = {
@@ -454,21 +456,127 @@ describe("worker expression reuse", () => {
 });
 
 describe("worker wait contract", () => {
-  it("waits for the real worker without a timeout", () => {
+  afterEach(() => configureBlueprintExpressions());
+  it.each([249, 60001, 250.5, NaN, Infinity])("rejects timeoutMs %s", (timeoutMs) => {
+    expect(() => configureBlueprintExpressions({ timeoutMs })).toThrowError(/timeoutMs/);
+  });
+  it.each([250, 60000])("accepts timeoutMs boundary %s", (timeoutMs) => {
+    expect(() => configureBlueprintExpressions({ timeoutMs })).not.toThrow();
+  });
+  it("bounds a recursive guard, reports the site, and recovers for the next evaluation", () => {
+    const expression = "($again := function() { $again() }; event.count = 0 ? $again() : true)";
+    const errors: ExpressionError[] = [];
     const machine = {
       initial: "ready",
       context: { count: 1 },
       states: {
-        ready: { entry: { type: "expression.assign", params: { expression: '{"count": 2}' } } },
+        ready: {
+          on: {
+            "parcel.scan": {
+              guard: { type: "expression.guard", params: { expression } },
+              target: "done",
+            },
+          },
+        },
+        done: { type: "final" },
       },
     };
-    const expressions = createBlueprintExpressions({ machine, schemas }, { onError: () => {} });
+    const expressions = createBlueprintExpressions(
+      { machine, schemas },
+      { onError: (error) => errors.push(error) },
+    );
     const actor = createActor(setup(expressions).createMachine(expressions.machine)).start();
-    try {
-      expect(vi.mocked(createSyncFn).mock.calls[0]?.[1]).toMatchObject({ timeout: Infinity });
-      expect(actor.getSnapshot().context).toEqual({ count: 2 });
-    } finally {
-      actor.stop();
+    configureBlueprintExpressions({ timeoutMs: 250 });
+    const start = performance.now();
+    actor.send({ type: "parcel.scan", count: 0 });
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(actor.getSnapshot().value).toBe("ready");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.detail).toEqual({
+      kind: "evaluation",
+      expression,
+      location: "/states/ready/on/parcel.scan/guard",
+      message: "Expression did not finish within 250 ms; the expression worker was restarted",
+    });
+    // An empty section replaces the previous bound with the shipped default.
+    configureBlueprintExpressions({});
+    expect(expressionsDefaults).toEqual({ timeoutMs: 1000 });
+    actor.send({ type: "parcel.scan", count: 0 });
+    expect(errors).toHaveLength(2);
+    expect(errors[1]?.detail.message).toBe(
+      "Expression did not finish within 1000 ms; the expression worker was restarted",
+    );
+    actor.send({ type: "parcel.scan", count: 1 });
+    expect(actor.getSnapshot().status).toBe("done");
+    expect(errors).toHaveLength(2);
+    actor.stop();
+  });
+});
+
+describe("bounded evaluation follows the existing actor error paths", () => {
+  afterEach(() => configureBlueprintExpressions());
+  it.each(["match", "assign", "input", "output"])("contains a runaway %s", (site) => {
+    configureBlueprintExpressions({ timeoutMs: 250 });
+    const errors: ExpressionError[] = [];
+    const reference = {
+      type:
+        site === "match"
+          ? "expression.match"
+          : site === "assign"
+            ? "expression.assign"
+            : "expression.map",
+      params: { expression: "($again := function() { $again() }; $again())" },
+    };
+    const machine = {
+      initial: "ready",
+      context: { count: 1 },
+      states: {
+        ready:
+          site === "output"
+            ? { type: "final", output: reference }
+            : site === "input"
+              ? { invoke: { src: "prepare", input: reference } }
+              : {
+                  on: {
+                    "parcel.scan":
+                      site === "match"
+                        ? { guard: reference, target: "forbidden" }
+                        : { actions: reference },
+                    "expression.error": "failed",
+                  },
+                },
+        forbidden: {},
+        failed: {},
+      },
+    };
+    const expressions = createBlueprintExpressions(
+      { machine, schemas },
+      { onError: (error) => errors.push(error) },
+    );
+    const actor = createActor(
+      setup({
+        ...expressions,
+        actors: { prepare: fromPromise(async ({ input }) => input) },
+      }).createMachine(expressions.machine),
+    );
+    let failure: unknown;
+    actor.subscribe({
+      error: (error) => {
+        failure = error;
+      },
+    });
+    actor.start();
+    if (site === "match" || site === "assign") actor.send({ type: "parcel.scan", count: 1 });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.detail.kind).toBe("evaluation");
+    expect(errors[0]?.detail.message).toContain("within 250 ms");
+    expect(actor.getSnapshot().context).toEqual({ count: 1 });
+    if (site === "match") expect(actor.getSnapshot().value).toBe("ready");
+    else if (site === "assign") expect(actor.getSnapshot().value).toBe("failed");
+    else {
+      expect(actor.getSnapshot().status).toBe("error");
+      expect(failure).toBe(errors[0]);
     }
+    actor.stop();
   });
 });

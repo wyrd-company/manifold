@@ -2,7 +2,7 @@
 // relationships:
 //   implements: evaluate-blueprint-expressions-in-a-worker-thread
 // ---
-import { runAsWorker } from "synckit";
+import { serveExpressionWorker } from "./expression-worker-channel.ts";
 import {
   compileExpression,
   evaluateExpression,
@@ -41,4 +41,11 @@ export async function evaluateInWorker(
     };
   }
 }
-runAsWorker(evaluateInWorker);
+serveExpressionWorker(async (request) => {
+  const { source, location, input } = request as {
+    source: string;
+    location: string;
+    input: unknown;
+  };
+  return evaluateInWorker(source, location, input);
+});

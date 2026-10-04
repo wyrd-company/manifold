@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   implements: [blueprint-expressions, decision-models]
+//   implements: [blueprint-expressions, decision-models, expressions-configuration]
 // ---
 export const packageName = "@wyrd-company/manifold-shared";
 
@@ -34,3 +34,5 @@ export {
   serviceConfigurationSchemas,
   serviceConfigurationSchemaId,
 } from "./service-configuration-schemas.ts";
+
+export { expressionsConfigurationSchema } from "./expressions-configuration-schema.ts";

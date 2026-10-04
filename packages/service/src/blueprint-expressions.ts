@@ -2,7 +2,7 @@
 // relationships:
 //   implements: blueprint-expressions
 // ---
-import { createSyncFn } from "synckit";
+import { createExpressionWorkerChannel } from "./expression-worker-channel.ts";
 import { enqueueActions } from "xstate";
 import type { MachineConfig } from "xstate";
 import {
@@ -10,25 +10,53 @@ import {
   compileExpression,
   compileExpressionResult,
   ExpressionError,
+  expressionsConfigurationSchema,
 } from "@wyrd-company/manifold-shared";
 import type { ExpressionBlueprint } from "@wyrd-company/manifold-shared";
-import type { evaluateInWorker } from "./expression-worker.ts";
+import type { WorkerResult } from "./expression-worker.ts";
 
 type Context = Record<string, unknown>;
 type Event = { type: string; [key: string]: unknown };
 type Params = { expression: string; location: string };
 type Args = { context: Context; event: Event };
-let evaluate: ReturnType<typeof createSyncFn<typeof evaluateInWorker>> | undefined;
+export interface ExpressionsConfiguration {
+  readonly timeoutMs: number;
+}
+export const expressionsDefaults: ExpressionsConfiguration = Object.freeze({
+  timeoutMs: expressionsConfigurationSchema.properties.timeoutMs.default,
+});
+let timeoutMs = expressionsDefaults.timeoutMs;
+export function configureBlueprintExpressions(
+  configuration: Partial<ExpressionsConfiguration> = {},
+) {
+  const next = configuration.timeoutMs ?? expressionsDefaults.timeoutMs;
+  const range = expressionsConfigurationSchema.properties.timeoutMs;
+  if (!Number.isInteger(next) || next < range.minimum || next > range.maximum)
+    throw new RangeError("timeoutMs must be an integer from 250 to 60000");
+  timeoutMs = next;
+}
+let channel: ReturnType<typeof createExpressionWorkerChannel> | undefined;
 function evaluateSync(params: Params, input: unknown) {
-  // Infinity overrides SYNCKIT_TIMEOUT as well as the library default.
-  evaluate ??= createSyncFn<typeof evaluateInWorker>(
-    new URL(
+  channel ??= createExpressionWorkerChannel({
+    worker: new URL(
       import.meta.url.endsWith(".ts") ? "./expression-worker.ts" : "./expression-worker.js",
       import.meta.url,
     ),
-    { timeout: Infinity, tsRunner: "node" },
+  });
+  const outcome = channel.evaluate(
+    { source: params.expression, location: params.location, input },
+    timeoutMs,
   );
-  const result = evaluate(params.expression, params.location, input);
+  if (!outcome.ok)
+    throw new ExpressionError({
+      kind: "evaluation",
+      ...params,
+      message:
+        outcome.cause === "timeout"
+          ? `Expression did not finish within ${timeoutMs} ms; the expression worker was restarted`
+          : `The expression worker exited with code ${outcome.exitCode} during evaluation; the expression worker was restarted`,
+    });
+  const result = outcome.value as WorkerResult;
   if ("error" in result) throw new ExpressionError(result.error);
   return result.value;
 }
