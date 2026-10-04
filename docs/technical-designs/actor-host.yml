@@ -58,8 +58,9 @@ proposed-design:
     that never fires, so delays run only as deadline rows, and with an
     inspector that tells it when an invoked actor changes the actor outside
     a delivery. Every machine the loader builds reports each state entry to
-    the host, which numbers it and records the fire time of the state's
-    delayed transitions. Each save lists those deadlines and the active
+    the host, which numbers it, and XState's inspection reports each delay
+    XState resolves for the entered state, which the host records as a fire
+    time on that entry. Each save lists those deadlines and the active
     invokes with their entry ids, and runs the save hooks the service
     registered inside the save's transaction. `invocationOf` reads an
     invoked implementation's actor id, invoke id, and entry id from the
@@ -130,6 +131,8 @@ proposed-design:
       readonly activeInvokes: readonly ActiveInvoke[];
       /** Root state paths entered since the actor's previous save, in first-entry order. */
       readonly entered: readonly string[];
+      /** Each active root state path, `""` excluded, to the entry id of its current entry. */
+      readonly entries: Readonly<Record<string, string>>;
     }
 
     export interface ActiveInvoke {
@@ -242,13 +245,22 @@ proposed-design:
   entries: >-
     Every machine the loader builds calls `onStateEntry` on each state
     node's entry, the root included, before the state's own entry actions,
-    with the machine actor, the state path, and each of the state's
-    delayed transitions resolved to milliseconds. `recordStateEntry` finds
+    with the machine actor and the state path. `recordStateEntry` finds
     the actor's record through the actor's system, increments the record's
     entry count, and records the entry under its qualified path with the
-    decimal count as its entry id and, for each delay, a fire time of `now`
-    plus the delay. An exit and re-entry in one delivery runs the entry
-    action again and takes a new id. A root state path, other than the
+    decimal count as its entry id. An exit and re-entry in one delivery
+    runs the entry action again and takes a new id. Delays are captured
+    apart from the entry: XState schedules each delayed transition of an
+    entered state with its built-in `xstate.raise` action, after the
+    state's own entry actions, with the delay it resolved, a named delay
+    evaluated over the context those actions left. The host's inspector
+    takes each `@xstate.action` event of type `xstate.raise` whose event
+    type is `xstate.after.<after key>.<state node id>` and whose actor is a
+    machine actor of the tree, finds the state node by its id in that
+    actor's machine, and records a fire time of `now` plus the action's
+    `delay` under the `after` key on that state's current entry. The host
+    never evaluates a delay itself, so a deadline fires after exactly the
+    delay XState resolved. A root state path, other than the
     root's own `""`, is added to the record's `entered` list when the list
     does not hold it. The count starts at zero for a new actor, so its
     first entry, the root's, is `1`. A replayed delivery starts from the
@@ -281,16 +293,23 @@ proposed-design:
     each active state node in `entries`: `statePath` is the state's path
     when it is in the root machine, and the path of the root state that
     invokes the first child of its chain when it is in a child blueprint;
-    `eventName` is the qualified path, `#`, and the `after` key encoded as
-    `threadTopic` encodes an id; `fireAt` is the recorded fire time; and
-    `entryId` is the state's entry id. The store keeps the first fire time
+    `eventName` is the qualified path, `#`, the `after` key encoded as
+    `threadTopic` encodes an id, `#`, and the entry id; `fireAt` is the
+    recorded fire time; and `entryId` is the state's entry id. A re-entry
+    therefore lists a new event name, and the store deletes the old row,
+    which the save no longer lists. The store keeps the first fire time
     of an entry, deletes every row the save does not list, and fires each
     row once, as `store` states. A deadline row the router delivers has a
     topic beginning `deadline.` and payload `{ "type": <eventName> }`; the
-    host parses the name, finds the machine actor through the invoke ids
-    from the root, and sends it XState's delayed event,
-    `xstate.after.<after key>.<state node id>`. When the child is gone or
-    the state is no longer active, XState takes no transition. A delayed
+    host parses the name from its last `#`: the entry id, the encoded
+    `after` key, the state path, and the encoded invoke ids. It sends
+    nothing unless the state's current entry in the host's record has that
+    entry id, so a deadline row fired for an earlier entry, and delivered
+    after an event that exited and re-entered the state, never takes the
+    new entry's delayed transition. Otherwise it finds the machine actor
+    through the invoke ids from the root and sends it XState's delayed
+    event, `xstate.after.<after key>.<state node id>`. When the child is
+    gone, XState takes no transition. A delayed
     raise or send that an implementation schedules itself never fires; an
     implementation leaves a delay to the blueprint's `after`.
   delivery: >-
@@ -332,7 +351,12 @@ proposed-design:
     registration order. `activeInvokes` lists every invoked child in the
     snapshot's tree with its invoke id and the entry id of the state node
     that declares it; for `done` and `stopped` it is empty. `entered` is the
-    record's list, which the host clears once the hooks return. A save
+    record's list, which the host clears once the hooks return, so it holds
+    a state that an eventless transition left within the same delivery.
+    `entries` maps each active root state path of the snapshot, the root's
+    `""` excluded, to its current entry id; a repeated save gives the same
+    map, and a re-entry gives the state a new id. For `done` and `stopped`
+    it is empty. A save
     whose snapshot status is `done` or `stopped` ends the actor. A hook
     that throws rolls back the save and propagates to the caller of the
     save. The service composes the hooks in one place,
@@ -412,6 +436,11 @@ proposed-design:
     later saves and a restart, fires once, and takes the transition; a
     re-entry into the delayed state through a self-transition with
     `reenter` in one delivery gives a new entry id and a new fire time; a
+    deadline fired for an entry and delivered after a queued event that
+    exits and re-enters the state takes no transition, and the new entry's
+    deadline fires at its own time; a named delay that reads context an
+    entry assignment of the state changes fires after the delay over the
+    assigned value; a
     child blueprint's delay fires into the child; the child's output
     reaches the parent's `onDone` and its error the parent's `onError`;
     a child blueprint that fails lint at the parent's commit fails the
@@ -419,7 +448,9 @@ proposed-design:
     the promise started before and after a restart and new values after a
     re-entry; each save hook runs in registration order inside the save's
     transaction, sees `activeInvokes` and `entered` including a state an
-    eventless transition left in the same delivery, and a hook that throws
+    eventless transition left in the same delivery, and `entries` with the
+    same ids on a repeated save and a new id after a re-entry, and a hook
+    that throws
     leaves the previous snapshot stored; an `error` save runs no hook; a
     `done` save lists no active invokes. Fault tests, in a child Node
     process that sends itself `SIGKILL` and whose kill signal the parent

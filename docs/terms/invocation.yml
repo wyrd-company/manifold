@@ -1,4 +1,9 @@
 $schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - actor-host
 title: Invocation
 description: >-
   The identity of an invoked implementation: its actor id, its invoke id,

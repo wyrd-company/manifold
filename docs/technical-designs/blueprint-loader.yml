@@ -92,8 +92,6 @@ proposed-design:
       readonly actor: AnyActorRef;
       /** The state path in that machine; `""` for its root. */
       readonly statePath: string;
-      /** Each delayed transition of the state node, by its `after` key, in milliseconds. */
-      readonly delays: Readonly<Record<string, number>>;
     }
 
     export interface ImplementationRegistry {
@@ -170,11 +168,9 @@ proposed-design:
     action, and `createMachine` with the returned machine configuration.
     Code supplies only implementations, the child blueprints, and one
     action the loader places first in every state node's `entry`, the root
-    included: it calls `onStateEntry` with the machine actor, the state
-    path, and each of the state's `after` delays in milliseconds, a decimal
-    key as its number and a named delay as its implementation returns for
-    the context and event of the entry. The rest of the configuration is
-    the blueprint's own. The lint has already compiled every
+    included: it calls `onStateEntry` with the machine actor and the state
+    path, and evaluates nothing. The rest of the configuration is the
+    blueprint's own. The lint has already compiled every
     expression and every schema and resolved the machine, so a clean
     blueprint builds. A throw from either build step still fails only
     that version: an `ExpressionError` becomes a finding of its kind at
@@ -337,8 +333,8 @@ proposed-design:
     reason, while the parent loads; that a snapshot holding a running child
     of a child blueprint bound to a rejecting logic returns
     `implementation-missing`; that `onStateEntry` is called for every state
-    node entered, the root first, before the state's own entry actions,
-    with each delay resolved; that an actor name `blueprints/a.yml` in the
+    node entered, the root first, before the state's own entry actions;
+    that an actor name `blueprints/a.yml` in the
     registry throws; and that `serviceImplementations` has
     exactly the names of `manifoldImplementationNames`. Each test is written red before
     green.

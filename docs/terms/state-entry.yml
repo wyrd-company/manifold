@@ -1,4 +1,9 @@
 $schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - actor-host
 title: State Entry
 description: >-
   One entry of an actor into a state, named by an entry id that a replay
