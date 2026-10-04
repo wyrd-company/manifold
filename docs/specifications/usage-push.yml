@@ -18,10 +18,10 @@ description: |-
   body. It references the `usage-record` schema by its `$id`.
 
   Request. `POST /api/usage/push` on the service, with the header
-  `Authorization: Bearer <operator token>` and the header
   `Content-Type: application/json`, and a body of at most 8 MiB holding
-  one JSON object. `environment` is the name of the environment the host
-  runs on, as service configuration's `environments` section names it.
+  one JSON object. The API is served without authentication; deployment
+  controls access, with loopback as the default. `environment` is the name
+  of the environment the host runs on, as service configuration's `environments` section names it.
   `records` holds at most 1000 usage records, call records and source
   error records, in the order the decoder yielded them. `threads` holds
   at most 1000 session mappings: each names a `provider`, a
@@ -87,7 +87,7 @@ description: |-
   object with an `error` code and a `message`. 400
   `invalid-request`: the body does not parse as JSON or does not validate
   against the schema; `issues` lists each failure with its JSON Pointer.
-  401: the operator token is absent or wrong. 404: a path under
+  404: a path under
   `/api/usage` other than `/push`. 405: a method other than `POST`. 413
   `too-large`: the body exceeds 8 MiB. 415 `unsupported-media-type`: the
   content type is not `application/json`. 422 `unknown-environment`: the

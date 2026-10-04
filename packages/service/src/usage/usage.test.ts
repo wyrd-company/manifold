@@ -453,8 +453,10 @@ it("canonicalizes parallel state values and assigns an early call to the first v
 it("rolls back the entire request when a ledger write fails, and contains listener rejection", async () => {
   const s = await setup();
   let posted = 0;
+  const errors: unknown[] = [];
   const broken = openUsage({
     connection: s.connection,
+    onError: (error) => errors.push(error),
     ledger: {
       settle: s.ledger.settle,
       postActual: (request) => {
@@ -494,6 +496,7 @@ it("rolls back the entire request when a ledger write fails, and contains listen
     }),
   });
   expect(response.status).toBe(500);
+  expect(errors).toEqual([expect.objectContaining({ message: "write failure" })]);
 });
 
 it("falls back to other with missing project and ignores malformed identity members", async () => {
@@ -654,4 +657,63 @@ it("uses the first visit before equal entry times and the latest visit at those 
   expect(
     s.connection.database.prepare("SELECT visit FROM usage_postings ORDER BY seq").all(),
   ).toMatchObject([{ visit: 1 }, { visit: 2 }]);
+});
+
+it("retains negative cache reclassification as pending and commits later calls and replays", async () => {
+  const s = await setup();
+  s.save();
+  // Persisted declarations accepted by an earlier service can predate the lint guard.
+  s.connection.database
+    .prepare(
+      "INSERT INTO usage_declarations (commit_id,declaration,accepted_at) VALUES ('legacy',?,0)",
+    )
+    .run(
+      JSON.stringify({
+        accounts: { acct: { unit: "usd", usage: [{ environment: "env-one", provider: "codex" }] } },
+        prices: {
+          unit: "usd",
+          models: {
+            "model-a": { standard: { input: 2, output: 8, cacheWrite: 4, cacheWriteOneHour: 1 } },
+          },
+        },
+      }),
+    );
+  const usage = s.restart();
+  const first = {
+    ...call("total", 0, 0),
+    granularity: "session-total" as const,
+    tokens: { ...tokens(), cacheWrite: 1000000 },
+  };
+  const second = { ...first, tokens: { ...first.tokens, cacheWriteOneHour: 1000000 } };
+  const request = {
+    environment: "env-one",
+    threads: [{ provider: "codex" as const, providerSessionId: "session-1", threadId: "thread-1" }],
+    records: [first, second, call("later", 1, 0)],
+  };
+  expect(usage.push(request).calls).toEqual({ accepted: 2, pending: 1, replayed: 0 });
+  expect(usage.push(request).calls).toEqual({ accepted: 0, pending: 0, replayed: 3 });
+  expect(usage.retryPending().pending.unpriced).toBe(1);
+  expect(s.ledger.actorUsage("actor-1").accounts[0]?.actual).toBe(4000002);
+});
+it("replays the same thread with a changed instance while retaining its first instance", async () => {
+  const s = await setup();
+  const mapping = {
+    provider: "codex" as const,
+    providerSessionId: "session-1",
+    threadId: "thread-1",
+    providerInstance: "instance-one",
+  };
+  expect(
+    s.usage.push({ environment: "env-one", threads: [mapping], records: [] }).threads.accepted,
+  ).toBe(1);
+  expect(
+    s.usage.push({
+      environment: "env-one",
+      threads: [{ ...mapping, providerInstance: "instance-two" }],
+      records: [],
+    }).threads,
+  ).toEqual({ accepted: 0, replayed: 1, conflicting: 0 });
+  expect(
+    s.connection.database.prepare("SELECT provider_instance FROM usage_sessions").get(),
+  ).toMatchObject({ provider_instance: "instance-one" });
 });

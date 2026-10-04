@@ -46,8 +46,9 @@ background:
     its environment, threads, and portfolio item, is at
     `context.manifold`. The T3 Code environment source keeps every
     followed thread with its T3code project id. The service mounts
-    operator endpoints with `mountOperator(pathPrefix, listener)`, which
-    answers 401 to a request without the operator token.
+    API endpoints with `mount(pathPrefix, listener)`. The API is served
+    without authentication; deployment controls access, with loopback as
+    the default.
   problems:
     - >-
       A call names only its provider session. The thread that ran it is
@@ -157,9 +158,9 @@ proposed-design:
     gives the session's calls.
   endpoint: >-
     The service mounts the module's listener with
-    `mountOperator("/api/usage", listener)`, so the operator token guards
-    it. The listener serves `POST /api/usage/push`. It reads the body up
-    to 8 MiB, parses it as JSON, and validates it against
+    `mount("/api/usage", listener)`. The host CLI sends no authentication
+    credential. The listener serves `POST /api/usage/push`. It reads the body
+    up to 8 MiB, parses it as JSON, and validates it against
     `usage-push.schema.yml`, which references `usage-record.schema.yml`.
     It answers 413 to a larger body, 415 to a content type other than
     `application/json`, 400 to a body that does not parse or validate,
@@ -167,7 +168,8 @@ proposed-design:
     to another method, and 404 to another path. A valid request calls
     `push`, which commits before the listener answers 200 with the
     counts. A failure inside `push` rolls its transaction back and
-    answers 500. Nothing past the listener validates the request again.
+    reports the error through the service log and answers 500. Nothing
+    past the listener validates the request again.
   push-transaction: >-
     `push` runs in one `connection.transaction`. It records each mapping
     first, then each record in request order. A source error record
@@ -251,7 +253,11 @@ proposed-design:
     tokens rounded once, however the growth was split. A price that
     changes between two postings of a key prices each posting's growth at
     the price in force when it posts. With no price, it is pending with reason
-    `unpriced`. It then calls `ledger.postActual` with key
+    `unpriced`. A negative cumulative difference is also retained as
+    pending with reason `unpriced`, so the request commits and replay
+    acknowledges the retained growth. Declaration lint rejects a one-hour
+    cache-write price below the default cache-write price, for each speed.
+    It then calls `ledger.postActual` with key
     `usage:<environment>:<call key>:<revision>`, the attributed actor and
     item, the account, the amount, and `usedAt` the call's timestamp in
     epoch milliseconds. The ledger nests the write as a savepoint and
@@ -475,7 +481,7 @@ proposed-design:
 
     The recovery test lives in `packages/service/src/usage/recovery.test.ts`.
     It starts a fixture service process on a database file, with the
-    usage listener behind a structural `mountOperator` stand-in, and runs
+    usage listener mounted with the service HTTP host's `mount`, and runs
     the host CLI's `src/cli.ts` with Node as `usage push` over fixture
     roots that give several requests. The fixture writes a line and
     waits after the commit of the second request; the test kills it with

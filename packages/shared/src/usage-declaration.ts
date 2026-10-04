@@ -100,6 +100,21 @@ export function lintUsageDeclaration(files: {
         });
       seenModels.add(model);
     }
+  for (const [id, entry] of Object.entries(prices?.models ?? {}))
+    for (const speed of ["standard", "fast"] as const) {
+      const rates = entry[speed];
+      if (
+        rates?.cacheWrite !== undefined &&
+        rates.cacheWriteOneHour !== undefined &&
+        rates.cacheWriteOneHour < rates.cacheWrite
+      )
+        findings.push({
+          file: "prices",
+          kind: "schema",
+          location: `/models/${pointer(id)}/${speed}/cacheWriteOneHour`,
+          message: "One-hour cache-write price must be at least the default cache-write price.",
+        });
+    }
   if (findings.length) return { ok: false, findings };
   const declaration: UsageDeclaration = {
     accounts: accounts?.accounts ?? {},

@@ -56,6 +56,7 @@ export function priceGrowth(
   const before = cumulative(base, provider, entry, speed),
     after = cumulative(total, provider, entry, speed);
   if (before === undefined || after === undefined) return;
+  if (after < before) return;
   const amount = Number(after - before);
   if (!Number.isSafeInteger(amount))
     throw new Error("Usage amount exceeds the ledger integer range.");

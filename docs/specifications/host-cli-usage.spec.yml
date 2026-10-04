@@ -85,17 +85,6 @@ commands:
               type: string
             examples:
               - env-one
-          - name: token-file
-            flags: [--token-file]
-            kind: option
-            description: >-
-              A file holding the service's operator token as its only
-              content. When absent, the token is the value of
-              `MANIFOLD_OPERATOR_TOKEN`.
-            required: false
-            repeatable: false
-            value:
-              type: string
           - name: root
             flags: [--root]
             kind: option
@@ -150,7 +139,7 @@ commands:
                 names it.
             - code: 2
               meaning: >-
-                The command line is invalid, or no operator token is given.
+                The command line is invalid.
                 Nothing is decoded or sent.
         examples:
-          - manifold-host usage push --service http://127.0.0.1:8080 --environment env-one --token-file /etc/example/operator.token
+          - manifold-host usage push --service http://127.0.0.1:8080 --environment env-one

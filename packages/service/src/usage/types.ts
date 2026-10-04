@@ -45,6 +45,7 @@ export type UsageOptions = {
   threadProject(environment: string, threadId: string): string | undefined;
   environments: ReadonlySet<string>;
   now?: () => number;
+  onError?: (error: unknown) => void;
 };
 export type Posting = {
   seq: number;

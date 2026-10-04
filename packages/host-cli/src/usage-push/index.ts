@@ -25,13 +25,7 @@ export async function runUsagePush(
 ): Promise<number> {
   const flags = new Map<string, string>(),
     roots: UsageRoot[] = [];
-  const validFlags = new Set([
-    "--service",
-    "--environment",
-    "--token-file",
-    "--t3-home",
-    "--state-dir",
-  ]);
+  const validFlags = new Set(["--service", "--environment", "--t3-home", "--state-dir"]);
   try {
     for (let i = 0; i < args.length; i += 2) {
       const flag = args[i],
@@ -60,18 +54,6 @@ export async function runUsagePush(
       throw Error();
   } catch {
     io.stderr.write("Invalid usage push arguments\n");
-    return 2;
-  }
-  let token: string;
-  try {
-    token = (
-      flags.has("--token-file")
-        ? await readFile(flags.get("--token-file")!, "utf8")
-        : (io.env["MANIFOLD_OPERATOR_TOKEN"] ?? "")
-    ).trim();
-    if (!token || /[\r\n]/.test(token)) throw Error();
-  } catch {
-    io.stderr.write("Usage push requires an operator token\n");
     return 2;
   }
   const service = flags.get("--service")!.replace(/\/+$/, "");
@@ -139,7 +121,7 @@ export async function runUsagePush(
         );
         const response = await fetch(service + "/api/usage/push", {
           method: "POST",
-          headers: { "content-type": "application/json", authorization: "Bearer " + token },
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({ environment, threads, records }),
           redirect: "error",
         });

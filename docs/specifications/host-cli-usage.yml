@@ -33,9 +33,8 @@ description: >-
   its records to the service at `--service`, as the environment named
   `--environment`, by the `usage-push` protocol, with the T3 Code thread of
   each provider session read from T3 Code's database under `--t3-home`. It
-  authenticates with the service's operator token, read from the file
-  `--token-file` names, else from the environment variable
-  `MANIFOLD_OPERATOR_TOKEN`, surrounding whitespace ignored. It keeps the
+  sends no authentication credential. Deployment controls access to the
+  service API. It keeps the
   stamps of the sources the service has acknowledged in its push state
   under `--state-dir`, and decodes only sources whose stamps changed. A
   source whose decode was `unreadable` or `decoder-failed` keeps no new
@@ -59,4 +58,4 @@ validation-criteria: >-
   server and a T3 Code database built from SQL, and checks that every
   request validates against `docs/specifications/usage-push.schema.yml`,
   that the summary on standard output is one JSON object, and that a run
-  with no token exits 2.
+  with no credential succeeds and sends no Authorization header.

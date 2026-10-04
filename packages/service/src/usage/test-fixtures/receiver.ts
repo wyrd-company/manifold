@@ -60,20 +60,18 @@ usage.saveHook({
   },
 });
 const http = createHttpHost({
-  configuration: { host: "127.0.0.1", port: 0, operatorCredential: "operator" },
+  configuration: { host: "127.0.0.1", port: 0, operatorCredential: undefined },
   credentials: {
-    names: ["operator"],
-    resolve: (name) => ({
-      kind: "operator-token",
-      name,
-      verify: async (token) => token === "example-token",
-    }),
+    names: [],
+    resolve: () => {
+      throw Error("No credentials");
+    },
   },
   onError: (error) => {
     throw error;
   },
 });
-http.mountOperator("/api/usage", (request, response) => {
+http.mount("/api/usage", (request, response) => {
   requestNumber++;
   const end = response.end.bind(response);
   response.end = ((...args: Parameters<typeof response.end>) => {

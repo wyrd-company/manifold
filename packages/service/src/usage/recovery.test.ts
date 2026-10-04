@@ -134,8 +134,6 @@ it.each(["inside", "committed", "host-checkpoint"])(
           url,
           "--environment",
           "env-one",
-          "--token-file",
-          join(dir, "operator-token"),
           "--state-dir",
           join(dir, "state"),
           "--t3-home",
@@ -148,7 +146,6 @@ it.each(["inside", "committed", "host-checkpoint"])(
           : [],
       );
     }
-    await writeFile(join(dir, "operator-token"), "example-token");
     const first = host(initial.url, mode === "host-checkpoint");
     if (mode === "host-checkpoint") {
       await first.message((value) => value === "acknowledged");

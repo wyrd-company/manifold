@@ -17,6 +17,7 @@ const validate = ajv.compile<UsagePushRequest>(usagePushSchema);
 export function usageListener(
   environments: ReadonlySet<string>,
   push: (request: UsagePushRequest) => UsagePushResult,
+  onError: (error: unknown) => void,
 ): (request: IncomingMessage, response: ServerResponse) => void {
   return (request, response) => {
     const answer = (status: number, body: unknown) => {
@@ -76,7 +77,8 @@ export function usageListener(
       }
       answer(200, push(value));
     };
-    void run().catch(() => {
+    void run().catch((error: unknown) => {
+      onError(error);
       if (!response.headersSent) failure(500, "internal", "Usage push failed.");
       else response.destroy();
     });

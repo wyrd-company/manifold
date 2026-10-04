@@ -94,6 +94,12 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       threadProject: (environment, threadId) =>
         readThreadProject(usageConnection, environment, threadId),
       environments: new Set(Object.keys(configuration.environments)),
+      onError: (error) =>
+        log({
+          level: "error",
+          event: "usage-push-failed",
+          message: error instanceof Error ? error.message : String(error),
+        }),
     });
     const processRepository = await openProcessRepository({
       configuration: configuration.processRepository,
@@ -218,7 +224,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           detail: { path: entry.path },
         }),
     });
-    http.mountOperator("/api/usage", parts.usage.listener);
+    http.mount("/api/usage", parts.usage.listener);
     const address = await http.listen();
     step("listening", "start");
     log({ level: "info", event: "started", message: "Service started", detail: address });

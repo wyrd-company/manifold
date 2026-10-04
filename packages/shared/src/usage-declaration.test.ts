@@ -83,3 +83,29 @@ it("embeds the specified schemas and a valid nonempty USD price table", () => {
   expect(bundledPriceTable.unit).toBe("usd");
   expect(Object.keys(bundledPriceTable.models).length).toBeGreaterThan(100);
 });
+
+it.each(["standard", "fast"])("rejects a cheaper one-hour cache write at %s speed", (speed) => {
+  expect(
+    lintUsageDeclaration({
+      accounts: undefined,
+      prices: `unit: usd
+models:
+  model-a:
+    ${speed === "fast" ? "standard: { input: 2, output: 8 }" : ""}
+    ${speed}: { input: 2, output: 8, cacheWrite: 4, cacheWriteOneHour: 1 }`,
+    }),
+  ).toMatchObject({
+    ok: false,
+    findings: [{ file: "prices", location: `/models/model-a/${speed}/cacheWriteOneHour` }],
+  });
+  expect(
+    lintUsageDeclaration({
+      accounts: undefined,
+      prices: `unit: usd
+models:
+  model-a:
+    ${speed === "fast" ? "standard: { input: 2, output: 8 }" : ""}
+    ${speed}: { input: 2, output: 8, cacheWrite: 4, cacheWriteOneHour: 4 }`,
+    }),
+  ).toMatchObject({ ok: true });
+});

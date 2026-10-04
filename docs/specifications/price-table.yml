@@ -69,12 +69,17 @@ description: |-
 
   computed with integer arithmetic.
 
+  For each speed, a declared one-hour cache-write price must be at least
+  the default cache-write price when both are present. Lint rejects a
+  cheaper one-hour price.
+
   Growth. A posting that adds tokens to a base, the tokens a call key had
   already charged, is priced as the amount of the base plus the added
   tokens, less the amount of the base, both at one price. Each amount is
   rounded once, so the postings of a key at one price sum to the amount of
   all its tokens however the growth was split. A posting with a base of 0
-  is priced as its own tokens.
+  is priced as its own tokens. A negative cumulative difference stays
+  pending as unpriced, without failing the push or its replay.
 
   Findings. `lintUsageDeclaration` lints `prices.yml` with the kinds
   `syntax` and `schema` as `accounts-declaration` states them, and

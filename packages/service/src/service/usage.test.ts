@@ -40,7 +40,7 @@ const call = (key: string): UsageCall => ({
   granularity: "call",
   estimated: false,
 });
-async function fixture(operator = true, projectBinding = false) {
+async function fixture(projectBinding = false) {
   const f = await serviceFixture();
   cleanup.push(f.close);
   await f.commit(60, {
@@ -55,16 +55,14 @@ async function fixture(operator = true, projectBinding = false) {
         }
       : {}),
   });
-  await writeFile(join(f.directory, "operator.token"), "example-token");
   await writeFile(join(f.directory, "environment.token"), "example-environment-token");
   await writeFile(
     f.file,
     stringify({
       ...f.configuration,
-      http: { port: 0, ...(operator ? { operatorCredential: "operator" } : {}) },
+      http: { port: 0 },
       credentials: {
         ...f.configuration.credentials,
-        operator: { kind: "operator-token", tokenFile: "operator.token" },
         environment: { kind: "t3code-token", tokenFile: "environment.token" },
       },
       environments: { "env-one": { url: "http://127.0.0.1:1", credential: "environment" } },
@@ -72,7 +70,7 @@ async function fixture(operator = true, projectBinding = false) {
   );
   return f;
 }
-test("assembles usage, guards its HTTP mount and follows declarations through pulls", async () => {
+test("assembles unauthenticated usage and follows declarations through pulls", async () => {
   const f = await fixture();
   const logs: string[] = [];
   const service = await startService({
@@ -100,12 +98,11 @@ test("assembles usage, guards its HTTP mount and follows declarations through pu
   cleanup.push(service.stop);
   const { host, port } = service.http.address();
   const url = `http://${host}:${port}/api/usage/push`;
-  const request = (key: string, token?: string) =>
+  const request = (key: string) =>
     fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(token ? { authorization: "Bearer " + token } : {}),
       },
       body: JSON.stringify({
         environment: "env-one",
@@ -113,9 +110,7 @@ test("assembles usage, guards its HTTP mount and follows declarations through pu
         records: [call(key)],
       }),
     });
-  expect((await request("denied")).status).toBe(401);
-  expect((await request("denied", "wrong")).status).toBe(401);
-  const first = await request("first", "example-token");
+  const first = await request("first");
   expect(first.status).toBe(200);
   expect(await first.json()).toMatchObject({ calls: { pending: 1 } });
   service.portfolio.ledger.credit({
@@ -131,7 +126,7 @@ test("assembles usage, guards its HTTP mount and follows declarations through pu
   await service.github.stop();
   await f.commit(60, declarations(4));
   await service.revisions.pull();
-  expect((await request("second", "example-token")).status).toBe(200);
+  expect((await request("second")).status).toBe(200);
   expect(service.portfolio.ledger.actorUsage("actor-one").accounts[0]?.actual).toBe(6);
   await f.commit(60, {
     accounts: { accounts: { acct: { unit: "invalid" } } },
@@ -139,30 +134,39 @@ test("assembles usage, guards its HTTP mount and follows declarations through pu
   });
   await service.revisions.pull();
   expect(logs).toContain("usage-rejected");
-  expect((await request("third", "example-token")).status).toBe(200);
+  expect((await request("third")).status).toBe(200);
   expect(service.portfolio.ledger.actorUsage("actor-one").accounts[0]?.actual).toBe(10);
 });
-test("does not serve usage without an operator credential", async () => {
-  const f = await fixture(false);
-  const service = await startService({ configurationFile: f.file, log: () => {} });
+test("logs usage push failures through the service log before answering 500", async () => {
+  const f = await fixture();
+  const logs: { event: string; message?: string }[] = [];
+  const service = await startService({
+    configurationFile: f.file,
+    log: (entry) => logs.push(entry),
+  });
   cleanup.push(service.stop);
+  service.store.connection.database.exec(
+    "CREATE TRIGGER fail_usage BEFORE INSERT ON usage_calls BEGIN SELECT RAISE(ABORT, 'example write failure'); END",
+  );
   const { host, port } = service.http.address();
-  expect(
-    (
-      await fetch(`http://${host}:${port}/api/usage/push`, {
-        method: "POST",
-        headers: { authorization: "Bearer example-token", "content-type": "application/json" },
-        body: JSON.stringify({ environment: "env-one", threads: [], records: [call("hidden")] }),
-      })
-    ).status,
-  ).toBe(404);
-  expect(
-    service.store.connection.database.prepare("SELECT count(*) n FROM usage_calls").get(),
-  ).toMatchObject({ n: 0 });
+  const response = await fetch(`http://${host}:${port}/api/usage/push`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ environment: "env-one", threads: [], records: [call("broken")] }),
+  });
+  expect(response.status).toBe(500);
+  expect(logs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        event: "usage-push-failed",
+        message: expect.stringContaining("example write failure"),
+      }),
+    ]),
+  );
 });
 
 test("attributes unowned usage through the assembled T3 Code source and portfolio binding", async () => {
-  const f = await fixture(true, true);
+  const f = await fixture(true);
   const service = await startService({ configurationFile: f.file, log: () => {} });
   cleanup.push(service.stop);
   const db = service.store.connection.database;
@@ -186,7 +190,7 @@ test("attributes unowned usage through the assembled T3 Code source and portfoli
   const { host, port } = service.http.address();
   const response = await fetch(`http://${host}:${port}/api/usage/push`, {
     method: "POST",
-    headers: { authorization: "Bearer example-token", "content-type": "application/json" },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       environment: "env-one",
       threads: [{ provider: "codex", providerSessionId: "session-one", threadId: "thread-one" }],

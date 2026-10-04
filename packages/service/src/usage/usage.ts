@@ -43,7 +43,7 @@ export function openUsage(options: UsageOptions): Usage {
   return {
     push,
     retryPending,
-    listener: usageListener(options.environments, push),
+    listener: usageListener(options.environments, push, options.onError ?? (() => {})),
     saveHook: (save) => saveActor(options, now, save),
     apply: (revision) => {
       const result = queue.then(() => applyRevision(revision));

@@ -87,8 +87,10 @@ it("batches flatten to the unchanged decoder output and skipping omits calls", a
 async function setup(responseBody?: unknown) {
   const home = await dir();
   const requests: UsagePushRequest[] = [];
+  const authorization: (string | undefined)[] = [];
   let status = 200;
   const server = createServer(async (req, res) => {
+    authorization.push(req.headers.authorization);
     let body = "";
     for await (const chunk of req) body += String(chunk);
     requests.push(JSON.parse(body) as UsagePushRequest);
@@ -112,7 +114,7 @@ async function setup(responseBody?: unknown) {
   const io = {
     stdout: out.writable,
     stderr: err.writable,
-    env: { MANIFOLD_OPERATOR_TOKEN: "example-token" },
+    env: {},
     home,
     decoderRevision: "revision-1",
   };
@@ -131,6 +133,7 @@ async function setup(responseBody?: unknown) {
   return {
     home,
     requests,
+    authorization,
     io,
     args,
     out,
@@ -153,10 +156,10 @@ it("checkpoints acknowledged batches, invalidates by decoder revision and leaves
   expect(await runUsagePush(s.args, { ...s.io, decoderRevision: "revision-2" })).toBe(0);
   expect(s.requests.length).toBeGreaterThan(count);
 });
-it("rejects invalid arguments or absent tokens without decoding or sending", async () => {
+it("rejects invalid arguments without decoding or sending", async () => {
   const s = await setup();
   expect(await runUsagePush([...s.args, "--unknown", "x"], s.io)).toBe(2);
-  expect(await runUsagePush(s.args, { ...s.io, env: {} })).toBe(2);
+  expect(await runUsagePush([...s.args, "--token-file", "unused"], s.io)).toBe(2);
   expect(s.requests).toHaveLength(0);
 });
 it("acknowledges transient database errors without checkpointing the unchanged source", async () => {
@@ -260,4 +263,11 @@ it("rejects malformed acknowledgements without checkpointing sources", async () 
   const count = s.requests.length;
   expect(await runUsagePush(s.args, s.io)).toBe(1);
   expect(s.requests.length).toBeGreaterThan(count);
+});
+
+it("pushes without credentials or Authorization headers", async () => {
+  const s = await setup();
+  expect(await runUsagePush(s.args, s.io)).toBe(0);
+  expect(s.requests.length).toBeGreaterThan(0);
+  expect(s.authorization.every((value) => value === undefined)).toBe(true);
 });

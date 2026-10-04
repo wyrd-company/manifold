@@ -133,12 +133,7 @@ export function pushUsage(
         | { thread_id: string; provider_instance: string | null }
         | undefined;
       if (previous) {
-        result.threads[
-          previous.thread_id === mapping.threadId &&
-          previous.provider_instance === (mapping.providerInstance ?? null)
-            ? "replayed"
-            : "conflicting"
-        ]++;
+        result.threads[previous.thread_id === mapping.threadId ? "replayed" : "conflicting"]++;
       } else {
         db.prepare("INSERT INTO usage_sessions VALUES (?,?,?,?,?,?)").run(
           request.environment,
