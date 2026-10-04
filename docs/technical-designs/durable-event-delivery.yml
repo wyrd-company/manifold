@@ -400,12 +400,16 @@ proposed-design:
     so a token in flight at the crash is held and never granted twice. Its
     population is a query over snapshots for actors in its state.
   restore-checks: >-
-    Before restoring a snapshot into a blueprint version, every state path
-    in the snapshot's value, every child id, and every implementation name
-    is checked against the machine. A mismatch routes the actor through the
-    version's migration path or holds it at its current version, and is
-    never a silent stall. The host runs the checks in `restore` and returns
-    `held` with the mismatch as its reason.
+    Every snapshot is saved with the key of the blueprint version its actor
+    runs, the process repository commit and the blueprint's path, and is
+    restored into that version, which the blueprint loader rebuilds on
+    demand. Before restoring, the loader's `checkRestore` checks every state
+    path in the snapshot's value, every state id in its history, every
+    child id, and every child's implementation name against the machine,
+    and returns each mismatch as a typed result. A mismatch routes the
+    actor through the version's migration path or holds it at its current
+    version, and is never a silent stall. The host runs the checks in
+    `restore` and returns `held` with the mismatch as its reason.
   tests: >-
     Tests import only the router's and the store's `index.ts`, run against a
     real file in a temporary directory, and start from a populated fixture:

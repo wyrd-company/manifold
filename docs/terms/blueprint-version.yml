@@ -1,0 +1,6 @@
+$schema: https://refinery.systems/ontology/term
+title: Blueprint version
+description: >-
+  A blueprint as it is at one process repository commit, identified by the
+  commit and the blueprint's path. An actor runs one blueprint version from
+  start to end unless it is migrated.

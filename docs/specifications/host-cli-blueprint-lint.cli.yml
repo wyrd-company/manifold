@@ -1,0 +1,54 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: host-cli-blueprint-lint
+# ---
+$schema: https://commonclischema.org/draft/2026-04/schema
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+commands:
+  - name: blueprint
+    summary: Work with blueprints in a process repository.
+    mode: non-interactive
+    subcommands:
+      - name: lint
+        summary: Lint blueprint files with the rules the service runs when it loads them.
+        mode: non-interactive
+        positional-arguments:
+          - name: files
+            description: Paths to blueprint files.
+            position: 0
+            greedy: true
+            required: true
+            value:
+              type: path-list
+              arity:
+                min: 1
+                max: unbounded
+        output:
+          modes:
+            - name: text
+              description: >-
+                One line per finding on standard output,
+                `<file>:<location> <kind> <message>`, followed by
+                ` (line <line>, column <column>)` for a `yaml` finding,
+                ` (<implementationKind> <name>)` for an
+                `implementation-unknown` finding, or
+                ` (sample <sample>[, event <type>])` when the finding names
+                a sample; nothing when every file is clean.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: Every file is clean.
+            - code: 1
+              meaning: At least one file has a finding.
+            - code: 2
+              meaning: No file was given, or a file could not be read.
+        examples:
+          - manifold-host blueprint lint blueprints/delivery.yml
+          - manifold-host blueprint lint blueprints/delivery.yml blueprints/returns.yml
+        notes:
+          - Implementation names are checked against the names the service registers.

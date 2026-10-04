@@ -1,0 +1,311 @@
+# ---
+# relationships:
+#   realizes: blueprint
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/blueprint
+title: Blueprint
+description: >-
+  The blueprint file a process repository declares, the version identity
+  the loader gives it, and the finding the blueprint lint reports.
+$defs:
+  blueprint:
+    description: One blueprint file.
+    type: object
+    required:
+      - machine
+      - schemas
+    additionalProperties: false
+    properties:
+      description:
+        type: string
+      machine:
+        $ref: "#/$defs/machine"
+      schemas:
+        $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-schemas"
+  machine:
+    description: >-
+      The root state node of the machine configuration, with the machine id
+      and the initial context.
+    type: object
+    allOf:
+      - $ref: "#/$defs/state-node-properties"
+    propertyNames:
+      enum:
+        - description
+        - type
+        - initial
+        - history
+        - target
+        - states
+        - "on"
+        - always
+        - after
+        - onDone
+        - entry
+        - exit
+        - invoke
+        - meta
+        - tags
+        - output
+        - id
+        - context
+    properties:
+      context:
+        type: object
+  state-node:
+    type: object
+    allOf:
+      - $ref: "#/$defs/state-node-properties"
+    propertyNames:
+      enum:
+        - description
+        - type
+        - initial
+        - history
+        - target
+        - states
+        - "on"
+        - always
+        - after
+        - onDone
+        - entry
+        - exit
+        - invoke
+        - meta
+        - tags
+        - output
+        - id
+  state-node-properties:
+    description: The keys a state node shares with the root.
+    type: object
+    properties:
+      id:
+        type: string
+        minLength: 1
+      description:
+        type: string
+      type:
+        enum:
+          - atomic
+          - compound
+          - parallel
+          - final
+          - history
+      initial:
+        $ref: "#/$defs/state-key"
+      history:
+        enum:
+          - shallow
+          - deep
+      target:
+        $ref: "#/$defs/targets"
+      states:
+        type: object
+        propertyNames:
+          $ref: "#/$defs/state-key"
+        additionalProperties:
+          $ref: "#/$defs/state-node"
+      "on":
+        type: object
+        additionalProperties:
+          $ref: "#/$defs/transitions"
+      always:
+        $ref: "#/$defs/transitions"
+      after:
+        type: object
+        propertyNames:
+          description: A delay in milliseconds as decimal digits, or a delay implementation name.
+          minLength: 1
+        additionalProperties:
+          $ref: "#/$defs/transitions"
+      onDone:
+        $ref: "#/$defs/transitions"
+      entry:
+        $ref: "#/$defs/actions"
+      exit:
+        $ref: "#/$defs/actions"
+      invoke:
+        oneOf:
+          - $ref: "#/$defs/invoke"
+          - type: array
+            items:
+              $ref: "#/$defs/invoke"
+      meta:
+        type: object
+      tags:
+        oneOf:
+          - type: string
+          - type: array
+            items:
+              type: string
+      output:
+        description: >-
+          On a top-level final state, the machine's output: static, or an
+          `expression.map`.
+  state-key:
+    description: A state key. Targets and state paths separate keys with `.` and ids with `#`.
+    type: string
+    minLength: 1
+    pattern: "^[^.#]+$"
+  targets:
+    oneOf:
+      - type: string
+        minLength: 1
+      - type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 1
+  transitions:
+    oneOf:
+      - $ref: "#/$defs/transition"
+      - type: array
+        items:
+          $ref: "#/$defs/transition"
+  transition:
+    oneOf:
+      - type: string
+        minLength: 1
+      - type: object
+        additionalProperties: false
+        properties:
+          target:
+            $ref: "#/$defs/targets"
+          guard:
+            $ref: "#/$defs/reference"
+          actions:
+            $ref: "#/$defs/actions"
+          reenter:
+            type: boolean
+          description:
+            type: string
+          meta:
+            type: object
+  actions:
+    oneOf:
+      - $ref: "#/$defs/reference"
+      - type: array
+        items:
+          $ref: "#/$defs/reference"
+  reference:
+    description: An implementation referenced by name, with optional parameters.
+    oneOf:
+      - $ref: "#/$defs/implementation-name"
+      - type: object
+        required:
+          - type
+        additionalProperties: false
+        properties:
+          type:
+            $ref: "#/$defs/implementation-name"
+          params:
+            type: object
+  implementation-name:
+    type: string
+    minLength: 1
+  invoke:
+    type: object
+    required:
+      - src
+    additionalProperties: false
+    properties:
+      src:
+        $ref: "#/$defs/implementation-name"
+      id:
+        type: string
+        minLength: 1
+      systemId:
+        type: string
+        minLength: 1
+      input:
+        description: Static input, or an `expression.map`.
+      onDone:
+        $ref: "#/$defs/transitions"
+      onError:
+        $ref: "#/$defs/transitions"
+      onSnapshot:
+        $ref: "#/$defs/transitions"
+  blueprint-version:
+    description: The identity the loader gives a loaded blueprint.
+    type: object
+    required:
+      - commit
+      - path
+    additionalProperties: false
+    properties:
+      commit:
+        description: The full id of the process repository commit the file was read at.
+        type: string
+        pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+      path:
+        description: The repository-relative path of the file.
+        type: string
+        pattern: "^blueprints/.+\\.ya?ml$"
+  blueprint-version-key:
+    description: A blueprint version as one string, `<commit>:<path>`.
+    type: string
+    pattern: "^([0-9a-f]{40}|[0-9a-f]{64}):blueprints/.+\\.ya?ml$"
+  blueprint-finding:
+    description: One failure the blueprint lint reports for one file.
+    type: object
+    required:
+      - path
+      - kind
+      - location
+      - message
+    additionalProperties: false
+    properties:
+      path:
+        description: The file's repository-relative path, or the file as given to the host CLI.
+        type: string
+      kind:
+        enum:
+          - yaml
+          - shape
+          - implementation-unknown
+          - machine
+          - final-state-missing
+          - syntax
+          - evaluation
+          - result
+          - schema
+          - schema-missing
+          - site-unsupported
+      location:
+        description: The RFC 6901 JSON Pointer of the failing value in the document.
+        type: string
+      message:
+        type: string
+      line:
+        description: For `yaml`, the 1-based line.
+        type: integer
+        minimum: 1
+      column:
+        description: For `yaml`, the 1-based column.
+        type: integer
+        minimum: 1
+      implementationKind:
+        description: For `implementation-unknown`, the kind of the reference.
+        enum:
+          - actor
+          - action
+          - guard
+          - delay
+      name:
+        description: For `implementation-unknown`, the name referenced.
+        type: string
+      expression:
+        type: string
+      code:
+        type: string
+      position:
+        type: integer
+        minimum: 0
+      schemaErrors:
+        $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/error-detail/properties/schemaErrors"
+      sample:
+        type: string
+        pattern: ^(examples\[[0-9]+\]|full|required)$
+      eventType:
+        type: string

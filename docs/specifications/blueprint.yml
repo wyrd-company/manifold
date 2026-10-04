@@ -1,0 +1,203 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design that loads this format.
+  realizes:
+    - blueprint-loader
+  references:
+    - blueprint-expressions
+description: |-
+  Defines the blueprint file: the YAML document in a process repository
+  from which Manifold builds an XState v5 state machine, the version
+  identity the loader gives each loaded file, and the findings the
+  blueprint lint reports. `docs/specifications/blueprint.schema.yml` is the
+  machine-readable definition of the document, the version identity, and
+  the finding.
+
+  Location. A blueprint is a file under `blueprints/` in the process
+  repository whose name ends in `.yml` or `.yaml`, at any depth. Its path
+  is the repository-relative path with `/` separators, such as
+  `blueprints/parcels/delivery.yml`.
+
+  Document. The file is one YAML 1.2 document under the core schema, with
+  no custom tags and unique mapping keys. Its value round-trips through
+  JSON unchanged. The document is a mapping with these keys:
+
+  - `machine`, required: the machine configuration, a serializable subset
+    of the XState v5 machine configuration.
+  - `schemas`, required: the expression schemas of `blueprint-expressions`,
+    `#/$defs/expression-schemas`. `input` is the machine's input schema
+    and `output` its output schema.
+  - `description`, optional: text for people.
+
+  ```yaml
+  description: Moves a parcel from intake to delivery.
+  machine:
+    id: delivery
+    initial: sorting
+    context:
+      attempts: 0
+      depot: ""
+    states:
+      sorting:
+        entry:
+          - type: expression.assign
+            params:
+              expression: '{ "depot": event.input.depot }'
+        on:
+          parcel.scanned:
+            target: routing
+            guard:
+              type: expression.guard
+              params:
+                expression: event.depot = context.depot
+      routing:
+        invoke:
+          id: route
+          src: courier.route
+          input:
+            type: expression.map
+            params:
+              expression: '{ "depot": context.depot }'
+          onDone: delivered
+        after:
+          "3600000": sorting
+      delivered:
+        type: final
+        output:
+          type: expression.map
+          params:
+            expression: '{ "depot": context.depot }'
+  schemas:
+    input: { type: object, required: [depot], properties: { depot: { type: string } } }
+    output: { type: object, required: [depot], properties: { depot: { type: string } } }
+    context: { type: object, required: [depot], properties: { attempts: { type: integer }, depot: { type: string } } }
+    events:
+      parcel.scanned: { type: object, required: [type, depot], properties: { type: { const: parcel.scanned }, depot: { type: string } } }
+    actors:
+      courier.route:
+        input: { type: object, properties: { depot: { type: string } } }
+        output: { type: object }
+  ```
+
+  Machine configuration. The root is a state node with two more keys:
+  `id`, the machine id, and `context`, the initial context, a static
+  mapping. Context is set from input by an `entry` assignment of an
+  initial state, which sees the `xstate.init` event and its `input`. A
+  state node has the keys `id`, `description`, `type` (`atomic`,
+  `compound`, `parallel`, `final`, or `history`), `initial`, `history`
+  (`shallow` or `deep`), `target` for a history state's default, `states`,
+  `on`, `always`, `after`, `onDone`, `entry`, `exit`, `invoke`, `meta`,
+  `tags`, and, on a top-level final state, `output`. Each key means what
+  it means in XState v5. A state key contains no `.` and no `#`, since
+  XState resolves targets by those characters and Manifold names a state
+  by its keys joined with `.`. `meta` is free for blueprint authors and for
+  the declarations Manifold reads from it, such as a gate.
+
+  A transition is a target string, an object, or an array of either. A
+  transition object has `target` (a string or an array of strings),
+  `guard`, `actions`, `reenter`, `description`, and `meta`. An `after` key
+  is a delay in milliseconds written as decimal digits, or the name of a
+  delay implementation. An invoke is an object, or an array of objects,
+  with `src`, `id`, `systemId`, `input`, `onDone`, `onError`, and
+  `onSnapshot`.
+
+  Implementation references. Every implementation is referenced by name,
+  so the file is serializable and diffable:
+
+  - an actor: the `src` of an invoke;
+  - an action: an entry of `entry`, `exit`, or a transition's `actions`,
+    written as the name or as `{ type, params }`;
+  - a guard: the `guard` of a transition, written as the name or as
+    `{ type, params }`;
+  - a delay: an `after` key that is not decimal digits.
+
+  `params` is a mapping passed to the implementation. Names beginning with
+  `expression.` are the four expression implementations of
+  `blueprint-expressions`; every other name is an implementation that
+  Manifold's code registers. A top-level `output` that is not an
+  `expression.map` is static, as `blueprint-expressions` defines.
+
+  Version identity. The loader gives each blueprint it loads a version:
+  the full id of the process repository commit it was read at, and its
+  path. The version key is `<commit>:<path>`, which is unambiguous because
+  a commit id holds no `:`. A blueprint version is immutable: the same
+  commit and path always give the same document. The service saves every
+  snapshot of a state machine actor with its version key, so a restored
+  actor runs the version it started on.
+
+  Lint. The blueprint lint checks one file and reports findings, each
+  naming the file's path, a kind, and a location: the RFC 6901 JSON
+  Pointer of the failing value in the document, so an expression at
+  machine location `/states/sorting/on/parcel.scanned/guard` is at
+  `/machine/states/sorting/on/parcel.scanned/guard`. The rules run in this
+  order:
+
+  1. `yaml`: the text does not parse as one YAML document under the rules
+     above. The location is the root, `""`, and the finding carries the
+     1-based `line` and `column`. No other rule runs.
+  2. `shape`: the document does not validate against
+     `#/$defs/blueprint`. One finding per failing location, the failing
+     value or, when a key is not allowed, the key, with the message of the
+     first validation error there. No other rule runs.
+  3. `implementation-unknown`: a reference names no implementation of its
+     kind among the names the lint is given, and is not an expression
+     implementation of the right kind. The finding carries
+     `implementationKind` and `name`, at the reference.
+  4. `machine`: XState v5 rejects the configuration when it resolves a
+     state node, such as a target or an `initial` that names no state.
+     The finding is at the state node XState was resolving, with XState's
+     message.
+  5. `final-state-missing`: the machine has no top-level final state,
+     at `/machine/states`.
+  6. The expression lint of `blueprint-expressions`, with its kinds
+     `syntax`, `evaluation`, `result`, `schema`, `schema-missing`, and
+     `site-unsupported` and its fields, with the location rewritten from
+     the machine to the document.
+
+  Findings are ordered by rule, then by location; expression findings
+  keep the expression lint's order. A blueprint with no findings loads.
+  Every finding fails the blueprint.
+
+  Shared function. `packages/shared` exports the lint and the version key:
+
+  ```ts
+  interface ImplementationNames {
+    readonly actors: ReadonlySet<string>;
+    readonly actions: ReadonlySet<string>;
+    readonly guards: ReadonlySet<string>;
+    readonly delays: ReadonlySet<string>;
+  }
+  type BlueprintLint =
+    | { readonly ok: true; readonly blueprint: BlueprintDocument }
+    | { readonly ok: false; readonly findings: readonly BlueprintFinding[] };
+  function lintBlueprint(path: string, text: string, names: ImplementationNames): Promise<BlueprintLint>;
+  const manifoldImplementationNames: ImplementationNames;
+  function blueprintVersionKey(version: BlueprintVersion): string;
+  function parseBlueprintVersionKey(key: string): BlueprintVersion | undefined;
+  ```
+
+  `lintBlueprint` reads no file, network, clock, random source, or
+  environment; the same path, text, and names give the same result.
+  `manifoldImplementationNames` lists every implementation name Manifold's
+  service registers, so a lint outside the service checks names against
+  the same set the service loads with. `parseBlueprintVersionKey` returns
+  `undefined` for a string that is not a version key.
+format: json-schema
+validation-criteria: >-
+  Every blueprint, blueprint version, and blueprint finding validates
+  against `docs/specifications/blueprint.schema.yml`. The lint tests in
+  `packages/shared` call `lintBlueprint` on fixture text and check each
+  finding's kind, location, and order for: text that is not YAML, with
+  its line and column; a document with no `schemas`; a state key that
+  contains `.`; an action, a guard, an invoke `src`, and a named delay
+  that are not among the names given, each with its implementation kind;
+  an `expression.` name that is not an expression implementation; a
+  target that names no state; a machine with no top-level final state;
+  and a guard whose result is not a boolean, located in the document. A
+  clean fixture returns the parsed document, and the same call twice
+  returns the same result. A test round-trips a version through its key,
+  including a path that contains `:`, and shows that a string with no
+  commit id is not a key. A test shows that the example in this
+  specification lints clean when `courier.route` is among the actor
+  names. Fixtures use a domain unrelated to Manifold.

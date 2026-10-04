@@ -1,0 +1,45 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose command this is.
+  realizes:
+    - blueprint-loader
+  references:
+    - blueprint
+    - blueprint-expressions
+description: >-
+  Defines the host CLI command `manifold-host blueprint lint`, which runs
+  the blueprint lint of `blueprint` on the host. It is the same
+  `lintBlueprint` function the service runs on every load, from
+  `packages/shared`, called with `manifoldImplementationNames`, the
+  implementation names the service registers.
+  `docs/specifications/host-cli-blueprint-lint.cli.yml` is the
+  machine-readable definition.
+
+  The command reads every file argument as UTF-8 text before it lints any.
+  A file that cannot be read is reported on standard error as
+  `<file>: <reason>` and ends the command with exit code 2 before any file
+  is linted. Otherwise it lints each file with the file as given on the
+  command line as its path, and reports every finding on standard output
+  as one line, `<file>:<location> <kind> <message>`, with the location the
+  RFC 6901 JSON Pointer of the failing value in the document. A `yaml`
+  finding ends with ` (line <line>, column <column>)`; an
+  `implementation-unknown` finding ends with ` (<implementationKind>
+  <name>)`; a finding that names a sample ends with ` (sample <sample>)`,
+  or ` (sample <sample>, event <type>)` when it names an event type. A
+  file that is not YAML or not a blueprint is a finding, not an error of
+  the command. Files are reported in argument order, and findings in the
+  lint's order within a file. The command prints nothing when every file
+  is clean.
+format: cli
+validation-criteria: >-
+  `docs/specifications/host-cli-blueprint-lint.cli.yml` validates against
+  the CLI Command Specification schema. A test compiles the host CLI for
+  the current platform and runs `blueprint lint` from a directory with no
+  `node_modules`. It observes exit 0 and no output for a clean blueprint;
+  exit 1 with a `yaml` line for text that is not YAML, a `shape` line for
+  a document with no `schemas`, an `implementation-unknown` line for an
+  invoke `src` Manifold does not register, a `machine` line for a target
+  that names no state, and a `result` line for a guard whose result is not
+  a boolean, each located in the document; and exit 2 with no standard
+  output for no file and for an unreadable file after a valid file.

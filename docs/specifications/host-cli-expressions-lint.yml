@@ -6,6 +6,7 @@ relationships:
     - expressions
   references:
     - blueprint-expressions
+    - blueprint
 description: >-
   Defines the host CLI command `manifold-host expressions lint`, which runs
   the blueprint expression lint of `blueprint-expressions` on the host. It
@@ -20,7 +21,10 @@ description: >-
   `context`, each event schema, and each actor's `input` and `output`, is a
   mapping or a boolean, and `actors`, when present, is a mapping of
   mappings. An absent schema is left to the lint, which reports it as
-  `schema-missing`, and other keys are accepted. A file that cannot be read,
+  `schema-missing`, and other keys are accepted. A blueprint file of
+  `blueprint` has this shape, so the command lints a blueprint file as it
+  is; `manifold-host blueprint lint` runs every rule of the blueprint lint
+  on it. A file that cannot be read,
   does not parse as YAML, or does not have that shape is reported on standard error as
   `<file>: <reason>` and ends the command with exit code 2 before any file
   is linted. Otherwise the command reports every finding on standard output
@@ -41,4 +45,9 @@ validation-criteria: >-
   a `syntax` line for a guard that does not parse; and exit 2 with no
   standard output for no file, an unreadable file, a file without the
   blueprint shape, and a file whose context, event, or actor schema is not
-  a mapping or a boolean, each after a valid file.
+  a mapping or a boolean, each after a valid file. The same test runs
+  `expressions lint` and `blueprint lint` on one blueprint file of
+  `blueprint` with a `description` and a guard whose result is not a
+  boolean: `expressions lint` exits 1 with the `result` line at the
+  machine location, and `blueprint lint` exits 1 with the `result` line at
+  the same location under `/machine`.
