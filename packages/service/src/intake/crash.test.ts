@@ -39,11 +39,7 @@ it.each(["recorded", "snapshot"])(
       commit: first,
       blueprintVersion: first + ":blueprints/parcel.yml",
     });
-    // A recorded version remains readable even though the follower now publishes B.
-    const revision = (await import("@wyrd-company/manifold-shared")).memoryRevision(first, files());
-    s.revisions.set(first, revision);
-    const loaded = await s.loader.loadRevision(revision);
-    for (const b of loaded.blueprints.values()) s.versions.set(b.key, b);
+    // The real host reloads the recorded version while the follower publishes B.
     s.intake.revisionLoaded();
     await s.intake.idle();
     expect(s.intake.record("I1")).toMatchObject({ status: "started", commit: first, attempts: 1 });
@@ -57,5 +53,10 @@ it.each(["recorded", "snapshot"])(
       machine: first + ":blueprints/parcel.yml",
     });
     expect(s.store.activeSnapshots()).toHaveLength(1);
+    expect(s.host.host.actorOf("task:I1")).toMatchObject({
+      commit: first,
+      manifold: { issue: "I1", portfolioItem: "beta" },
+    });
+    expect(s.store.loadSnapshot("task:I1")?.snapshot["entries"]).toMatchObject({ count: 2 });
   },
 );

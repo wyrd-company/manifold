@@ -11,6 +11,7 @@ import { memoryRevision } from "@wyrd-company/manifold-shared";
 import { startGitHubSource } from "../github-source/index.ts";
 import { githubFake, FakeClock } from "../github-source/test-fixtures/api.ts";
 import { SecretValue } from "../service-configuration/index.ts";
+import { recordStateEntry } from "../actor-host/index.ts";
 import { startIntake } from "./index.ts";
 import type { Intake } from "./index.ts";
 import { setup, files, first } from "./test-fixtures/fixture.ts";
@@ -45,13 +46,13 @@ it("takes existing Project items through discovery, then hears their later issue
     const { createBlueprintLoader } = await import("../blueprint-loader/index.ts");
     const loader = createBlueprintLoader({
       implementations: { actors: {}, actions: {}, guards: {}, delays: {} },
+      onStateEntry: recordStateEntry,
       revisionAt: async () => revision,
       onExpressionError: (error) => {
         throw error;
       },
     });
     const loaded = await loader.loadRevision(revision);
-    for (const b of loaded.blueprints.values()) s.versions.set(b.key, b);
     s.setCurrent({
       ...basis,
       revision,

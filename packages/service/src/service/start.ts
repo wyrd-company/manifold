@@ -259,12 +259,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       tracked: github,
       blueprints: parts.blueprints,
       current: parts.revisions.current,
-      actors: {
-        start(request) {
-          if (!parts.actorHost.start) throw new TypeError("No actor host start implementation");
-          parts.actorHost.start(request);
-        },
-      },
+      actors: parts.actorHost,
       onFailed: (record) => {
         const failure = record.failure ?? record.startFailure!;
         parts.log({

@@ -2,22 +2,17 @@
 // relationships:
 //   verifies: intake
 // ---
-import { createActor } from "xstate";
-import {
-  memoryRevision,
-  lintPortfolioDeclaration,
-  parseBlueprintVersionKey,
-} from "@wyrd-company/manifold-shared";
+import { memoryRevision, lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
 import { stringify } from "yaml";
 import { openStore } from "../../store/index.ts";
-import type { Store, DeliveryTarget, PersistedSnapshot } from "../../store/index.ts";
+import type { Store } from "../../store/index.ts";
 import { startRouter } from "../../router/index.ts";
-import type { ActorHost, Router } from "../../router/index.ts";
 import { createBlueprintLoader } from "../../blueprint-loader/index.ts";
-import type { LoadedBlueprint } from "../../blueprint-loader/index.ts";
+import type { BlueprintLoader } from "../../blueprint-loader/index.ts";
+import { openActorHost, recordStateEntry } from "../../actor-host/index.ts";
 import type { TrackedIssue } from "../../github-source/index.ts";
 import { intakeMigrationSteps, startIntake } from "../index.ts";
-import type { IntakeOptions, IntakeRevision, TaskActorStarter } from "../index.ts";
+import type { IntakeOptions, IntakeRevision } from "../index.ts";
 export const first = "a".repeat(40),
   second = "b".repeat(40);
 export const issue = (id = "I1"): TrackedIssue => ({
@@ -132,90 +127,23 @@ export function portfolio(commit = first, bindingItem = "alpha", archived = fals
   if (!parsed.ok) throw new Error(JSON.stringify(parsed.findings));
   return { commit, declaration: parsed.declaration };
 }
-export function fixtureHost(
+export async function testActorHost(
   store: Store,
-  blueprints: Map<string, LoadedBlueprint>,
-  afterAttach?: () => void,
+  blueprints: BlueprintLoader,
+  afterStart?: () => void,
 ) {
-  let router: Router;
-  const active: ReturnType<typeof createActor>[] = [];
+  const host = await openActorHost({ store, blueprints, saveHooks: [], log: () => {} });
   const starts: string[] = [];
   const inputs: unknown[] = [];
-  function target(
-    actorId: string,
-    blueprint: LoadedBlueprint,
-    input: unknown,
-    snapshot?: PersistedSnapshot,
-  ): DeliveryTarget {
-    const actor = createActor(blueprint.machine, {
-      input,
-      ...(snapshot
-        ? {
-            snapshot: snapshot as Parameters<typeof createActor>[1] extends { snapshot?: infer S }
-              ? S
-              : never,
-          }
-        : {}),
-    });
-    actor.start();
-    active.push(actor);
-    // This is the ruled actor-host seam, while its owner is still in flight.
-    if (!snapshot)
-      (actor.getSnapshot().context as Record<string, unknown>)["manifold"] = (
-        input as Record<string, unknown>
-      )["manifold"];
-    return {
-      actorId,
-      send: (row) => actor.send(row.payload as { type: string }),
-      persist: () => ({
-        machine: blueprint.key,
-        snapshot: actor.getPersistedSnapshot() as PersistedSnapshot,
-      }),
-    };
-  }
-  const host: ActorHost & TaskActorStarter = {
-    subscription(record) {
-      const identity = (
-        record.snapshot["context"] as { manifold: { issue: string; threads?: string[] } }
-      ).manifold;
-      return {
-        topics: [
-          `github.issue.${identity.issue}`,
-          ...(identity.threads ?? []).map((id) => `t3code.thread.${id}`),
-        ],
-        ...(blueprints.has(record.machine)
-          ? { events: Object.keys(blueprints.get(record.machine)!.document.schemas.events) }
-          : {}),
-      };
-    },
-    restore(stored) {
-      const blueprint = blueprints.get(stored.machine);
-      return blueprint
-        ? {
-            status: "restored",
-            target: target(stored.actorId, blueprint, undefined, stored.snapshot),
-          }
-        : { status: "held", reason: "fixture version missing" };
-    },
-    start(request) {
-      blueprints.set(request.blueprint.key, request.blueprint);
-      starts.push(request.actorId);
-      inputs.push(request.input);
-      router.attach(target(request.actorId, request.blueprint, request.input));
-      afterAttach?.();
-    },
+  const start = host.start;
+  host.start = (request) => {
+    start(request);
+    starts.push(request.actorId);
+    inputs.push(request.input);
+    afterStart?.();
   };
-  router = startRouter({ store, host });
-  return {
-    host,
-    router,
-    starts,
-    inputs,
-    stop() {
-      router.stop();
-      for (const actor of active) actor.stop();
-    },
-  };
+  const router = startRouter({ store, host });
+  return { host, router, starts, inputs, stop: () => router.stop() };
 }
 export async function setup(
   path: string,
@@ -231,6 +159,7 @@ export async function setup(
   ]);
   const loader = createBlueprintLoader({
     implementations: { actors: {}, actions: {}, guards: {}, delays: {} },
+    onStateEntry: recordStateEntry,
     revisionAt: async (c) => revisions.get(c),
     onExpressionError: (error) => {
       throw error;
@@ -243,13 +172,7 @@ export async function setup(
     portfolio: portfolio(commit),
   };
   const tracked = new Map<string, TrackedIssue>();
-  const versions = new Map([...loaded.blueprints.values()].map((b) => [b.key, b]));
-  for (const saved of store.activeSnapshots()) {
-    const version = parseBlueprintVersionKey(saved.machine)!;
-    const restored = await loader.version(version);
-    if (restored.status === "loaded") versions.set(restored.blueprint.key, restored.blueprint);
-  }
-  const host = fixtureHost(store, versions);
+  const host = await testActorHost(store, loader);
   const errors: unknown[] = [];
   const intake = startIntake({
     store,
@@ -269,7 +192,6 @@ export async function setup(
     host,
     intake,
     errors,
-    versions,
     current: () => current,
     setCurrent(value: IntakeRevision | undefined) {
       current = value;

@@ -3,7 +3,7 @@
 //   implements: service-assembly
 // ---
 import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
-import type { Intake, IntakeRevision, TaskActorStarter } from "../intake/index.ts";
+import type { Intake, IntakeRevision } from "../intake/index.ts";
 import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
 import type { Router } from "../router/index.ts";
 import type { ActorHost } from "../actor-host/index.ts";
@@ -27,9 +27,7 @@ export interface StartServiceOptions {
   /** Aborting it stops the start at the next step boundary. */
   readonly signal?: AbortSignal;
   /** Builds the router's actor host from the parts started before the router. */
-  readonly actorHost?: (
-    parts: Omit<ServiceParts, "actorHost">,
-  ) => ServiceActorHost | Promise<ServiceActorHost>;
+  readonly actorHost?: (parts: Omit<ServiceParts, "actorHost">) => ActorHost | Promise<ActorHost>;
   /** Receives every log entry. Defaults to one JSON line per entry on stderr. */
   readonly log?: (entry: ServiceLogEntry) => void;
   readonly probes?: ServiceProbes;
@@ -73,7 +71,7 @@ export type ServiceStep =
 
 export interface ServiceParts {
   readonly escalations: Escalations;
-  readonly actorHost: ServiceActorHost;
+  readonly actorHost: ActorHost;
   readonly configuration: ServiceConfiguration;
   readonly store: Store;
   readonly portfolio: Portfolio;
@@ -83,9 +81,6 @@ export interface ServiceParts {
   readonly revisions: Revisions;
   readonly log: (entry: ServiceLogEntry) => void;
 }
-
-/** The start seam is supplied by the actor host when available. */
-export type ServiceActorHost = ActorHost & Partial<TaskActorStarter>;
 
 export interface Service extends ServiceParts {
   readonly intake: Intake;

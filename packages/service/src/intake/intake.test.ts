@@ -41,6 +41,11 @@ it("records once, starts one actor and hands off mirror state and later issue ev
   s.intake.revisionLoaded();
   await s.intake.idle();
   expect(s.errors).toEqual([]);
+  expect(s.host.host.actorOf("task:I1")).toMatchObject({
+    commit: first,
+    manifold: { issue: "I1", project: "P1" },
+  });
+  expect(s.store.loadSnapshot("task:I1")?.snapshot["entries"]).toMatchObject({ count: 2 });
   expect(s.intake.record("I1")).toMatchObject({
     status: "started",
     attempts: 1,

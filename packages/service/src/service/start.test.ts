@@ -732,27 +732,12 @@ test("wires discovery, revision retry, actor start and drained shutdown through 
   const f = await fixture();
   await publishIntake(f, '{"blueprint":"blueprints/counter.yml","portfolioItem":"unknown"}');
   f.api.addItem("IT_A", "I_A");
-  const inputs: unknown[] = [];
   const logs: { event: string; message: string }[] = [];
+  const steps: ServiceStep[] = [];
   const service = await startService({
     configurationFile: f.file,
     log: (entry) => logs.push(entry),
-    actorHost: (parts) => ({
-      subscription: () => ({ topics: [] }),
-      restore: () => ({ status: "held", reason: "fixture" }),
-      start(request) {
-        inputs.push(request.input);
-        parts.store.saveSnapshot({
-          actorId: request.actorId,
-          machine: request.blueprint.key,
-          snapshot: {
-            status: "active",
-            value: "counting",
-            context: { manifold: request.input["manifold"]! },
-          },
-        });
-      },
-    }),
+    probes: { step: (step) => steps.push(step) },
   });
   cleanup.push(service.stop);
   await expect.poll(() => service.intake.record("I_A")?.status).toBe("failed");
@@ -760,7 +745,7 @@ test("wires discovery, revision retry, actor start and drained shutdown through 
   expect(logs).toContainEqual(
     expect.objectContaining({ event: "intake-failed", message: "Intake failed: item-unknown" }),
   );
-  expect(inputs).toEqual([]);
+  expect(service.actorHost.actorOf("task:I_A")).toBeUndefined();
   const next = await publishIntake(f);
   await service.revisions.pull();
   await service.intake.idle();
@@ -769,16 +754,22 @@ test("wires discovery, revision retry, actor start and drained shutdown through 
     commit: next,
     attempts: 2,
   });
-  expect(inputs).toMatchObject([
-    {
-      manifold: { issue: "I_A", project: "P_one", environment: "env-one", portfolioItem: "alpha" },
-      task: { item: { nodeId: "IT_A", archived: false } },
-    },
-  ]);
+  expect(service.store.loadSnapshot("task:I_A")?.snapshot["context"]).toMatchObject({
+    manifold: { issue: "I_A", project: "P_one", environment: "env-one", portfolioItem: "alpha" },
+  });
   f.api.addItem("IT_B", "I_B");
   service.github.requestSweep();
   await expect.poll(() => service.intake.record("I_B")?.status).toBe("started");
-  expect(inputs).toHaveLength(2);
+  expect(service.actorHost.actorOf("task:I_A")).toMatchObject({
+    commit: next,
+    manifold: { issue: "I_A" },
+  });
+  expect(service.actorHost.actorOf("task:I_B")).toMatchObject({
+    commit: next,
+    manifold: { issue: "I_B" },
+  });
+  expect(service.store.activeSnapshots()).toHaveLength(2);
+  expect(steps.indexOf("actor-host-opened")).toBeLessThan(steps.indexOf("intake-started"));
   await service.stop();
   expect(() => service.intake.discovered(["I_C"])).toThrow(TypeError);
 });

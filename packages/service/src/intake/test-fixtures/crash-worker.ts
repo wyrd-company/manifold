@@ -3,7 +3,7 @@
 //   verifies: intake
 // ---
 import { setup, files } from "./fixture.ts";
-import { fixtureHost } from "./fixture.ts";
+import { testActorHost } from "./fixture.ts";
 const [path, step] = process.argv.slice(2);
 if (!path) throw new Error("path required");
 const s = await setup(path, files(), {
@@ -14,7 +14,7 @@ const s = await setup(path, files(), {
 if (step === "snapshot") {
   await s.intake.stop();
   s.host.stop();
-  const host = fixtureHost(s.store, s.versions, () => process.kill(process.pid, "SIGKILL"));
+  const host = await testActorHost(s.store, s.loader, () => process.kill(process.pid, "SIGKILL"));
   const { startIntake } = await import("../index.ts");
   const intake = startIntake({
     store: s.store,
