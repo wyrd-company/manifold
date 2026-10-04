@@ -137,7 +137,8 @@ proposed-design:
     }
 
     export interface StateQuery {
-      readonly machine: string;
+      /** Absent: actors on every machine. */
+      readonly machine?: string;
       readonly statePath: string;
     }
 
@@ -258,8 +259,12 @@ proposed-design:
     `findActorsInState({ machine, statePath })` returns the stored snapshot
     of every actor whose `store_snapshot_state` holds that machine and path,
     ordered by actor id, through the `store_snapshot_state_by_path` index and
-    a join to `store_snapshot`. It loads no actor. A gate calls it with its
-    blueprint and gated state to rebuild its population.
+    a join to `store_snapshot`. With no `machine` it returns the actors in
+    that path on every machine, through the `store_snapshot_state_by_state`
+    index. It loads no actor and returns every status. A gate calls it with
+    its gated state and no machine, and keeps the active actors whose
+    machine is a version of its blueprint, to rebuild its population across
+    versions.
     `activeSnapshots()` returns the stored snapshot of every actor whose
     status is `active`, ordered by actor id. The router calls it once at
     resume to derive every subscription and restore every actor.
@@ -383,6 +388,7 @@ proposed-design:
     with it; an errored snapshot does not overwrite the active one and is
     kept beside it; `findActorsInState` returns exactly the actors in a
     path, including ancestor paths and parallel regions, filtered by
+    machine, and with no machine returns the actors in that path on every
     machine; `activeSnapshots` returns exactly the `active` actors in actor
     id order; `nextDeadlineAt` returns the earliest unfired fire time,
     skips fired rows, and is `undefined` with no armed row; `writeInbox` holds one row for a repeated event id and returns

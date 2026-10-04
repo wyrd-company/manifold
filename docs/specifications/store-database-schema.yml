@@ -30,7 +30,9 @@ description: >-
   value to the node, joined with `.`. A state value `{ open: { lifecycle:
   ready } }` has the state paths `open`, `open.lifecycle`, and
   `open.lifecycle.ready`. The rows of an actor are replaced in the same
-  transaction as its snapshot row.
+  transaction as its snapshot row. Two indexes serve the state query: one by machine
+  and state path, for the actors of one machine in a state, and one by
+  state path alone, for the actors of every machine in a state.
 
   Errored snapshots. `store_errored_snapshot` holds one row per actor with
   the last snapshot whose status is `error`, and the event id whose delivery

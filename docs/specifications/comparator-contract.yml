@@ -54,7 +54,9 @@ description: |-
   ```
 
   Population. `population` is the task actors in the gated state that hold
-  no token from its gate. `id` is the task's id. `fields` is the task's
+  no token from its gate and can take one now: an actor whose present
+  entry into the gated state was already granted a token, or which has an
+  event pending delivery, waits and is left out. `id` is the task's id. `fields` is the task's
   declared fields as JSON values. `age` is the whole number of milliseconds
   since the task entered the gated state, computed by Manifold when it
   assembles the input. `dependencies` is the state of the task's
@@ -65,8 +67,10 @@ description: |-
   Holders. `holders` is the tasks holding a token from this gate, each with
   its id and portfolio item.
 
-  Balances. `balances` maps a portfolio item name to an account name to that
-  item's available balance in the account, in the account's native unit.
+  Balances. `balances` maps a portfolio item name to an account name to
+  what that item could reserve now in the account, the sharing rule's
+  answer, in the account's native unit. An item the portfolio in force
+  does not hold has no entry.
 
   Random. `random` returns a number in `[0, 1)`. It is a mulberry32
   generator over the evaluation's seed, so one input and one seed give one
@@ -75,7 +79,8 @@ description: |-
   Selection. A comparator returns `null` when no task proceeds, or a
   selection naming one task of the population by `task`, with the
   reservations to hold against that task's portfolio item, each naming an
-  account and an amount greater than zero in the account's native unit.
+  account and a whole amount of at least 1 in the account's native unit,
+  since the ledger holds whole amounts.
 
   World. The function receives everything it may read as input. It has no
   clock, no state between calls, no I/O, no timers, and no module other than

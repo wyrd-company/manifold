@@ -11,6 +11,7 @@ relationships:
     - escalations
     - blueprint-loader
     - token-lint
+    - gate-runtime
 objective: >-
   Let a process decide which tasks may proceed past a state, in what order,
   and with what budget, without a state machine above the task and without
@@ -47,14 +48,15 @@ proposed-design:
     that state's population, the task actors in it that hold no token, calls
     the process's comparator over the population, and hands out one token at
     a time until the comparator returns none. A token is delivered to the
-    task actor as an event named `token`; the guarded transition out of the
-    state requires it. The comparator is a pure TypeScript function in the process
+    task actor as an event of the type the gate declares, `token` by
+    default; the guarded transition out of the state requires it. The comparator is a pure TypeScript function in the process
     repository run in a sandbox. Orthogonal regions on the task machine hold
     derived facts so that every guard is a read of state.
   declaration: >-
     The gated state carries `meta.gate` naming the comparator file,
-    whether a reservation accompanies the token, and where the token is
-    returned. The transition out is
+    whether a reservation accompanies the token, where the token is
+    returned, the token event's type, and the region that holds the task's
+    dependency state, as `blueprint` specifies. The transition out is
     guarded on being `in` the token-holding region state, and on any other
     regions the process requires, such as dependencies clear. Other
     transitions out of the same state, an issue closed by an operator, carry
@@ -70,8 +72,9 @@ proposed-design:
   comparator-contract: >-
     Input: the population, each task with its id, fields, age in the state,
     dependency facts, critical-path length, and portfolio item; the holders,
-    tasks holding a token from this gate with their item; the available
-    balances per item and account; a seeded random. Output: one task id with
+    tasks holding a token from this gate with their item; per item and
+    account, what the item could reserve now, the sharing rule's answer;
+    a seeded random. Output: one task id with
     an optional list of reservations, each naming an account and an amount,
     or none. The function has no clock, no state between calls, no I/O, and
     cannot send events. `now` is not an input; age is computed by Manifold.
@@ -180,9 +183,9 @@ proposed-design:
     blueprint at that path, so a push that changes the blueprint neither
     splits a gate's population nor resets its holders. The comparator and
     whether a reservation accompanies the token come from the newest
-    loaded version of the blueprint. Each actor returns its token at the
-    return point its own version declares, and the trap configurations it
-    is checked against are its own version's.
+    loaded version of the blueprint that declares the gate. Each actor
+    returns its token at the return point its own version declares, and
+    the trap configurations it is checked against are its own version's.
   reservation: >-
     When the comparator's output carries reservations, the gate writes them
     to the ledger in the same transaction that records the token, under an

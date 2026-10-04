@@ -1,0 +1,67 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - gate-runtime
+  references:
+    - store-database-schema
+    - portfolio-ledger-tables
+    - comparator-contract
+terms:
+  - gate
+  - token
+  - holder
+  - population
+description: |-
+  Defines the tables the gates module owns in Manifold's SQLite database
+  file. `docs/specifications/gates-database-schema.sql` is the
+  machine-readable definition: the schema that the module's migrations
+  produce. The module receives the connection from the store and migrates
+  its tables with `migrate("gates", steps)`; its owner is `gates`, so every
+  table and index it creates is named `gates_<name>`. Times are
+  milliseconds since the Unix epoch. A gate is named by its key,
+  `<blueprintPath>#<statePath>`.
+
+  Entries. `gates_entry` holds one row per gate and actor while the actor's
+  saved configuration holds the gated state: the entry id, an
+  `AUTOINCREMENT` key that SQLite never reuses, and the entry time. A new
+  entry into the gated state replaces the row with a new entry id. The row
+  is deleted when a save leaves the gated state or ends the actor. The
+  entry time gives each member of the population its age.
+
+  Evaluations. `gates_evaluation` holds one row per comparator evaluation:
+  the gate, the blueprint version key of the version whose comparator ran,
+  the time, the seed, the input as canonical JSON with keys sorted and
+  without `random`, and the outcome. An outcome of `selection` carries the
+  selection as JSON in the shape of `comparator-contract`'s `selection`; an
+  outcome of `none` carries nothing; an outcome of `failure` carries the
+  failure's kind and message. A failure's kind is one of the comparator
+  sandbox's kinds, or `reservation` for a selection whose reservation the
+  ledger refused. `duration_ms` is the evaluation's duration as the sandbox
+  measured it. A row is never updated or deleted.
+
+  Tokens. `gates_token` holds one row per granted token: the token id, which
+  is `token:` followed by the decimal entry id the token was granted to, the
+  gate, the actor, the entry id, the evaluation that selected it, and the
+  grant time. A token is held while `returned_at` is null, whether its inbox
+  row is consumed or pending, so holders are counted from this table alone.
+  A return sets `returned_at`, `return_reason`, and `return_state` once:
+  `return-point` with the return point's state path, `ended` with the
+  snapshot status of the save that ended the actor, or `escalation` with the
+  actor's state paths at the answer, joined with `,`. `trapped` is 1 while
+  the holder's last saved configuration is one of its gate's trap
+  configurations. At most one token of a gate is held by one actor at a
+  time, and one entry is granted at most one token.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/gates-database-schema.sql` runs without error on an
+  empty SQLite database. A test applies the module's exported migration
+  steps to a store over an empty file and compares the `type`, `name`,
+  `tbl_name`, and `sql` of every `sqlite_schema` row whose name starts with
+  `gates_` with the rows this file produces on a second empty database, with
+  each run of whitespace in `sql` read as one space; they are equal. After
+  migration, `schema_migration` holds the row `('gates', n)`, where n is the
+  number of the module's migration steps. A second held token of one gate
+  for one actor, and a token whose id does not match its entry id, each fail
+  their constraint.

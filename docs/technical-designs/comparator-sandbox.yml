@@ -242,8 +242,8 @@ proposed-design:
     The host parses the returned JSON and checks it against the `selection`
     definition by hand: `null`, or an object whose `task` is a string naming
     a population task and whose optional `reservations` is an array of
-    objects each with a non-empty string `account` and a finite `amount`
-    greater than zero. A property the definition does not name fails the
+    objects each with a non-empty string `account` and an `amount` that is
+    a safe integer of at least 1. A property the definition does not name fails the
     check. The validated value is returned as `ComparatorSelection | null`.
   declaration-file: >-
     `packages/shared/src/comparator.d.ts` is a module declaration file that
@@ -364,9 +364,9 @@ proposed-design:
     the same selection and draws, and another seed returns other draws. State:
     a module-level counter returns the same value on every evaluation.
     Failures: a throw returns `thrown`; returning `undefined`, a promise, an
-    unknown task id, or a reservation with a negative amount returns
-    `invalid-output`; a syntax error fails the load with `transpile`; each is
-    followed by a successful evaluation. Caller: a test caller stands in for
+    unknown task id, or a reservation with a negative or fractional amount
+    returns `invalid-output`; a syntax error fails the load with
+    `transpile`; each is followed by a successful evaluation. Caller: a test caller stands in for
     the gate. It evaluates a sequence of inputs through one loaded comparator
     whose behavior each input selects (throw, infinite loop, hoarding
     allocation, then a selection), appends each `ComparatorEvaluation` to a

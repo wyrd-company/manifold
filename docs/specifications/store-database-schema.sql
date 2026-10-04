@@ -28,6 +28,8 @@ CREATE TABLE store_snapshot_state (
 
 CREATE INDEX store_snapshot_state_by_path ON store_snapshot_state (machine, state_path, actor_id);
 
+CREATE INDEX store_snapshot_state_by_state ON store_snapshot_state (state_path, actor_id);
+
 CREATE TABLE store_errored_snapshot (
   actor_id TEXT PRIMARY KEY CHECK (length(actor_id) > 0),
   machine TEXT NOT NULL CHECK (length(machine) > 0),

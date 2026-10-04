@@ -288,7 +288,7 @@ proposed-design:
       /** Defaults to Date.now and setTimeout. */
       readonly clock?: RouterClock;
       /** Runs once, after every restored actor's inbox is drained. */
-      readonly afterDrain?: () => void;
+      readonly afterDrain?: (router: Router) => void;
       /** Called each time an actor becomes held. */
       readonly onHeld?: (held: HeldActor) => void;
     }
@@ -297,6 +297,8 @@ proposed-design:
       publish(event: SourceEvent): PublishOutcome;
       attach(target: DeliveryTarget): void;
       persist(actorId: string): void;
+      /** Schedules a loaded actor to drain rows another module wrote with `store.writeInbox`. */
+      schedule(actorId: string): void;
       /** Restores a held actor again; does nothing for one that is not held. */
       release(actorId: string): void;
       stop(): void;
@@ -443,6 +445,17 @@ proposed-design:
     drained. A gate's holders are counted from token rows, consumed or not,
     so a token in flight at the crash is held and never granted twice. Its
     population is a query over snapshots for actors in its state.
+    `afterDrain` receives the router, so that the gates can schedule the
+    actors they write token rows to.
+  module-writes: >-
+    A module that writes an inbox row with `store.writeInbox`, as a gate
+    writes a token, commits the row in its own transaction and then calls
+    `schedule(actorId)`. `schedule` adds a loaded actor to the set the
+    scheduler drains, and does nothing for an actor that is not loaded, is
+    held, or after `stop`; a held actor's row stays pending until `release`
+    or resume. During resume, `schedule` adds the actor to the set the
+    resume drains or, from `afterDrain`, to the set the scheduler drains
+    once resume ends. `schedule` twice for one actor drains it once.
   restore-checks: >-
     Every snapshot is saved with the key of the blueprint version its actor
     runs, the process repository commit and the blueprint's path, and is
@@ -491,7 +504,10 @@ proposed-design:
     to an earlier one while draining, `afterDrain` sees the earlier actor's
     snapshot with that event applied and its inbox empty; a held actor keeps receiving rows, takes none, and drains
     them after a restart whose host restores it; an errored delivery holds
-    only its actor; a delivery or `persist` that adds a topic to the
+    only its actor; a row written with `store.writeInbox` and then
+    `schedule` is delivered once, `schedule` of a held actor delivers
+    nothing, and a row written and scheduled from `afterDrain` is delivered
+    after resume; a delivery or `persist` that adds a topic to the
     context makes the next event under it reach the actor; an actor saved
     `done` receives no later event. Fault tests, in a child Node process
     that sends itself `SIGKILL` and whose kill signal the parent asserts
