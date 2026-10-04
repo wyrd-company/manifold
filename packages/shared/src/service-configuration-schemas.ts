@@ -3,6 +3,7 @@
 //   implements: service-configuration
 // ---
 /* eslint-disable unicorn/no-thenable -- JSON Schema uses the then keyword. */
+import { expressionsConfigurationSchema } from "./expressions-configuration-schema.ts";
 // Generated from the specification assets; agreement is tested.
 export const serviceConfigurationSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -31,6 +32,10 @@ export const serviceConfigurationSchema = {
     },
     comparatorSandbox: {
       $ref: "https://manifold.wyrd.company/schemas/comparator-sandbox-configuration",
+      default: {},
+    },
+    expressions: {
+      $ref: "https://manifold.wyrd.company/schemas/expressions-configuration",
       default: {},
     },
   },
@@ -173,5 +178,6 @@ export const serviceConfigurationSchemas = [
   serviceConfigurationSchema,
   processRepositoryConfigurationSchema,
   comparatorSandboxConfigurationSchema,
+  expressionsConfigurationSchema,
 ];
 export const serviceConfigurationSchemaId = serviceConfigurationSchema.$id;

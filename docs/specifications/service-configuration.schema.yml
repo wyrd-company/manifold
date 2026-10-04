@@ -31,6 +31,9 @@ properties:
   comparatorSandbox:
     $ref: https://manifold.wyrd.company/schemas/comparator-sandbox-configuration
     default: {}
+  expressions:
+    $ref: https://manifold.wyrd.company/schemas/expressions-configuration
+    default: {}
 $defs:
   declared-name:
     description: >-

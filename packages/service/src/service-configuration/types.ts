@@ -2,12 +2,14 @@
 // relationships:
 //   implements: service-configuration
 // ---
+import type { ExpressionsConfiguration } from "../blueprint-expressions.ts";
 import type { ComparatorSandboxLimits } from "../comparator-sandbox/index.ts";
 import type { SecretValue } from "./credentials.ts";
 export interface ServiceConfiguration {
   readonly file: string;
   readonly processRepository: ProcessRepositoryConfiguration;
   readonly comparatorSandbox: ComparatorSandboxLimits;
+  readonly expressions: ExpressionsConfiguration;
   readonly credentials: Credentials;
 }
 export interface ProcessRepositoryConfiguration {

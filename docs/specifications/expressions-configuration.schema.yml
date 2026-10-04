@@ -5,6 +5,7 @@
 #   asset-of: expressions-configuration
 # ---
 $schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/expressions-configuration
 title: Expressions configuration
 description: The value of the `expressions` section of the service configuration.
 type: object
