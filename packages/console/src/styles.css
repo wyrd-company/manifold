@@ -340,21 +340,6 @@ small {
   border-bottom: 2px solid var(--primary);
   color: var(--foreground);
 }
-.general-settings form {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-  max-width: 440px;
-}
-.general-settings label {
-  font-size: 12px;
-  font-weight: 500;
-}
-.form-actions {
-  display: flex;
-  gap: 8px;
-}
 .error-alert {
   border: 1px solid var(--error);
   color: var(--error-foreground);
