@@ -10,6 +10,8 @@ import { Lru } from "toad-cache";
 import { UnknownCredentialError } from "./types.ts";
 import type {
   Credentials,
+  CredentialSettings,
+  Credential,
   GitHubAppCredential,
   GitHubAppSettings,
   InstallationTokenRequest,
@@ -80,10 +82,15 @@ function githubApp(name: string, settings: GitHubAppSettings): GitHubAppCredenti
   });
 }
 export function createCredentials(
-  settings: Readonly<Record<string, GitHubAppSettings>>,
+  settings: Readonly<Record<string, CredentialSettings>>,
 ): Credentials {
-  const credentials = new Map(
-    Object.entries(settings).map(([name, value]) => [name, githubApp(name, value)]),
+  const credentials = new Map<string, Credential>(
+    Object.entries(settings).map(([name, value]) => [
+      name,
+      value.kind === "github-app"
+        ? githubApp(name, value)
+        : Object.freeze({ kind: "t3code-token" as const, name, tokenFile: value.tokenFile }),
+    ]),
   );
   return Object.freeze({
     names: Object.freeze([...credentials.keys()].sort()),

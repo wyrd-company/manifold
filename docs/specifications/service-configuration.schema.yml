@@ -37,6 +37,9 @@ properties:
   github:
     $ref: https://manifold.wyrd.company/schemas/github-source-configuration
     default: {}
+  environments:
+    $ref: https://manifold.wyrd.company/schemas/t3code-environments-configuration
+    default: {}
 $defs:
   declared-name:
     description: >-
@@ -58,6 +61,7 @@ $defs:
       kind:
         enum:
           - github-app
+          - t3code-token
     allOf:
       - if:
           properties:
@@ -65,6 +69,12 @@ $defs:
               const: github-app
         then:
           $ref: "#/$defs/github-app-credential"
+      - if:
+          properties:
+            kind:
+              const: t3code-token
+        then:
+          $ref: https://manifold.wyrd.company/schemas/t3code-environments-configuration#/$defs/t3code-token-credential
   github-app-credential:
     description: >-
       A GitHub App installation. The service mints a short-lived installation

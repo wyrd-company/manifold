@@ -2,11 +2,13 @@
 // relationships:
 //   implements: service-configuration
 // ---
+import type { EnvironmentsConfiguration } from "../t3code-source/types.ts";
 import type { GitHubConfiguration } from "../github-source/types.ts";
 import type { ExpressionsConfiguration } from "../blueprint-expressions.ts";
 import type { ComparatorSandboxLimits } from "../comparator-sandbox/index.ts";
 import type { SecretValue } from "./credentials.ts";
 export interface ServiceConfiguration {
+  readonly environments: EnvironmentsConfiguration;
   readonly github: GitHubConfiguration;
   readonly file: string;
   readonly processRepository: ProcessRepositoryConfiguration;
@@ -25,7 +27,13 @@ export interface Credentials {
   readonly names: readonly string[];
   resolve(name: string): Credential;
 }
-export type Credential = GitHubAppCredential;
+export type Credential = GitHubAppCredential | T3CodeTokenCredential;
+export interface T3CodeTokenCredential {
+  readonly kind: "t3code-token";
+  readonly name: string;
+  readonly tokenFile: string;
+}
+export type CredentialSettings = GitHubAppSettings | { kind: "t3code-token"; tokenFile: string };
 export interface GitHubAppCredential {
   readonly kind: "github-app";
   readonly name: string;

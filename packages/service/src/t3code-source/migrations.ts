@@ -1,9 +1,14 @@
--- ---
+// ---
+// relationships:
+//   realizes: t3code-source-database-schema
+// ---
+export const migrations = [
+  String.raw`-- ---
 -- relationships:
 --   realizes: t3code-source-database-schema
 -- ---
 -- SQLite schema of the tables the T3 Code environment source owns in
--- Manifold's database file, migrated under the owner `tthree`.
+-- Manifold's database file, migrated under the owner tthree.
 
 CREATE TABLE t3_environment (
   environment TEXT NOT NULL PRIMARY KEY CHECK (length(environment) > 0),
@@ -22,3 +27,5 @@ CREATE TABLE t3_thread (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX t3_thread_followed ON t3_thread (environment, status);
+`,
+];

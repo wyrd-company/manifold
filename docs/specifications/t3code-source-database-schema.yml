@@ -12,7 +12,7 @@ description: >-
   SQLite database file. `docs/specifications/t3code-source-database-schema.sql`
   is the machine-readable definition: the schema the source's migrations
   produce. The source receives the connection from the store and migrates
-  its tables with `migrate("t3", steps)`, so every table it creates is named
+  its tables with `migrate("tthree", steps)`, so every table it creates is named
   `t3_<name>`.
 
   Environments. `t3_environment` holds one row per environment the source
@@ -42,5 +42,5 @@ validation-criteria: >-
   `sqlite_schema` row whose name starts with `t3_` with the rows the same
   file's statements produce on a second empty database, with each run of
   whitespace in `sql` read as one space; they are equal. After the source
-  starts, `schema_migration` holds the row `('t3', n)`, where n is the number
+  starts, `schema_migration` holds the row `('tthree', n)`, where n is the number
   of the source's migration steps.

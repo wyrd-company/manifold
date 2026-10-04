@@ -296,3 +296,52 @@ test("reports the GitHub schema property and an unreadable hook secret", async (
     await chmod(secret, 0o600);
   }
 });
+test("loads environment defaults and a token file credential", async () => {
+  const { directory, file } = await config({
+    ...minimal,
+    credentials: { reader: { kind: "t3code-token", tokenFile: "token" } },
+    environments: { station: { url: "http://localhost:4321", credential: "reader" } },
+  });
+  await writeFile(join(directory, "token"), "fixture-token");
+  const loaded = await loadServiceConfiguration(file);
+  expect(loaded.environments["station"]).toEqual({
+    url: "http://localhost:4321",
+    credential: "reader",
+    reconnect: { initialMs: 1000, factor: 2, maxMs: 30000, jitter: 0.2 },
+    heartbeat: { intervalMs: 5000, missedPongLimit: 3 },
+    openTimeoutMs: 10000,
+  });
+  expect(loaded.credentials.resolve("reader")).toEqual({
+    kind: "t3code-token",
+    name: "reader",
+    tokenFile: join(directory, "token"),
+  });
+});
+test("reports environment credential, URL and backoff contract failures", async () => {
+  const { file } = await config({
+    ...minimal,
+    environments: {
+      station: {
+        url: "http://user:pass@example.test",
+        credential: "absent",
+        reconnect: { initialMs: 200, maxMs: 100 },
+      },
+    },
+  });
+  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+    issues: expect.arrayContaining([
+      { path: "/environments/station/credential", message: expect.any(String) },
+      { path: "/environments/station/url", message: expect.any(String) },
+      { path: "/environments/station/reconnect/maxMs", message: expect.any(String) },
+    ]),
+  });
+});
+test("validates token file readability through the credential file dispatch", async () => {
+  const { file } = await config({
+    ...minimal,
+    credentials: { reader: { kind: "t3code-token", tokenFile: "absent" } },
+  });
+  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+    issues: [{ path: "/credentials/reader/tokenFile", message: "ENOENT" }],
+  });
+});

@@ -54,6 +54,27 @@ export async function loadServiceConfiguration(file: string) {
       return [owner, Object.freeze({ ...settings, hooks: Object.freeze(resolvedHooks) })] as const;
     }),
   );
+  for (const [name, environment] of Object.entries(configuration.environments)) {
+    const path = `/environments/${name}`;
+    try {
+      const url = new URL(environment.url);
+      if (url.username || url.password)
+        issues.push({ path: `${path}/url`, message: "URL must have no user information" });
+    } catch {
+      issues.push({ path: `${path}/url`, message: "Invalid URL" });
+    }
+    if (environment.reconnect.maxMs < environment.reconnect.initialMs)
+      issues.push({ path: `${path}/reconnect/maxMs`, message: "Must be at least initialMs" });
+    try {
+      if (configuration.credentials.resolve(environment.credential).kind !== "t3code-token")
+        issues.push({ path: `${path}/credential`, message: "Requires a t3code-token credential" });
+    } catch {
+      issues.push({
+        path: `${path}/credential`,
+        message: `Unknown credential: ${environment.credential}`,
+      });
+    }
+  }
   if (issues.length) throw new ServiceConfigurationError(configuration.file, issues);
   return Object.freeze({
     ...configuration,

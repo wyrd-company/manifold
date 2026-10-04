@@ -13,10 +13,15 @@ import {
 } from "@wyrd-company/manifold-shared";
 import { createCredentials } from "./credentials.ts";
 import { ServiceConfigurationError } from "./types.ts";
-import type { ConfigurationIssue, GitHubAppSettings, ServiceConfiguration } from "./types.ts";
+import type { ConfigurationIssue, CredentialSettings, ServiceConfiguration } from "./types.ts";
+
+const credentialFileFields = {
+  "github-app": ["privateKeyFile"],
+  "t3code-token": ["tokenFile"],
+} as const;
 
 type ConfigurationDocument = Omit<ServiceConfiguration, "file" | "credentials"> & {
-  credentials: Record<string, GitHubAppSettings>;
+  credentials: Record<string, CredentialSettings>;
 };
 const ajv = new Ajv2020({ allErrors: true, useDefaults: true });
 for (const schema of serviceConfigurationSchemas) ajv.addSchema(schema);
@@ -91,12 +96,16 @@ export async function loadServiceConfiguration(file: string): Promise<ServiceCon
     issues.push({ path: "/processRepository/url", message: "Invalid URL" });
   }
   for (const [name, settings] of Object.entries(configuration.credentials)) {
-    settings.privateKeyFile = resolve(dirname(file), settings.privateKeyFile);
-    try {
-      await access(settings.privateKeyFile, constants.R_OK);
-      if (!(await stat(settings.privateKeyFile)).isFile()) throw new Error("Not a file");
-    } catch (error) {
-      issues.push({ path: `/credentials/${pointer(name)}/privateKeyFile`, message: code(error) });
+    for (const field of credentialFileFields[settings.kind]) {
+      const files = settings as unknown as Record<string, string>;
+      const path = resolve(dirname(file), files[field]!);
+      files[field] = path;
+      try {
+        await access(path, constants.R_OK);
+        if (!(await stat(path)).isFile()) throw new Error("Not a file");
+      } catch (error) {
+        issues.push({ path: `/credentials/${pointer(name)}/${field}`, message: code(error) });
+      }
     }
   }
   if (issues.length) throw new ServiceConfigurationError(file, issues);

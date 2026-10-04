@@ -11,6 +11,7 @@ export type {
   Credentials,
   Credential,
   GitHubAppCredential,
+  T3CodeTokenCredential,
   InstallationTokenRequest,
   ConfigurationIssue,
 } from "./types.ts";

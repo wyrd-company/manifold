@@ -43,11 +43,13 @@ async function setup() {
       },
     }),
   );
+  const credential = (await loadServiceConfiguration(file)).credentials.resolve("example-app");
+  if (credential.kind !== "github-app") throw new Error("Expected github-app");
   return {
     api,
     directory,
     privateKey,
-    credential: (await loadServiceConfiguration(file)).credentials.resolve("example-app"),
+    credential,
   };
 }
 test("mints repository-scoped installation token and shares token cache across calls", async () => {

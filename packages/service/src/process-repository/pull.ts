@@ -36,6 +36,8 @@ export async function pullRevision(
         ref: `refs/heads/${configuration.branch}`,
         value: previous,
       });
+    if (credential && credential.kind !== "github-app")
+      throw new Error("Requires github-app credential");
     const result = await git.fetch({
       ...objects,
       http: gitHttp(signal),

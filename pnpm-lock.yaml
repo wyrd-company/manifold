@@ -83,6 +83,9 @@ importers:
       '@wyrd-company/manifold-shared':
         specifier: workspace:*
         version: link:../shared
+      '@wyrd-company/t3code-client':
+        specifier: 0.5.0
+        version: 0.5.0
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -108,9 +111,15 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 24.19.0
+      '@types/ws':
+        specifier: ^8.18.2
+        version: 8.18.2
       vite-plus:
         specifier: 'catalog:'
         version: 0.3.3(@types/node@24.19.0)(typescript@6.0.3)(yaml@2.9.1)
+      ws:
+        specifier: ^8.22.0
+        version: 8.22.0
 
   packages/shared:
     dependencies:
@@ -670,6 +679,9 @@ packages:
   '@types/node@24.19.0':
     resolution: {integrity: sha512-zY+5tKxXdhGh1PYI0ac+7juvEu4OI6vWtVVoj5i2m42jxAY1U+zHGt6QCyOFwykdP62sM3MJ9stoYYUw5aCWew==}
 
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
+
   '@vitest/browser-preview@4.1.11':
     resolution: {integrity: sha512-iPKSE6Ibayey6HFgK1V1/aHgyhx7HSRk1YMi+lnBZGmlIiNV5Uc7xRkD9Su8RDylTxDECK23t7kTHdRKoqSYDQ==}
     peerDependencies:
@@ -817,6 +829,10 @@ packages:
     engines: {node: '>=20.0.0'}
     cpu: [x64]
     os: [win32]
+
+  '@wyrd-company/t3code-client@0.5.0':
+    resolution: {integrity: sha512-/byTt11VHV+vvaMcbmNCGL66dMDCgE710WFafPOsXAuZzWdnWQ6teqf6mgq8Cn6FAjfKjVOcgsDcymZU73AQSw==}
+    engines: {node: '>=22.16'}
 
   '@yuku-codegen/binding-android-arm64@0.9.5':
     resolution: {integrity: sha512-jrOY5WM+AaAqkv51fHP1x28ifto4WgcZVzodLUyMU1jMWn5Sq+VciRdk/n8E0Ey5w4p4cWWE+m5GfXWOYh7Kzw==}
@@ -1582,6 +1598,9 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+
 snapshots:
 
   '@babel/code-frame@7.29.7':
@@ -1960,6 +1979,10 @@ snapshots:
     dependencies:
       undici-types: 7.24.6
 
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 24.19.0
+
   '@vitest/browser-preview@4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.19.0)(typescript@6.0.3)(yaml@2.9.1))(vitest@4.1.11)':
     dependencies:
       '@testing-library/dom': 10.4.2
@@ -2075,6 +2098,10 @@ snapshots:
 
   '@voidzero-dev/vite-plus-win32-x64-msvc@0.3.3':
     optional: true
+
+  '@wyrd-company/t3code-client@0.5.0':
+    dependencies:
+      zod: 4.6.5
 
   '@yuku-codegen/binding-android-arm64@0.9.5':
     optional: true
@@ -2767,3 +2794,5 @@ snapshots:
       '@yuku-parser/binding-win32-x64': 0.9.5
 
   zod@3.25.76: {}
+
+  zod@4.6.5: {}

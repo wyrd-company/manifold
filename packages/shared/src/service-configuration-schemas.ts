@@ -3,6 +3,7 @@
 //   implements: service-configuration
 // ---
 /* eslint-disable unicorn/no-thenable -- JSON Schema uses the then keyword. */
+import { t3codeEnvironmentsConfigurationSchema } from "./t3code-environments-configuration-schema.ts";
 import { expressionsConfigurationSchema } from "./expressions-configuration-schema.ts";
 import { githubSourceConfigurationSchema } from "./github-source-configuration-schema.ts";
 // Generated from the specification assets; agreement is tested.
@@ -43,6 +44,10 @@ export const serviceConfigurationSchema = {
       $ref: "https://manifold.wyrd.company/schemas/github-source-configuration",
       default: {},
     },
+    environments: {
+      $ref: "https://manifold.wyrd.company/schemas/t3code-environments-configuration",
+      default: {},
+    },
   },
   $defs: {
     "declared-name": {
@@ -59,7 +64,7 @@ export const serviceConfigurationSchema = {
       required: ["kind"],
       properties: {
         kind: {
-          enum: ["github-app"],
+          enum: ["github-app", "t3code-token"],
         },
       },
       allOf: [
@@ -73,6 +78,18 @@ export const serviceConfigurationSchema = {
           },
           then: {
             $ref: "#/$defs/github-app-credential",
+          },
+        },
+        {
+          if: {
+            properties: {
+              kind: {
+                const: "t3code-token",
+              },
+            },
+          },
+          then: {
+            $ref: "https://manifold.wyrd.company/schemas/t3code-environments-configuration#/$defs/t3code-token-credential",
           },
         },
       ],
@@ -185,5 +202,6 @@ export const serviceConfigurationSchemas = [
   comparatorSandboxConfigurationSchema,
   expressionsConfigurationSchema,
   githubSourceConfigurationSchema,
+  t3codeEnvironmentsConfigurationSchema,
 ];
 export const serviceConfigurationSchemaId = serviceConfigurationSchema.$id;

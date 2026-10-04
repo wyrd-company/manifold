@@ -122,9 +122,10 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
       return await Promise.race([
         aborted,
         (async () => {
-          const token = await options.credentials
-            .resolve(entry.credential)
-            .installationToken({ signal: active.signal });
+          const credential = options.credentials.resolve(entry.credential);
+          if (credential.kind !== "github-app")
+            throw new GitHubSourceError("api", "Requires github-app credential");
+          const token = await credential.installationToken({ signal: active.signal });
           if (active.signal.aborted) throw new GitHubSourceError("api", "GitHub request aborted");
           return work(token.reveal(), active.signal);
         })(),
