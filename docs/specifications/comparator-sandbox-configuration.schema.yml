@@ -1,3 +1,9 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: comparator-sandbox-configuration
+# ---
 $schema: https://json-schema.org/draft/2020-12/schema
 title: Comparator sandbox configuration
 description: The value of the `comparatorSandbox` key of the service configuration.
@@ -12,9 +18,9 @@ properties:
   memoryLimitMiB:
     description: >-
       QuickJS runtime memory limit in mebibytes. Linear memory per loaded
-      comparator is capped at twice this value, within the 4 GiB a 32-bit
-      wasm memory can address.
+      comparator is capped at twice this value, which must lie within the
+      16 MiB to 2 GiB memory the QuickJS wasm binary imports.
     type: integer
-    minimum: 1
-    maximum: 2047
+    minimum: 8
+    maximum: 1024
     default: 32

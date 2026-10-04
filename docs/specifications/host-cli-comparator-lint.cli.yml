@@ -1,3 +1,9 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: host-cli-comparator-lint
+# ---
 $schema: https://commonclischema.org/draft/2026-04/schema
 tool:
   name: manifold-host

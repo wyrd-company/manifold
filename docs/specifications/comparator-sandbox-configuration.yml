@@ -11,12 +11,15 @@ description: >-
   machine-readable definition of the key's value.
 
   `timeoutMs` is the per-evaluation timeout in milliseconds. An evaluation
-  whose duration exceeds it fails with kind `timeout`. Default 100.
+  whose duration exceeds it fails with kind `timeout`. It is an integer of
+  at least 1. Default 100.
 
   `memoryLimitMiB` is the QuickJS runtime memory limit in mebibytes. An
   evaluation that exceeds it fails with kind `memory`. Each loaded
   comparator's linear memory has a maximum of twice this value, which is the
-  most host memory one loaded comparator holds. Default 32.
+  most host memory one loaded comparator holds. It is an integer from 8 to
+  1024, so that the linear memory maximum lies within the 16 MiB to 2 GiB
+  memory the QuickJS wasm binary imports. Default 32.
 
   The key and each property are optional; an absent value takes its
   default. The service reads the key when it starts, and the limits apply to

@@ -124,21 +124,34 @@ proposed-design:
     runtime limit trips before linear memory can fail to grow and the
     engine's own allocations have headroom. That maximum is the host bound
     for one loaded comparator: linear memory never shrinks, so a loaded
-    comparator holds the most it has used until it is disposed.
+    comparator holds the most it has used until it is disposed. The wasm
+    binary imports its memory with a minimum of 256 pages (16 MiB) and a
+    maximum of 32768 pages (2 GiB), and a memory links only between those
+    bounds, so `memoryLimitMiB` is an integer from 8 to 1024. `timeoutMs` is
+    an integer of at least 1. `createComparatorSandbox` throws a
+    `RangeError` naming the limit for a value outside its range, because the
+    service has already validated its configuration against
+    `comparator-sandbox-configuration`.
   load: >-
     `createComparatorSandbox` compiles the QuickJS wasm binary of
     `@jitl/quickjs-wasmfile-release-sync` to one `WebAssembly.Module` and
     keeps it. `load` does, in order: transpile, instantiate, probe.
     Transpile calls `ts.transpileModule` with `target` ES2022, `module`
     ESNext, and `reportDiagnostics`; any diagnostic fails the load with kind
-    `transpile`, naming the line and column. Instantiate builds a QuickJS
+    `transpile`, naming the line and column. Transpile then walks the source
+    file's syntax tree and fails the load with kind `module`, naming the line
+    and column, at the first module reference that survives transpiling: an
+    import declaration that is not type-only, an import-equals declaration,
+    an export declaration with a module specifier, an `import()` call, or
+    `import.meta`. A type-only import, and an import whose every binding is
+    type-only, passes, because transpiling removes it. Instantiate builds a QuickJS
     module from that compiled module and a new `WebAssembly.Memory` with the
     variant's minimum as `initial` and the limit above as `maximum`, through
     the `wasmModule` and `wasmMemory` variant options of
     `quickjs-emscripten-core`. Probe runs one evaluation scope, described
     below, that evaluates the module and checks that its default export is a
-    function, without calling it; a module that throws, imports, awaits at
-    the top level, or has no default function fails the load with kind
+    function, without calling it; a module that throws, awaits at the top
+    level, or has no default function fails the load with kind
     `module`, and a probe stopped by a limit fails with that limit's kind. A
     failed load disposes its instance.
   evaluation-scope: >-
@@ -185,8 +198,11 @@ proposed-design:
     The context has the ECMAScript intrinsics QuickJS provides and nothing
     else: no `require`, `process`, `fetch`, timers, `console`, or
     `performance`, which QuickJS does not define, and no `Date`, which the
-    context omits. `Math.random` throws. A static or dynamic `import` fails
-    because the runtime has no module loader. The input is copied in as
+    context omits. `Math.random` throws. An import written in the source
+    fails the load, per the load step. An `import()` that the comparator
+    builds at run time through `eval` reaches nothing: the runtime has no
+    module loader, and the scope never runs pending jobs, so the promise it
+    returns never settles inside the evaluation. The input is copied in as
     JSON, so the comparator holds no reference to a host object. The seed
     and the values age is derived from reach the comparator only as input:
     age is a number in the input that the gate computes.
@@ -325,8 +341,13 @@ proposed-design:
     For each, the evaluation returns within one second, the host's
     `process.memoryUsage().rss` grows by less than twice the memory limit
     plus 64 MiB, and the next evaluation of a well-behaved comparator on the
-    same sandbox succeeds. World access: a static import and a dynamic
-    import each fail the load with `module`; a call to `require`, `fetch`,
+    same sandbox succeeds. Configuration: `memoryLimitMiB` 8 and 1024 each
+    load and evaluate a well-behaved comparator, and 7, 1025, and a
+    `timeoutMs` of 0 each make `createComparatorSandbox` throw a
+    `RangeError`. World access: a static import, a re-export from a module,
+    a top-level `import("external")`, and an `import("external")` inside the
+    comparator's body each fail the load with `module`, and a type-only
+    import of `manifold:comparator` loads; a call to `require`, `fetch`,
     `process.env`, `setTimeout`, `Date.now`, `new Date()`, and `Math.random`
     each returns `thrown`. Determinism: two evaluations with one seed return
     the same selection and draws, and another seed returns other draws. State:
@@ -334,7 +355,16 @@ proposed-design:
     Failures: a throw returns `thrown`; returning `undefined`, a promise, an
     unknown task id, or a reservation with a negative amount returns
     `invalid-output`; a syntax error fails the load with `transpile`; each is
-    followed by a successful evaluation. Lint tests in
+    followed by a successful evaluation. Caller: a test caller stands in for
+    the gate. It evaluates a sequence of inputs through one loaded comparator
+    whose behavior each input selects (throw, infinite loop, hoarding
+    allocation, then a selection), appends each `ComparatorEvaluation` to a
+    record list, and moves to the next input without catching anything. The
+    test asserts that the caller completes, that the list holds `thrown`,
+    `timeout`, `memory`, and then the selection in order, each with its
+    `durationMs`, and that the selection is the one the last input
+    determines. The gate's own record of an evaluation, with its input,
+    output, and seed, is defined by `gates` and `expressions`. Lint tests in
     `packages/host-cli/src/comparator-lint/` drive only
     `createComparatorLinter` and `lint`: a well-formed comparator returns no
     diagnostic; a wrong signature and an async comparator return TS2322; a

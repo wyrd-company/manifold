@@ -1,3 +1,9 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: comparator-contract
+# ---
 $schema: https://json-schema.org/draft/2020-12/schema
 title: Comparator contract
 description: >-
