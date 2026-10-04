@@ -34,11 +34,11 @@ response-strategy: mitigate
 # column bindings, whole-input access, blank input matching, nested object
 # outputs, parse rejection, conservative AST warnings, and structured failing
 # cell traces supplied by the host. All 69 tests and the spike typecheck pass.
-# Open gap: the explainability design attributes rule and column to the native
-# engine trace, which carries neither. Host enrichment proves a workaround, but
-# the design contract still needs to name that responsibility.
-# Residual limits: never-boolean classification is conservative; output blanks
-# and no-result values are omitted by the spike; Zen error-envelope enrichment
-# needs an upgrade contract test. Production adoption remains implementation work.
+# The decision-models specification names host enrichment as the source of
+# rule and column in a failing cell's trace, and fixes blank and no-result
+# output cells as writing nothing.
+# Residual limits: never-boolean classification is conservative; Zen
+# error-envelope enrichment needs an upgrade contract test. Production
+# adoption remains implementation work.
 
 status: open

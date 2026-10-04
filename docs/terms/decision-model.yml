@@ -1,0 +1,9 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - decision-models
+title: Decision model
+description: >-
+  A GoRules JDM graph in the process repository whose tables and expressions are JSONata, evaluated by the Zen engine.

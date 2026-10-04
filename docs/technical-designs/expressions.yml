@@ -98,17 +98,26 @@ proposed-design:
     Manifold ships two custom Zen node types, a decision table and an
     expression node, with JSONata cells and expressions, built on the
     editor's exported table component and evaluated by a host handler beside
-    the engine. Input, output, switch, and graph stay stock. Hit policy and
-    pass-through are controls on the node card. The editor version is pinned
-    and a browser check guards the undocumented behaviour the table relies
-    on.
+    the engine. Input, output, switch, and graph stay stock. Hit policy,
+    pass-through, input field, output path, and loop mode are controls on the
+    node card. A setting that reads a value is JSONata; a setting that names a
+    place is a dotted path. The service evaluates a set of models through one
+    Zen engine whose custom handler runs the two kinds over JSONata compiled
+    once at load, and the lint in `packages/shared` checks a model without
+    evaluating it. The engine and editor versions are pinned; a contract test
+    guards the engine's error envelope and a browser check guards the
+    undocumented editor behaviour the table relies on. The specification
+    `decision-models` defines the node configurations, the evaluation, the
+    record, and the lint.
   cell-semantics: >-
     An input cell is a JSONata expression evaluated with the column's value
     bound as `$` and the whole input bound as `$input`; an empty cell matches
     anything; a cell matches when its result is true. An output cell is a
     JSONata expression evaluated against the input whose result is the
-    column's value. The lint rejects a cell that does not parse and warns on a
-    cell whose result can never be boolean.
+    column's value; a blank output cell or one with no result writes nothing.
+    The lint rejects a cell that does not parse and warns on an input cell
+    whose result is provably never boolean from the shape of its syntax tree;
+    a cell it cannot classify is left to strict matching at run time.
   comparator-sandbox: >-
     A comparator is a TypeScript module exporting one function typed by a
     declaration file Manifold ships. The service transpiles it with the
@@ -127,4 +136,8 @@ proposed-design:
   explainability: >-
     Each comparator evaluation is recorded with its input, output, and seed.
     Each decision model evaluation is recorded with its input and the trace
-    the engine returns, naming the node, rule, and column of any failing cell.
+    the engine returns. The engine's trace names a failing node but not its
+    rule or column, so the handler carries the failing cell's location
+    through the engine's error, and the service writes it into the failing
+    node's trace, so the record names the node, rule, and column of any
+    failing cell.

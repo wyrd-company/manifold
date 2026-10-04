@@ -66,12 +66,14 @@ We need to be on the same page with terminology. When communicating, use this la
 - **callback** an imperative actor that runs until its state exits, receiving and sending events.
 - **capacity** what an account can spend in a window.
 - **ceiling** the most of its parent's limit a portfolio item may use, its allocation and borrowed unallocated remainder together.
+- **cell** the JSONata expression at one rule and one column of a decision table.
 - **child state machine** a blueprint invoked or spawned by another state machine actor, for work the parent owns.
 - **client** means the web, desktop, or mobile UI for T3Code.
 - **comparator** the user's function that picks which task in a gate's population proceeds next.
 - **console** the web user interface to Manifold
 - **credit** a ledger entry that adds to an account's capacity for a window.
 - **deadline** a time at which an actor in a state receives an event.
+- **decision model** a GoRules JDM graph in the process repository whose tables and expressions are JSONata, evaluated by the Zen engine.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
 - **event match** a JSONata expression over an event that decides whether a transition takes it.

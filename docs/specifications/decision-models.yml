@@ -1,0 +1,248 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design;
+# `references` is the best fit for the design this specification realizes.
+relationships:
+  references:
+    - expressions
+    - blueprint-expressions
+    - zen-jsonata
+  mitigates:
+    - decision-table-cell-semantics-unproven
+description: |-
+  Defines what a Manifold decision model is, how the JSONata decision table
+  and JSONata expression node evaluate, what an evaluation returns and
+  records, how a failure is reported, and what the decision model lint
+  checks. `docs/specifications/decision-models.schema.yml` is the
+  machine-readable definition of the decision model graph, both custom node
+  configurations, the finding, the error detail, and the evaluation record.
+  The engine is `@gorules/zen-engine`, pinned to an exact version. JSONata is
+  the primitive `packages/shared` exports, so cells, expression nodes, and
+  blueprint expressions share one JSONata version and one error shape.
+
+  Decision model. A decision model is a GoRules JDM graph in a JSON file,
+  identified by a key the caller supplies, such as its path in the process
+  repository. Its nodes are of five types: `inputNode`, `outputNode`,
+  `switchNode`, and `decisionNode` are stock JDM; `customNode` carries one of
+  two kinds in `content.kind`, `jsonataDecisionTable` or `jsonataExpression`,
+  with its configuration in `content.config`. A `decisionNode` names another
+  model by its key in `content.key`. The models evaluated together form a
+  set, and every key a `decisionNode` names is in the set.
+
+  ```json
+  {
+    "id": "c3a1",
+    "name": "shipping",
+    "type": "customNode",
+    "content": {
+      "kind": "jsonataDecisionTable",
+      "config": {
+        "hitPolicy": "first",
+        "inputs": [{ "id": "weight", "name": "Weight", "field": "parcel.kg" }],
+        "outputs": [{ "id": "rate", "name": "Rate", "field": "quote.rate" }],
+        "rules": [
+          { "_id": "heavy", "weight": "$ > 20", "rate": "parcel.kg * 1.5" },
+          { "_id": "any", "weight": "", "rate": "10" }
+        ]
+      }
+    }
+  }
+  ```
+
+  Reads and writes. A setting that reads a value, an input column's
+  `field`, is a JSONata expression over the node input. A setting that names
+  where a value goes or comes from by path, an output column's `field`,
+  `inputField`, and `outputPath`, is a dotted path: property names joined by
+  `.`. Writing at a dotted path creates each missing parent object.
+
+  Node input. Zen gives a custom node the upstream output with a `$nodes`
+  property holding the outputs of earlier nodes. The node removes `$nodes`;
+  what remains is the node's whole input. When `inputField` is present, the
+  node input is the value at that path of the whole input, or `null` when the
+  path is absent; otherwise the node input is the whole input. In `single`
+  mode the node evaluates once over the node input. In `loop` mode the node
+  input is an array and the node evaluates once per element, with that
+  element as the node input; the node's result is the array of per-element
+  results in order. A `loop` node whose value at `inputField` is not an array
+  fails with a `result` error.
+
+  Bindings. Every expression a custom node evaluates has three bindings
+  beside `$`: `$input` is the node input, `$nodes` is the `$nodes` value Zen
+  supplied, and JSONata's own functions are available unchanged.
+
+  - An input column `field`: `$` is the node input. Its result is the column
+    value. An absent or blank `field` makes the column value the node input.
+  - An input cell: `$` is the column value. A blank cell matches without
+    being evaluated. A non-blank cell matches when its result is exactly
+    `true`; any other result, including a truthy value and no result, does
+    not match.
+  - An output cell: `$` is the node input. Its result is the column's value.
+  - An expression node's `expression`: `$` is the node input. Its result is
+    the node's result.
+
+  A cell is blank when its text is absent, `null`, empty, or whitespace
+  only. Zen gives an explicitly `undefined` cell property to the handler as
+  `null`, so `null` is blank.
+
+  Decision table. A rule matches when every input cell of the rule matches;
+  a rule with no input columns matches. Rules are tried in `rules` order, and
+  within a rule input cells in `inputs` order; a rule stops at its first cell
+  that does not match. Under `first` the table's result is the output of the
+  first matching rule, or `{}` when none matches. Under `collect` it is the
+  array of the outputs of every matching rule in order, or `[]`. Output cells
+  are evaluated only for a matching rule. A rule's output is an object built
+  by writing each output column's value at its `field`, in `outputs` order.
+  A blank output cell and an output cell with no result write nothing and
+  create no parent object. A `null` result writes `null`.
+
+  Expression node. The node's result is the expression's result. No result
+  gives `{}`.
+
+  Node output. A function result from an output cell or an expression node
+  fails with a `result` error. When `outputPath` is present, the node output
+  is a new object with the result written at that path; otherwise it is the
+  result. When `passThrough` is `true`, the node output is the whole input
+  deep-merged with the node output: objects merge property by property and
+  any other value from the node output replaces. Pass-through on a node
+  output that is not an object fails with a `result` error.
+
+  Trace. Each custom node returns `traceData`. A decision table returns, per
+  evaluation, one match object or `null` under `first`, or an array of match
+  objects under `collect`; a match object is `{ index, rule: { _id },
+  reference_map }`, where `index` is the rule's position and `reference_map`
+  maps each input column id to its column value. In `loop` mode `traceData`
+  is the array of per-element trace data. An expression node returns
+  `{ "expression": <source> }`.
+
+  Locations. Every expression has a location, passed to `compileExpression`
+  so each error it yields names it: `<model>#/nodes/<nodeId>` followed by
+  `/rules/<ruleId>/<columnId>` for a cell, `/inputs/<columnId>/field` for an
+  input column field, and `/expression` for an expression node. Each segment
+  after `#` is escaped as in RFC 6901 (`~` as `~0`, `/` as `~1`).
+
+  Shared lint. `packages/shared` exports the lint:
+
+  ```ts
+  function lintDecisionModel(model: unknown, key: string): readonly DecisionModelFinding[];
+  ```
+
+  `DecisionModelFinding` is `#/$defs/decision-model-finding`. The lint is
+  synchronous and pure: it reads no file, network, clock, random source, or
+  environment, evaluates no expression, and gives the same findings in the
+  same order for the same model. It checks, in this order:
+
+  1. `structure`: the model validates against `#/$defs/decision-model`. A
+     node whose `type` or custom `kind` is outside the five types and two
+     kinds is `node-unsupported`, not `structure`. When any `structure`
+     finding exists the lint stops after this step.
+  2. Per node in `nodes` order: `duplicate-id` for a node id seen before;
+     for a custom node, `loop-needs-input-field`, and
+     `pass-through-needs-object` for `passThrough` without `outputPath` on a
+     `collect` table or any node in `loop` mode.
+  3. Per JSONata decision table: `duplicate-id` for a column id or rule id
+     seen before in that table, and `output-field-conflict` for an output
+     field equal to or a prefix, at a `.` boundary, of another.
+  4. Per expression, in node order, then input column fields in `inputs`
+     order, then cells in `rules` order and within a rule `inputs` then
+     `outputs` order: `syntax` when `compileExpression` throws, carrying the
+     JSONata `code` and `position`; otherwise, for an input cell only,
+     `never-boolean` when its AST is one of the shapes below.
+
+  `syntax`, `structure`, `node-unsupported`, `duplicate-id`,
+  `output-field-conflict`, `pass-through-needs-object`, and
+  `loop-needs-input-field` are errors. `never-boolean` is a warning. Every
+  finding names the model, and the node, rule, column, and location that
+  apply.
+
+  Never-boolean. The lint reads the AST of the compiled expression and
+  classifies it without evaluating it. An expression is never-boolean when
+  its AST root, with no predicate, stage, group, or focus attached, is:
+
+  - a number, string, or `null` literal;
+  - a binary `+`, `-`, `*`, `/`, `%`, `&`, or `..` operator;
+  - a unary minus;
+  - an array constructor or an object constructor;
+  - a block whose last expression is never-boolean;
+  - a condition whose `then` branch is never-boolean and whose `else` branch
+    is absent or never-boolean.
+
+  Every other expression, including a variable, a path, a function call, a
+  comparison, and any node with a predicate or stage, is not classified and
+  gives no warning; strict matching decides it at run time. `[true][0]` is
+  not classified, because its predicate can select a boolean.
+
+  Service seam. `packages/service` exports one function:
+
+  ```ts
+  function createDecisionModels(models: Readonly<Record<string, unknown>>): DecisionModels;
+
+  interface DecisionModels {
+    readonly findings: readonly DecisionModelFinding[]; // the warnings of every model
+    evaluate(key: string, input: Record<string, unknown>): Promise<DecisionModelEvaluation>;
+    dispose(): void;
+  }
+  ```
+
+  `models` maps each key to a parsed JDM file. `DecisionModelEvaluation` is
+  `#/$defs/decision-model-evaluation`. Creating lints every model in key
+  order, adds a `model-missing` error for each `decisionNode` whose key is
+  not in `models`, and throws a `DecisionModelLoadError` carrying every error
+  finding when any exists. Otherwise it compiles every expression once,
+  keeps the compiled forms by location, and builds one Zen engine whose
+  loader serves the set and whose custom handler evaluates the two custom
+  kinds. The handler reads which model a node belongs to from a `$model`
+  property the service adds to each custom node's configuration in the copy
+  it gives the loader; the caller's objects are not changed.
+
+  `evaluate` runs the model with the engine's trace on. It resolves to a
+  `result` record with the model's result and the full trace, or to an
+  `error` record with the error detail and the partial trace; it rejects only
+  for a key that is not in the set. `dispose` releases the engine.
+
+  Errors. `DecisionModelErrorDetail` is
+  `#/$defs/decision-model-error-detail`. A cell, field, or expression that
+  throws stops the evaluation: no later rule, fallback rule, or downstream
+  node runs. Its detail has kind `evaluation`, the `ExpressionErrorDetail`
+  fields `evaluateExpression` gave, and the model, node, rule, and column.
+  A `result` failure names the model and node, and the rule and column when
+  an output cell gave it. The handler throws an error whose message is the
+  detail as JSON. Zen rejects with an `Error` whose message is a JSON
+  envelope `{ nodeId, source, type: "NodeError", trace }`, where `source` is
+  the handler's message and `trace` is the partial trace. The service parses
+  the envelope, parses the detail from `source`, writes the detail into the
+  failing node's `traceData.error` in the partial trace, and resolves the
+  `error` record. A rejection that is not a `NodeError` envelope from a
+  Manifold node is an `engine` error with the engine's message and the
+  partial trace when the envelope carries one, or `{}`.
+
+  Determinism. Evaluation writes nothing: `evaluate` over the same input
+  gives the same record, except through JSONata's clock and random
+  functions and the `performance` timings. A `DecisionModels` instance holds
+  only what it derived from `models`, so a restarted service rebuilds it
+  from the process repository and a repeated evaluation after a crash
+  evaluates afresh.
+format: json-schema
+validation-criteria: >-
+  Every fixture model, finding, error detail, and evaluation record
+  validates against `docs/specifications/decision-models.schema.yml`. The
+  service tests evaluate a model that joins input, a JSONata decision table,
+  a JSONata expression node, a stock switch, and output through
+  `createDecisionModels`. Table-driven tests run, under both `first` and
+  `collect`, an input cell for each result in `true`, `false`, `null`, `0`,
+  `""`, no result, `[1,2]`, `[]`, `{"x":1}`, `7`, and `"sample"`, with the
+  column value set equal to the result, and assert that only `true`
+  matches; a column value that is present and one that is missing, read
+  with `$` and `$input`; blank input cells as empty, whitespace, `null`, and
+  absent, each matching present and missing values; an output cell writing a
+  nested object, a blank output cell, and an output cell with no result.
+  They cover `passThrough`, `inputField`, `outputPath`, and `loop` mode, a
+  `decisionNode` into a second model, and a `$nodes` reference. A failing
+  input cell and a failing output cell, each followed by a catch-all rule,
+  resolve an `error` record naming node, rule, and column, with that detail
+  in the failing node's `traceData.error`, under both policies. A contract
+  test asserts the `NodeError` envelope shape and the null native
+  `traceData` of a failing custom node at the pinned engine version. The
+  lint tests in `packages/shared` cover each finding kind, a `syntax`
+  finding in an input cell and in an output cell, each never-boolean shape,
+  and the expressions `true`, `false`, `$ > 3`, `$`, `item.value`,
+  `$custom()`, `$number($)`, `true ? true : 3`, and `[true][0]` giving no
+  warning. Fixtures use a domain unrelated to Manifold.
