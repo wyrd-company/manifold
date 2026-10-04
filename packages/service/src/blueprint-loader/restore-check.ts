@@ -2,6 +2,7 @@
 // relationships:
 //   implements: [blueprint-loader, durable-event-delivery]
 // ---
+import { unavailableChildren } from "./children.ts";
 import type { AnyStateMachine, Snapshot } from "xstate";
 export type RestoreCheck =
   | { readonly ok: true }
@@ -75,7 +76,7 @@ export function checkRestore(machine: AnyStateMachine, snapshot: Snapshot<unknow
         typeof src === "string" && Object.hasOwn(machine.implementations.actors, src)
           ? machine.implementations.actors[src]
           : undefined;
-      if (!logic)
+      if (!logic || unavailableChildren.has(logic))
         implementations.push({
           kind: "implementation-missing",
           childId,

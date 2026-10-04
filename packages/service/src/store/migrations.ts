@@ -54,4 +54,21 @@ CREATE TABLE store_deadline (
 
 CREATE INDEX store_deadline_due ON store_deadline (fire_at, actor_id) WHERE fired_at IS NULL;
 `,
+  `ALTER TABLE store_deadline RENAME TO store_deadline_old;
+DROP INDEX store_deadline_due;
+CREATE TABLE store_deadline (
+  deadline_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+  state_path TEXT NOT NULL,
+  event_name TEXT NOT NULL CHECK (length(event_name) > 0),
+  fire_at INTEGER NOT NULL,
+  entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
+  fired_at INTEGER,
+  UNIQUE (actor_id, state_path, event_name)
+) STRICT;
+INSERT INTO store_deadline SELECT * FROM store_deadline_old;
+UPDATE sqlite_sequence SET seq = max(seq, coalesce((SELECT seq FROM sqlite_sequence WHERE name = 'store_deadline_old'), 0)) WHERE name = 'store_deadline';
+INSERT INTO sqlite_sequence(name, seq) SELECT 'store_deadline', seq FROM sqlite_sequence WHERE name = 'store_deadline_old' AND NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'store_deadline');
+DROP TABLE store_deadline_old;
+CREATE INDEX store_deadline_due ON store_deadline (fire_at, actor_id) WHERE fired_at IS NULL;`,
 ];

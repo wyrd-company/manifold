@@ -242,10 +242,10 @@ states:
           target: warming
   boiling:
     type: final
-    output: { type: expression.map, params: { expression: 'context' } }
+    output: { type: expression.map, params: { expression: '$sift(context, function($value, $key) { $key != "manifold" })' } }
   warming:
     type: final
-    output: { type: expression.map, params: { expression: 'context' } }
+    output: { type: expression.map, params: { expression: '$sift(context, function($value, $key) { $key != "manifold" })' } }
 `),
     schemas: {
       input: reading,

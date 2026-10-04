@@ -102,6 +102,8 @@ export interface DeliveryTarget {
   readonly actorId: string;
   send(row: InboxRow): void;
   persist(): Omit<SnapshotWrite, "actorId" | "eventId">;
+  saved?(write: SnapshotWrite): void;
+  stop?(): void;
 }
 
 export type DeliveryOutcome = "delivered" | "already-consumed" | "errored";

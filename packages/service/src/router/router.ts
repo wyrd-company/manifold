@@ -71,6 +71,9 @@ export function startRouter({
             if (write) update(write);
             target.send(row);
           },
+          saved(saved) {
+            host.saving?.(saved);
+          },
           persist() {
             const persisted = target.persist();
             write = { ...persisted, actorId };
@@ -83,6 +86,13 @@ export function startRouter({
         delivering.delete(actorId);
       }
     }
+  }
+  function save(write: SnapshotWrite) {
+    return store.connection.transaction(() => {
+      const outcome = store.saveSnapshot(write);
+      if (outcome === "saved") host.saving?.(write);
+      return outcome;
+    });
   }
   const router: Router = {
     publish(event) {
@@ -108,7 +118,7 @@ export function startRouter({
     attach(target) {
       requireRunning();
       const write = { ...target.persist(), actorId: target.actorId };
-      if (store.saveSnapshot(write) === "errored") {
+      if (save(write) === "errored") {
         hold(target.actorId, "Actor returned an errored snapshot");
         return;
       }
@@ -121,10 +131,9 @@ export function startRouter({
       requireRunning();
       if (delivering.has(actorId)) return;
       const target = targets.get(actorId);
-      if (!target) throw new TypeError(`Actor ${actorId} is not loaded`);
+      if (!target) return;
       const write = { ...target.persist(), actorId };
-      if (store.saveSnapshot(write) === "errored")
-        hold(actorId, "Actor returned an errored snapshot");
+      if (save(write) === "errored") hold(actorId, "Actor returned an errored snapshot");
       else update(write);
       if (!resuming) deadlines.arm();
     },
@@ -135,10 +144,12 @@ export function startRouter({
       immediate = undefined;
       scheduled.clear();
       deadlines.stop();
+      for (const target of targets.values()) target.stop?.();
       targets.clear();
     },
   };
   try {
+    host.connect?.(router);
     const snapshots = store.activeSnapshots();
     for (const stored of snapshots) update(stored);
     for (const stored of snapshots) {

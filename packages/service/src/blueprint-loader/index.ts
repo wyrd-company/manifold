@@ -5,6 +5,7 @@
 export { createBlueprintLoader } from "./loader.ts";
 export type {
   BlueprintLoaderOptions,
+  StateEntry,
   ImplementationRegistry,
   BlueprintLoader,
   RevisionLoad,

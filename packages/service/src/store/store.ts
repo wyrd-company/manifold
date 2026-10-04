@@ -71,7 +71,7 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         }
         const paths = statePaths(snapshot.value);
         for (const deadline of write.deadlines ?? [])
-          if (!paths.includes(deadline.statePath))
+          if (deadline.statePath !== "" && !paths.includes(deadline.statePath))
             throw new RangeError(`Deadline state ${deadline.statePath} is not active`);
         database
           .prepare(
@@ -81,11 +81,20 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         database.prepare("DELETE FROM store_snapshot_state WHERE actor_id = ?").run(actorId);
         const insertState = database.prepare("INSERT INTO store_snapshot_state VALUES (?, ?, ?)");
         for (const path of paths) insertState.run(actorId, machine, path);
-        database
-          .prepare(
-            "DELETE FROM store_deadline WHERE actor_id = ? AND state_path NOT IN (SELECT state_path FROM store_snapshot_state WHERE actor_id = ?)",
-          )
-          .run(actorId, actorId);
+        const arms = new Set(
+          (write.deadlines ?? []).map((arm) =>
+            JSON.stringify([arm.statePath, arm.eventName, arm.entryId]),
+          ),
+        );
+        for (const row of database
+          .prepare("SELECT * FROM store_deadline WHERE actor_id = ?")
+          .all(actorId)) {
+          const deadline = readDeadline(row);
+          if (!arms.has(JSON.stringify([deadline.statePath, deadline.eventName, deadline.entryId])))
+            database
+              .prepare("DELETE FROM store_deadline WHERE deadline_id = ?")
+              .run(deadline.deadlineId);
+        }
         for (const deadline of write.deadlines ?? []) {
           database
             .prepare(
@@ -189,6 +198,7 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
       }
       connection.transaction(() => {
         store.saveSnapshot(write);
+        target.saved?.(write);
         probe?.("saved", row);
         store.markConsumed(row.actorId, row.eventId);
       });

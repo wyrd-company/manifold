@@ -183,7 +183,7 @@ describe("schema boundary and event topology regressions", () => {
           invoke: {
             id: "prep",
             src: "worker",
-            input: ref("expression.map", "context"),
+            input: ref("expression.map", '{"count": context.count}'),
             onDone: "finished",
           },
         },
@@ -303,7 +303,7 @@ describe("schema boundary and event topology regressions", () => {
       initial: "ready",
       states: {
         ready: { on: { "parcel.scan": "done" } },
-        done: { type: "final", output: ref("expression.map", "context") },
+        done: { type: "final", output: ref("expression.map", '{"count": context.count}') },
       },
     };
     expect(await lintBlueprintExpressions({ machine: config, schemas })).toMatchObject([
@@ -502,4 +502,45 @@ it("keeps an event schema's reference to its context schema when compiling a res
     events: [{ type: "sample", schema: { $ref: "https://example.invalid/context" } }],
   });
   expect(check(true, {})).toBe(true);
+});
+
+it("rejects identity assignments and permits identity beside a closed context schema", async () => {
+  expect(
+    await lintBlueprintExpressions({ machine: machine('{"manifold": {}}'), schemas }),
+  ).toMatchObject([{ kind: "result" }, { kind: "result" }, { kind: "result" }, { kind: "result" }]);
+  const blueprint = { machine: machine('{"count": event.count}'), schemas };
+  const site = collectExpressionSites(blueprint)[0]!;
+  const { compileExpressionResult } = await import("./expression-results.ts");
+  expect(
+    compileExpressionResult(site)({ count: 4 }, { count: 2, manifold: { issue: "parcel" } }),
+  ).toEqual({ count: 4, manifold: { issue: "parcel" } });
+});
+
+it("samples identity as present with fields and present with no fields", async () => {
+  const blueprint = {
+    machine: {
+      initial: "ready",
+      states: {
+        ready: {
+          invoke: {
+            src: "courier",
+            input: ref("expression.map", '{"node": context.manifold.issue}'),
+          },
+        },
+      },
+    },
+    schemas: {
+      ...schemas,
+      actors: {
+        courier: {
+          input: { type: "object", required: ["node"], properties: { node: { type: "string" } } },
+        },
+      },
+    },
+  };
+  const findings = await lintBlueprintExpressions(blueprint);
+  expect(findings).toEqual([
+    expect.objectContaining({ kind: "schema", sample: "full" }),
+    expect.objectContaining({ kind: "schema", sample: "required" }),
+  ]);
 });

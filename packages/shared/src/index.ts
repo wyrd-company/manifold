@@ -69,3 +69,5 @@ export type {
 } from "./portfolio-declaration-types.ts";
 export { githubEventsSchema } from "./github-events-schema.ts";
 export { githubSourceConfigurationSchema } from "./github-source-configuration-schema.ts";
+export type { ManifoldIdentity } from "./manifold-identity.ts";
+export { blueprintSchema } from "./blueprint-schema.ts";

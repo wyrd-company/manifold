@@ -146,6 +146,7 @@ export async function lintBlueprint(
         : kind === "action"
           ? ["expression.assign"]
           : [];
+    if (kind === "actor" && name.startsWith("blueprints/")) return;
     if (!names[`${kind}s`].has(name) && !builtIn.includes(name))
       unknowns.push({
         path,

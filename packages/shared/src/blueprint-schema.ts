@@ -61,7 +61,11 @@ export const blueprintSchema = {
       },
       properties: {
         context: {
+          description: "The initial context. `manifold` is the engine's.",
           type: "object",
+          not: {
+            required: ["manifold"],
+          },
         },
       },
     },
@@ -327,7 +331,16 @@ export const blueprintSchema = {
       additionalProperties: false,
       properties: {
         src: {
-          $ref: "#/$defs/implementation-name",
+          description:
+            "An actor implementation name, or a blueprint path that invokes a child blueprint.",
+          anyOf: [
+            {
+              $ref: "#/$defs/blueprint-path",
+            },
+            {
+              $ref: "#/$defs/implementation-name",
+            },
+          ],
         },
         id: {
           type: "string",
@@ -349,6 +362,72 @@ export const blueprintSchema = {
         },
         onSnapshot: {
           $ref: "#/$defs/transitions",
+        },
+      },
+    },
+    "blueprint-path": {
+      description: "The repository-relative path of a blueprint file.",
+      type: "string",
+      pattern: "^blueprints/.+\\.ya?ml$",
+    },
+    "child-blueprint-error": {
+      description: "The error an invoke of a child blueprint that cannot run fails with.",
+      type: "object",
+      required: ["type", "path", "reason"],
+      additionalProperties: false,
+      properties: {
+        type: {
+          const: "child-blueprint",
+        },
+        path: {
+          $ref: "#/$defs/blueprint-path",
+        },
+        reason: {
+          enum: ["missing", "invalid", "cycle", "schemas"],
+        },
+        findings: {
+          description: "For `invalid`, the child's lint findings.",
+          type: "array",
+          items: {
+            $ref: "#/$defs/blueprint-finding",
+          },
+        },
+      },
+    },
+    "actor-identity": {
+      description: "The engine's identity of an actor, at `context.manifold`.",
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        project: {
+          description: "The GitHub Project node id.",
+          type: "string",
+          minLength: 1,
+        },
+        issue: {
+          description: "The issue node id.",
+          type: "string",
+          minLength: 1,
+        },
+        environment: {
+          description: "The T3 Code environment name from service configuration.",
+          type: "string",
+          minLength: 1,
+        },
+        threads: {
+          description: "The ids of the threads the actor follows.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        portfolioItem: {
+          type: "string",
+          minLength: 1,
+        },
+        blueprintPath: {
+          $ref: "#/$defs/blueprint-path",
         },
       },
     },

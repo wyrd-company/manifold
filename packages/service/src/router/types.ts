@@ -31,6 +31,8 @@ export interface Router {
 }
 
 export interface ActorHost {
+  connect?(router: Router): void;
+  saving?(actor: ActorRecord): void;
   subscription(actor: ActorRecord): Subscription;
   /** `router` is the one the restored actor publishes through. */
   restore(stored: StoredSnapshot, router: Router): RestoreOutcome;

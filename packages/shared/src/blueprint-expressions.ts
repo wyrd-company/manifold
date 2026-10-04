@@ -2,6 +2,8 @@
 // relationships:
 //   implements: blueprint-expressions
 // ---
+import { blueprintSchema } from "./blueprint-schema.ts";
+import { record } from "./expression-sites.ts";
 import { createSchemaCompiler } from "./schema-compiler.ts";
 import { generateSync } from "json-schema-faker";
 import type { JsonSchema } from "json-schema-faker";
@@ -81,6 +83,10 @@ export async function lintBlueprintExpressions(
         site.kind === "expression.match"
           ? [{ name: "required", value: undefined }]
           : samples(site.contextSchema!);
+      const identity = samples({
+        ...blueprintSchema.$defs["actor-identity"],
+        $defs: blueprintSchema.$defs,
+      }).find((sample) => sample.name === "full")!.value;
       for (const event of site.events) {
         for (const context of contexts)
           for (const sample of samples(event.schema!)) {
@@ -92,6 +98,10 @@ export async function lintBlueprintExpressions(
                   ? "full"
                   : "required";
             try {
+              const contextValue = {
+                ...record(context.value),
+                manifold: context.name === "required" ? {} : identity,
+              };
               const fromMillis = compileExpression(
                 "$fromMillis($value, $picture, $timezone)",
                 site.location,
@@ -100,7 +110,7 @@ export async function lintBlueprintExpressions(
                 compiled,
                 site.kind === "expression.match"
                   ? sample.value
-                  : { context: context.value, event: sample.value },
+                  : { context: contextValue, event: sample.value },
                 {
                   millis: () => 0,
                   now: (picture?: string, timezone?: string) =>
@@ -108,7 +118,7 @@ export async function lintBlueprintExpressions(
                   random: random(`${site.location}:${event.type}:${context.name}:${sample.name}`),
                 },
               );
-              check(result, context.value);
+              check(result, contextValue);
             } catch (error) {
               findings.push({
                 ...(error as ExpressionError).detail,

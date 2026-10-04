@@ -46,9 +46,15 @@ export function compileExpressionResult(
     if (site.kind === "expression.assign") {
       if (result === null || typeof result !== "object" || Array.isArray(result))
         fail("result", "Assignment must return an object");
+      if (Object.hasOwn(record(result), "manifold"))
+        fail("result", "Assignment cannot write manifold");
       result = { ...record(context), ...record(result) };
     }
-    if (validate && !validate(result))
+    const validated =
+      site.kind === "expression.assign"
+        ? Object.fromEntries(Object.entries(record(result)).filter(([key]) => key !== "manifold"))
+        : result;
+    if (validate && !validate(validated))
       fail("schema", "Expression result does not match its schema");
     return result;
   };

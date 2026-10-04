@@ -2,8 +2,8 @@
 // relationships:
 //   implements: blueprint-loader
 // ---
-import { setup } from "xstate";
-import type { AnyActorLogic, AnyStateMachine, Snapshot } from "xstate";
+import { setup, enqueueActions } from "xstate";
+import type { AnyActorLogic, AnyActorRef, AnyStateMachine, Snapshot } from "xstate";
 import { blueprintVersionKey, lintBlueprint, ExpressionError } from "@wyrd-company/manifold-shared";
 import type {
   BlueprintDocument,
@@ -13,6 +13,7 @@ import type {
   ProcessRepositoryRevision,
 } from "@wyrd-company/manifold-shared";
 import { createBlueprintExpressions } from "../blueprint-expressions.ts";
+import { bindChildren } from "./children.ts";
 import { checkRestore } from "./restore-check.ts";
 import type { RestoreCheck } from "./restore-check.ts";
 
@@ -33,7 +34,12 @@ export interface ImplementationRegistry {
   readonly guards: Readonly<Record<string, unknown>>;
   readonly delays: Readonly<Record<string, unknown>>;
 }
+export interface StateEntry {
+  readonly actor: AnyActorRef;
+  readonly statePath: string;
+}
 export interface BlueprintLoaderOptions {
+  readonly onStateEntry?: (entry: StateEntry) => void;
   readonly implementations: ImplementationRegistry;
   revisionAt(commit: string): Promise<ProcessRepositoryRevision | undefined>;
   onExpressionError(error: ExpressionError, version: BlueprintVersion): void;
@@ -73,7 +79,10 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
   const implementations = options.implementations;
   for (const entries of Object.values(implementations))
     for (const name of Object.keys(entries)) {
-      if (name.startsWith("expression."))
+      if (
+        name.startsWith("expression.") ||
+        (entries === implementations.actors && name.startsWith("blueprints/"))
+      )
         throw new TypeError(`Reserved implementation name: ${name}`);
     }
   const names: ImplementationNames = {
@@ -97,8 +106,26 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
       const expressions = createBlueprintExpressions(lint.blueprint, {
         onError: (error) => options.onExpressionError(error, version),
       });
+      const children = await bindChildren(lint.blueprint, version, source, load);
+      function observe(node: Record<string, unknown>, statePath: string) {
+        const own =
+          node["entry"] === undefined
+            ? []
+            : Array.isArray(node["entry"])
+              ? node["entry"]
+              : [node["entry"]];
+        node["entry"] = [
+          enqueueActions(({ self }) => options.onStateEntry?.({ actor: self, statePath })),
+          ...own,
+        ];
+        for (const [key, child] of Object.entries(
+          (node["states"] ?? {}) as Record<string, Record<string, unknown>>,
+        ))
+          observe(child, statePath ? `${statePath}.${key}` : key);
+      }
+      observe(expressions.machine as Record<string, unknown>, "");
       const bound = setup({
-        actors: implementations.actors,
+        actors: { ...implementations.actors, ...children },
         delays: implementations.delays as NonNullable<SetupImplementations["delays"]>,
         guards: {
           ...(implementations.guards as NonNullable<SetupImplementations["guards"]>),

@@ -182,7 +182,7 @@ describe("blueprint loader", () => {
       ).toThrow(/expression.custom/);
     }
     for (const kind of ["actors", "actions", "guards", "delays"] as const)
-      expect(new Set(Object.keys(serviceImplementations[kind]))).toEqual(
+      expect(new Set(Object.keys(serviceImplementations()[kind]))).toEqual(
         manifoldImplementationNames[kind],
       );
   });
@@ -492,4 +492,143 @@ it("orders discovery by Unicode code point", async () => {
     onExpressionError: () => {},
   });
   expect([...(await loader.loadRevision(current)).blueprints.keys()]).toEqual(paths.toReversed());
+});
+
+it("reports root and state entries before blueprint actions", async () => {
+  const entries: string[] = [];
+  const loader = createBlueprintLoader({
+    implementations: registry(),
+    revisionAt: async () =>
+      memoryRevision(first, { "blueprints/z-delivery.yml": stringify(document()) }),
+    onExpressionError: () => {},
+    onStateEntry: ({ statePath }) => entries.push(statePath),
+  });
+  const blueprint = await loaded(loader);
+  const actor = createActor(blueprint.machine).start();
+  expect(entries).toEqual(["", "sorting"]);
+  actor.send({ type: "scanned" });
+  expect(entries).toEqual(["", "sorting", "delivered"]);
+  actor.stop();
+});
+
+it("binds child blueprints at the parent's commit and returns their output", async () => {
+  const parent = document("waiting");
+  parent.machine.states = {
+    waiting: { invoke: { id: "delivery", src: "blueprints/child.yml", onDone: "delivered" } },
+    delivered: { type: "final" },
+  } as unknown as typeof parent.machine.states;
+  const loader = createBlueprintLoader({
+    implementations: registry(),
+    onExpressionError: () => {},
+    revisionAt: async () =>
+      memoryRevision(first, {
+        "blueprints/z-delivery.yml": stringify(parent),
+        "blueprints/child.yml": stringify({
+          ...document("delivered"),
+          machine: {
+            id: "child",
+            initial: "delivered",
+            states: { delivered: { type: "final", output: { delivered: true } } },
+          },
+        }),
+      }),
+  });
+  const result = await loaded(loader);
+  const actor = createActor(result.machine).start();
+  expect(actor.getSnapshot().status).toBe("done");
+  actor.stop();
+});
+
+it.each(["missing", "invalid", "schemas", "cycle"])(
+  "delivers child %s errors to onError while leaving the parent loaded",
+  async (reason) => {
+    let failure: unknown;
+    const implementations = registry();
+    const parent = {
+      ...document("waiting"),
+      machine: {
+        id: "parent",
+        initial: "waiting",
+        states: {
+          waiting: {
+            invoke: {
+              id: "delivery",
+              src: "blueprints/child.yml",
+              onError: { target: "delivered", actions: "child-error" },
+            },
+          },
+          delivered: { type: "final" },
+        },
+      },
+      schemas: {
+        ...document().schemas,
+        ...(reason === "schemas"
+          ? { actors: { "blueprints/child.yml": { input: false, output: true } } }
+          : {}),
+      },
+    };
+    const child =
+      reason === "invalid"
+        ? "machine: bad"
+        : stringify(
+            reason === "cycle"
+              ? {
+                  ...document("waiting"),
+                  machine: {
+                    id: "child",
+                    initial: "waiting",
+                    states: {
+                      waiting: { invoke: { id: "back", src: "blueprints/z-delivery.yml" } },
+                      delivered: { type: "final" },
+                    },
+                  },
+                }
+              : document("delivered"),
+          );
+    const loader = createBlueprintLoader({
+      implementations: {
+        ...implementations,
+        actions: {
+          ...implementations.actions,
+          "child-error": ({ event }: { event: { error: unknown } }) => {
+            failure = event.error;
+          },
+        },
+      },
+      onExpressionError: () => {},
+      revisionAt: async () =>
+        memoryRevision(first, {
+          "blueprints/z-delivery.yml": stringify(parent),
+          ...(reason === "missing" ? {} : { "blueprints/child.yml": child }),
+        }),
+    });
+    const blueprint = await loaded(loader);
+    const actor = createActor(blueprint.machine).start();
+    await new Promise<void>((done) => setImmediate(done));
+    expect(actor.getSnapshot().status).toBe("done");
+    expect(failure).toMatchObject({
+      type: "child-blueprint",
+      path: "blueprints/child.yml",
+      reason,
+    });
+    actor.stop();
+  },
+);
+
+it("rejects child path registry names and duplicate module names", () => {
+  expect(() =>
+    createBlueprintLoader({
+      implementations: {
+        ...registry(),
+        actors: { "blueprints/child.yml": fromPromise(async () => {}) },
+      },
+      revisionAt: async () => undefined,
+      onExpressionError: () => {},
+    }),
+  ).toThrow("Reserved implementation name");
+  expect(() => serviceImplementations({ first: registry(), second: registry() })).toThrow(
+    "courier",
+  );
+  const part = registry();
+  expect(serviceImplementations({ module: part })).toEqual(part);
 });
