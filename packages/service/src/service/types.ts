@@ -1,6 +1,8 @@
 // ---
 // relationships:
-//   implements: service-assembly
+//   implements:
+//     - service-assembly
+//     - gate-runtime
 // ---
 import type { AgentThreads } from "../agent-threads/index.ts";
 import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
@@ -10,6 +12,7 @@ import type { Router } from "../router/index.ts";
 import type { ActorHost } from "../actor-host/index.ts";
 import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
 import type { Usage } from "../usage/index.ts";
+import type { Gates } from "../gates/index.ts";
 import type { Portfolio } from "../portfolio/index.ts";
 import type {
   ProcessRepository,
@@ -29,6 +32,13 @@ export interface StartServiceOptions {
   readonly signal?: AbortSignal;
   /** Builds the router's actor host from the parts started before the router. */
   readonly actorHost?: (parts: Omit<ServiceParts, "actorHost">) => ActorHost | Promise<ActorHost>;
+  /** Builds gates before revision following; dependency modules supply their structural seams. */
+  readonly gates?: (
+    parts: Pick<
+      ServiceParts,
+      "configuration" | "store" | "portfolio" | "processRepository" | "blueprints" | "log"
+    >,
+  ) => Gates | Promise<Gates>;
   /** Receives every log entry. Defaults to one JSON line per entry on stderr. */
   readonly log?: (entry: ServiceLogEntry) => void;
   readonly probes?: ServiceProbes;
@@ -71,6 +81,7 @@ export type ServiceStep =
   | "store-closed";
 
 export interface ServiceParts {
+  readonly gates?: Gates;
   readonly escalations: Escalations;
   readonly actorHost: ActorHost;
   readonly agentThreads: AgentThreads;

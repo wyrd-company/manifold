@@ -773,3 +773,72 @@ test("wires discovery, revision retry, actor start and drained shutdown through 
   await service.stop();
   expect(() => service.intake.discovered(["I_C"])).toThrow(TypeError);
 });
+
+test("wires gates into revision following, router resume, and shutdown", async () => {
+  const f = await fixture();
+  const events: string[] = [];
+  const gates = {
+    revision: async (
+      load: { blueprints: ReadonlyMap<string, unknown> },
+      revision: { commit: string },
+    ) => {
+      expect(load.blueprints.size).toBe(1);
+      events.push(`gate-revision:${revision.commit}`);
+    },
+    prepare: async () => {
+      events.push("gate-prepare");
+    },
+    afterDrain: () => {
+      events.push("gate-drain");
+    },
+    saved: () => {},
+    strandedToken: () => undefined,
+    inputChanged: () => {
+      events.push("gate-input");
+    },
+    replay: async () => {
+      throw new Error("unused");
+    },
+    stop: () => {
+      events.push("gate-stop");
+    },
+  };
+  const service = await startService({
+    configurationFile: f.file,
+    log: () => {},
+    gates: (parts) => {
+      expect(
+        parts.store.connection.database
+          .prepare("SELECT version FROM schema_migration WHERE owner = 'gates'")
+          .get(),
+      ).toEqual({ version: 1 });
+      return gates;
+    },
+    actorHost: (parts) => {
+      expect(parts.gates).toBe(gates);
+      events.push("host-created");
+      return {
+        subscription: () => ({ topics: [] }),
+        restore: () => ({ status: "held", reason: "test" }),
+      };
+    },
+    probes: { step: (step) => events.push(step) },
+  });
+  cleanup.push(service.stop);
+  expect(service.gates).toBe(gates);
+  expect(events.indexOf(`gate-revision:${f.first}`)).toBeLessThan(events.indexOf("gate-prepare"));
+  expect(events.indexOf("gate-prepare")).toBeLessThan(events.indexOf("host-created"));
+  expect(events).toContain("gate-drain");
+  expect(events.filter((event) => event === "gate-input")).toHaveLength(1);
+  expect(events.indexOf("gate-drain")).toBeLessThan(events.indexOf("router-started"));
+  const next = await f.commit(70);
+  await service.revisions.pull();
+  expect(events.filter((event) => event.startsWith("gate-revision:"))).toEqual([
+    `gate-revision:${f.first}`,
+    `gate-revision:${next}`,
+  ]);
+  expect(events.filter((event) => event === "gate-input")).toHaveLength(2);
+  await service.stop();
+  expect(events.indexOf("revisions-idle")).toBeLessThan(events.indexOf("gate-stop"));
+  expect(events.indexOf("gate-stop")).toBeLessThan(events.indexOf("store-closed"));
+});

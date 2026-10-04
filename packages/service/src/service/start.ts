@@ -1,6 +1,8 @@
 // ---
 // relationships:
-//   implements: service-assembly
+//   implements:
+//     - service-assembly
+//     - gate-runtime
 // ---
 import { startIntake, intakeMigrationSteps } from "../intake/index.ts";
 import type { Intake } from "../intake/index.ts";
@@ -11,6 +13,8 @@ import { configureBlueprintExpressions } from "../blueprint-expressions.ts";
 import { openStore } from "../store/index.ts";
 import type { Store } from "../store/index.ts";
 import { openUsage, usageMigrationSteps } from "../usage/index.ts";
+import { gatesMigrationSteps } from "../gates/index.ts";
+import type { Gates } from "../gates/index.ts";
 import { ledgerMigrationSteps } from "../ledger/index.ts";
 import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
 import { openProcessRepository } from "../process-repository/index.ts";
@@ -47,6 +51,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
   let router: Router | undefined;
   let escalations: Escalations | undefined;
   let actorHost: ActorHost | undefined;
+  let gates: Gates | undefined;
   let github: GitHubSource | undefined;
   let t3code: T3CodeSource | undefined;
   let agentThreads: AgentThreads | undefined;
@@ -98,6 +103,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       if (revisions) await finish("revisions-idle", () => revisions!.close());
       if (intake) await finish("intake-stopped", () => intake!.stop());
       if (router) await finish("router-stopped", () => router!.stop());
+      gates?.stop();
       if (store) await finish("store-closed", () => store!.close());
       log({ level: "info", event: "stopped", message: "Service stopped" });
       if (errors.length) throw errors[0];
@@ -118,6 +124,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     store.connection.migrate("portfolio", portfolioMigrationSteps);
     store.connection.migrate("usage", usageMigrationSteps);
     store.connection.migrate("intake", intakeMigrationSteps);
+    store.connection.migrate("gates", gatesMigrationSteps);
     step("store-opened", "start");
     escalations = openEscalations({
       store,
@@ -238,6 +245,14 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         }),
     });
     step("process-repository-opened", "start");
+    gates = await options.gates?.({
+      configuration,
+      store,
+      portfolio,
+      processRepository,
+      blueprints,
+      log,
+    });
     revisions = createRevisions({
       repository: processRepository,
       blueprints,
@@ -248,6 +263,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         intake?.revisionLoaded();
         options.probes?.applied?.(revision);
       },
+      ...(gates ? { gates } : {}),
     });
     await revisions.follow();
     step("revision-followed", "start");
@@ -257,8 +273,10 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       log({ level: "error", event: "pull-failed", message: "Process repository pull failed" });
     }
     step("pulled", "start");
+    await gates?.prepare();
     const beforeHost = {
       escalations,
+      ...(gates ? { gates } : {}),
       configuration,
       agentThreads,
       store,
@@ -275,6 +293,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     router = startRouter({
       store,
       host: actorHost,
+      ...(gates ? { afterDrain: gates.afterDrain } : {}),
       onHeld: (held) => {
         log({
           level: "warn",
@@ -311,6 +330,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         pull: revisions.pull,
       },
       onTracked: (ids) => intake?.discovered(ids),
+      ...(gates ? { onMirrorChanged: gates.inputChanged } : {}),
       onError: (error) =>
         log({
           level: "error",

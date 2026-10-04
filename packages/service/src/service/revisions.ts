@@ -1,10 +1,13 @@
 // ---
 // relationships:
-//   implements: service-assembly
+//   implements:
+//     - service-assembly
+//     - gate-runtime
 // ---
 import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
 import type { IntakeRevision } from "../intake/index.ts";
 import type { Usage } from "../usage/index.ts";
+import type { Gates } from "../gates/index.ts";
 import type { Portfolio } from "../portfolio/index.ts";
 import type { ProcessRepository } from "../process-repository/index.ts";
 import type { AppliedRevision, Revisions, ServiceLogEntry } from "./types.ts";
@@ -13,6 +16,7 @@ export function createRevisions(options: {
   readonly blueprints: BlueprintLoader;
   readonly portfolio: Portfolio;
   readonly usage: Pick<Usage, "apply">;
+  readonly gates?: Gates;
   readonly log: (entry: ServiceLogEntry) => void;
   readonly applied?: (revision: AppliedRevision) => void;
 }): Revisions & { close(): Promise<void> } {
@@ -68,6 +72,8 @@ export function createRevisions(options: {
         message: "Usage declaration rejected",
         detail: { commit: revision.commit, findings: usageResult.findings.map((f) => ({ ...f })) },
       });
+    await options.gates?.revision(loaded, revision);
+    options.gates?.inputChanged();
     current = { revision, blueprints: loaded, portfolio: options.portfolio.current() };
     followed = revision.commit;
     options.log({
