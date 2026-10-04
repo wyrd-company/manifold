@@ -474,3 +474,19 @@ describe("seeded lint random", () => {
     expect(await lintBlueprintExpressions({ machine: config, schemas })).toEqual(first);
   });
 });
+
+describe("assignment result shape", () => {
+  it.each(["42", "null", "[]", '"text"'])(
+    "rejects a non-object assignment result: %s",
+    (expression) => {
+      return expect(
+        lintBlueprintExpressions({ machine: machine(expression), schemas }),
+      ).resolves.toMatchObject([
+        { kind: "result" },
+        { kind: "result" },
+        { kind: "result" },
+        { kind: "result" },
+      ]);
+    },
+  );
+});

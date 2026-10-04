@@ -2,8 +2,10 @@
 // relationships:
 //   verifies: blueprint-expressions
 // ---
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { parse } from "yaml";
+import { createSyncFn } from "synckit";
+vi.mock("synckit", { spy: true });
 import { createActor, setup, fromPromise } from "xstate";
 import { createBlueprintExpressions } from "./blueprint-expressions.ts";
 import type { ExpressionBlueprint, ExpressionError } from "@wyrd-company/manifold-shared";
@@ -448,5 +450,25 @@ describe("worker expression reuse", () => {
     const actor = createActor(setup(expressions).createMachine(expressions.machine)).start();
     actor.send({ type: "parcel.scan" });
     expect(actor.getSnapshot().status).toBe("done");
+  });
+});
+
+describe("worker wait contract", () => {
+  it("waits for the real worker without a timeout", () => {
+    const machine = {
+      initial: "ready",
+      context: { count: 1 },
+      states: {
+        ready: { entry: { type: "expression.assign", params: { expression: '{"count": 2}' } } },
+      },
+    };
+    const expressions = createBlueprintExpressions({ machine, schemas }, { onError: () => {} });
+    const actor = createActor(setup(expressions).createMachine(expressions.machine)).start();
+    try {
+      expect(vi.mocked(createSyncFn).mock.calls[0]?.[1]).toMatchObject({ timeout: Infinity });
+      expect(actor.getSnapshot().context).toEqual({ count: 2 });
+    } finally {
+      actor.stop();
+    }
   });
 });
