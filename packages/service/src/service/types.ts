@@ -32,7 +32,7 @@ export interface StartServiceOptions {
   readonly signal?: AbortSignal;
   /** Builds the router's actor host from the parts started before the router. */
   readonly actorHost?: (parts: Omit<ServiceParts, "actorHost">) => ActorHost | Promise<ActorHost>;
-  /** Builds gates before revision following; dependency modules supply their structural seams. */
+  /** Builds gates before revision following. Defaults to the service gate runtime. */
   readonly gates?: (
     parts: Pick<
       ServiceParts,

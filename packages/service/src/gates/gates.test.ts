@@ -104,10 +104,17 @@ async function fixture(source = oldest, override: Partial<GatesOptions> = {}, do
     errors: unknown[] = [],
     scheduled: string[] = [];
   const lint: GateTokenLint = {
+    configurations: 1,
     gates: [
-      { statePath: "open.lifecycle.waiting", verdict: "potential", traps: new Set(["trap"]) },
+      {
+        statePath: "open.lifecycle.waiting",
+        verdict: "potential",
+        location: "",
+        findings: [],
+        traps: new Set(["trap"]),
+      },
     ],
-    configurationKey: (s) => JSON.stringify(s.value),
+    configurationKey: (s) => JSON.stringify((s as unknown as { value: unknown }).value),
   };
   const options: GatesOptions = {
     store,
@@ -139,6 +146,17 @@ async function fixture(source = oldest, override: Partial<GatesOptions> = {}, do
     escalations: {
       raise: (e) => {
         raised.push(e);
+        return {
+          id: "example",
+          raiser: { type: "service", kind: e.kind, subject: e.subject, occurrence: 1 },
+          title: "",
+          question: e.question,
+          choices: e.choices,
+          freeText: false,
+          destinations: [],
+          status: "open",
+          raisedAt: 100,
+        };
       },
       withdraw: (e) => {
         withdrawn.push(e);
@@ -297,8 +315,15 @@ it("returns at transient return states and on end, but keeps tokens on error", a
 it("raises once per trap entry, handles return idempotently, and withdraws on actor end", async () => {
   const f = await fixture(single, {
     lintTokens: () => ({
+      configurations: 1,
       gates: [
-        { statePath: "open.lifecycle.waiting", verdict: "potential", traps: new Set(["trap"]) },
+        {
+          statePath: "open.lifecycle.waiting",
+          verdict: "potential",
+          location: "",
+          findings: [],
+          traps: new Set(["trap"]),
+        },
       ],
       configurationKey: () => "trap",
     }),
@@ -309,12 +334,12 @@ it("raises once per trap entry, handles return idempotently, and withdraws on ac
   expect(f.raised).toHaveLength(1);
   const token = String(f.rows("gates_token")[0]?.["token_id"]);
   const after = f.store.connection.transaction(() =>
-    f.gates.strandedToken({ subject: { gate, tokenId: token }, answer: { choice: "return" } }),
+    f.gates.strandedToken(answered({ gate, tokenId: token }, { choice: "return" })),
   );
   after?.();
   expect(f.rows("gates_token")[0]?.["return_reason"]).toBe("escalation");
   expect(
-    f.gates.strandedToken({ subject: { gate, tokenId: token }, answer: { choice: "return" } }),
+    f.gates.strandedToken(answered({ gate, tokenId: token }, { choice: "return" })),
   ).toBeUndefined();
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(f.rows("gates_token")).toHaveLength(2);
@@ -638,14 +663,17 @@ it("grants existing actors when a live revision first introduces a gate without 
 it("withdraws the escalation when a token returns after its actor has left a trap", async () => {
   const f = await fixture(single, {
     lintTokens: () => ({
+      configurations: 1,
       gates: [
         {
           statePath: "open.lifecycle.waiting",
           verdict: "potential",
+          location: "",
+          findings: [],
           traps: new Set([JSON.stringify(snapshot("working").value)]),
         },
       ],
-      configurationKey: (s) => JSON.stringify(s.value),
+      configurationKey: (s) => JSON.stringify((s as unknown as { value: unknown }).value),
     }),
   });
   await f.start();
@@ -670,7 +698,7 @@ it("excludes a holder after a new state entry and an entry whose token was alrea
   const first = String(g.rows("gates_token")[0]?.["token_id"]);
   g.store.markConsumed("parcel-00", `gate:${first}`);
   g.store.connection.transaction(() =>
-    g.gates.strandedToken({ subject: { gate, tokenId: first }, answer: { choice: "return" } }),
+    g.gates.strandedToken(answered({ gate, tokenId: first }, { choice: "return" })),
   );
   g.gates.afterDrain({ schedule: () => {} });
   expect(g.rows("gates_token").map((r) => r["actor_id"])).toEqual(["parcel-00", "parcel-01"]);
@@ -771,7 +799,7 @@ it("dismisses and ignores stale or mismatched escalation answers without returni
     { subject: { gate, tokenId: token }, answer: { text: "example" } },
     { subject: { gate, tokenId: token }, answer: undefined },
   ])
-    expect(f.gates.strandedToken(escalation)).toBeUndefined();
+    expect(f.gates.strandedToken(answered(escalation.subject, escalation.answer))).toBeUndefined();
   expect(f.rows("gates_token")[0]?.["returned_at"]).toBeNull();
 });
 it("records canonical input JSON regardless of snapshot field insertion order", async () => {
@@ -831,8 +859,15 @@ it("replays seeded selections with canonical fields in the same enumeration orde
 it("restores trap flags without reraising and ignores trap sets for unknown lint verdicts", async () => {
   const f = await fixture(single, {
     lintTokens: () => ({
+      configurations: 1,
       gates: [
-        { statePath: "open.lifecycle.waiting", verdict: "potential", traps: new Set(["trap"]) },
+        {
+          statePath: "open.lifecycle.waiting",
+          verdict: "potential",
+          location: "",
+          findings: [],
+          traps: new Set(["trap"]),
+        },
       ],
       configurationKey: () => "trap",
     }),
@@ -858,8 +893,15 @@ it("restores trap flags without reraising and ignores trap sets for unknown lint
   expect(f.raised).toHaveLength(1);
   const unknown = await fixture(single, {
     lintTokens: () => ({
+      configurations: 1,
       gates: [
-        { statePath: "open.lifecycle.waiting", verdict: "unknown", traps: new Set(["trap"]) },
+        {
+          statePath: "open.lifecycle.waiting",
+          verdict: "unknown",
+          location: "",
+          findings: [],
+          traps: new Set(["trap"]),
+        },
       ],
       configurationKey: () => "trap",
     }),
@@ -992,3 +1034,13 @@ it("keeps the mapped comparator alive until its replacement finishes loading", a
   f.gates.stop();
   expect(disposed).toEqual([1, 2, 3]);
 });
+
+function answered(
+  subject: Readonly<Record<string, string>>,
+  value: { choice: string } | { text: string } | undefined,
+) {
+  return {
+    raiser: { type: "service" as const, kind: "stranded-token" as const, subject, occurrence: 1 },
+    ...(value ? { answer: { value, channel: "api" as const, at: 100 } } : {}),
+  };
+}

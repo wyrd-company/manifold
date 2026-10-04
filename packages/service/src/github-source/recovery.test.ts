@@ -1038,9 +1038,14 @@ test("mirror notifications rerun gate critical paths on a transitive close, trac
       ledger,
       current: () => ({ declaration: { ledger: { items: [{ id: "left" }], allocations: [] } } }),
     },
-    lintTokens: () => ({ gates: [], configurationKey: () => "" }),
+    lintTokens: () => ({ gates: [], configurations: 0, configurationKey: () => "" }),
     trackedIssue: s.source.trackedIssue,
-    escalations: { raise: () => {}, withdraw: () => {} },
+    escalations: {
+      raise: () => {
+        throw new Error("No traps in this fixture");
+      },
+      withdraw: () => {},
+    },
   });
   cleanup.push(async () => gates!.stop());
   s.store.saveSnapshot({

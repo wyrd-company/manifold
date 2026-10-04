@@ -2,6 +2,7 @@
 // relationships:
 //   implements: gate-runtime
 // ---
+import type { Snapshot } from "xstate";
 import type {
   GatesOptions,
   GateSave,
@@ -57,8 +58,8 @@ export function saveHook(
           continue;
         }
         const lint = view!.lint.gates.find((g) => g.statePath === declaration.statePath);
-        const key = view!.lint.configurationKey(save.snapshot),
-          trapped = lint?.verdict !== "unknown" && lint?.traps.has(key) === true;
+        const key = view!.lint.configurationKey(save.snapshot as unknown as Snapshot<unknown>),
+          trapped = lint?.verdict !== "unknown" && lint?.traps?.has(key) === true;
         if (trapped && !token.trapped)
           options.escalations.raise({
             kind: "stranded-token",
@@ -101,13 +102,15 @@ export function saveHook(
     },
     strandedToken(escalation: GateStrandedEscalation) {
       if (
+        escalation.raiser.type !== "service" ||
+        escalation.raiser.kind !== "stranded-token" ||
         !escalation.answer ||
-        !("choice" in escalation.answer) ||
-        escalation.answer.choice !== "return"
+        !("choice" in escalation.answer.value) ||
+        escalation.answer.value.choice !== "return"
       )
         return undefined;
-      const token = tables.token(escalation.subject["tokenId"] ?? "");
-      if (!token || token.gate !== escalation.subject["gate"] || token.returned_at !== null)
+      const token = tables.token(escalation.raiser.subject["tokenId"] ?? "");
+      if (!token || token.gate !== escalation.raiser.subject["gate"] || token.returned_at !== null)
         return undefined;
       const snapshot = options.store.loadSnapshot(token.actor_id)?.snapshot;
       const state = snapshot ? statePaths(snapshot).join(",") : "";

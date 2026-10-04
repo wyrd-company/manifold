@@ -13,7 +13,11 @@ import { configureBlueprintExpressions } from "../blueprint-expressions.ts";
 import { openStore } from "../store/index.ts";
 import type { Store } from "../store/index.ts";
 import { openUsage, usageMigrationSteps } from "../usage/index.ts";
-import { gatesMigrationSteps } from "../gates/index.ts";
+import { lintTokens, manifoldImplementationNames } from "@wyrd-company/manifold-shared";
+import { createComparatorSandbox } from "../comparator-sandbox/index.ts";
+import { createMirror } from "../github-source/mirror.ts";
+import { githubSteps } from "../github-source/migrations.ts";
+import { createGates, gatesMigrationSteps } from "../gates/index.ts";
 import type { Gates } from "../gates/index.ts";
 import { ledgerMigrationSteps } from "../ledger/index.ts";
 import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
@@ -147,11 +151,8 @@ export async function startService(options: StartServiceOptions): Promise<Servic
             }),
           );
         }),
-        "stranded-token":
-          options.strandedTokenHandler ??
-          (() => {
-            throw new Error("Stranded-token handler is not installed");
-          }),
+        "stranded-token": (escalation) =>
+          (options.strandedTokenHandler ?? gates!.strandedToken)(escalation),
       },
       logger: {
         warn: (message) =>
@@ -166,7 +167,18 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     const usageConnection = store.connection;
     const usage = openUsage({
       connection: usageConnection,
-      ledger: portfolio.ledger,
+      ledger: {
+        postActual: (request) => {
+          const result = portfolio.ledger.postActual(request);
+          gates?.inputChanged();
+          return result;
+        },
+        settle: (request) => {
+          const result = portfolio.ledger.settle(request);
+          gates?.inputChanged();
+          return result;
+        },
+      },
       portfolio,
       threadProject: (environment, threadId) =>
         readThreadProject(usageConnection, environment, threadId),
@@ -245,14 +257,49 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         }),
     });
     step("process-repository-opened", "start");
-    gates = await options.gates?.({
+    const gateParts = {
       configuration,
       store,
       portfolio,
       processRepository,
       blueprints,
       log,
-    });
+    };
+    store.connection.migrate("github", githubSteps);
+    const mirror = createMirror(store, Date.now);
+    gates = options.gates
+      ? await options.gates(gateParts)
+      : createGates({
+          store,
+          portfolio,
+          escalations,
+          version: blueprints.version,
+          revisionAt: processRepository.revisionAt,
+          sandbox: await createComparatorSandbox(configuration.comparatorSandbox),
+          lintTokens: (document) =>
+            lintTokens(document, {
+              names: manifoldImplementationNames,
+              configurationBound: configuration.blueprintLint.configurationBound,
+            }),
+          trackedIssue: (nodeId) =>
+            mirror.trackedIssue(
+              nodeId,
+              new Map(
+                [...mirror.read().projects.values()]
+                  .filter((row) =>
+                    portfolio
+                      .current()
+                      .declaration.githubProjects.some(
+                        (reference) =>
+                          reference.owner.toLowerCase() === row.project.owner.toLowerCase() &&
+                          reference.number === row.project.number,
+                      ),
+                  )
+                  .map((row) => [row.project.nodeId, row.project]),
+              ),
+            ),
+          onError: (error) => log({ level: "error", event: "gate-error", message: error.message }),
+        });
     revisions = createRevisions({
       repository: processRepository,
       blueprints,

@@ -2,6 +2,9 @@
 // relationships:
 //   implements: gate-runtime
 // ---
+import type { TokenLintResult } from "@wyrd-company/manifold-shared";
+import type { ActorSave } from "../actor-host/index.ts";
+import type { Escalations, Escalation } from "../escalations/index.ts";
 import type { BlueprintDocument } from "@wyrd-company/manifold-shared";
 import type {
   ComparatorSandbox,
@@ -9,7 +12,7 @@ import type {
   ComparatorInputData,
 } from "../comparator-sandbox/index.ts";
 import type { Ledger } from "../ledger/index.ts";
-import type { Store, PersistedSnapshot } from "../store/index.ts";
+import type { Store } from "../store/index.ts";
 import type { Router } from "../router/index.ts";
 export interface GateBlueprint {
   readonly key: string;
@@ -36,31 +39,13 @@ export interface GatePortfolio {
     };
   };
 }
-export interface GateTokenLint {
-  readonly gates: readonly {
-    readonly statePath: string;
-    readonly verdict: string;
-    readonly traps: ReadonlySet<string>;
-  }[];
-  configurationKey(snapshot: PersistedSnapshot): string;
-}
+export type GateTokenLint = TokenLintResult;
 export interface GateTrackedIssue {
   readonly issue: { readonly nodeId: string; readonly state: "open" | "closed" };
   readonly blocking: readonly { readonly nodeId: string; readonly state: "open" | "closed" }[];
 }
-export interface GateEscalations {
-  raise(request: {
-    kind: "stranded-token";
-    subject: Readonly<Record<string, string>>;
-    question: string;
-    choices: readonly { id: string; label: string }[];
-  }): unknown;
-  withdraw(request: { kind: "stranded-token"; subject: Readonly<Record<string, string>> }): unknown;
-}
-export interface GateStrandedEscalation {
-  readonly subject: Readonly<Record<string, string>>;
-  readonly answer: { readonly choice: string } | { readonly text: string } | undefined;
-}
+export type GateEscalations = Pick<Escalations, "raise" | "withdraw">;
+export type GateStrandedEscalation = Pick<Escalation, "raiser" | "answer">;
 export interface GatesOptions {
   readonly store: Store;
   version(version: { commit: string; path: string }): Promise<GateVersionLoad>;
@@ -85,14 +70,7 @@ export interface Gates {
   replay(evaluationId: number): Promise<GateReplay>;
   stop(): void;
 }
-export interface GateSave {
-  readonly actorId: string;
-  readonly machine: string;
-  readonly snapshot: PersistedSnapshot;
-  readonly activeInvokes: readonly { readonly invokeId: string; readonly entryId: string }[];
-  readonly entered: readonly string[];
-  readonly entries: Readonly<Record<string, string>>;
-}
+export type GateSave = ActorSave;
 export interface GateError {
   readonly gate: string | undefined;
   readonly version: string | undefined;

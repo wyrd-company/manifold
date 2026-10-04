@@ -24,10 +24,15 @@ export async function serviceFixture() {
   let previous: string | undefined;
   async function commit(
     guarantee: number,
-    usageFiles: { accounts?: unknown; prices?: unknown; bindings?: unknown } = {},
+    usageFiles: {
+      accounts?: unknown;
+      prices?: unknown;
+      bindings?: unknown;
+      comparator?: string;
+    } = {},
     document?: BlueprintDocument,
   ) {
-    async function blob(path: string, value: unknown) {
+    async function blob(path: string, value: unknown, raw = false) {
       return {
         path,
         mode: "100644",
@@ -35,7 +40,7 @@ export async function serviceFixture() {
         oid: await git.writeBlob({
           fs,
           gitdir: remote.gitdir,
-          blob: Buffer.from(stringify(value)),
+          blob: Buffer.from(raw ? String(value) : stringify(value)),
         }),
       };
     }
@@ -68,6 +73,9 @@ export async function serviceFixture() {
           },
         }),
         await blob("bindings.yml", usageFiles.bindings ?? {}),
+        ...(usageFiles.comparator === undefined
+          ? []
+          : [await blob("order.ts", usageFiles.comparator, true)]),
         ...(usageFiles.accounts === undefined
           ? []
           : [await blob("accounts.yml", usageFiles.accounts)]),

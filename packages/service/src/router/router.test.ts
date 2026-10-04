@@ -417,7 +417,7 @@ test("router schema matches its approved DDL and migrations stay isolated and id
     store.connection.database.prepare("SELECT * FROM schema_migration ORDER BY owner").all(),
   ).toEqual([
     { owner: "router", version: 1 },
-    { owner: "store", version: 2 },
+    { owner: "store", version: 3 },
   ]);
 });
 

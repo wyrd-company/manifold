@@ -818,6 +818,9 @@ test("wires gates into revision following, router resume, and shutdown", async (
       expect(parts.gates).toBe(gates);
       events.push("host-created");
       return {
+        start: () => {},
+        actorOf: () => undefined,
+        release: async () => {},
         subscription: () => ({ topics: [] }),
         restore: () => ({ status: "held", reason: "test" }),
       };
@@ -841,4 +844,74 @@ test("wires gates into revision following, router resume, and shutdown", async (
   await service.stop();
   expect(events.indexOf("revisions-idle")).toBeLessThan(events.indexOf("gate-stop"));
   expect(events.indexOf("gate-stop")).toBeLessThan(events.indexOf("store-closed"));
+});
+
+test("default service resumes gates with real token lint, save hooks, and escalation answers", async () => {
+  const f = await fixture();
+  await f.commit(
+    60,
+    { comparator: "export default i => i.holders.length ? null : { task: i.population[0].id };" },
+    {
+      machine: {
+        initial: "counting",
+        context: {},
+        states: {
+          counting: {
+            meta: { gate: { comparator: "order.ts", return: { state: "packed" } } },
+            on: { token: "holding" },
+          },
+          holding: { on: { finish: "done" } },
+          packed: {},
+          done: { type: "final" },
+        },
+      },
+      schemas: { input: true, output: true, context: true, events: { token: true, finish: true } },
+    },
+  );
+  const first = await startService({ configurationFile: f.file, log: () => {} });
+  cleanup.push(first.stop);
+  const blueprint = first.revisions.latest()!.blueprints.get("blueprints/counter.yml")!;
+  expect(blueprint.tokens.gates[0]?.verdict).toBe("potential");
+  first.gates!.stop();
+  const { createActor } = await import("xstate");
+  const actor = createActor(blueprint.machine);
+  actor.start();
+  for (let i = 0; i < 20; i++)
+    first.store.saveSnapshot({
+      actorId: `parcel-${String(i).padStart(2, "0")}`,
+      machine: blueprint.key,
+      snapshot: actor.getPersistedSnapshot() as import("../store/index.ts").PersistedSnapshot,
+    });
+  actor.stop();
+  await first.stop();
+  const resumed = await startService({ configurationFile: f.file, log: () => {} });
+  cleanup.push(resumed.stop);
+  expect(resumed.store.loadSnapshot("parcel-00")?.snapshot["value"]).toBe("holding");
+  expect(resumed.store.pendingInbox("parcel-00")).toEqual([]);
+  await resumed.github.stop();
+  await resumed.t3code.stop();
+  await resumed.revisions.follow();
+  // Drain host persistence and the gate passes those saves schedule.
+  for (let turn = 0; turn < 4; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+  const question = resumed.escalations
+    .list({ status: "open" })
+    .find((row) => row.raiser.type === "service" && row.raiser.kind === "stranded-token")!;
+  expect(question).toBeDefined();
+  expect(resumed.escalations.answer(question.id, { choice: "return" }, "api").status).toBe(
+    "answered",
+  );
+  await expect
+    .poll(
+      () =>
+        resumed.store.connection.database.prepare("SELECT count(*) AS n FROM gates_token").get()?.[
+          "n"
+        ],
+    )
+    .toBe(2);
+  expect(
+    resumed.store.connection.database
+      .prepare("SELECT return_reason FROM gates_token WHERE actor_id='parcel-00'")
+      .get()?.["return_reason"],
+  ).toBe("escalation");
+  expect(resumed.store.loadSnapshot("parcel-01")?.snapshot["value"]).toBe("holding");
 });
