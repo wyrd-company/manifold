@@ -115,17 +115,32 @@ proposed-design:
     Code provider instance with its own home path is decoded by passing that
     path as a root.
   decode-order-and-dedup: >-
-    Roots decode in the order given. Within a root, sources decode in
-    ascending order of their path compared as UTF-16 code units, and one
-    dedup set spans every source of that root. For `claude` the set is the
-    message-id set `groupIntoTurns` takes, so a session transcript decodes
-    before its `subagents/` directory and a replayed message stays with the
-    session. For `codex` the set is the `seenKeys` of `decodeCodex`, and
-    each rollout file starts a fresh decode state, so a fork's replay of its
-    origin collides with the origin's keys and is dropped. The other
-    providers pass one `seenKeys` set per root. Two roots of the same
-    provider share no dedup set. The order fixes which unit owns a
-    duplicated call, so the same files always give the same records.
+    The decoder gathers the sources of every root of one provider into one
+    list and decodes them with one dedup set. A source is identified by its
+    real path from `fs.realpath`, so a root given twice, or a source that two
+    roots reach, decodes once, at its first position. Sources take the order
+    of their first root in the order given, and within a root ascending
+    order of their path compared as UTF-16 code units. For `claude` the set
+    is the message-id set `groupIntoTurns` takes, so a session transcript
+    decodes before its `subagents/` directory and a replayed message stays
+    with the session. For `codex` the set is the `seenKeys` of `decodeCodex`,
+    and each rollout file starts a fresh decode state. Before any Codex
+    rollout decodes, the decoder reads the first `session_meta` record of
+    every rollout of the provider, and orders each rollout after the rollout
+    whose unit is its origin: `payload.forked_from_id` for a fork, and its
+    parent for a child thread. The order is a stable topological sort of
+    that relation over the path order, so an origin decodes before its fork
+    wherever each file lives, and its calls stay with the origin's unit. A
+    rollout whose origin is in no source of the decode, or whose origin
+    cannot be read, decodes at its path position, and its replay of that
+    origin stays with its own unit. A cycle in the relation, which no
+    harness writes, decodes in path order. The other providers pass one
+    `seenKeys` set per provider. The first copy of a session in decode
+    order owns its calls, and a later copy, in the same root or another,
+    yields only the calls the first copy lacks. A `session-total` record is
+    yielded once per key, from the first source in decode order that holds
+    the unit. The order fixes which unit owns a duplicated call, so the
+    same files always give the same records.
   unit-identity: >-
     Every call carries `providerSessionId`, the session id the library
     assigns the call, which is the id the harness and T3 Code know, and a
@@ -205,8 +220,8 @@ proposed-design:
     run that stops halfway leaves nothing to repair; the next run decodes
     every source again. A source that grows between runs yields its earlier
     calls under the same keys, and a session total yields its new counts
-    under its old key. A deleted parent file lets a replay reappear on its
-    child unit under the key the parent's call had, so the service treats
+    under its old key. A deleted or unreadable origin file lets a replay
+    reappear on its fork or child unit under the key the origin's call had, so the service treats
     the key as the idempotency key of a call and the last `session-total`
     record for a key as that key's value.
   dependency-pin: >-
@@ -221,7 +236,9 @@ proposed-design:
     harness releases, and no content from a real session. They cover a
     session with calls on two models, every token class, a Claude subagent
     with its meta file, a Codex child thread whose library call carries the
-    root session id, a Codex fork that replays its origin, an OpenCode child
+    root session id, a Codex fork in `archived_sessions/` whose origin is in
+    `sessions/` and which replays the origin's calls and adds calls of its
+    own, a second fork whose origin file is absent, an OpenCode child
     session in a database, a Cursor conversation with and without a summary
     row, a Grok session, a call on a model no price table holds, a call with
     no model, a truncated file, a line that does not parse, and a record of
@@ -241,4 +258,8 @@ proposed-design:
     binary test compiles `src/cli.ts` with the package's Bun into a
     temporary directory, runs `manifold-host usage decode` with a `--root`
     for each fixture provider, and compares its standard output with
-    `fixtures/expected.jsonl` line for line.
+    `fixtures/expected.jsonl` line for line. Root tests drive `decodeUsage`
+    with the same fixture root given twice, and with two distinct roots
+    that each hold a copy of one Claude session and one Codex rollout, and
+    check that the records equal those of the single root, with unique
+    keys.

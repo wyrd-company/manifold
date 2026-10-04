@@ -1,3 +1,9 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no schema declares an edge from an asset to its
+#   # specification; `asset-of` names it.
+#   asset-of: usage-record
+# ---
 $schema: https://json-schema.org/draft/2020-12/schema
 $id: https://manifold.wyrd.company/schemas/usage-record
 title: Usage record

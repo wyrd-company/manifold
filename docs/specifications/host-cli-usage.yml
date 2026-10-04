@@ -15,11 +15,12 @@ description: >-
   environment and writes the usage records, one JSON object on each line of
   standard output, in the format of the `usage-record` specification. Each
   `--root <provider>=<path>` names a directory where a provider keeps its
-  sessions, and the roots decode in the order given. With no `--root`, the
-  command decodes the default root of every provider, in the order
-  `claude`, `codex`, `cursor`, `grok`, `opencode`, resolved from the
-  environment variables and home directory as the `usage-decoder` design
-  states. A root whose directory does not exist yields no records.
+  sessions, and the roots decode in the order given. A file that two roots
+  reach decodes once, and a call that two roots hold yields one record.
+  With no `--root`, the command decodes the default root of every
+  provider, in the order `claude`, `codex`, `cursor`, `grok`, `opencode`,
+  resolved from the environment variables and home directory as the
+  `usage-decoder` design states. A root whose directory does not exist yields no records.
 
   A problem with one source is a source error record on standard output, and
   the decode continues. Standard error carries only messages about the
