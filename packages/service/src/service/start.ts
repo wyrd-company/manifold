@@ -14,7 +14,9 @@ import { openProcessRepository } from "../process-repository/index.ts";
 import { createBlueprintLoader } from "../blueprint-loader/index.ts";
 import { serviceImplementations } from "../implementations.ts";
 import { startRouter } from "../router/index.ts";
-import type { Router, ActorHost } from "../router/index.ts";
+import type { Router } from "../router/index.ts";
+import { createServiceActorHost } from "../actor-host/service.ts";
+import { recordStateEntry } from "../actor-host/index.ts";
 import { startGitHubSource } from "../github-source/index.ts";
 import type { GitHubSource } from "../github-source/index.ts";
 import { startT3CodeSource } from "../t3code-source/index.ts";
@@ -25,10 +27,6 @@ import { createRevisions } from "./revisions.ts";
 import { stderrLog } from "./log.ts";
 import { githubWebhookPath } from "./types.ts";
 import type { Service, ServiceParts, ServiceStep, StartServiceOptions } from "./types.ts";
-const defaultHost: ActorHost = {
-  subscription: () => ({ topics: [] }),
-  restore: () => ({ status: "held", reason: "no actor host" }),
-};
 export async function startService(options: StartServiceOptions): Promise<Service> {
   const log = options.log ?? stderrLog;
   let store: Store | undefined;
@@ -91,7 +89,8 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       ...(options.probes?.pull ? { probe: options.probes.pull } : {}),
     });
     const blueprints = createBlueprintLoader({
-      implementations: serviceImplementations,
+      implementations: serviceImplementations(),
+      onStateEntry: recordStateEntry,
       revisionAt: processRepository.revisionAt,
       onExpressionError: (error, version) =>
         log({
@@ -126,8 +125,8 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       revisions,
       log,
     };
-    const actorHost = options.actorHost ? await options.actorHost(beforeHost) : defaultHost;
-    options.signal?.throwIfAborted();
+    const actorHost = await (options.actorHost ?? createServiceActorHost)(beforeHost);
+    step("actor-host-opened", "start");
     const parts: ServiceParts = { ...beforeHost, actorHost };
     router = startRouter({
       store,

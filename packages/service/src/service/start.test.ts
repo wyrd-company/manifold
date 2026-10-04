@@ -23,6 +23,7 @@ const startSteps: ServiceStep[] = [
   "process-repository-opened",
   "revision-followed",
   "pulled",
+  "actor-host-opened",
   "router-started",
   "github-started",
   "t3code-started",
@@ -43,6 +44,9 @@ test("starts in order, awaits the actor host, follows revisions, and stops once"
   const f = await fixture();
   const steps: ServiceStep[] = [];
   const host = {
+    start: () => {},
+    actorOf: () => undefined,
+    release: async () => {},
     subscription: () => ({ topics: [] }),
     restore: () => ({ status: "held" as const, reason: "test" }),
   };
@@ -161,6 +165,9 @@ test("restores and drains a populated inbox before sources start", async () => {
     log: () => {},
     probes: { step: (step) => events.push(step) },
     actorHost: () => ({
+      start: () => {},
+      actorOf: () => undefined,
+      release: async () => {},
       subscription: () => ({ topics: ["counter"] }),
       restore: (stored) => {
         events.push("restored");
@@ -377,7 +384,7 @@ test("the default actor host holds restored actors with their inbox intact", asy
     },
   });
   cleanup.push(service.stop);
-  expect(held).toEqual(["no actor host"]);
+  expect(held).toEqual([expect.stringContaining("blueprint version counter is missing (file)")]);
   expect(service.store.pendingInbox("counter-one")).toHaveLength(1);
   expect(
     service.actorHost.subscription({
@@ -386,4 +393,31 @@ test("the default actor host holds restored actors with their inbox intact", asy
       snapshot: { status: "active", value: "counting" },
     }),
   ).toEqual({ topics: [] });
+});
+
+test("the default host starts durable actors and restores them before sources start", async () => {
+  const f = await fixture();
+  const service = await startService({ configurationFile: f.file, log: () => {} });
+  cleanup.push(service.stop);
+  const blueprint = service.revisions.latest()!.blueprints.get("blueprints/counter.yml")!;
+  service.actorHost.start({
+    actorId: "parcel",
+    blueprint,
+    input: { manifold: { issue: "parcel-node" } },
+  });
+  expect(service.store.loadSnapshot("parcel")?.snapshot["entries"]).toMatchObject({ count: 2 });
+  await service.stop();
+  const steps: ServiceStep[] = [];
+  const resumed = await startService({
+    configurationFile: f.file,
+    log: () => {},
+    probes: { step: (step) => steps.push(step) },
+  });
+  cleanup.push(resumed.stop);
+  expect(resumed.actorHost.actorOf("parcel")).toEqual({
+    manifold: { issue: "parcel-node" },
+    commit: f.first,
+  });
+  expect(resumed.store.loadSnapshot("parcel")?.snapshot["entries"]).toMatchObject({ count: 2 });
+  expect(steps.indexOf("actor-host-opened")).toBeLessThan(steps.indexOf("router-started"));
 });

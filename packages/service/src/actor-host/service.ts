@@ -4,16 +4,9 @@
 //   references: service-assembly
 // ---
 import { serviceSaveHooks } from "../save-hooks.ts";
-import type { ServiceSaveHookParts } from "../save-hooks.ts";
+import type { ServiceParts } from "../service/index.ts";
 import { openActorHost } from "./host.ts";
-import type { ActorHostOptions } from "./types.ts";
-/** Structural subset of Omit<ServiceParts, "actorHost"> until service assembly lands. */
-export interface ActorHostServiceParts extends ServiceSaveHookParts {
-  readonly store: ActorHostOptions["store"];
-  readonly blueprints: ActorHostOptions["blueprints"];
-  readonly log: ActorHostOptions["log"];
-}
-export function createServiceActorHost(parts: ActorHostServiceParts) {
+export function createServiceActorHost(parts: Omit<ServiceParts, "actorHost">) {
   return openActorHost({
     store: parts.store,
     blueprints: parts.blueprints,

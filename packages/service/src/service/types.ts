@@ -3,7 +3,8 @@
 //   implements: service-assembly
 // ---
 import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
-import type { ActorHost, Router } from "../router/index.ts";
+import type { Router } from "../router/index.ts";
+import type { ActorHost } from "../actor-host/index.ts";
 import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
 import type { Portfolio } from "../portfolio/index.ts";
 import type {
@@ -47,6 +48,7 @@ export type ServiceStep =
   | "process-repository-opened"
   | "revision-followed"
   | "pulled"
+  | "actor-host-opened"
   | "router-started"
   | "github-started"
   | "t3code-started"

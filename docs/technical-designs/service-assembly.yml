@@ -58,7 +58,7 @@ proposed-design:
     `packages/service/src/service/` is the assembly. `startService` loads
     the service configuration, opens the store, the portfolio, the process
     repository, and the blueprint loader, brings the loaders up to the
-    current commit and pulls, starts the router, starts the GitHub and T3
+    current commit and pulls, opens the actor host, starts the router, starts the GitHub and T3
     Code sources, mounts the GitHub source's listener, and listens.
     `Service.stop` undoes the same steps in reverse. The revision follower
     sits between every pull and the loaders: after each pull it loads the
@@ -73,7 +73,8 @@ proposed-design:
 
     ```ts
     import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
-    import type { ActorHost, Router } from "../router/index.ts";
+    import type { Router } from "../router/index.ts";
+    import type { ActorHost } from "../actor-host/index.ts";
     import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
     import type { Portfolio } from "../portfolio/index.ts";
     import type {
@@ -119,6 +120,7 @@ proposed-design:
       | "process-repository-opened"
       | "revision-followed"
       | "pulled"
+      | "actor-host-opened"
       | "router-started"
       | "github-started"
       | "t3code-started"
@@ -234,26 +236,29 @@ proposed-design:
     the store's connection. (4) `process-repository-opened`:
     `openProcessRepository` with the `processRepository` section, the
     credentials, and the `pull` probe, then `createBlueprintLoader` with
-    `serviceImplementations`, the repository's `revisionAt`, and an
+    `serviceImplementations()`, the repository's `revisionAt`,
+    `onStateEntry: recordStateEntry`, and an
     `onExpressionError` that logs `expression-error`. (5)
     `revision-followed`: creates the revision follower and awaits
     `follow()`, so a commit published before a crash is in force before
     anything reads the portfolio or the blueprints. (6) `pulled`: awaits
     `revisions.pull()`; a pull that fails logs `pull-failed` and start
     continues on the current commit, or with no revision when there is
-    none, since every sweep pulls again. (7) `router-started`: calls
-    `startRouter` with the store, the actor host awaited from the `actorHost` option
-    built from the parts of steps 1 to 6, and an `onHeld` that logs
+    none, since every sweep pulls again. (7) `actor-host-opened`: awaits
+    the `actorHost` factory, defaulting to `createServiceActorHost`, with
+    `Omit<ServiceParts, "actorHost">` from steps 1 to 6. (8)
+    `router-started`: calls `startRouter` with the store, the opened actor
+    host, and an `onHeld` that logs
     `actor-held`. `startRouter` restores and drains every stored actor and
-    returns. (8) `github-started`: `startGitHubSource` with the `github`
+    returns. (9) `github-started`: `startGitHubSource` with the `github`
     section, the credentials, the store, the router, `boundProjects` read
     from `portfolio.current()`, a `processRepository` trigger whose `url`
     and `branch` are the section's and whose `pull` is `revisions.pull`,
-    and an `onError` that logs `github-error`. (9) `t3code-started`:
+    and an `onError` that logs `github-error`. (10) `t3code-started`:
     `startT3CodeSource` with the store, the router, the `environments`
     section, a `tokenFile` that resolves the credential name to its
     `t3code-token` credential's file, and a `logger` that writes to the
-    log. (10) `listening`: creates the HTTP host from the `http` section,
+    log. (11) `listening`: creates the HTTP host from the `http` section,
     mounts the GitHub source's `requestListener` at `githubWebhookPath`
     with `mount`, awaits `listen`, and logs `started` with the address.
     Sources start after the router returns, and the host listens after the
@@ -273,16 +278,17 @@ proposed-design:
     A module joins the service by adding its start to `start.ts` at the
     step its dependencies fix, its stop at the mirrored point of the stop
     order, its member to `Service` when other modules read it, and its
-    endpoints with `mount` before step 10's `listen`. A
-    module that publishes starts after step 7. A module whose state the
+    endpoints with `mount` before step 11's `listen`. A
+    module that publishes starts after step 8. A module whose state the
     actor host reads, such as the implementations a blueprint binds, is
     built before step 7 and reaches the host through `ServiceParts`.
   actor-host: >-
-    The router's actor host comes from the `actorHost` option. Without the
-    option, the host derives no topics from a snapshot, and its `restore`
-    returns `held` with the reason `no actor host`, so the service holds
-    every stored actor with its inbox intact and runs no actor until a
-    host is given.
+    The default factory opens the actor host described in `actor-host`,
+    with the store, blueprint loader, log, and `serviceSaveHooks(parts)`.
+    The `actorHost` option supplies an alternative factory with the same
+    parts and may return a promise. Both are awaited before the router
+    restores any actor. `ServiceParts.actorHost` exposes `start`, `actorOf`,
+    and `release` to modules that start after the router.
   stop: >-
     `stop` runs these steps in order, each after the one before it
     resolves, and calls the `step` probe after each. (1) `http-closed`:

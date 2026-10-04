@@ -132,6 +132,9 @@ const service = await startService({
       blueprints.set(result.blueprint.key, result.blueprint);
     }
     return {
+      start: () => {},
+      actorOf: () => undefined,
+      release: async () => {},
       subscription(record) {
         const blueprint = blueprints.get(record.machine)!;
         return {
