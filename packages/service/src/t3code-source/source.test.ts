@@ -135,6 +135,7 @@ test("baselines existing state and publishes a post-origin thread once across re
       threadId: thread.id,
       projectId: "project",
       turnId: "turn-one",
+      messageId: null,
     },
     {
       type: "t3.turn.settled",
@@ -142,6 +143,7 @@ test("baselines existing state and publishes a post-origin thread once across re
       threadId: thread.id,
       projectId: "project",
       turnId: "turn-one",
+      messageId: null,
       state: "completed",
       assistantMessageId: null,
       error: null,
@@ -654,6 +656,7 @@ test("compact projections retain the checkpoints a revert needs", async () => {
       threadId: thread.id,
       projectId: "project",
       turnId: "older-turn",
+      messageId: null,
     },
     {
       type: "t3.turn.settled",
@@ -661,6 +664,7 @@ test("compact projections retain the checkpoints a revert needs", async () => {
       threadId: thread.id,
       projectId: "project",
       turnId: "older-turn",
+      messageId: null,
       state: "completed",
       assistantMessageId: "answer",
       error: null,
@@ -714,7 +718,7 @@ test("the public source migrates tables that agree with the specification", asyn
       store.connection.database
         .prepare("SELECT version FROM schema_migration WHERE owner = 'tthree'")
         .get(),
-    ).toEqual({ version: 2 });
+    ).toEqual({ version: 3 });
   } finally {
     reference.close();
   }
@@ -878,4 +882,326 @@ test("upgrades populated source tables and preserves project identity", async ()
   });
   await expect.poll(() => source.status()[0]?.openSubscriptions).toBe(0);
   expect(source.status()[0]?.state).toBe("following");
+});
+
+function userMessage(id: string, createdAt: string) {
+  return {
+    id,
+    role: "user" as const,
+    text: "Prepare a recipe",
+    turnId: null,
+    streaming: false,
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+function running(thread: ReturnType<typeof fixtureThread>, turn: string, at: string) {
+  thread.session = {
+    threadId: thread.id,
+    status: "running",
+    providerName: "provider",
+    runtimeMode: "full-access",
+    activeTurnId: turn as NonNullable<typeof thread.latestTurn>["turnId"],
+    lastError: null,
+    updatedAt: at,
+  };
+  thread.latestTurn = {
+    turnId: thread.session.activeTurnId!,
+    state: "running",
+    requestedAt: at,
+    startedAt: at,
+    completedAt: null,
+    assistantMessageId: null,
+  };
+}
+test("ready waits for the origin, survives lost connections, and rejects abort and unknown names", async () => {
+  const { server, start } = await setup();
+  let release!: () => void;
+  server.hooks.beforeReadModel = () =>
+    new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  const source = start();
+  let ready = false;
+  const waiting = source.ready("station").then(() => {
+    ready = true;
+  });
+  await expect.poll(() => typeof release).toBe("function");
+  expect(ready).toBe(false);
+  const abort = new AbortController();
+  const aborted = expect(source.ready("station", abort.signal)).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  abort.abort();
+  await aborted;
+  await expect(source.ready("missing")).rejects.toMatchObject({
+    name: "AgentThreadError",
+    kind: "environment",
+  });
+  release();
+  await waiting;
+  await source.ready("station");
+  server.drop();
+  await source.ready("station");
+  await source.stop();
+  await expect(source.ready("station")).rejects.toMatchObject({
+    name: "AgentThreadError",
+    kind: "environment",
+  });
+});
+test("ready rejects when the source stops before its first connection", async () => {
+  const { server, options } = await setup();
+  server.setToken("unavailable-token");
+  const source = startT3CodeSource(options);
+  cleanup.push(() => source.stop());
+  const waiting = expect(source.ready("station")).rejects.toMatchObject({
+    name: "AgentThreadError",
+    kind: "environment",
+  });
+  await expect.poll(() => source.status()[0]?.state).toBe("retrying");
+  await source.stop();
+  await waiting;
+});
+test.each(["live", "replay", "snapshot"])(
+  "attributes turns to requesting messages through %s",
+  async (mode) => {
+    const { server, store, start } = await setup();
+    const thread = fixtureThread();
+    server.baseline(thread);
+    const source = start();
+    await expect.poll(() => source.status()[0]?.state).toBe("following");
+    await expect.poll(() => source.status()[0]?.openSubscriptions).toBe(0);
+    if (mode !== "live") await source.stop();
+    if (mode === "snapshot") server.setBound(0);
+    const message = userMessage("requesting-message", "2026-01-01T00:00:01.000Z");
+    thread.messages.push(message as (typeof thread.messages)[number]);
+    server.change(thread, "thread.message-sent", {
+      threadId: thread.id,
+      ...message,
+      messageId: message.id,
+    });
+    running(thread, "requested-turn", message.createdAt);
+    server.change(thread);
+    if (mode !== "live") start();
+    await expect.poll(() => store.pendingInbox("reader").length).toBe(1);
+    expect(store.pendingInbox("reader")[0]!.payload).toMatchObject({
+      turnId: "requested-turn",
+      messageId: message.id,
+    });
+  },
+);
+test("preserves a message queued during a turn across restart and attribution across snapshots", async () => {
+  const { server, store, start } = await setup();
+  const thread = fixtureThread();
+  const first = userMessage("first-message", thread.createdAt);
+  thread.messages.push(first as (typeof thread.messages)[number]);
+  running(thread, "first-turn", first.createdAt);
+  server.baseline(thread);
+  const source = start();
+  await expect.poll(() => source.status()[0]?.state).toBe("following");
+  const next = userMessage("next-message", "2026-01-01T00:00:01.000Z");
+  thread.messages.push(next as (typeof thread.messages)[number]);
+  server.change(thread, "thread.message-sent", {
+    threadId: thread.id,
+    ...next,
+    messageId: next.id,
+  });
+  await expect
+    .poll(() => store.connection.database.prepare("SELECT cursor FROM t3_thread").get()?.["cursor"])
+    .toBe(1);
+  await source.stop();
+  thread.session = { ...thread.session!, status: "ready", activeTurnId: null };
+  thread.latestTurn = { ...thread.latestTurn!, state: "completed", completedAt: thread.updatedAt };
+  server.change(thread);
+  running(thread, "next-turn", next.createdAt);
+  server.change(thread);
+  const resumed = start();
+  await expect.poll(() => store.pendingInbox("reader").length).toBe(2);
+  expect(store.pendingInbox("reader").map((r) => r.payload)).toMatchObject([
+    { type: "t3.turn.settled", turnId: "first-turn", messageId: first.id },
+    { type: "t3.turn.started", turnId: "next-turn", messageId: next.id },
+  ]);
+  await resumed.stop();
+  server.setBound(0);
+  thread.messages = [];
+  thread.session = { ...thread.session!, status: "ready", activeTurnId: null };
+  thread.latestTurn = { ...thread.latestTurn!, state: "completed", completedAt: thread.updatedAt };
+  server.change(thread);
+  start();
+  await expect.poll(() => store.pendingInbox("reader").length).toBe(3);
+  expect(store.pendingInbox("reader")[2]!.payload).toMatchObject({
+    type: "t3.turn.settled",
+    messageId: next.id,
+  });
+});
+test.each(["missing", "ambiguous", "ambiguous-pending"])(
+  "never guesses a snapshot attribution with %s messages",
+  async (mode) => {
+    const { server, store, start } = await setup();
+    const thread = fixtureThread();
+    running(thread, "first-turn", thread.createdAt);
+    if (mode !== "missing") {
+      const time = mode === "ambiguous-pending" ? "2026-01-01T00:00:01.000Z" : thread.createdAt;
+      thread.messages = [
+        userMessage("one", time),
+        userMessage("two", time),
+      ] as typeof thread.messages;
+    }
+    server.baseline(thread);
+    const source = start();
+    await expect.poll(() => source.status()[0]?.state).toBe("following");
+    await source.stop();
+    server.setBound(0);
+    thread.session = { ...thread.session!, status: "ready", activeTurnId: null };
+    thread.latestTurn = {
+      ...thread.latestTurn!,
+      state: "completed",
+      completedAt: thread.updatedAt,
+    };
+    server.change(thread);
+    const resumed = start();
+    await expect.poll(() => store.pendingInbox("reader").length).toBe(1);
+    expect(store.pendingInbox("reader")[0]!.payload).toMatchObject({ messageId: null });
+    if (mode === "ambiguous-pending") {
+      await resumed.stop();
+      server.setBound(1000);
+      running(thread, "next-turn", "2026-01-01T00:00:01.000Z");
+      server.change(thread);
+      start();
+      await expect.poll(() => store.pendingInbox("reader").length).toBe(2);
+      expect(store.pendingInbox("reader")[1]!.payload).toMatchObject({ messageId: null });
+    }
+  },
+);
+
+test("snapshot attribution retains null for a turn even when a later snapshot reveals a matching message", async () => {
+  const { server, store, start } = await setup();
+  const thread = fixtureThread();
+  running(thread, "first-turn", thread.createdAt);
+  server.baseline(thread);
+  const source = start();
+  await expect.poll(() => source.status()[0]?.state).toBe("following");
+  await source.stop();
+  server.setBound(0);
+  thread.messages.push(
+    userMessage("late-evidence", thread.createdAt) as (typeof thread.messages)[number],
+  );
+  thread.session = { ...thread.session!, status: "ready", activeTurnId: null };
+  thread.latestTurn = { ...thread.latestTurn!, state: "completed", completedAt: thread.updatedAt };
+  server.change(thread);
+  start();
+  await expect.poll(() => store.pendingInbox("reader").length).toBe(1);
+  expect(store.pendingInbox("reader")[0]!.payload).toMatchObject({ messageId: null });
+});
+test("a new snapshot turn with ambiguous requesting timestamps publishes null", async () => {
+  const { server, store, start } = await setup();
+  const source = start();
+  await source.ready("station");
+  const thread = fixtureThread();
+  running(thread, "ambiguous-turn", thread.createdAt);
+  thread.messages = [
+    userMessage("one", thread.createdAt),
+    userMessage("two", thread.createdAt),
+  ] as typeof thread.messages;
+  server.change(thread);
+  await expect.poll(() => store.pendingInbox("reader").length).toBe(1);
+  expect(store.pendingInbox("reader")[0]!.payload).toMatchObject({ messageId: null });
+});
+test("a stopped run with no origin waits for its own baseline on restart", async () => {
+  const { server, store, start } = await setup();
+  let release!: () => void;
+  server.hooks.beforeReadModel = () =>
+    new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  const source = start();
+  const firstReady = expect(source.ready("station")).rejects.toMatchObject({ kind: "environment" });
+  await expect.poll(() => typeof release).toBe("function");
+  await source.stop();
+  await firstReady;
+  expect(store.connection.database.prepare("SELECT * FROM t3_environment").all()).toEqual([]);
+  release();
+  release = undefined!;
+  const resumed = start();
+  let ready = false;
+  const resumedReady = resumed.ready("station").then(() => {
+    ready = true;
+  });
+  await expect.poll(() => typeof release).toBe("function");
+  expect(ready).toBe(false);
+  release();
+  await resumedReady;
+});
+
+test("SIGKILL before the origin commit leaves no readiness and the next run commits its own origin", async () => {
+  const { server, store, options, token, directory, start } = await setup();
+  server.baseline(fixtureThread());
+  const child = fork(
+    new URL("./test-fixtures/crash-worker.ts", import.meta.url),
+    [
+      JSON.stringify({
+        path: join(directory, "store.sqlite"),
+        token,
+        environments: options.environments,
+        pause: false,
+        pauseOrigin: true,
+      }),
+    ],
+    { silent: true },
+  );
+  const messages = new Set<unknown>();
+  child.on("message", (message) => {
+    messages.add(message);
+  });
+  cleanup.push(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill("SIGKILL");
+      await exited;
+    }
+  });
+  await expect.poll(() => messages.has("inside-origin")).toBe(true);
+  expect(messages.has("ready")).toBe(false);
+  expect(store.connection.database.prepare("SELECT * FROM t3_environment").all()).toEqual([]);
+  const exited = once(child, "exit");
+  child.kill("SIGKILL");
+  expect(await exited).toEqual([null, "SIGKILL"]);
+  server.change(fixtureThread("new-baseline"));
+  const source = start();
+  await source.ready("station");
+  expect(
+    store.connection.database.prepare("SELECT origin_sequence FROM t3_environment").get(),
+  ).toEqual({ origin_sequence: 1 });
+  expect(store.pendingInbox("reader")).toEqual([]);
+}, 30000);
+
+test("ready resets during a changed environment identity until its new origin commits", async () => {
+  const { server, store, start } = await setup();
+  const source = start();
+  await source.ready("station");
+  let release!: () => void;
+  server.hooks.beforeReadModel = () =>
+    new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  await expect
+    .poll(() => server.requests.some((request) => request.tag === "orchestration.subscribeShell"))
+    .toBe(true);
+  server.reset("replacement-server");
+  server.failShell();
+  await expect.poll(() => typeof release).toBe("function");
+  let ready = false;
+  const waiting = source.ready("station").then(() => {
+    ready = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(ready).toBe(false);
+  expect(
+    store.connection.database.prepare("SELECT environment_id FROM t3_environment").get(),
+  ).toEqual({ environment_id: "server-one" });
+  release();
+  await waiting;
+  expect(
+    store.connection.database.prepare("SELECT environment_id FROM t3_environment").get(),
+  ).toEqual({ environment_id: "replacement-server" });
 });

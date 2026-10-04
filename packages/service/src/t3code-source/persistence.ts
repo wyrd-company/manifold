@@ -4,6 +4,8 @@
 //   realizes: t3code-source-database-schema
 // ---
 import type { OrchestrationThread } from "@wyrd-company/t3code-client";
+import { emptyAttribution } from "./state.ts";
+import type { TurnAttribution } from "./state.ts";
 import type { Store } from "../store/index.ts";
 export interface ThreadRow {
   thread_id: string;
@@ -11,6 +13,7 @@ export interface ThreadRow {
   cursor: number;
   thread: OrchestrationThread | null;
   project_id: string | null;
+  attribution: TurnAttribution;
 }
 export interface EnvironmentRow {
   environment_id: string;
@@ -68,6 +71,7 @@ export function persistence(store: Store, environment: string) {
             .map((row) => ({
               ...row,
               thread: JSON.parse(String(row["thread"])),
+              attribution: JSON.parse(String(row["attribution"])),
             })) as unknown as ThreadRow[],
       );
     },
@@ -77,7 +81,11 @@ export function persistence(store: Store, environment: string) {
           .prepare("SELECT * FROM t3_thread WHERE environment = ? AND thread_id = ?")
           .get(environment, id);
         return row
-          ? ({ ...row, thread: JSON.parse(String(row["thread"])) } as unknown as ThreadRow)
+          ? ({
+              ...row,
+              thread: JSON.parse(String(row["thread"])),
+              attribution: JSON.parse(String(row["attribution"])),
+            } as unknown as ThreadRow)
           : undefined;
       });
     },
@@ -87,10 +95,19 @@ export function persistence(store: Store, environment: string) {
       cursor: number,
       thread: OrchestrationThread | null,
       projectId: OrchestrationThread["projectId"] | null = thread?.projectId ?? null,
+      attribution?: TurnAttribution,
     ) {
       db.prepare(
-        "INSERT INTO t3_thread (environment, thread_id, status, cursor, thread, project_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (environment, thread_id) DO UPDATE SET status=excluded.status, cursor=excluded.cursor, thread=excluded.thread, project_id=coalesce(excluded.project_id, t3_thread.project_id)",
-      ).run(environment, id, status, cursor, JSON.stringify(thread), projectId);
+        "INSERT INTO t3_thread (environment, thread_id, status, cursor, thread, project_id, attribution) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (environment, thread_id) DO UPDATE SET status=excluded.status, cursor=excluded.cursor, thread=excluded.thread, project_id=coalesce(excluded.project_id, t3_thread.project_id), attribution=excluded.attribution",
+      ).run(
+        environment,
+        id,
+        status,
+        cursor,
+        JSON.stringify(thread),
+        projectId,
+        JSON.stringify(attribution ?? this.row(id)?.attribution ?? emptyAttribution),
+      );
     },
   };
 }

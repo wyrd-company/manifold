@@ -102,7 +102,7 @@ proposed-design:
     so a message sent while a turn runs goes to the next turn that starts.
     A `snapshot` item carries no order of events, so it attributes by
     time, since the server sets a turn's `requestedAt` and its user
-    message's `createdAt` from the `createdAt` of the command that
+    message's `createdAt` from the server-normalized `createdAt` of the command that
     requested the turn. A new latest turn in a snapshot takes the user
     message whose `createdAt` equals the turn's `requestedAt` only when
     exactly one user message has that time; with none or more than one it
@@ -219,8 +219,11 @@ proposed-design:
     that its row is committed with an origin and a connection has compared
     the server's `environmentId` with it: after the first transaction of a
     new environment, after the reset of one whose `environmentId` changed,
-    or after the first connection of a resumed one. It stays ready until
-    the service stops, through lost connections. `ready` resolves at that
+    or after the first connection of a resumed one. It stays ready through
+    ordinary connection loss. When a connection finds a different
+    `environmentId`, readiness resets before the source reads its new
+    baseline and resolves only after the replacement origin commits.
+    `ready` resolves at that
     moment, or at once after it, so a writer that sends a command only
     after `ready` creates every thread and turn after the origin, and the
     source publishes their changes. A crash before the first transaction

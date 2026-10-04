@@ -38,5 +38,6 @@ export interface EnvironmentStatus {
 }
 export interface T3CodeSource {
   status(): readonly EnvironmentStatus[];
+  ready(environment: string, signal?: AbortSignal): Promise<void>;
   stop(): Promise<void>;
 }

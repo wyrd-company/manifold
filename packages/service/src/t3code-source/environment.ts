@@ -15,7 +15,14 @@ import {
 } from "@wyrd-company/t3code-client";
 import type { OrchestrationThread } from "@wyrd-company/t3code-client";
 import type { RoutedEvent } from "../router/index.ts";
-import { compactThread, threadState, threadChanges } from "./state.ts";
+import {
+  compactThread,
+  threadState,
+  threadChanges,
+  snapshotAttribution,
+  eventAttribution,
+  emptyAttribution,
+} from "./state.ts";
 import { retryDelay } from "./retry.ts";
 import { needsSubscription, canClose } from "./follow.ts";
 import { sourceEvent, threadTopic } from "./events.ts";
@@ -25,6 +32,8 @@ export function environmentLoop(
   options: T3CodeSourceOptions,
   environment: string,
   signal: AbortSignal,
+  onReady: () => void,
+  onNotReady: () => void,
 ) {
   const configuration = options.environments[environment]!;
   const stored = persistence(options.store, environment);
@@ -150,10 +159,18 @@ export function environmentLoop(
                         ? applyThreadEvent(before.thread, item.event)
                         : null;
                   if (!thread) throw new SourceDefect("Replay has no stored projection");
+                  const attribution =
+                    item.kind === "snapshot"
+                      ? snapshotAttribution(thread, before?.attribution)
+                      : eventAttribution(
+                          thread,
+                          item.event,
+                          before?.attribution ?? emptyAttribution,
+                        );
                   const compact = compactThread(thread);
                   for (const change of threadChanges(
-                    before?.thread ? threadState(before.thread) : undefined,
-                    threadState(compact),
+                    before?.thread ? threadState(before.thread, before.attribution) : undefined,
+                    threadState(compact, attribution),
                   ))
                     publish(id, compact, change);
                   stored.save(
@@ -163,6 +180,8 @@ export function environmentLoop(
                       ? item.snapshot.snapshotSequence
                       : Number("sequence" in item.event ? item.event.sequence : 0),
                     compact,
+                    compact.projectId,
+                    attribution,
                   );
                 });
               const current = stored.row(id);
@@ -237,6 +256,7 @@ export function environmentLoop(
         server = (await client.server.environment(lifetime.signal)).environmentId;
         const previous = stored.environment();
         if (!previous || previous.environment_id !== server) {
+          onNotReady();
           const model = await client.shell.readModel(lifetime.signal);
           stored.atomic(() => {
             stored.reset();
@@ -248,9 +268,12 @@ export function environmentLoop(
                   thread.archivedAt ? "archived" : "followed",
                   model.snapshotSequence,
                   compactThread(thread),
+                  thread.projectId,
+                  snapshotAttribution(thread),
                 );
           });
         }
+        onReady();
         const cursor = stored.environment()!.shell_sequence;
         for (const row of stored.rows())
           if (row.status === "followed") follow(row.thread_id, row.cursor);

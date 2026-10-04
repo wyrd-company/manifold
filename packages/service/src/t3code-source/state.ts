@@ -3,9 +3,58 @@
 //   implements: t3code-environment-source
 // ---
 import { pendingRequests } from "@wyrd-company/t3code-client";
-import type { OrchestrationThread } from "@wyrd-company/t3code-client";
+import type { OrchestrationThread, OrchestrationEvent } from "@wyrd-company/t3code-client";
 import type { RoutedEvent } from "../router/index.ts";
 import type { JsonValue } from "../store/index.ts";
+export interface TurnAttribution {
+  readonly turnId: string | null;
+  readonly messageId: string | null;
+  readonly pendingMessageId: string | null;
+}
+export const emptyAttribution: TurnAttribution = {
+  turnId: null,
+  messageId: null,
+  pendingMessageId: null,
+};
+/** A snapshot proves an attribution only with a unique timestamp match. */
+export function snapshotAttribution(
+  thread: OrchestrationThread,
+  previous = emptyAttribution,
+): TurnAttribution {
+  const turn = threadState(thread).turn;
+  const users = thread.messages.filter((message) => message.role === "user");
+  const matches = turn ? users.filter((message) => message.createdAt === turn.requestedAt) : [];
+  const pending = users.filter((message) => !turn || message.createdAt > turn.requestedAt);
+  const latestTime = pending.reduce(
+    (at, message) => (message.createdAt > at ? message.createdAt : at),
+    "",
+  );
+  const latest = pending.filter((message) => message.createdAt === latestTime);
+  return {
+    turnId: turn?.turnId ?? null,
+    messageId:
+      turn && turn.turnId === previous.turnId
+        ? previous.messageId
+        : matches.length === 1
+          ? matches[0]!.id
+          : null,
+    pendingMessageId: latest.length === 1 ? latest[0]!.id : null,
+  };
+}
+export function eventAttribution(
+  thread: OrchestrationThread,
+  event: OrchestrationEvent,
+  previous: TurnAttribution,
+): TurnAttribution {
+  const pending =
+    "type" in event && event.type === "thread.message-sent" && event.payload.role === "user"
+      ? event.payload.messageId
+      : previous.pendingMessageId;
+  const turnId = threadState(thread).turn?.turnId ?? null;
+  return turnId !== previous.turnId
+    ? { turnId, messageId: turnId ? pending : null, pendingMessageId: null }
+    : { ...previous, pendingMessageId: pending };
+}
 export function compactThread(thread: OrchestrationThread): OrchestrationThread {
   return {
     ...thread,
@@ -25,14 +74,16 @@ const sessionStatuses = new Set([
   "stopped",
   "error",
 ]);
-export function threadState(thread: OrchestrationThread): {
+export function threadState(thread: OrchestrationThread, attribution = emptyAttribution): {
   projectId: OrchestrationThread["projectId"];
   turn: OrchestrationThread["latestTurn"];
   requests: ReturnType<typeof pendingRequests>;
   session: OrchestrationThread["session"];
+  messageId:string|null;
 } {
   return {
     projectId: thread.projectId,
+    messageId: attribution.messageId,
     turn:
       thread.latestTurn &&
       typeof thread.latestTurn.state === "string" &&
@@ -55,7 +106,7 @@ export function threadChanges(
   const changes: RoutedEvent[] = [];
   const turn = after.turn;
   if (turn && turn.turnId !== before?.turn?.turnId)
-    changes.push({ type: "t3.turn.started", turnId: turn.turnId });
+    changes.push({ type: "t3.turn.started", turnId: turn.turnId, messageId: after.messageId });
   if (
     turn &&
     turn.state !== "running" &&
@@ -64,6 +115,7 @@ export function threadChanges(
     changes.push({
       type: "t3.turn.settled",
       turnId: turn.turnId,
+      messageId: after.messageId,
       state: turn.state as string,
       assistantMessageId: turn.assistantMessageId,
       error: turn.state === "error" ? (after.session?.lastError ?? null) : null,

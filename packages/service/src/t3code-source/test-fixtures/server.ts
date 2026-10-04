@@ -33,6 +33,10 @@ export async function fakeServer() {
   let token = "fixture-token";
   const hooks: {
     readModel?: () => void;
+    ticketStatus?: number;
+    beforeReadModel?: () => Promise<void>;
+    dispatch?: (command: unknown) => { sequence: number };
+    beforeDispatchResponse?: (command: unknown) => Promise<void>;
     acknowledged?: (tag: string) => void;
     threadSubscribe?: () => void;
     beforeThreadSnapshot?: () => boolean | void;
@@ -65,7 +69,7 @@ export async function fakeServer() {
   const buffered: { socket: WebSocket; requestId: string; values: unknown[] }[] = [];
   const flow = new Map<WebSocket, Map<string, { waiting: boolean; queue: string[] }>>();
   let acknowledgements = 0;
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
     response.setHeader("content-type", "application/json");
     if (request.url === "/.well-known/t3/environment") {
       response.end(
@@ -85,10 +89,45 @@ export async function fakeServer() {
       return;
     }
     if (request.url?.startsWith("/api/auth/websocket-ticket")) {
+      if (hooks.ticketStatus) {
+        response.writeHead(hooks.ticketStatus);
+        response.end(
+          JSON.stringify({ reason: "insufficient_scope", requiredScope: "orchestration:operate" }),
+        );
+        return;
+      }
       response.end(JSON.stringify({ ticket: "ticket", expiresAt: at }));
       return;
     }
+    if (request.url === "/api/orchestration/shell") {
+      response.end(JSON.stringify(shell()));
+      return;
+    }
+    if (request.url === "/api/orchestration/dispatch") {
+      if (hooks.ticketStatus) {
+        response.writeHead(hooks.ticketStatus);
+        response.end(
+          JSON.stringify({ reason: "insufficient_scope", requiredScope: "orchestration:operate" }),
+        );
+        return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const command: unknown = JSON.parse(Buffer.concat(chunks).toString());
+      try {
+        const value = hooks.dispatch?.(command) ?? { sequence };
+        await hooks.beforeDispatchResponse?.(command);
+        response.end(JSON.stringify(value));
+      } catch (error) {
+        response.writeHead(400);
+        response.end(
+          JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
+        );
+      }
+      return;
+    }
     if (request.url === "/api/orchestration/snapshot") {
+      await hooks.beforeReadModel?.();
       response.end(
         JSON.stringify({
           snapshotSequence: sequence,
@@ -138,7 +177,7 @@ export async function fakeServer() {
       subscriptions.delete(socket);
       flow.delete(socket);
     });
-    socket.on("message", (data) => {
+    socket.on("message", async (data) => {
       const frame = JSON.parse(String(data)) as {
         _tag: string;
         id: string;
@@ -168,6 +207,59 @@ export async function fakeServer() {
       }
       if (frame._tag !== "Request") return;
       requests.push({ tag: frame.tag, payload: frame.payload });
+      if (frame.tag === "orchestration.getArchivedShellSnapshot") {
+        socket.send(
+          JSON.stringify({
+            _tag: "Exit",
+            requestId: frame.id,
+            exit: {
+              _tag: "Success",
+              value: {
+                ...shell(),
+                threads: [...threads.values()]
+                  .filter((thread) => thread.archivedAt && !thread.deletedAt)
+                  .map(shellThread),
+              },
+            },
+          }),
+        );
+        return;
+      }
+      if (frame.tag === "orchestration.dispatchCommand") {
+        try {
+          const value = hooks.dispatch?.(frame.payload) ?? { sequence };
+          await hooks.beforeDispatchResponse?.(frame.payload);
+          if (socket.readyState === socket.OPEN)
+            socket.send(
+              JSON.stringify({
+                _tag: "Exit",
+                requestId: frame.id,
+                exit: { _tag: "Success", value },
+              }),
+            );
+        } catch (error) {
+          if (socket.readyState === socket.OPEN)
+            socket.send(
+              JSON.stringify({
+                _tag: "Exit",
+                requestId: frame.id,
+                exit: {
+                  _tag: "Failure",
+                  cause: [
+                    {
+                      _tag: "Fail",
+                      error: {
+                        _tag: "OrchestrationDispatchCommandError",
+                        message: error instanceof Error ? error.message : String(error),
+                      },
+                    },
+                  ],
+                },
+              }),
+            );
+        }
+        return;
+      }
       subs.set(String(frame.id), { tag: frame.tag, payload: frame.payload });
       const cursor = frame.payload["afterSequence"] as number | undefined;
       if (frame.tag === "orchestration.subscribeShell") {
@@ -251,6 +343,29 @@ export async function fakeServer() {
     },
     setToken(value: string) {
       token = value;
+    },
+    failShell() {
+      for (const [socket, subs] of subscriptions)
+        for (const [id, sub] of subs)
+          if (sub.tag === "orchestration.subscribeShell")
+            socket.send(
+              JSON.stringify({
+                _tag: "Exit",
+                requestId: id,
+                exit: {
+                  _tag: "Failure",
+                  cause: [
+                    {
+                      _tag: "Fail",
+                      error: {
+                        _tag: "OrchestrationGetSnapshotError",
+                        message: "Fixture shell unavailable",
+                      },
+                    },
+                  ],
+                },
+              }),
+            );
     },
     drop() {
       for (const socket of ws.clients) socket.terminate();
