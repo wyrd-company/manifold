@@ -19,33 +19,36 @@ description: |-
   the primitive `packages/shared` exports, so cells, expression nodes, and
   blueprint expressions share one JSONata version and one error shape.
 
-  Decision model. A decision model is a GoRules JDM graph in a JSON file,
-  identified by a key the caller supplies, such as its path in the process
-  repository. Its nodes are of five types: `inputNode`, `outputNode`,
-  `switchNode`, and `decisionNode` are stock JDM; `customNode` carries one of
-  two kinds in `content.kind`, `jsonataDecisionTable` or `jsonataExpression`,
-  with its configuration in `content.config`. A `decisionNode` names another
-  model by its key in `content.key`. The models evaluated together form a
-  set, and every key a `decisionNode` names is in the set.
+  Decision model. A decision model is a GoRules JDM graph in a YAML file
+  (`.yml`) in the process repository, parsed with the YAML parser into the
+  JDM object, and identified by a key the caller supplies, such as its path
+  in the process repository. A JSON export from the stock editor is valid
+  YAML and loads unchanged when saved as `.yml`. Its nodes are of five
+  types: `inputNode`, `outputNode`, `switchNode`, and `decisionNode` are
+  stock JDM; `customNode` carries one of two kinds in `content.kind`,
+  `jsonataDecisionTable` or `jsonataExpression`, with its configuration in
+  `content.config`. A `switchNode` holds its `statements`, each with an
+  `id` and a `condition`, and a `hitPolicy` of `first` or `collect`. A
+  `decisionNode` names another model by its key in `content.key`. The
+  models evaluated together form a set, and every key a `decisionNode`
+  names is in the set. Properties the editor writes beyond those the schema
+  names are kept and ignored.
 
-  ```json
-  {
-    "id": "c3a1",
-    "name": "shipping",
-    "type": "customNode",
-    "content": {
-      "kind": "jsonataDecisionTable",
-      "config": {
-        "hitPolicy": "first",
-        "inputs": [{ "id": "weight", "name": "Weight", "field": "parcel.kg" }],
-        "outputs": [{ "id": "rate", "name": "Rate", "field": "quote.rate" }],
-        "rules": [
-          { "_id": "heavy", "weight": "$ > 20", "rate": "parcel.kg * 1.5" },
-          { "_id": "any", "weight": "", "rate": "10" }
-        ]
-      }
-    }
-  }
+  ```yaml
+  id: c3a1
+  name: shipping
+  type: customNode
+  content:
+    kind: jsonataDecisionTable
+    config:
+      hitPolicy: first
+      inputs:
+        - { id: weight, name: Weight, field: parcel.kg }
+      outputs:
+        - { id: rate, name: Rate, field: quote.rate }
+      rules:
+        - { _id: heavy, weight: "$ > 20", rate: parcel.kg * 1.5 }
+        - { _id: any, weight: "", rate: "10" }
   ```
 
   Reads and writes. A setting that reads a value, an input column's
@@ -182,7 +185,7 @@ description: |-
   }
   ```
 
-  `models` maps each key to a parsed JDM file. `DecisionModelEvaluation` is
+  `models` maps each key to the parsed YAML of a decision model file. `DecisionModelEvaluation` is
   `#/$defs/decision-model-evaluation`. Creating lints every model in key
   order, adds a `model-missing` error for each `decisionNode` whose key is
   not in `models`, and throws a `DecisionModelLoadError` carrying every error
@@ -223,7 +226,9 @@ description: |-
 format: json-schema
 validation-criteria: >-
   Every fixture model, finding, error detail, and evaluation record
-  validates against `docs/specifications/decision-models.schema.yml`. The
+  validates against `docs/specifications/decision-models.schema.yml`.
+  Fixture models are `.yml` files parsed with the YAML parser, and one is a
+  stock editor JSON export saved as `.yml` unchanged. The
   service tests evaluate a model that joins input, a JSONata decision table,
   a JSONata expression node, a stock switch, and output through
   `createDecisionModels`. Table-driven tests run, under both `first` and
@@ -241,7 +246,11 @@ validation-criteria: >-
   in the failing node's `traceData.error`, under both policies. A contract
   test asserts the `NodeError` envelope shape and the null native
   `traceData` of a failing custom node at the pinned engine version. The
-  lint tests in `packages/shared` cover each finding kind, a `syntax`
+  lint tests in `packages/shared` cover each finding kind; `structure`
+  findings for malformed stock content, a `switchNode` whose `content` is
+  not an object, a statement with no `id`, and a `hitPolicy` outside `first`
+  and `collect`, while an unknown editor property on a recognized node gives
+  no finding; a `syntax`
   finding in an input cell and in an output cell, each never-boolean shape,
   and the expressions `true`, `false`, `$ > 3`, `$`, `item.value`,
   `$custom()`, `$number($)`, `true ? true : 3`, and `[true][0]` giving no

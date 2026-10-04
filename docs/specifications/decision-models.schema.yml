@@ -14,7 +14,7 @@ description: >-
 $defs:
   decision-model:
     description: >-
-      A GoRules JDM graph as parsed from its JSON file. Properties the editor
+      A GoRules JDM graph as parsed from its YAML file. Properties the editor
       writes beside `nodes` and `edges` are kept and ignored.
     type: object
     required:
@@ -83,6 +83,26 @@ $defs:
       - if:
           properties:
             type:
+              const: switchNode
+        then:
+          required:
+            - content
+          properties:
+            content:
+              $ref: "#/$defs/switch-node-content"
+      - if:
+          properties:
+            type:
+              enum:
+                - inputNode
+                - outputNode
+        then:
+          properties:
+            content:
+              type: object
+      - if:
+          properties:
+            type:
               const: decisionNode
         then:
           required:
@@ -97,6 +117,35 @@ $defs:
                   description: The key of another decision model in the same set.
                   type: string
                   minLength: 1
+  switch-node-content:
+    description: >-
+      The stock switch. Each statement's `condition` is evaluated by the Zen
+      engine; a blank condition is the default branch. An edge leaving the
+      switch names its statement in `sourceHandle`.
+    type: object
+    required:
+      - statements
+    properties:
+      hitPolicy:
+        enum:
+          - first
+          - collect
+        default: first
+      statements:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+            - condition
+          properties:
+            id:
+              type: string
+              minLength: 1
+            condition:
+              type: string
+            isDefault:
+              type: boolean
   custom-node-content:
     oneOf:
       - type: object
