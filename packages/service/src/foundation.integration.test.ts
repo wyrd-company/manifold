@@ -1,12 +1,23 @@
 // ---
 // relationships:
-//   verifies: [store, portfolio-ledger, blueprint-expressions, decision-models]
+//   verifies: [store, portfolio-ledger, blueprint-expressions, decision-models, process-repository, blueprint-loader, portfolio, durable-event-delivery, github-event-source, t3code-environment-source]
 // ---
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
+import { fork, execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import * as fs from "node:fs/promises";
+import git from "isomorphic-git";
+import { fixture as repositoryFixture } from "./process-repository/test-fixtures/remote.ts";
+import { githubFake } from "./github-source/test-fixtures/api.ts";
+import { fakeServer, fixtureThread } from "./t3code-source/test-fixtures/server.ts";
+import { openPortfolio } from "./portfolio/index.ts";
+import { blueprintVersionKey } from "@wyrd-company/manifold-shared";
+import type { FoundationWorkerConfiguration } from "./test-fixtures/foundation-worker.ts";
 import { createActor, fromPromise, setup } from "xstate";
 import { lintBlueprintExpressions, lintDecisionModel } from "@wyrd-company/manifold-shared";
 import type { ExpressionBlueprint, ExpressionError } from "@wyrd-company/manifold-shared";
@@ -15,9 +26,9 @@ import type { DeliveryTarget, Store } from "./store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "./ledger/index.ts";
 import { createBlueprintExpressions, createDecisionModels } from "./index.ts";
 
-const cleanup: (() => void)[] = [];
-afterEach(() => {
-  for (const close of cleanup.splice(0)) close();
+const cleanup: (() => void | Promise<void>)[] = [];
+afterEach(async () => {
+  for (const close of cleanup.splice(0).toReversed()) await close();
 });
 
 describe("store and ledger on one database file", () => {
@@ -352,3 +363,347 @@ states:
     });
   });
 });
+
+it("resumes the same revision after SIGKILL across repository, sources, inbox and ledger", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "foundation-wave-two-"));
+  cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
+  const remote = await repositoryFixture(directory);
+  cleanup.push(() => remote.close());
+  const api = await githubFake();
+  cleanup.push(() => api.close());
+  api.addItem("item-one", "I_A");
+  const server = await fakeServer();
+  cleanup.push(() => server.close());
+  const thread = fixtureThread();
+  thread.session = {
+    threadId: thread.id,
+    status: "running",
+    providerName: "provider",
+    runtimeMode: "full-access",
+    activeTurnId: null,
+    lastError: null,
+    updatedAt: thread.createdAt,
+  };
+  server.baseline(thread);
+  const token = join(directory, "token");
+  const secretFile = join(directory, "hook-secret");
+  writeFileSync(token, "fixture-token");
+  writeFileSync(secretFile, "synthetic-secret");
+
+  // A real git revision holds both declarations. Advance the live revision before restart.
+  async function commit(state: string, parent?: string) {
+    const eventTypes = ["github.issue.closed", "t3.turn.started"];
+    const blueprint = {
+      machine: {
+        id: "oven",
+        initial: state,
+        context: { readings: [], count: 0 },
+        states: {
+          finished: { type: "final" },
+          [state]: {
+            on: Object.fromEntries(
+              eventTypes.map((type) => [
+                type,
+                {
+                  actions: {
+                    type: "expression.assign",
+                    params: {
+                      expression:
+                        '{"readings": $append(context.readings, event.type), "count": context.count + 1}',
+                    },
+                  },
+                },
+              ]),
+            ),
+          },
+        },
+      },
+      schemas: {
+        input: true,
+        output: true,
+        context: {
+          type: "object",
+          properties: {
+            readings: { type: "array", items: { type: "string" } },
+            count: { type: "number" },
+          },
+          required: ["readings", "count"],
+          additionalProperties: false,
+        },
+        events: Object.fromEntries(eventTypes.map((type) => [type, true])),
+      },
+    };
+    async function blob(path: string, value: unknown) {
+      return {
+        path,
+        mode: "100644",
+        type: "blob" as const,
+        oid: await git.writeBlob({
+          fs,
+          gitdir: remote.gitdir,
+          blob: Buffer.from(stringify(value)),
+        }),
+      };
+    }
+    const blueprints = await git.writeTree({
+      fs,
+      gitdir: remote.gitdir,
+      tree: [await blob("oven.yml", blueprint)],
+    });
+    const tree = await git.writeTree({
+      fs,
+      gitdir: remote.gitdir,
+      tree: [
+        { path: "blueprints", mode: "040000", type: "tree", oid: blueprints },
+        await blob("portfolio.yml", {
+          items: {
+            baking: { allocations: { meter: { guarantee: 60 } } },
+            roasting: { allocations: { meter: { guarantee: 40 } } },
+          },
+        }),
+        await blob("bindings.yml", {
+          githubProjects: {
+            recipes: {
+              owner: "sample",
+              number: 1,
+              environment: "station",
+              item: "baking",
+              t3codeProjects: ["project"],
+            },
+          },
+        }),
+      ],
+    });
+    const author = {
+      name: "Example",
+      email: "example@example.test",
+      timestamp: 1700000000,
+      timezoneOffset: 0,
+    };
+    const oid = await git.writeCommit({
+      fs,
+      gitdir: remote.gitdir,
+      commit: {
+        message: "Recipe configuration",
+        tree,
+        parent: parent ? [parent] : [],
+        author,
+        committer: author,
+      },
+    });
+    await remote.force(oid);
+    return oid;
+  }
+  const original = await commit("warming");
+  const configuration: FoundationWorkerConfiguration = {
+    path: join(directory, "store.sqlite"),
+    repository: {
+      url: remote.url,
+      branch: "main",
+      directory: join(directory, "clone"),
+      credential: undefined,
+      pullTimeoutMs: 30000,
+    },
+    github: {
+      apiUrl: api.url,
+      owners: {
+        sample: { credential: "api-reader", hooks: [{ id: 1, repository: undefined, secretFile }] },
+      },
+      sweepIntervalMs: 900000,
+      redeliveryIntervalMs: 60000,
+      requestTimeoutMs: 30000,
+    },
+    environments: {
+      station: {
+        url: server.url,
+        credential: "reader",
+        reconnect: { initialMs: 10, factor: 2, maxMs: 30, jitter: 0 },
+        heartbeat: { intervalMs: 5000, missedPongLimit: 3 },
+        openTimeoutMs: 10000,
+      },
+    },
+    token,
+    crash: true,
+  };
+  // Compile the child with the shipping settings, including relative-import rewriting.
+  const compiled = join(directory, "compiled");
+  const buildConfiguration = join(directory, "tsconfig.json");
+  const serviceRoot = fileURLToPath(new URL("..", import.meta.url));
+  writeFileSync(
+    buildConfiguration,
+    JSON.stringify({
+      extends: join(serviceRoot, "tsconfig.build.json"),
+      compilerOptions: {
+        outDir: compiled,
+        declaration: false,
+        typeRoots: [join(serviceRoot, "node_modules/@types")],
+      },
+      include: [join(serviceRoot, "src/**/*.ts")],
+      exclude: [
+        join(serviceRoot, "src/**/*.test.ts"),
+        join(serviceRoot, "src/**/test-fixtures/**"),
+      ],
+      files: [join(serviceRoot, "src/test-fixtures/foundation-worker.ts")],
+    }),
+  );
+  await promisify(execFile)(process.execPath, [
+    join(serviceRoot, "node_modules/typescript/bin/tsc"),
+    "-p",
+    buildConfiguration,
+  ]).catch((error: { stdout: string; stderr: string }) => {
+    throw new Error(`${error.stdout}\n${error.stderr}`);
+  });
+  await fs.symlink(join(serviceRoot, "node_modules"), join(compiled, "node_modules"), "dir");
+  function worker(crash: boolean) {
+    // Buffer IPC notifications so a fast child cannot outrun an assertion's listener.
+    const child = fork(
+      join(compiled, "test-fixtures/foundation-worker.js"),
+      [JSON.stringify({ ...configuration, crash })],
+      { silent: true },
+    );
+    let stderr = "";
+    child.stderr!.on("data", (value) => {
+      stderr += String(value);
+    });
+    const messages: { type: string; detail: unknown }[] = [];
+    const waiters = new Map<
+      string,
+      { resolve: (value: unknown) => void; reject: (error: Error) => void }
+    >();
+    child.on("message", (message) => {
+      const notification = message as { type: string; detail: unknown };
+      const waiter = waiters.get(notification.type);
+      if (waiter) {
+        waiters.delete(notification.type);
+        waiter.resolve(notification.detail);
+      } else messages.push(notification);
+    });
+    const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) =>
+      child.once("exit", (code, signal) => {
+        resolve({ code, signal });
+        for (const waiter of waiters.values())
+          waiter.reject(new Error(`Worker exited (${code}, ${signal}): ${stderr}`));
+        waiters.clear();
+      }),
+    );
+    child.on("error", (error) => {
+      for (const waiter of waiters.values()) waiter.reject(error);
+      waiters.clear();
+    });
+    cleanup.push(async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+        await exited;
+      }
+    });
+    return {
+      child,
+      exited,
+      wait(type: string) {
+        const index = messages.findIndex((message) => message.type === type);
+        if (index >= 0) return Promise.resolve(messages.splice(index, 1)[0]!.detail);
+        if (child.exitCode !== null || child.signalCode !== null)
+          return Promise.reject(new Error(`Worker exited: ${stderr}`));
+        return new Promise<unknown>((resolve, reject) => waiters.set(type, { resolve, reject }));
+      },
+    };
+  }
+  function threadSynchronized() {
+    // The fake boundary reports the protocol acknowledgement; there is no readiness poll.
+    return new Promise<void>((resolve) => {
+      server.hooks.acknowledged = (tag) => {
+        if (tag === "orchestration.subscribeThread") {
+          delete server.hooks.acknowledged;
+          resolve();
+        }
+      };
+    });
+  }
+  const firstSynchronized = threadSynchronized();
+  const first = worker(true);
+  const machine = blueprintVersionKey({ commit: original, path: "blueprints/oven.yml" });
+  expect(await first.wait("started")).toEqual({ current: original, machine, portfolio: original });
+  await Promise.all([first.wait("github-baseline"), firstSynchronized]);
+  thread.latestTurn = {
+    turnId: "turn-one" as NonNullable<typeof thread.latestTurn>["turnId"],
+    state: "running",
+    requestedAt: thread.createdAt,
+    startedAt: thread.createdAt,
+    completedAt: null,
+    assistantMessageId: null,
+  };
+  thread.session.activeTurnId = thread.latestTurn.turnId;
+  server.change(thread);
+  expect(await first.wait("delivered")).toMatchObject({ type: "t3.turn.started" });
+  api.issues.get("I_A")!.state = "CLOSED";
+  api.issues.get("I_A")!.stateReason = "COMPLETED";
+  first.child.send("webhook");
+  expect(await first.wait("received")).toMatchObject({ status: "accepted", duplicate: false });
+  expect(await first.wait("inside-delivery")).toMatchObject({ type: "github.issue.closed" });
+  first.child.kill("SIGKILL");
+  expect(await first.exited).toEqual({ code: null, signal: "SIGKILL" });
+
+  const interrupted = openStore({ path: configuration.path });
+  try {
+    expect(interrupted.loadSnapshot("oven-one")).toMatchObject({
+      machine,
+      snapshot: { value: "warming", context: { count: 1, readings: ["t3.turn.started"] } },
+    });
+    expect(interrupted.pendingInbox("oven-one").map((row) => row.payload)).toEqual([
+      expect.objectContaining({ type: "github.issue.closed" }),
+    ]);
+  } finally {
+    interrupted.close();
+  }
+
+  // Force an authoritative thread snapshot on restart, with the same turn still running.
+  // It must not turn the already committed start into another actor event.
+  server.setBound(0);
+  server.change(thread);
+  const current = await commit("cooling", original);
+  const resumedSynchronized = threadSynchronized();
+  const resumed = worker(false);
+  expect(await resumed.wait("started")).toEqual({ current, machine, portfolio: original });
+  expect(await resumed.wait("delivered")).toMatchObject({ type: "github.issue.closed" });
+  await Promise.all([resumed.wait("github-baseline"), resumedSynchronized]);
+  resumed.child.send("redelivery");
+  expect(await resumed.wait("received")).toMatchObject({ status: "accepted", duplicate: true });
+  resumed.child.send("stop");
+  expect(await resumed.wait("report")).toMatchObject({
+    portfolio: original,
+    pending: [],
+    snapshot: {
+      machine,
+      snapshot: {
+        status: "active",
+        value: "warming",
+        context: { count: 2, readings: ["t3.turn.started", "github.issue.closed"] },
+      },
+    },
+    usage: { accounts: [{ account: "meter", actual: 12 }] },
+    balance: { allocation: 60, actual: 12, outstanding: 8, available: 40 },
+  });
+  expect(await resumed.exited).toEqual({ code: 0, signal: null });
+
+  // Read through the ledger's public interface on the store's populated database file.
+  const recovered = openStore({ path: configuration.path });
+  try {
+    const portfolio = openPortfolio({ connection: recovered.connection, now: () => 10 });
+    expect(portfolio.current().commit).toBe(original);
+    expect(portfolio.githubProject({ owner: "sample", number: 1 })).toMatchObject({
+      item: "baking",
+      environment: "station",
+      t3codeProjects: ["project"],
+    });
+    expect(portfolio.t3codeProject({ environment: "station", id: "project" })).toMatchObject({
+      item: "baking",
+      via: "association",
+    });
+    expect(
+      portfolio.ledger.balance({ item: "baking", account: "meter", waiting: [] }),
+    ).toMatchObject({ allocation: 60, actual: 12, outstanding: 8, available: 40 });
+    expect(recovered.pendingInbox("oven-one")).toEqual([]);
+  } finally {
+    recovered.close();
+  }
+}, 60000);

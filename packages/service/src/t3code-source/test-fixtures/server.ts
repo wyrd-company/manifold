@@ -33,6 +33,7 @@ export async function fakeServer() {
   let token = "fixture-token";
   const hooks: {
     readModel?: () => void;
+    acknowledged?: (tag: string) => void;
     threadSubscribe?: () => void;
     beforeThreadSnapshot?: () => boolean | void;
   } = {};
@@ -156,6 +157,7 @@ export async function fakeServer() {
       }
       if (frame._tag === "Ack") {
         acknowledgements++;
+        hooks.acknowledged?.(subs.get(String(frame.requestId))?.tag ?? "");
         const state = flow.get(socket)?.get(String(frame.requestId));
         if (state) {
           const next = state.queue.shift();
