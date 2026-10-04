@@ -163,6 +163,9 @@ test("malformed requests never change the escalation", async () => {
   expect((await fetch(path)).status).toBe(405);
   expect((await fetch(f.url + "/api/escalations?status=missing")).status).toBe(400);
   f.module.saving({
+    machine: "delivery",
+    entered: [],
+    entries: {},
     actorId: "parcel",
     snapshot: { status: "active", value: "later" },
     activeInvokes: [],

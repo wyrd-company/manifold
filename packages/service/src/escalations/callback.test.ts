@@ -43,6 +43,9 @@ test("callback answers once, save marks taken, restart in the same state sends n
       snapshot: actor.getPersistedSnapshot() as PersistedSnapshot,
     });
     f.module.saving({
+      machine: "delivery",
+      entered: [],
+      entries: {},
       actorId: "parcel",
       snapshot: actor.getPersistedSnapshot() as PersistedSnapshot,
       activeInvokes: [{ invokeId: "ask", entryId: "1" }],
@@ -139,6 +142,9 @@ test("saved exit refuses an answer and no later state receives it; failed save w
   expect(() =>
     f.store.connection.transaction(() => {
       f.module.saving({
+        machine: "delivery",
+        entered: [],
+        entries: {},
         actorId: "parcel",
         snapshot: actor.getPersistedSnapshot() as PersistedSnapshot,
         activeInvokes: [],
@@ -148,6 +154,9 @@ test("saved exit refuses an answer and no later state receives it; failed save w
   ).toThrow("rollback");
   expect(f.module.get(escalation.id)?.status).toBe("open");
   f.module.saving({
+    machine: "delivery",
+    entered: [],
+    entries: {},
     actorId: "parcel",
     snapshot: actor.getPersistedSnapshot() as PersistedSnapshot,
     activeInvokes: [],

@@ -19,7 +19,6 @@ test("real HTTP host serves the escalation API without authentication", async ()
   const configuration = await loadServiceConfiguration(file);
   const http = createHttpHost({
     configuration: configuration.http,
-    credentials: configuration.credentials,
     onError: (error) => {
       throw error;
     },

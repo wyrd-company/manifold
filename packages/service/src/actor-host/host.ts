@@ -285,10 +285,7 @@ export async function openActorHost({
       const router = connected();
       const stored = store.loadSnapshot(actorId);
       if (stored) await load(stored.machine);
-      // The escalation module adds release to Router; keep its structural seam until it lands.
-      const releasable = router as Router & { release?(actorId: string): void };
-      if (!releasable.release) throw new TypeError("Router release is not available");
-      releasable.release(actorId);
+      router.release(actorId);
     },
   };
   return host;

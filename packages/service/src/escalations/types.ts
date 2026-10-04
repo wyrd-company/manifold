@@ -4,16 +4,14 @@
 // ---
 import type { RequestListener } from "node:http";
 import type { CallbackActorLogic, EventObject } from "xstate";
-import type { Store, PersistedSnapshot } from "../store/index.ts";
+import type { Store } from "../store/index.ts";
+import type { ActorSave, Invocation } from "../actor-host/index.ts";
+import { invocationOf } from "../actor-host/index.ts";
+export type { Invocation } from "../actor-host/index.ts";
 import type { EscalationsConfiguration } from "../service-configuration/index.ts";
 export type ServiceEscalationKind = "held-actor" | "stranded-token";
 export type EscalationSubject = Readonly<Record<string, string>>;
 export type ServiceEscalationHandler = (escalation: Escalation) => void | (() => void);
-export interface Invocation {
-  readonly actorId: string;
-  readonly invokeId: string;
-  readonly entryId: string;
-}
 export interface EscalationsOptions {
   readonly store: Store;
   readonly configuration: EscalationsConfiguration;
@@ -22,8 +20,8 @@ export interface EscalationsOptions {
   readonly clock?: { now(): number };
   readonly fetch?: typeof globalThis.fetch;
   readonly logger?: { warn(message: string): void; error(message: string): void };
-  /** Structural stand-in until the actor host supplies invocationOf. */
-  readonly invocationOf?: (args: unknown) => Invocation;
+  /** Override invocation resolution in isolated module tests. */
+  readonly invocationOf?: typeof invocationOf;
 }
 export interface EscalationChoice {
   readonly id: string;
@@ -73,11 +71,7 @@ export type AnswerOutcome =
   | { readonly status: "answered" | "closed"; readonly escalation: Escalation }
   | { readonly status: "invalid"; readonly reason: string }
   | { readonly status: "not-found" };
-export interface EscalationSave {
-  readonly actorId: string;
-  readonly snapshot: PersistedSnapshot;
-  readonly activeInvokes: readonly { readonly invokeId: string; readonly entryId: string }[];
-}
+export type EscalationSave = ActorSave;
 export interface Escalations {
   readonly escalate: CallbackActorLogic<EventObject, EscalateInput>;
   saving(save: EscalationSave): void;

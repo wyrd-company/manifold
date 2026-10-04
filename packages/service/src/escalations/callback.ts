@@ -4,11 +4,12 @@
 // ---
 import { fromCallback } from "xstate";
 import type { EventObject } from "xstate";
-import type { Escalation, EscalateInput, Invocation } from "./types.ts";
+import type { Escalation, EscalateInput } from "./types.ts";
+import type { invocationOf as hostInvocationOf } from "../actor-host/index.ts";
 import type { EscalationRows } from "./rows.ts";
 export function escalationCallback(
   rows: EscalationRows,
-  invocationOf: (args: unknown) => Invocation,
+  invocationOf: typeof hostInvocationOf,
   sent: Set<string>,
   waiting: Map<string, (escalation: Escalation) => void>,
   wake: () => void,

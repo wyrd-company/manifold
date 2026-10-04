@@ -13,7 +13,7 @@ import { ledgerMigrationSteps } from "../ledger/index.ts";
 import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
 import { openProcessRepository } from "../process-repository/index.ts";
 import { createBlueprintLoader } from "../blueprint-loader/index.ts";
-import { composeServiceImplementations } from "../implementations.ts";
+import { serviceImplementations } from "../implementations.ts";
 import {
   openEscalations,
   heldActorHandler,
@@ -24,6 +24,7 @@ import type { Escalations } from "../escalations/index.ts";
 import { startRouter } from "../router/index.ts";
 import type { Router } from "../router/index.ts";
 import { createServiceActorHost } from "../actor-host/service.ts";
+import type { ActorHost } from "../actor-host/index.ts";
 import { recordStateEntry } from "../actor-host/index.ts";
 import { startGitHubSource } from "../github-source/index.ts";
 import type { GitHubSource } from "../github-source/index.ts";
@@ -41,7 +42,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
   let store: Store | undefined;
   let router: Router | undefined;
   let escalations: Escalations | undefined;
-  let actorHost: ServiceActorHost | undefined;
+  let actorHost: ActorHost | undefined;
   let github: GitHubSource | undefined;
   let t3code: T3CodeSource | undefined;
   let http: HttpHost | undefined;
@@ -103,12 +104,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           throw new TypeError("Requires an ntfy-token credential");
         return credential.tokenFile;
       },
-      ...(options.invocationOf ? { invocationOf: options.invocationOf } : {}),
       handlers: {
         "held-actor": heldActorHandler((actorId) => {
-          const release = actorHost?.release
-            ? actorHost.release(actorId)
-            : router!.release(actorId);
+          const release = actorHost!.release(actorId);
           void Promise.resolve(release).catch(() =>
             log({
               level: "error",
@@ -155,7 +153,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       ...(options.probes?.pull ? { probe: options.probes.pull } : {}),
     });
     const blueprints = createBlueprintLoader({
-      implementations: serviceImplementations({ escalations: escalationImplementations(escalations) }),
+      implementations: serviceImplementations({
+        escalations: escalationImplementations(escalations),
+      }),
       onStateEntry: recordStateEntry,
       configurationBound: configuration.blueprintLint.configurationBound,
       revisionAt: processRepository.revisionAt,

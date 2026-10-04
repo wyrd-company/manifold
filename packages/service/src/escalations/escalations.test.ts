@@ -60,11 +60,21 @@ test("a repeated cause converges; first answer wins and retry can raise a new oc
 test("withdrawal joins the save transaction and error saves leave a held cause open", () => {
   const { module, store } = fixture();
   const first = module.raise(request);
-  module.saving({ actorId: "parcel", snapshot: { status: "error" }, activeInvokes: [] });
+  module.saving({
+    machine: "delivery",
+    entered: [],
+    entries: {},
+    actorId: "parcel",
+    snapshot: { status: "error" },
+    activeInvokes: [],
+  });
   expect(module.get(first.id)?.status).toBe("open");
   expect(() =>
     store.connection.transaction(() => {
       module.saving({
+        machine: "delivery",
+        entered: [],
+        entries: {},
         actorId: "parcel",
         snapshot: { status: "active", value: "waiting" },
         activeInvokes: [],
@@ -74,6 +84,9 @@ test("withdrawal joins the save transaction and error saves leave a held cause o
   ).toThrow("rollback");
   expect(module.get(first.id)?.status).toBe("open");
   module.saving({
+    machine: "delivery",
+    entered: [],
+    entries: {},
     actorId: "parcel",
     snapshot: { status: "done", value: "delivered" },
     activeInvokes: [],

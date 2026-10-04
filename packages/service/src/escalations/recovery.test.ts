@@ -100,6 +100,9 @@ test.each(["answer", "exit"])(
     ).start();
     expect(actor.getSnapshot().context.answers).toBe(1);
     f.module.saving({
+      machine: "delivery",
+      entered: [],
+      entries: {},
       actorId: "parcel",
       snapshot: { status: "active", value: "asking" },
       activeInvokes: [{ invokeId: "ask", entryId: "1" }],

@@ -2,6 +2,7 @@
 // relationships:
 //   implements: escalations
 // ---
+import { invocationOf } from "../actor-host/index.ts";
 import { escalationSteps } from "./migrations.ts";
 import { escalationRows } from "./rows.ts";
 import { invalidAnswer } from "./records.ts";
@@ -53,15 +54,8 @@ export function openEscalations(options: EscalationsOptions): Escalations {
     module.answer(id, answer, channel),
   );
   const module: Escalations = {
-    escalate: escalationCallback(
-      rows,
-      options.invocationOf ??
-        (() => {
-          throw new TypeError("Actor host invocationOf is required");
-        }),
-      sent,
-      waiting,
-      () => sender.wake(),
+    escalate: escalationCallback(rows, options.invocationOf ?? invocationOf, sent, waiting, () =>
+      sender.wake(),
     ),
     saving(save) {
       if (save.snapshot.status === "error") return;

@@ -474,51 +474,35 @@ test("passes the service lint bound to revision loading and reports warnings", a
   );
 });
 
-test("service exposes escalations to the actor host, mounts API answers, and retries held actors", async () => {
+test("service retry uses the actor host to load the corrected version and drain its held inbox", async () => {
   const f = await fixture();
+  await f.commit(
+    60,
+    {},
+    {
+      machine: {
+        initial: "waiting",
+        states: { waiting: { on: { scanned: "delivered" } }, delivered: { type: "final" } },
+      },
+      schemas: { input: true, output: true, context: true, events: { scanned: true } },
+    },
+  );
   const seed = await startService({ configurationFile: f.file, log: () => {} });
-  seed.store.saveSnapshot({
+  const blueprint = seed.revisions.latest()!.blueprints.get("blueprints/counter.yml")!;
+  seed.actorHost.start({
     actorId: "parcel",
-    machine: "delivery",
-    snapshot: { status: "active", value: "waiting" },
+    blueprint,
+    input: { manifold: { issue: "parcel-node" } },
   });
+  const valid = seed.store.loadSnapshot("parcel")!;
+  seed.router.stop();
+  seed.store.saveSnapshot({ ...valid, machine: "missing-version" });
   seed.store.writeInbox(
-    { eventId: "reading-one", topic: "weather.station", payload: { type: "reading" } },
+    { eventId: "scan-one", topic: "github.issue.parcel-node", payload: { type: "scanned" } },
     ["parcel"],
   );
   await seed.stop();
-  let failed = true;
-  let released = 0;
-  let service!: Service;
-  service = await startService({
-    configurationFile: f.file,
-    log: () => {},
-    actorHost: (parts) => {
-      expect(parts.escalations).toBeDefined();
-      return {
-        subscription: () => ({ topics: ["weather.station"] }),
-        restore: (stored) =>
-          failed
-            ? { status: "held", reason: "Delivery failed" }
-            : {
-                status: "restored",
-                target: {
-                  actorId: stored.actorId,
-                  send: () => {},
-                  persist: () => ({
-                    machine: "delivery",
-                    snapshot: { status: "active", value: "received" },
-                  }),
-                },
-              },
-        release: (actorId) => {
-          released++;
-          failed = false;
-          service.router.release(actorId);
-        },
-      };
-    },
-  });
+  const service = await startService({ configurationFile: f.file, log: () => {} });
   cleanup.push(service.stop);
   const escalation = service.escalations.list({ status: "open" })[0]!;
   expect(escalation.raiser).toMatchObject({
@@ -526,6 +510,8 @@ test("service exposes escalations to the actor host, mounts API answers, and ret
     kind: "held-actor",
     subject: { actorId: "parcel" },
   });
+  expect(service.store.pendingInbox("parcel")).toHaveLength(1);
+  service.store.saveSnapshot(valid);
   const path = url(service) + "/api/escalations/" + escalation.id + "/answer";
   const headers = { "Content-Type": "application/json" };
   expect(
@@ -533,82 +519,103 @@ test("service exposes escalations to the actor host, mounts API answers, and ret
       .status,
   ).toBe(200);
   await expect.poll(() => service.store.pendingInbox("parcel").length).toBe(0);
-  expect(released).toBe(1);
+  expect(service.store.loadSnapshot("parcel")?.snapshot).toMatchObject({
+    status: "done",
+    value: "delivered",
+  });
+  expect(service.escalations.list({ status: "open" })).toEqual([]);
   expect(
     (await fetch(path, { method: "POST", headers, body: JSON.stringify({ choice: "dismiss" }) }))
       .status,
   ).toBe(200);
-  expect(released).toBe(1);
+  expect(service.store.loadSnapshot("parcel")?.snapshot).toMatchObject({
+    status: "done",
+    value: "delivered",
+  });
 });
 
 test("the service registry loads escalate blueprints and their callbacks answer through the HTTP host", async () => {
   const f = await fixture();
-  const { createActor } = await import("xstate");
   const { escalationContractSchema } = await import("@wyrd-company/manifold-shared");
-  await f.commit(60, {}, {
-    machine: {
-      id: "parcel",
-      initial: "asking",
-      states: {
-        asking: {
-          invoke: {
-            id: "ask",
-            src: "escalate",
-            input: { question: "Send the parcel?", freeText: true },
+  await f.commit(
+    60,
+    {},
+    {
+      machine: {
+        id: "parcel",
+        initial: "asking",
+        states: {
+          asking: {
+            invoke: {
+              id: "ask",
+              src: "escalate",
+              input: { question: "Send the parcel?", freeText: true },
+            },
+            on: { "escalation.answered": "delivered", skipped: "delivered" },
           },
-          on: { "escalation.answered": "delivered" },
-        },
-        delivered: { type: "final" },
-      },
-    },
-    schemas: {
-      input: true,
-      context: true,
-      output: true,
-      actors: {
-        escalate: {
-          input: { $ref: escalationContractSchema.$id + "#/$defs/escalate-input" },
-          output: true,
+          delivered: { type: "final" },
         },
       },
-      events: {
-        "escalation.answered": {
-          $ref: escalationContractSchema.$id + "#/$defs/escalation-answered-event",
+      schemas: {
+        input: true,
+        context: true,
+        output: true,
+        actors: {
+          escalate: {
+            input: { $ref: escalationContractSchema.$id + "#/$defs/escalate-input" },
+            output: true,
+          },
+        },
+        events: {
+          skipped: true,
+          "escalation.answered": {
+            $ref: escalationContractSchema.$id + "#/$defs/escalation-answered-event",
+          },
         },
       },
     },
-  });
-  let actor: ReturnType<typeof createActor> | undefined;
-  const service = await startService({
-    configurationFile: f.file,
-    log: () => {},
-    invocationOf: () => ({ actorId: "parcel", invokeId: "ask", entryId: "1" }),
-    actorHost: (parts) => {
-      const revision = parts.revisions.latest()!;
-      expect([...revision.failures]).toEqual([]);
-      const loaded = revision.blueprints.values().next().value!;
-      actor = createActor(loaded.machine).start();
-      return {
-        subscription: () => ({ topics: [] }),
-        restore: () => ({ status: "held", reason: "No saved actor" }),
-      };
-    },
-  });
+  );
+  const service = await startService({ configurationFile: f.file, log: () => {} });
   cleanup.push(service.stop);
-  try {
-    const escalation = service.escalations.list({ status: "open" })[0]!;
-    expect(escalation.question).toBe("Send the parcel?");
-    const response = await fetch(url(service) + "/api/escalations/" + escalation.id + "/answer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "Proceed" }),
-    });
-    expect(response.status).toBe(200);
-    expect(actor?.getSnapshot().status).toBe("done");
-    expect(service.escalations.get(escalation.id)?.answer?.value).toEqual({ text: "Proceed" });
-  } finally {
-    actor?.stop();
-  }
+  const revision = service.revisions.latest()!;
+  expect([...revision.failures]).toEqual([]);
+  const blueprint = revision.blueprints.get("blueprints/counter.yml")!;
+  service.actorHost.start({ actorId: "parcel", blueprint, input: {} });
+  const escalation = service.escalations.list({ status: "open" })[0]!;
+  expect(escalation.raiser).toEqual({
+    type: "blueprint",
+    actorId: "parcel",
+    invokeId: "ask",
+    entryId: "2",
+  });
+  expect(escalation.question).toBe("Send the parcel?");
+  const response = await fetch(url(service) + "/api/escalations/" + escalation.id + "/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: "Proceed" }),
+  });
+  expect(response.status).toBe(200);
+  await expect.poll(() => service.store.loadSnapshot("parcel")?.snapshot.status).toBe("done");
+  expect(service.escalations.get(escalation.id)?.answer?.value).toEqual({ text: "Proceed" });
+  expect(
+    service.store.connection.database
+      .prepare("SELECT taken_at FROM escalation WHERE escalation_id=?")
+      .get(escalation.id)?.["taken_at"],
+  ).toEqual(expect.any(Number));
+  service.actorHost.start({
+    actorId: "envelope",
+    blueprint,
+    input: { manifold: { issue: "envelope-node" } },
+  });
+  const withdrawn = service.escalations.list({ status: "open" })[0]!;
+  service.router.publish({
+    source: "github",
+    eventId: "skip-one",
+    topics: ["github.issue.envelope-node"],
+    event: { type: "skipped" },
+  });
+  await expect.poll(() => service.store.loadSnapshot("envelope")?.snapshot.status).toBe("done");
+  expect(service.escalations.get(withdrawn.id)?.status).toBe("withdrawn");
 });
 
 test("service startup starts ntfy delivery and shutdown aborts it before closing the store", async () => {
