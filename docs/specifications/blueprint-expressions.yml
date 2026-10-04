@@ -90,8 +90,10 @@ description: |-
   that reach it, read from the machine configuration. Each transition has
   an event set fixed by where it is declared:
 
-  - in `on` under event type `T`: `events[T]`; under a descriptor `T.*`
-    or `*`: every declared event whose type the descriptor matches;
+  - in `on` under `expression.error`: the `expression.error` event
+    schema; under any other event type `T`: `events[T]`; under a
+    descriptor `T.*` or `*`: every declared event, and the
+    `expression.error` event, whose type the descriptor matches;
   - `onDone` of an invoke of `src` `S` with id `I`: an object with `type`
     equal to `xstate.done.actor.I` and `output` validating against
     `actors[S].output`;
@@ -119,10 +121,16 @@ description: |-
     ancestor, or a descendant;
   - `output` of a top-level final state: its `entry` event set.
 
-  A transition enters a state when its target is the state or a
-  descendant, or the state is in the initial configuration of its target.
-  A transition exits a state when the state is active in its source
-  configuration and absent from its target configuration. Each event set
+  Which states a transition enters and exits follows XState v5. A
+  transition with no target enters and exits no state. For a transition
+  with a target, its domain is its source when `reenter` is not `true` and
+  every target is the source or a descendant of it; otherwise its domain
+  is the nearest compound state that properly contains the source and
+  every target. The transition exits every state active in its source
+  configuration that is a proper descendant of its domain, and enters
+  every state of its target configuration that is a proper descendant of
+  its domain. A self-transition therefore exits and enters its source only
+  with `reenter: true`. Each event set
   is a set of schemas taken by event type, so a type appears once. A site
   whose event set is empty is unreachable and is not evaluated.
 
@@ -234,6 +242,14 @@ validation-criteria: >-
   mapping with no output schema, and check each finding's kind, location,
   and sample. They cover event sets with an `entry` assignment of a state
   entered only through an invoke's `onDone`, whose samples are the
-  `xstate.done.actor` event alone, and with an `onSnapshot` guard. They
+  `xstate.done.actor` event alone; with an `onSnapshot` guard; with an
+  `exit` assignment of a state whose only exiting transition is a
+  self-transition with `reenter: true`, which is evaluated over that
+  transition's event; with an `entry` assignment of a state whose only
+  other transition is a self-transition without `reenter`, whose samples
+  exclude that transition's event; and with a guard on `expression.error`,
+  an action on a `*` transition, and an `entry` assignment of a state
+  entered through an `expression.error` transition, each sampled with the
+  `expression.error` event. They
   lint a guard that calls `$random()` and `$now()` twice and get identical
   findings. Fixtures use a domain unrelated to Manifold.
