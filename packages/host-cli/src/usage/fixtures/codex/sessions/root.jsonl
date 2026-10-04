@@ -1,0 +1,2 @@
+{"type": "session_meta", "timestamp": "2026-01-01T00:00:00Z", "payload": {"id": "root-a", "session_id": "root-a", "model": "sample-model"}}
+{"type": "event_msg", "timestamp": "2026-01-01T00:00:10Z", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 12, "cached_input_tokens": 2, "output_tokens": 4, "reasoning_output_tokens": 1}, "total_token_usage": {"total_tokens": 17, "input_tokens": 12, "cached_input_tokens": 2, "output_tokens": 4, "reasoning_output_tokens": 1}}}}

@@ -43,16 +43,25 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
+      '@codeburn/core':
+        specifier: 0.9.20
+        version: 0.9.20
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 24.19.0
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       bun:
         specifier: 'catalog:'
         version: 1.4.2
       vite-plus:
         specifier: 'catalog:'
         version: 0.3.3(@types/node@24.19.0)(typescript@6.0.3)(yaml@2.9.1)
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   packages/service:
     dependencies:
@@ -129,6 +138,9 @@ packages:
 
   '@jitl/quickjs-wasmfile-release-sync@0.32.0':
     resolution: {integrity: sha512-BKNDI/TPBfGlLNGYpLrhcDGXmIk4xHm4MRAisOBnOzpXVn9HZWsfmMAc9WMBrAHjvvds6HOikKeaOBKdPdpVrg==}
+  '@codeburn/core@0.9.20':
+    resolution: {integrity: sha512-uRYT94L1Q74RkLNy/wmp8l/ogLhC5EMNDIIBk0tYG9IdkkkIsp1nr9dJfV1PO+xmzYTgWFFcJLDSNd99ucqoug==}
+    engines: {node: '>=22.13.0'}
 
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
@@ -1206,6 +1218,9 @@ packages:
   yuku-parser@0.9.5:
     resolution: {integrity: sha512-IBnAdNVMswWbJcM7woPluOudectJzFjJ1N8jVRxP9Uq4CIv5hZdBIcdmtRbFDYF/Ph2j2gVup4YJ4N9mh0jYFA==}
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
 snapshots:
 
   '@babel/code-frame@7.29.7':
@@ -1225,6 +1240,9 @@ snapshots:
   '@jitl/quickjs-wasmfile-release-sync@0.32.0':
     dependencies:
       '@jitl/quickjs-ffi-types': 0.32.0
+  '@codeburn/core@0.9.20':
+    dependencies:
+      zod: 3.25.76
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
@@ -2015,3 +2033,5 @@ snapshots:
       '@yuku-parser/binding-linux-x64-musl': 0.9.5
       '@yuku-parser/binding-win32-arm64': 0.9.5
       '@yuku-parser/binding-win32-x64': 0.9.5
+
+  zod@3.25.76: {}

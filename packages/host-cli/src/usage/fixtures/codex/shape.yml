@@ -1,0 +1,7 @@
+relationships:
+  verifies: usage-decoder
+provider: codex
+harness-version: "0.159.2"
+decoder-version: 0.9.20
+shape-basis: Published provider types in @codeburn/core 0.9.20; synthetic records.
+version-basis: Installed harness version; fixtures are validated against the pinned decoder contract, not live session files.

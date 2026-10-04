@@ -16,12 +16,15 @@
     "generate:comparator-library": "node scripts/generate-comparator-library.mjs && vp fmt src/comparator-lint/library.generated.ts"
   },
   "dependencies": {
+    "@codeburn/core": "0.9.20",
     "@wyrd-company/manifold-shared": "workspace:*",
     "typescript": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "ajv": "^8.20.0",
     "bun": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "yaml": "^2.9.1"
   }
 }

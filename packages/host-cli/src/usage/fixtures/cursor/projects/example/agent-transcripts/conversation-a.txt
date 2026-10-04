@@ -1,0 +1,5 @@
+user:
+<user_query>Inspect a sample.</user_query>
+A:
+Sample inspected.
+[Thinking] Checking.

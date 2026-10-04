@@ -1,0 +1,7 @@
+{
+  "id": "message-o",
+  "role": "assistant",
+  "modelID": "sample-model",
+  "time": { "created": 1767225610000 },
+  "tokens": { "input": 10, "output": 4, "reasoning": 1, "cache": { "read": 3, "write": 2 } }
+}
