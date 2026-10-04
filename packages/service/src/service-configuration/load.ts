@@ -13,19 +13,11 @@ import {
 } from "@wyrd-company/manifold-shared";
 import { createCredentials } from "./credentials.ts";
 import { ServiceConfigurationError } from "./types.ts";
-import type {
-  ConfigurationIssue,
-  GitHubAppSettings,
-  ServiceConfiguration,
-  ProcessRepositoryConfiguration,
-} from "./types.ts";
-import type { ComparatorSandboxLimits } from "../comparator-sandbox/index.ts";
+import type { ConfigurationIssue, GitHubAppSettings, ServiceConfiguration } from "./types.ts";
 
-interface ConfigurationDocument {
-  processRepository: ProcessRepositoryConfiguration;
-  comparatorSandbox: ComparatorSandboxLimits;
+type ConfigurationDocument = Omit<ServiceConfiguration, "file" | "credentials"> & {
   credentials: Record<string, GitHubAppSettings>;
-}
+};
 const ajv = new Ajv2020({ allErrors: true, useDefaults: true });
 for (const schema of serviceConfigurationSchemas) ajv.addSchema(schema);
 const validate = ajv.getSchema<ConfigurationDocument>(serviceConfigurationSchemaId)!;

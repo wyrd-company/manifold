@@ -26,6 +26,7 @@ export async function openProcessRepository(
   let current = commit ? revision(objects, commit) : undefined;
   let running: Promise<PullOutcome> | undefined;
   let queued: Promise<PullOutcome> | undefined;
+  let queuedCommit: string | undefined;
   function launch(request?: PullRequest): Promise<PullOutcome> {
     const promise = pullRevision(options, objects, paths, credential, current?.commit, request)
       .then((outcome) => {
@@ -53,11 +54,18 @@ export async function openProcessRepository(
       }
     },
     pull(request?: PullRequest) {
-      if (!running) return queued ?? launch(request);
-      queued ??= running
+      if (queued) {
+        if (request?.commit !== queuedCommit) queuedCommit = undefined;
+        return queued;
+      }
+      if (!running) return launch(request);
+      queuedCommit = request?.commit;
+      queued = running
         .catch(() => undefined)
         .then(() => {
+          const request = queuedCommit === undefined ? undefined : { commit: queuedCommit };
           queued = undefined;
+          queuedCommit = undefined;
           return launch(request);
         });
       return queued;

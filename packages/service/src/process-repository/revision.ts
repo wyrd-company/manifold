@@ -3,7 +3,6 @@
 //   implements: process-repository
 // ---
 import git from "isomorphic-git";
-import { assertRevisionPath } from "@wyrd-company/manifold-shared";
 import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
 import type { gitFileSystem } from "./git-fs.ts";
 export interface GitObjects {
@@ -64,4 +63,15 @@ export function revision(objects: GitObjects, commit: string): ProcessRepository
       return paths.sort();
     },
   });
+}
+
+function assertRevisionPath(path: string, prefix = false): void {
+  if (prefix && path === "") return;
+  if (
+    !path ||
+    path.includes("\\") ||
+    path.split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    throw new TypeError(`Invalid ${prefix ? "prefix" : "path"}: ${path}`);
+  }
 }

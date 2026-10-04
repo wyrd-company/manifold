@@ -25,7 +25,7 @@ export type {
 export { lintDecisionModel, collectDecisionModelExpressions } from "./decision-models.ts";
 export { decisionModelBlank, decisionModelLocation } from "./decision-model-types.ts";
 export type * from "./decision-model-types.ts";
-export { memoryRevision, assertRevisionPath } from "./process-repository-revision.ts";
+export { memoryRevision } from "./process-repository-revision.ts";
 export type { ProcessRepositoryRevision } from "./process-repository-revision.ts";
 export {
   serviceConfigurationSchema,

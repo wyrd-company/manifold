@@ -210,7 +210,7 @@ test("verification rejects an unreadable newly fetched object before publication
 });
 
 test("a request from a settled-pull callback joins the already queued successor", async () => {
-  const { remote, configuration } = await setup(200);
+  const { remote, configuration, a } = await setup(200);
   const repository = await openProcessRepository({ configuration, credentials });
   await repository.pull();
   const b = await remote.commit("second");
@@ -225,7 +225,7 @@ test("a request from a settled-pull callback joins the already queued successor"
     return error;
   });
   await started;
-  const next = repository.pull();
+  const next = repository.pull({ commit: a });
   void next.catch(() => undefined);
   remote.state.mode = "healthy";
   await first;
@@ -241,3 +241,41 @@ test("a request from a settled-pull callback joins the already queued successor"
     await Promise.allSettled([next, late]);
   }
 });
+
+test.each(["different", "absent", "initially-absent", "matching"] as const)(
+  "joined %s commit hints determine whether the successor fetches",
+  async (hint) => {
+    const { remote, configuration, a } = await setup(200);
+    const repository = await openProcessRepository({ configuration, credentials });
+    await repository.pull();
+    const b = await remote.commit("second");
+    remote.state.mode = "pack";
+    const started = new Promise<void>((resolve) => {
+      remote.state.packStarted = resolve;
+    });
+    const first = repository.pull().catch((error) => error);
+    await started;
+    const next = repository.pull(hint === "initially-absent" ? undefined : { commit: a });
+    const joined = repository.pull(
+      hint === "absent" ? undefined : { commit: hint === "matching" ? a : b },
+    );
+    const repeated = repository.pull({ commit: a });
+    remote.state.mode = "healthy";
+    try {
+      expect(repeated).toBe(next);
+      expect(joined).toBe(next);
+      expect(await first).toMatchObject({ kind: "remote" });
+      expect(await next).toEqual(
+        hint === "matching"
+          ? { kind: "unchanged", commit: a }
+          : { kind: "advanced", commit: b, previous: a },
+      );
+      expect(repository.current()!.commit).toBe(hint === "matching" ? a : b);
+      expect(remote.requests.filter((request) => request.path.includes("/info/refs"))).toHaveLength(
+        hint === "matching" ? 2 : 3,
+      );
+    } finally {
+      await Promise.allSettled([first, next, joined, repeated]);
+    }
+  },
+);

@@ -30,8 +30,8 @@ export function memoryRevision(
   });
 }
 
-/** Shared boundary for implementations of ProcessRepositoryRevision. */
-export function assertRevisionPath(path: string, prefix = false): void {
+/** Validates the in-memory revision's path arguments. */
+function assertRevisionPath(path: string, prefix = false): void {
   if (prefix && path === "") return;
   if (
     !path ||
