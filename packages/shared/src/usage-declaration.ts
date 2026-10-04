@@ -21,12 +21,10 @@ import type {
 const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: false });
 for (const schema of serviceConfigurationSchemas) ajv.addSchema(schema);
 ajv.addSchema(usageRecordSchema);
-const accountsValidator = ajv.compile<{ accounts?: Record<string, UsageAccount> }>(
-  accountsDeclarationSchema,
-);
-const pricesValidator = ajv.compile<{ unit?: "usd"; models?: Record<string, UsagePriceEntry> }>(
-  priceTableSchema,
-);
+let accountsValidator: ValidateFunction<{ accounts?: Record<string, UsageAccount> }> | undefined;
+let pricesValidator:
+  | ValidateFunction<{ unit?: "usd"; models?: Record<string, UsagePriceEntry> }>
+  | undefined;
 const pointer = (value: string) => value.replaceAll("~", "~0").replaceAll("/", "~1");
 function document<T>(
   text: string | undefined,
@@ -68,6 +66,12 @@ export function lintUsageDeclaration(files: {
   accounts: string | undefined;
   prices: string | undefined;
 }): UsageLintResult {
+  accountsValidator ??= ajv.compile<{ accounts?: Record<string, UsageAccount> }>(
+    accountsDeclarationSchema,
+  );
+  pricesValidator ??= ajv.compile<{ unit?: "usd"; models?: Record<string, UsagePriceEntry> }>(
+    priceTableSchema,
+  );
   const findings: UsageFinding[] = [];
   const accounts = document(files.accounts, "accounts", accountsValidator, findings);
   const prices = document(files.prices, "prices", pricesValidator, findings);
