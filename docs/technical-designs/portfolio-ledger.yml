@@ -413,10 +413,14 @@ proposed-design:
     `index.ts` exports the public surface. `ledger.ts` holds `createLedger`
     and its SQL statements. `migrations.ts` holds `ledgerMigrationSteps`, an
     array of SQL strings whose step 1 is the script of
-    `docs/specifications/portfolio-ledger-tables.sql`. `portfolio.ts` holds
-    `parseLedgerPortfolio`. `sharing-rule.ts` and `balance.ts` hold the pure
-    computations. The module adds nothing to `packages/shared` and does not
-    import the store.
+    `docs/specifications/portfolio-ledger-tables.sql`. `sharing-rule.ts` and
+    `balance.ts` hold the pure computations. `parseLedgerPortfolio`,
+    `LedgerError`, `LedgerErrorCode`, `LedgerPortfolio`, and
+    `LedgerPortfolioInput` live in `packages/shared/src/ledger-portfolio.ts`,
+    with the read accessors over a parsed portfolio that the computations
+    use, so that the host CLI lints a declared portfolio with the same
+    rules; `index.ts` re-exports them. The module does not import the
+    store.
   tests: |-
     Tests live in `packages/service/src/ledger/ledger.test.ts` and drive
     only the public interface, against a database file each test opens in a

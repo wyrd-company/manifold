@@ -1,0 +1,99 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: bindings-declaration
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/bindings-declaration
+title: Bindings declaration
+description: >-
+  The document in `bindings.yml` at the root of the process repository: the
+  bindings that tie GitHub Projects and T3code projects to portfolio items.
+  An empty document declares no bindings.
+type: object
+additionalProperties: false
+properties:
+  githubProjects:
+    description: GitHub Project bindings, keyed by binding name.
+    type: object
+    propertyNames:
+      $ref: "#/$defs/name"
+    additionalProperties:
+      $ref: "#/$defs/githubProject"
+  t3codeProjects:
+    description: T3code project bindings, keyed by binding name.
+    type: object
+    propertyNames:
+      $ref: "#/$defs/name"
+    additionalProperties:
+      $ref: "#/$defs/t3codeProject"
+$defs:
+  name:
+    description: A lower-case slug. Binding names, environment names, and item ids are names.
+    type: string
+    pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+    maxLength: 64
+  t3codeProjectId:
+    description: The id of a T3code project on its environment.
+    type: string
+    minLength: 1
+  githubProject:
+    description: A GitHub Project binding.
+    type: object
+    additionalProperties: false
+    required:
+      - owner
+      - number
+      - environment
+      - item
+    properties:
+      owner:
+        description: The login of the organization or user that owns the Project.
+        type: string
+        pattern: "^[A-Za-z0-9](-?[A-Za-z0-9])*$"
+        maxLength: 39
+      number:
+        description: The Project's number under its owner.
+        type: integer
+        minimum: 1
+      environment:
+        description: The environment that places every thread for the Project's tasks.
+        $ref: "#/$defs/name"
+      item:
+        description: The portfolio item the Project attaches to.
+        $ref: "#/$defs/name"
+      t3codeProjects:
+        description: >-
+          The T3code projects on the binding's environment associated with
+          the Project. Each follows the Project's item.
+        type: array
+        uniqueItems: true
+        items:
+          $ref: "#/$defs/t3codeProjectId"
+      archived:
+        description: Archives the binding. An archived binding still resolves.
+        type: boolean
+        default: false
+  t3codeProject:
+    description: A T3code project binding.
+    type: object
+    additionalProperties: false
+    required:
+      - environment
+      - project
+      - item
+    properties:
+      environment:
+        description: The environment the T3code project is on.
+        $ref: "#/$defs/name"
+      project:
+        description: The T3code project's id on its environment.
+        $ref: "#/$defs/t3codeProjectId"
+      item:
+        description: The portfolio item the T3code project attaches to.
+        $ref: "#/$defs/name"
+      archived:
+        description: Archives the binding. An archived binding still resolves.
+        type: boolean
+        default: false

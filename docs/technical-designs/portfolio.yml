@@ -2,6 +2,8 @@ $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
     - gates
+    - portfolio-ledger
+    - store
 objective: >-
   Track budget by portfolio item across accounts so that a gate can ask
   whether a task may reserve an estimate, unused budget is not stranded, one
@@ -71,7 +73,9 @@ proposed-design:
     chooses: move it up to the parent, where it lands on the parent's Other
     by the same rule as intake; reassign it to a sibling; or archive the
     project. An archived item keeps its history, and its usage stays
-    charged to its parent and to the account.
+    charged to its parent and to the account. The choice is made in the
+    same commit as the archive: a declaration in which a binding that is not
+    archived names an archived item is refused.
   sharing-rule: >-
     An item may reserve while its usage counted as it arrives plus the new
     reservation stays within its guarantee, or within its guarantee plus the
@@ -124,3 +128,278 @@ proposed-design:
     usage and its reset times are estimates until observed. An API account's
     capacity is its declared monthly budget. A granted reset is shown and
     never applied on the operator's behalf.
+  declaration: >-
+    The portfolio is declared in `portfolio.yml` and the bindings in
+    `bindings.yml`, both at the root of the process repository. Their
+    formats are `portfolio-declaration` and `bindings-declaration`. Item ids
+    are unique across the tree, so an item keeps its id and its history when
+    it moves to another parent. Manifold adds the Other items: `other` at the
+    top level, and `<parent>/other` under every item with a sub-item. The
+    key `other` in an items mapping carries that Other's allocations. An
+    archive flag archives an item and everything under it and leaves its
+    allocations in the file, where they do not apply. The declaration maps
+    one to one onto the ledger's `LedgerPortfolioInput`, so the ledger's
+    tables and sharing rule take it unchanged.
+  declaration-module: |-
+    The portfolio module is `packages/service/src/portfolio/`. It owns the
+    declaration in force, the ledger built on it, and binding resolution,
+    so a gate's balance and an intake's item are read from the same commit.
+    Its public surface is exported from `index.ts`:
+
+    ```ts
+    /** Migration steps for owner `portfolio`, applied by the store's migrate. */
+    export const portfolioMigrationSteps: readonly string[];
+
+    /** The members of the process repository revision the module reads. */
+    export interface PortfolioRevision {
+      readonly commit: string;
+      read(path: string): Promise<string | undefined>;
+    }
+
+    export function openPortfolio(options: {
+      connection: LedgerConnection;
+      now?: () => number; // defaults to Date.now; passed to the ledger
+    }): Portfolio;
+
+    export interface Portfolio {
+      readonly ledger: Ledger;
+      apply(revision: PortfolioRevision): Promise<PortfolioApplyResult>;
+      current(): PortfolioInForce;
+      githubProject(project: { owner: string; number: number }): GitHubProjectResolution | undefined;
+      t3codeProject(project: { environment: string; id: string }): T3codeProjectResolution;
+    }
+
+    export type PortfolioApplyResult =
+      | { status: "applied"; commit: string }
+      | { status: "unchanged"; commit: string }
+      | { status: "rejected"; commit: string; findings: readonly PortfolioFinding[] };
+
+    export type PortfolioInForce = {
+      commit: string | null; // null before the first accepted declaration
+      declaration: PortfolioDeclaration;
+    };
+
+    export type GitHubProjectResolution = {
+      binding: string;
+      item: string;
+      environment: string;
+      t3codeProjects: readonly string[];
+      archived: boolean;
+    };
+
+    export type T3codeProjectResolution =
+      | { item: string; via: "binding" | "association"; binding: string; archived: boolean }
+      | { item: "other"; via: "unbound" };
+    ```
+
+    `PortfolioRevision` is the part of `ProcessRepositoryRevision` the
+    module uses, declared structurally in the module as `LedgerConnection`
+    is in the ledger, so the process repository's revision satisfies it and
+    a test passes a fixture of the same shape. The service applies
+    `ledgerMigrationSteps` and `portfolioMigrationSteps` with the store's
+    `migrate`, calls `openPortfolio` with the store's connection, takes its
+    ledger from `portfolio.ledger`, and calls `apply` with every revision
+    the process repository pulls. `index.ts` holds the public surface,
+    `portfolio.ts` holds `openPortfolio`, `migrations.ts` holds the steps,
+    whose step 1 is the script of
+    `docs/specifications/portfolio-declarations-table.sql`, and
+    `resolution.ts` holds resolution as pure functions over a declaration.
+  declaration-in-force: >-
+    The declaration in force is persisted, so a restart with an invalid
+    declaration at the head commit resumes on the last valid one. Its table
+    is specified in `portfolio-declarations-table`. `openPortfolio` reads the
+    row with the greatest `seq`, or takes the empty declaration, which holds
+    only the top-level Other and no bindings, when there is none. It
+    validates that declaration with `parseLedgerPortfolio`, calls
+    `createLedger` with the result, and builds the resolution index. It
+    writes nothing.
+  applying-a-revision: >-
+    `apply` reads `portfolio.yml` and `bindings.yml` through the revision,
+    lints their text with `lintPortfolioDeclaration`, and compares the
+    normalized declaration with the one in force. A declaration with a
+    finding is rejected: `apply` returns the findings and the declaration in
+    force, the ledger's portfolio, and resolution stay as they were. A
+    declaration equal to the one in force, as canonical JSON, returns
+    `unchanged` and writes nothing. Any other declaration is accepted:
+    `apply` appends its row in one `connection.transaction`, then calls
+    `ledger.setPortfolio` with the parsed ledger portfolio and swaps the
+    resolution index, and returns `applied`. A changed declaration takes
+    effect on the next call to the ledger or to resolution, with no restart
+    and no new ledger. `apply` calls run one at a time in call order: a
+    call waits for the one before it, so two revisions never interleave
+    their reads and writes. A failing `read` rejects the call and changes
+    nothing. `apply` does not order revisions: the caller passes them in
+    the order it pulls them.
+  resolution: >-
+    `githubProject` answers the binding of a GitHub Project by owner and
+    number, the owner compared without regard to case, or undefined when no
+    binding names it. `t3codeProject` answers the item of a T3code project
+    on an environment: its own binding's item, else the item of the GitHub
+    Project binding whose environment matches and whose `t3codeProjects`
+    lists it, else the top-level Other with `via: "unbound"`. The lint
+    refuses a T3code project that is both bound and associated, or
+    associated twice, so the answer is unique. Resolution reads in-memory
+    maps built from the declaration in force, keyed by the lower-case owner
+    and number and by environment and T3code project id. An archived
+    binding resolves like any other and reports `archived: true`; intake
+    and the console decide what an archived binding allows.
+  lint: >-
+    `lintPortfolioDeclaration` in `packages/shared` is the one function that
+    validates a declaration. The service runs it on every revision, and the
+    host CLI command `manifold-host portfolio lint` of
+    `host-cli-portfolio-lint` runs it on a checkout. It takes the text of
+    each file, undefined for an absent file, parses each with the `yaml`
+    library, validates each document against its JSON Schema with Ajv,
+    reports the findings of `portfolio-declaration` and
+    `bindings-declaration`, normalizes the declaration, adds the Other
+    items, and calls `parseLedgerPortfolio` on the ledger input. A
+    `LedgerError` becomes one finding with the error's code, message, and
+    details, so a declaration whose guarantees under one parent exceed 100%
+    is refused with the ledger's error naming the parent and its sum. It
+    returns the findings, or the declaration with its parsed ledger
+    portfolio:
+
+    ```ts
+    export function lintPortfolioDeclaration(files: {
+      portfolio: string | undefined;
+      bindings: string | undefined;
+    }):
+      | { ok: true; declaration: PortfolioDeclaration; ledgerPortfolio: LedgerPortfolio }
+      | { ok: false; findings: readonly PortfolioFinding[] };
+
+    export type PortfolioFinding = {
+      file: "portfolio" | "bindings";
+      location: string; // RFC 6901 JSON Pointer in the file's document
+      kind: PortfolioFindingKind;
+      message: string;
+      details?: Record<string, unknown>;
+    };
+
+    export type PortfolioFindingKind =
+      | "syntax"
+      | "schema"
+      | "duplicate-item"
+      | "other-without-items"
+      | "invalid-portfolio"
+      | "guarantee-limit"
+      | "duplicate-binding"
+      | "duplicate-project"
+      | "duplicate-association"
+      | "bound-and-associated"
+      | "unknown-item"
+      | "archived-item";
+
+    export type PortfolioDeclaration = {
+      ledger: LedgerPortfolioInput; // Other items added, archive inherited, archived rows dropped
+      items: readonly {
+        id: string;
+        parent: string | null;
+        title: string;
+        archived: boolean;
+        other: boolean;
+      }[];
+      githubProjects: readonly {
+        name: string;
+        owner: string;
+        number: number;
+        environment: string;
+        item: string;
+        t3codeProjects: readonly string[];
+        archived: boolean;
+      }[];
+      t3codeProjects: readonly {
+        name: string;
+        environment: string;
+        project: string;
+        item: string;
+        archived: boolean;
+      }[];
+    };
+    ```
+
+    The two schemas are embedded in `packages/shared` as generated
+    constants, and a test shows each equals its specification asset.
+  ledger-portfolio-in-shared: >-
+    The host CLI lints with the ledger's allocation rules, so
+    `parseLedgerPortfolio`, `LedgerError`, `LedgerErrorCode`,
+    `LedgerPortfolio`, and `LedgerPortfolioInput` live in
+    `packages/shared/src/ledger-portfolio.ts`, with the read accessors the
+    ledger's computations use. The ledger's `index.ts` re-exports them, so
+    its public surface and every behaviour stay as `portfolio-ledger`
+    states them. `packages/shared` depends on `yaml`.
+  libraries: >-
+    The module adds no new library. YAML is parsed with `yaml` (eemeli/yaml),
+    which the host CLI and the service tests use: it is widely
+    adopted, actively released, has no dependencies, and reports parse
+    errors with line and column. JSON Schemas are checked with Ajv, which
+    `packages/shared` depends on.
+  convergence: >-
+    `apply` twice with the same revision: the second finds the declaration
+    equal to the one in force and writes nothing. `apply` of a rejected
+    revision twice rejects twice and writes nothing. A crash before the row
+    commits leaves the previous declaration in force, and the next `apply`
+    of that revision accepts it. A crash after the row commits and before
+    `setPortfolio` leaves the new row in force, and `openPortfolio` on
+    restart builds the ledger and resolution from it. `openPortfolio` writes
+    nothing. Migration convergence belongs to the store's `migrate`.
+  portfolio-tests: |-
+    Tests live in `packages/service/src/portfolio/portfolio.test.ts` and
+    drive `openPortfolio` through its public interface, against a database
+    file each test opens in a temporary directory, with an injected clock
+    and a revision fixture that serves file text by commit. Tests of the
+    lint live in `packages/shared`. Values are generic: account `acct`,
+    items `alpha`, `beta`, `gamma`, owner `example-org`, environment
+    `env-one`, T3code projects `t3-project-1` to `t3-project-4`, actors
+    `actor-1` and `actor-2`, one window `w1` from 0 to 1000 credited 100.
+    The scenarios, each written red before green:
+
+    - Load: a revision with `alpha` 60% holding `beta` and `gamma` gives a
+      ledger whose `alpha/other` balance reads with no error, and `apply`
+      returns `applied`.
+
+    - Empty: `openPortfolio` on an empty database holds only `other`, and
+      every T3code project resolves to it.
+
+    - Guarantee limit: a revision with `alpha` 70% and `beta` 40% returns
+      `rejected` with one `guarantee-limit` finding whose message names
+      the top level and 110%.
+
+    - Last valid stays in force: after `alpha` and `beta` at 50% are
+      applied, the 110% revision is rejected, `alpha` reservable is still
+      50, and a second `openPortfolio` on the same file reads the same.
+
+    - No restart: after `alpha` and `beta` at 50% are applied, a revision
+      at a new commit with `alpha` 30% and `beta` 70% is applied, and the
+      same `portfolio.ledger` reads `beta` allocation 70.
+
+    - Archive with outstanding reservations: `alpha` and `beta` at 50%,
+      the GitHub Project bound to `alpha`; `actor-1` reserves 20 on
+      `alpha`. A revision that archives `alpha` and leaves its binding live
+      is rejected with `archived-item`. A revision that archives `alpha`
+      and moves the binding to `beta` is applied: `beta` reservable is 80,
+      a reserve on `alpha` throws `invalid-input`, the GitHub Project
+      resolves to `beta`; after `actor-1` settles, `beta` reservable is 100.
+
+    - Resolution: a GitHub Project resolves to its item, with the owner in
+      another case too; a bound T3code project resolves `via: "binding"`;
+      a T3code project the GitHub Project binding lists resolves `via:
+      "association"` to the Project's item; the same id on another
+      environment resolves to `other`; an archived binding resolves with
+      `archived: true`.
+
+    - Several projects: `alpha` holds two GitHub Projects and two T3code
+      project bindings, and all four resolve to `alpha`.
+
+    - Convergence: `apply` twice with one revision returns `applied` then
+      `unchanged` and leaves one row; a revision at a new commit with the
+      same files returns `unchanged`.
+
+    - Interleaving: two `apply` calls started together, with the first
+      revision's reads delayed, apply in call order, and the second
+      revision is in force.
+
+    - Schema: the steps applied to an empty database produce the schema of
+      `docs/specifications/portfolio-declarations-table.sql`.
+
+    The host CLI test compiles the binary and runs `portfolio lint` as
+    `host-cli-portfolio-lint` states.

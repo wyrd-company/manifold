@@ -1,0 +1,104 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose declaration this is.
+  realizes:
+    - portfolio
+  references:
+    - portfolio-ledger
+terms:
+  - portfolio-item
+  - allocation
+  - ceiling
+  - weight
+  - pacing
+  - unallocated-remainder
+description: >-
+  Defines `portfolio.yml`, the file at the root of the process repository
+  that declares the portfolio: the tree of portfolio items and each item's
+  allocation per account. `docs/specifications/portfolio-declaration.schema.yml`
+  is the machine-readable definition of its document.
+
+  An absent file and an empty document both declare no items. The portfolio
+  they give holds only the top-level Other.
+
+  Items. `items` maps item ids to items, in declaration order. An item's own
+  `items` holds its sub-items, to any depth. An item id is a name: a
+  lower-case slug of at most 64 characters. Item ids are unique across the
+  whole tree, so an item keeps its id, and its history, when it moves to
+  another parent. `title` is the name the console shows, and defaults to the
+  id.
+
+  Other. The portfolio always holds a top-level Other, with id `other`.
+  Every item with at least one sub-item, archived sub-items included, holds
+  an Other sub-item with id `<parent>/other`, after its declared sub-items.
+  An item with no sub-items holds no Other. Other items are never declared
+  as items: the key `other` in an `items` mapping sets that Other's
+  allocations, and takes no title, no sub-items, and no archive flag. The
+  key `other` under an item that has no other sub-item is the finding
+  `other-without-items`. The `/` in an Other id is outside the name
+  pattern, so an Other id never equals a declared item id.
+
+  Archive. `archived: true` archives the item and every item under it, its
+  Other included. An archived item keeps its place in the tree, so its
+  history stays charged to its parent. Its allocations stay in the file and
+  do not apply: its guarantee for every account is 0. Removing
+  `archived: true` restores them. An item the file does not declare is not
+  in the portfolio, and its history is charged to the top level.
+
+  Allocations. `allocations` maps account names to an allocation. An
+  account name is a name. `guarantee` is the guaranteed percentage of the
+  parent's amount, default 0. `ceiling` is the most of the parent's limit
+  the item may use, default 100. `weight` is a positive integer, default 1.
+  `pacing.burst` is a percentage of the parent's amount. Percentages run
+  from 0 to 100 with at most two decimal places. An item with no allocation
+  for an account has a guarantee of 0 and a ceiling of 100 for it. The
+  parent of every top-level item, the top-level Other included, is the
+  account's capacity.
+
+  Ledger portfolio. The declaration maps one to one onto the ledger's
+  `LedgerPortfolioInput`. Each item, Other included, is one entry of
+  `items` with its id, its parent id or null, and `archived` when it or an
+  ancestor is archived. Each allocation of a live item is one row of
+  `allocations` with the item id, the account, and the four fields as
+  declared, defaults omitted. `parseLedgerPortfolio` validates the result
+  and is the only source of the allocation rules: a percentage with more
+  than two decimal places, a ceiling below the guarantee, and guarantees
+  under one parent for one account that total more than 100%.
+
+  Findings. Linting a portfolio document gives findings with a kind, a
+  location, and a message. The location is the RFC 6901 JSON Pointer of the
+  offending value in the document. The kinds:
+
+  - `syntax`: the file does not parse as one YAML document. The location is
+    the empty pointer, and the message is the parser's, with its line and
+    column. No other finding is reported for that file.
+
+  - `schema`: the document does not validate against the schema. The
+    message is the validator's. No other finding is reported for a
+    document with a `schema` finding.
+
+  - `duplicate-item`: an item id is declared a second time. The location is
+    the second declaration.
+
+  - `other-without-items`: the key `other` under an item with no other
+    sub-item.
+
+  - `invalid-portfolio` and `guarantee-limit`: `parseLedgerPortfolio` threw
+    a `LedgerError` with that code. The message is the error's message
+    unchanged, and the finding carries the error's details. For
+    `guarantee-limit` the location is the `items` mapping of the parent
+    the error names, or `/items` for the top level; for
+    `invalid-portfolio` it is the allocation or item the details name.
+    The ledger reports the first offending parent, so one document gives at
+    most one of these findings.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/portfolio-declaration.schema.yml` is a valid JSON
+  Schema 2020-12 document, and equals the schema `packages/shared` embeds,
+  which a test shows. Tests of `lintPortfolioDeclaration` show the Other
+  items it adds at the top level and under an item with sub-items, and none
+  under a leaf; archive inheritance; the dropped allocations of an archived
+  item; and each finding kind with its location. A document whose
+  guarantees under one item total 110% gives one `guarantee-limit` finding
+  whose message names that item and 110%.

@@ -1,0 +1,39 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose table this is.
+  realizes:
+    - portfolio
+  references:
+    - store-database-schema
+    - portfolio-declaration
+    - bindings-declaration
+description: >-
+  Defines the table the portfolio module holds in Manifold's store
+  database. `docs/specifications/portfolio-declarations-table.sql` is the
+  machine-readable definition: the schema that the module's migration steps
+  produce. The module's owner name is `portfolio`, and every table and
+  trigger it creates is named `portfolio_<name>`. Its steps are applied by
+  the store's `migrate("portfolio", steps)`; the module never runs DDL
+  itself. Step 1 is this file's script. Steps are append-only: a change to
+  the table is a new step, and this file is rewritten to the schema all
+  steps produce.
+
+  `portfolio_declarations` holds one row per accepted declaration whose
+  content differs from the declaration in force. `commit_id` is the full
+  commit id of the process repository revision it was read from.
+  `declaration` is the canonical JSON, keys sorted, of the normalized
+  declaration that `lintPortfolioDeclaration` returns. `accepted_at` is the
+  time it was written, in epoch milliseconds. The row with the greatest
+  `seq` is the declaration in force. No row is updated or deleted; a
+  trigger aborts every `UPDATE` and `DELETE`.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/portfolio-declarations-table.sql` runs without error
+  on an empty SQLite database. A test applies the module's exported
+  migration steps in order to an empty database and compares the `type`,
+  `name`, `tbl_name`, and `sql` of every `sqlite_schema` row whose name
+  starts with `portfolio_` with the rows this file produces on a second
+  empty database, with each run of whitespace in `sql` read as one space;
+  they are equal. An `UPDATE` or `DELETE` on the table fails with its
+  append-only message.

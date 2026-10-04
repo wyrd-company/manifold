@@ -1,0 +1,42 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose command this is.
+  realizes:
+    - portfolio
+  references:
+    - portfolio-declaration
+    - bindings-declaration
+description: >-
+  Defines the host CLI command `manifold-host portfolio lint`, which lints
+  the portfolio and bindings of a process repository checkout on the host.
+  It runs `lintPortfolioDeclaration` from `packages/shared`, the function
+  the service runs on every revision it applies.
+  `docs/specifications/host-cli-portfolio-lint.cli.yml` is the
+  machine-readable definition.
+
+  The command takes one optional argument, the directory of a process
+  repository checkout, default the current directory. It reads
+  `portfolio.yml` and `bindings.yml` from that directory and passes their
+  text to the lint, which parses each as one YAML document. An absent file
+  is linted as an empty document, as the service reads it. A directory
+  that cannot be read, or a file that exists but cannot be read, is
+  reported on standard error as `<file>: <reason>` and ends the command
+  with exit code 2 before anything is linted. Otherwise the command reports every finding
+  on standard output as one line, `<file>:<location> <kind> <message>`,
+  with the file as `portfolio.yml` or `bindings.yml`, the location the
+  finding's RFC 6901 JSON Pointer, and the kind and message the finding's.
+  Findings of `portfolio.yml` come first, then those of `bindings.yml`,
+  each in the lint's order. The command prints nothing and exits 0 when
+  there is no finding, and exits 1 when there is one.
+format: cli
+validation-criteria: >-
+  `docs/specifications/host-cli-portfolio-lint.cli.yml` validates against
+  the CLI Command Specification schema. A test compiles the host CLI for
+  the current platform and runs `portfolio lint` from a directory with no
+  `node_modules`. It observes exit 0 and no output for a clean checkout and
+  for an empty directory; exit 1 with a `guarantee-limit` line naming the
+  parent and its sum, and an `unknown-item` line from `bindings.yml`; exit
+  1 with a `syntax` line for a `bindings.yml` that does not parse as YAML;
+  and exit 2 with no standard output for a missing directory and for a
+  `portfolio.yml` that is a directory.
