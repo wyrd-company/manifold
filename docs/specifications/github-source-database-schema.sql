@@ -29,6 +29,7 @@ CREATE TABLE github_pending (
   kind TEXT NOT NULL CHECK (kind IN ('issue', 'item', 'project')),
   node_id TEXT NOT NULL CHECK (length(node_id) > 0),
   requested_at INTEGER NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation > 0),
   PRIMARY KEY (kind, node_id)
 ) STRICT, WITHOUT ROWID;
 

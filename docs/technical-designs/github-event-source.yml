@@ -275,8 +275,11 @@ proposed-design:
     present dependency or sub-issue row in either direction, becomes a
     pending `issue` instead, so a blocker outside every bound Project still
     reaches the issues it blocks. An item becomes a pending `item` and a
-    Project a pending `project` only when the Project is bound. Recording a
-    pending row that exists moves its `requested_at` to now.
+    Project a pending `project` only when the Project is bound. A new
+    pending row has generation 1 and `requested_at` now. Recording a pending
+    row that exists raises its generation by one and keeps its
+    `requested_at`, so a request made during a read of the entity is told
+    apart from the request the read serves, within one clock tick too.
   bound-projects: >-
     The runner keeps the bound Projects as a map from Project node id to
     Project reference, rebuilt at the start of each sweep from
@@ -306,10 +309,11 @@ proposed-design:
     read up to 50 at a time with the `GitHubIssues` query, grouped by the
     credential that reads them; items up to 50 at a time with `GitHubItems`;
     and a Project alone, as the sweep reconciles it. Before each read it
-    notes the time. After the read it opens one transaction that applies
-    each entity's comparison in turn, publishes each resulting event with
-    `router.publish` inside the transaction, and deletes each pending row
-    whose `requested_at` is earlier than the noted time. A failed request,
+    notes each row's generation. After the read it opens one transaction
+    that applies each entity's comparison in turn, publishes each resulting
+    event with `router.publish` inside the transaction, and deletes each
+    pending row whose generation still equals the noted one. A row whose
+    generation rose during the read stays pending and is read again. A failed request,
     a request that runs past `requestTimeoutMs`, or a rate limit answer
     stops the runner's pending work for this wake, leaves every unread row
     pending, and sends a `GitHubSourceError` of kind `api` with the status
@@ -402,11 +406,15 @@ proposed-design:
     dependency and sub-issue row that names `T`, and the set of tracked
     issues. (1) Each issue it observed, `T` and every issue in its lists,
     is written to `github_issue`; one whose row existed with another state
-    is a state change. (2) When `T` is baselined, each dependency and
-    sub-issue `T` takes part in that the lists show and the mirror holds
-    absent is an addition, and each the mirror holds present that the lists
-    do not show is a removal. When `T` is not baselined, the lists are
-    written as present without a change and `T` is marked baselined. (3)
+    is a state change. (2) Each dependency and sub-issue `T` takes part in
+    that the lists show and the mirror holds absent is an addition, and
+    each the mirror holds present that the lists do not show is a removal.
+    A relationship difference is a change when either of its endpoints is a
+    tracked issue that was baselined before this comparison; otherwise it
+    is written without a change. A shared relationship is therefore
+    published for the endpoint that already holds a baseline, whichever
+    endpoint is read first, and the later read finds the row as it
+    observes it. `T` is marked baselined at the end of its comparison. (3)
     Each change raises its row's revision by one and becomes one event:
     relationship changes first, in list order, then state changes, so a
     close's `blocks` and `parent` already reflect the relationships read
@@ -419,8 +427,14 @@ proposed-design:
     mirror rows. An item with no row, or with `present` 0, that is observed
     is an addition: its row and field values are written, and it publishes
     `github.project-item.added` with its field values and its content issue.
-    Its content issue is written to `github_issue` as a baseline when it has
-    no row, and becomes a pending `issue`. A present item observed absent is
+    When the content is an issue that is not yet baselined, the runner reads
+    that issue with `GitHubIssues`, its lists read to their end, after the
+    item read and before the transaction, and the transaction applies the
+    issue's comparison right after the item addition. The added event and
+    the issue's baseline commit together, so no consumer takes
+    `github.project-item.added` before `trackedIssue` answers with the
+    issue's complete dependencies, sub-issues, and parent; a failed read of
+    the issue leaves the item pending with nothing written. A present item observed absent is
     a removal. A change of `isArchived` is an archive or a restore. Each
     field whose value differs from its row, a field with no value read as
     `null`, is one `field-changed` event; a field with no row whose value is
@@ -430,7 +444,8 @@ proposed-design:
     A Project's comparison reads its `closed` and every page of its items.
     A change of `closed` is `github.project.closed` or
     `github.project.reopened`. Each page's items compare as items, in one
-    transaction per page. After the last page, each item the mirror holds
+    transaction per page, after the content issues the page adds are read
+    as an item addition requires. After the last page, each item the mirror holds
     present on the Project that no page showed becomes a pending `item`, so
     its own read decides whether it was removed or is archived and outside
     the list. Every tracked issue of the Project then becomes a pending
@@ -484,7 +499,8 @@ proposed-design:
     `trackedIssue(nodeId)` reads the mirror: the issue, the present
     dependencies in each direction, the present sub-issues and parent, and
     the bound Projects with a present item for it. It returns `undefined`
-    for an issue that is not tracked. Intake and gates read the dependency
+    for an issue that is not tracked or not yet baselined, so every answer
+    it gives holds the issue's complete relationship lists. Intake and gates read the dependency
     graph through it.
   stop: >-
     `stop()` clears both timers, aborts the request in flight, and resolves
@@ -546,9 +562,19 @@ proposed-design:
     publishes nothing. An item added, edited, archived, restored, and
     removed publishes each event once with its field values; the first
     sweep of a newly bound Project publishes `added` for each item and no
-    `field-changed`; an issue's first read publishes no relationship; a
-    Project closed and reopened publishes both. A request made for an
-    entity during its read is still pending after the read. A `502`, a
+    `field-changed`; an issue's first read publishes no relationship
+    between it and an issue that is not baselined; with A tracked and
+    baselined and B newly added to a bound Project and blocking A, reading
+    A first and reading B first each publish `github.dependency.added`
+    once; with the first relationship read of a newly added issue held
+    open by the fake and the issue blocked by an open issue, neither
+    `github.project-item.added` nor a defined `trackedIssue` answer is
+    observable until the read completes, and then `trackedIssue` lists the
+    blocker; a
+    Project closed and reopened publishes both. With the fake clock held
+    still, a request and its read in one tick clear the row and the runner
+    goes idle, and a second request made during that read, in the same
+    tick, leaves the row pending and is read again. A `502`, a
     rate limit answer, and a request that never answers, past
     `requestTimeoutMs` on the fake clock, each leave the work pending and
     report `api`, and the next wake completes it. A matching push calls

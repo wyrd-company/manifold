@@ -35,10 +35,12 @@ description: |-
   Pending reconciles. `github_pending` is the set of entities whose current
   state the source has yet to read and compare with the mirror: a tracked
   issue, a Project item, or a bound Project, keyed by kind and node id.
-  Requesting an entity already pending moves its `requested_at` forward. A
-  reconcile deletes the row in the transaction that applies its result, only
-  when `requested_at` is earlier than the time its read began, so a request
-  made during the read survives it.
+  `requested_at` is the time of the first request, which orders the work.
+  `generation` is 1 for the first request, and each later request of an
+  entity already pending raises it by one. A reconcile deletes the row in
+  the transaction that applies its result, only when `generation` still
+  equals the value it noted before its read, so a request made during the
+  read survives it.
 
   Mirror. The remaining tables are the GitHub mirror: the last state the
   source read of each entity, with the revision each published change gave
@@ -58,7 +60,8 @@ description: |-
 
   - `github_issue`: an issue's repository as `owner/name`, number, state, and
     state reason. `baselined` is 1 once the issue has been read as a tracked
-    issue, after which a change to its dependencies or sub-issues publishes.
+    issue, after which a change to a dependency or sub-issue it takes part in
+  publishes, whichever endpoint's read finds it.
 
   - `github_dependency`: that one issue is blocked by another.
 

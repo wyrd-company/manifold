@@ -38,3 +38,13 @@ decision-outcome:
     correction, so an actor sees a change that did not hold. Option 2 keeps
     two publishing paths whose events differ in shape and id, and cannot
     tell a repeated add after a removal from a duplicate.
+expected-outcomes:
+  positive:
+    - A change reaches each actor once, whether a webhook, a redelivery, or a sweep learns of it first.
+    - A redelivered or late delivery never publishes a state that no longer holds.
+    - The HTTP answer commits the delivery and returns without waiting for GitHub's API.
+    - The sweep recovers changes made while the service was down longer than GitHub keeps deliveries.
+  negative:
+    - Each delivery costs a GraphQL read, batched 50 entities to a query, against the installation's rate limit.
+    - A GraphQL read that lags the delivery that named it delays the change until the next sweep.
+    - The mirror is a second copy of GitHub's relationships and Project items in Manifold's database.

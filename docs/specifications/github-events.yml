@@ -145,10 +145,13 @@ description: |-
   First observation. The mirror records an entity it has not seen before
   without publishing a change for it, with three exceptions that publish:
   an item of a bound Project, as `github.project-item.added` with its field
-  values; a dependency or sub-issue added to an issue that was already
-  tracked when it was last read; and the state change of an issue the
-  mirror already holds. When an issue becomes tracked, its dependencies,
-  sub-issues, and parent are recorded as its baseline.
+  values; a dependency or sub-issue added or removed where either endpoint
+  is a tracked issue already baselined; and the state change of an issue
+  the mirror already holds. When an issue becomes tracked, its
+  dependencies, sub-issues, and parent are read in full and recorded as
+  its baseline in the transaction that publishes its
+  `github.project-item.added`, so an actor that takes that event finds
+  the issue's complete relationships in the mirror.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/github-events.schema.yml` is a valid JSON Schema
