@@ -1,0 +1,66 @@
+// ---
+// relationships:
+//   implements: process-repository
+// ---
+import git from "isomorphic-git";
+import { layout } from "./layout.ts";
+import { gitFileSystem } from "./git-fs.ts";
+import { recover } from "./recover.ts";
+import { revision } from "./revision.ts";
+import { pullRevision } from "./pull.ts";
+import type {
+  ProcessRepository,
+  ProcessRepositoryOptions,
+  PullOutcome,
+  PullRequest,
+} from "./types.ts";
+export async function openProcessRepository(
+  options: ProcessRepositoryOptions,
+): Promise<ProcessRepository> {
+  const credential = options.configuration.credential
+    ? options.credentials.resolve(options.configuration.credential)
+    : undefined;
+  const paths = layout(options.configuration.directory);
+  const objects = { gitdir: paths.gitdir, fs: gitFileSystem(paths.gitdir), cache: {} };
+  const commit = await recover(paths, objects);
+  let current = commit ? revision(objects, commit) : undefined;
+  let running: Promise<PullOutcome> | undefined;
+  let queued: Promise<PullOutcome> | undefined;
+  function launch(request?: PullRequest): Promise<PullOutcome> {
+    const promise = pullRevision(options, objects, paths, credential, current?.commit, request)
+      .then((outcome) => {
+        if (outcome.kind === "advanced") {
+          current = revision(objects, outcome.commit);
+          options.probe?.("published", outcome.commit);
+        }
+        return outcome;
+      })
+      .finally(() => {
+        if (running === promise) running = undefined;
+      });
+    running = promise;
+    return promise;
+  }
+  return {
+    current: () => current,
+    async revisionAt(commit: string) {
+      if (!/^[a-f0-9]{40}$/.test(commit)) return undefined;
+      try {
+        await git.readCommit({ ...objects, oid: commit });
+        return revision(objects, commit);
+      } catch {
+        return undefined;
+      }
+    },
+    pull(request?: PullRequest) {
+      if (!running) return launch(request);
+      queued ??= running
+        .catch(() => undefined)
+        .then(() => {
+          queued = undefined;
+          return launch(request);
+        });
+      return queued;
+    },
+  };
+}

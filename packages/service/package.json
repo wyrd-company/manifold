@@ -19,16 +19,20 @@
   "dependencies": {
     "@gorules/zen-engine": "2.0.2",
     "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
+    "@octokit/auth-app": "^8.3.1",
+    "@octokit/request": "^10.0.16",
     "@wyrd-company/manifold-shared": "workspace:*",
+    "ajv": "^8.20.0",
+    "isomorphic-git": "^1.42.6",
     "quickjs-emscripten-core": "0.32.0",
     "synckit": "^0.11.13",
+    "toad-cache": "^3.7.4",
     "typescript": "catalog:",
-    "xstate": "^5.33.2"
+    "xstate": "^5.33.2",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "ajv": "^8.20.0",
-    "vite-plus": "catalog:",
-    "yaml": "^2.9.1"
+    "vite-plus": "catalog:"
   }
 }
