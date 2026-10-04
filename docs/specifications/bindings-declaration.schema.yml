@@ -15,25 +15,20 @@ type: object
 additionalProperties: false
 properties:
   githubProjects:
-    description: GitHub Project bindings, keyed by binding name.
+    description: GitHub Project bindings, keyed by binding name, a declared name.
     type: object
     propertyNames:
-      $ref: "#/$defs/name"
+      $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
     additionalProperties:
       $ref: "#/$defs/githubProject"
   t3codeProjects:
-    description: T3code project bindings, keyed by binding name.
+    description: T3code project bindings, keyed by binding name, a declared name.
     type: object
     propertyNames:
-      $ref: "#/$defs/name"
+      $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
     additionalProperties:
       $ref: "#/$defs/t3codeProject"
 $defs:
-  name:
-    description: A lower-case slug. Binding names, environment names, and item ids are names.
-    type: string
-    pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
-    maxLength: 64
   t3codeProjectId:
     description: The id of a T3code project on its environment.
     type: string
@@ -59,10 +54,10 @@ $defs:
         minimum: 1
       environment:
         description: The environment that places every thread for the Project's tasks.
-        $ref: "#/$defs/name"
+        $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
       item:
         description: The portfolio item the Project attaches to.
-        $ref: "#/$defs/name"
+        $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
       t3codeProjects:
         description: >-
           The T3code projects on the binding's environment associated with
@@ -86,13 +81,13 @@ $defs:
     properties:
       environment:
         description: The environment the T3code project is on.
-        $ref: "#/$defs/name"
+        $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
       project:
         description: The T3code project's id on its environment.
         $ref: "#/$defs/t3codeProjectId"
       item:
         description: The portfolio item the T3code project attaches to.
-        $ref: "#/$defs/name"
+        $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
       archived:
         description: Archives the binding. An archived binding still resolves.
         type: boolean

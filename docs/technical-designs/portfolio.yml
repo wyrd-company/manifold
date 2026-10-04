@@ -4,6 +4,7 @@ relationships:
     - gates
     - portfolio-ledger
     - store
+    - process-repository
 objective: >-
   Track budget by portfolio item across accounts so that a gate can ask
   whether a task may reserve an estimate, unused budget is not stranded, one
@@ -251,13 +252,20 @@ proposed-design:
     each file, undefined for an absent file, parses each with the `yaml`
     library, validates each document against its JSON Schema with Ajv,
     reports the findings of `portfolio-declaration` and
-    `bindings-declaration`, normalizes the declaration, adds the Other
-    items, and calls `parseLedgerPortfolio` on the ledger input. A
-    `LedgerError` becomes one finding with the error's code, message, and
-    details, so a declaration whose guarantees under one parent exceed 100%
-    is refused with the ledger's error naming the parent and its sum. It
-    returns the findings, or the declaration with its parsed ledger
-    portfolio:
+    `bindings-declaration`, normalizes the declaration, and adds the Other
+    items. Normalization writes `guarantee` on every allocation row, 0 when
+    the declaration leaves it out, since the ledger requires it. The lint
+    then calls `parseLedgerPortfolio` on each allocation row alone, in a
+    portfolio of the row's item as the only item, and turns each
+    `LedgerError` into an `invalid-portfolio` finding at that row's source
+    pointer, which normalization keeps beside each row. When every row
+    passes, it calls `parseLedgerPortfolio` on the whole ledger input, and
+    a `LedgerError` becomes one finding with the error's code, message,
+    and details, so a declaration whose guarantees under one parent exceed
+    100% is refused with the ledger's error naming the parent and its sum.
+    The ledger's rules stay the only allocation rules, and every finding
+    has an exact location whatever the error's details name. It returns
+    the findings, or the declaration with its parsed ledger portfolio:
 
     ```ts
     export function lintPortfolioDeclaration(files: {
@@ -319,6 +327,16 @@ proposed-design:
 
     The two schemas are embedded in `packages/shared` as generated
     constants, and a test shows each equals its specification asset.
+    Every declared name in them is a `$ref` to
+    `https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name`,
+    the one definition `service-configuration` holds. Ajv resolves a
+    `$ref` into a document only when every `$ref` of that document
+    resolves, so the lint's Ajv instance registers the generated constants
+    of the service configuration root schema and of each section schema it
+    references before it compiles the two declaration schemas. Those
+    constants live in `packages/shared`, where the service's configuration
+    loader and the lint both import them, and `bun build --compile` embeds
+    them in the host CLI.
   ledger-portfolio-in-shared: >-
     The host CLI lints with the ledger's allocation rules, so
     `parseLedgerPortfolio`, `LedgerError`, `LedgerErrorCode`,
@@ -402,4 +420,5 @@ proposed-design:
       `docs/specifications/portfolio-declarations-table.sql`.
 
     The host CLI test compiles the binary and runs `portfolio lint` as
-    `host-cli-portfolio-lint` states.
+    `host-cli-portfolio-lint` states, including a digit-leading item id,
+    which both the binary and the service reject with a `schema` finding.

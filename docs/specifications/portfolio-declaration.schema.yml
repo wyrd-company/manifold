@@ -17,20 +17,14 @@ properties:
   items:
     $ref: "#/$defs/items"
 $defs:
-  name:
-    description: >-
-      A lower-case slug. Item ids and account names are names. `other` is
-      the Other key of an items mapping and is never an item id.
-    type: string
-    pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
-    maxLength: 64
   items:
     description: >-
       The items under one parent, keyed by item id, in declaration order.
-      The key `other` sets the allocations of that parent's Other item.
+      An item id is a declared name. The key `other` sets the allocations
+      of that parent's Other item and is never an item id.
     type: object
     propertyNames:
-      $ref: "#/$defs/name"
+      $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
     properties:
       other:
         $ref: "#/$defs/other"
@@ -64,10 +58,12 @@ $defs:
       allocations:
         $ref: "#/$defs/allocations"
   allocations:
-    description: The item's allocation per account, keyed by account name.
+    description: >-
+      The item's allocation per account, keyed by account name. An account
+      name is a declared name.
     type: object
     propertyNames:
-      $ref: "#/$defs/name"
+      $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
     additionalProperties:
       $ref: "#/$defs/allocation"
   allocation:

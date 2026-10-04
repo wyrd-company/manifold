@@ -6,6 +6,7 @@ relationships:
     - portfolio
   references:
     - portfolio-declaration
+    - service-configuration
 terms:
   - binding
   - portfolio-item
@@ -20,8 +21,9 @@ description: >-
 
   Names. A binding's name is its key. Names are unique across
   `githubProjects` and `t3codeProjects` together, so a name identifies one
-  binding. Binding names, environment names, and item ids are lower-case
-  slugs of at most 64 characters. An environment name is resolved by
+  binding. Binding names, environment names, and item ids are declared
+  names, as `service-configuration` defines them, and the schema references
+  that one definition. An environment name is resolved by
   service configuration; the declaration does not check that it exists.
 
   GitHub Project bindings. A binding in `githubProjects` names the Project
@@ -98,7 +100,8 @@ validation-criteria: >-
   `docs/specifications/bindings-declaration.schema.yml` is a valid JSON
   Schema 2020-12 document, and equals the schema `packages/shared` embeds,
   which a test shows. Tests of `lintPortfolioDeclaration` show each
-  finding kind with its location. Tests of the portfolio module's
+  finding kind with its location, and a digit-leading binding name or
+  environment name as a `schema` finding. Tests of the portfolio module's
   resolution show a GitHub Project, a bound T3code project, an associated
   T3code project, an unbound T3code project resolving to `other`, a login
   in another case, an archived binding, and one item holding two GitHub

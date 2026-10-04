@@ -37,6 +37,7 @@ validation-criteria: >-
   `node_modules`. It observes exit 0 and no output for a clean checkout and
   for an empty directory; exit 1 with a `guarantee-limit` line naming the
   parent and its sum, and an `unknown-item` line from `bindings.yml`; exit
+  1 with a `schema` line for a digit-leading item id; exit
   1 with a `syntax` line for a `bindings.yml` that does not parse as YAML;
   and exit 2 with no standard output for a missing directory and for a
   `portfolio.yml` that is a directory.

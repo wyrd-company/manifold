@@ -6,6 +6,7 @@ relationships:
     - portfolio
   references:
     - portfolio-ledger
+    - service-configuration
 terms:
   - portfolio-item
   - allocation
@@ -23,8 +24,10 @@ description: >-
   they give holds only the top-level Other.
 
   Items. `items` maps item ids to items, in declaration order. An item's own
-  `items` holds its sub-items, to any depth. An item id is a name: a
-  lower-case slug of at most 64 characters. Item ids are unique across the
+  `items` holds its sub-items, to any depth. An item id is a declared name,
+  as `service-configuration` defines it: a lower-case slug of at most 64
+  characters that starts with a letter. The schema references that one
+  definition. Item ids are unique across the
   whole tree, so an item keeps its id, and its history, when it moves to
   another parent. `title` is the name the console shows, and defaults to the
   id.
@@ -36,8 +39,8 @@ description: >-
   as items: the key `other` in an `items` mapping sets that Other's
   allocations, and takes no title, no sub-items, and no archive flag. The
   key `other` under an item that has no other sub-item is the finding
-  `other-without-items`. The `/` in an Other id is outside the name
-  pattern, so an Other id never equals a declared item id.
+  `other-without-items`. The `/` in an Other id is outside the declared
+  name pattern, so an Other id never equals a declared item id.
 
   Archive. `archived: true` archives the item and every item under it, its
   Other included. An archived item keeps its place in the tree, so its
@@ -47,7 +50,7 @@ description: >-
   in the portfolio, and its history is charged to the top level.
 
   Allocations. `allocations` maps account names to an allocation. An
-  account name is a name. `guarantee` is the guaranteed percentage of the
+  account name is a declared name. `guarantee` is the guaranteed percentage of the
   parent's amount, default 0. `ceiling` is the most of the parent's limit
   the item may use, default 100. `weight` is a positive integer, default 1.
   `pacing.burst` is a percentage of the parent's amount. Percentages run
@@ -60,8 +63,12 @@ description: >-
   `LedgerPortfolioInput`. Each item, Other included, is one entry of
   `items` with its id, its parent id or null, and `archived` when it or an
   ancestor is archived. Each allocation of a live item is one row of
-  `allocations` with the item id, the account, and the four fields as
-  declared, defaults omitted. `parseLedgerPortfolio` validates the result
+  `allocations` with the item id, the account, and `guarantee`, which is
+  always present and is 0 when the allocation does not declare it.
+  `ceiling`, `weight`, and `pacing` are present only when declared; the
+  ledger's defaults for them equal the declaration's. An empty allocation,
+  `acct: {}`, is the row `{ item, account, guarantee: 0 }`.
+  `parseLedgerPortfolio` validates the result
   and is the only source of the allocation rules: a percentage with more
   than two decimal places, a ceiling below the guarantee, and guarantees
   under one parent for one account that total more than 100%.
@@ -84,14 +91,26 @@ description: >-
   - `other-without-items`: the key `other` under an item with no other
     sub-item.
 
-  - `invalid-portfolio` and `guarantee-limit`: `parseLedgerPortfolio` threw
-    a `LedgerError` with that code. The message is the error's message
-    unchanged, and the finding carries the error's details. For
-    `guarantee-limit` the location is the `items` mapping of the parent
-    the error names, or `/items` for the top level; for
-    `invalid-portfolio` it is the allocation or item the details name.
-    The ledger reports the first offending parent, so one document gives at
-    most one of these findings.
+  - `invalid-portfolio`: an allocation breaks a row rule of
+    `parseLedgerPortfolio`: a percentage with more than two decimal places,
+    or a ceiling below the guarantee. The lint finds it by calling
+    `parseLedgerPortfolio` on each row alone, in a portfolio of the row's
+    item as the only item, so the row is known whatever the error's details
+    hold. The message is the `LedgerError`'s message unchanged, and the
+    finding carries its details. When the details name exactly one of
+    `guarantee`, `ceiling`, `burst`, or `weight`, the location is that
+    field of the allocation, `.../allocations/<account>/pacing/burst` for
+    `burst`; otherwise it is the allocation. Each offending row gives one
+    finding, in document order.
+
+  - `guarantee-limit`: when every row passes alone, `parseLedgerPortfolio`
+    on the whole portfolio threw a `LedgerError` with that code. The
+    message is the error's message unchanged, and the finding carries its
+    details. The location is the `items` mapping of the parent the error
+    names, or `/items` for the top level. The ledger reports the first
+    offending parent, so one document gives at most one such finding. Any
+    other error from the whole portfolio is an `invalid-portfolio` finding
+    at `/items`.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/portfolio-declaration.schema.yml` is a valid JSON
@@ -99,6 +118,12 @@ validation-criteria: >-
   which a test shows. Tests of `lintPortfolioDeclaration` show the Other
   items it adds at the top level and under an item with sub-items, and none
   under a leaf; archive inheritance; the dropped allocations of an archived
-  item; and each finding kind with its location. A document whose
+  item; an empty allocation and a ceiling-only allocation giving rows with
+  `guarantee: 0` that the ledger accepts; and each finding kind with its
+  location. The exact locations of `invalid-portfolio` are shown for a
+  guarantee, a ceiling, and a burst with three decimal places, and for one
+  value repeated under two items and two accounts, which gives one finding
+  per row. A digit-leading item id or account name is a `schema` finding,
+  as a digit-leading name is in service configuration. A document whose
   guarantees under one item total 110% gives one `guarantee-limit` finding
   whose message names that item and 110%.
