@@ -1,0 +1,34 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: An escalation's answer link can be used by anyone who sees the message
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the design that bounds the exposure.
+relationships:
+  mitigated-by:
+    - escalations
+
+description: >-
+  apprise-api has no answer path, so a notification carries links that
+  answer the escalation, each holding the escalation's key. The message is
+  kept in the history of every service it is sent to, and anyone who reads
+  that history, or a service that forwards it, can open the link and
+  answer while the escalation is open. An answer from the wrong person
+  moves an actor, releases a held actor, or returns a stranded token.
+
+categories:
+  - security
+
+likelihood: 2
+impact: 3
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: a link opens a page and never answers on GET; only a POST with
+# the key answers, once, while the escalation is open; the key is 32 random
+# bytes stored only as a digest; a wrong key cannot be told from a missing
+# escalation. The residual is accepted for single-operator use until the
+# console has sign-in.

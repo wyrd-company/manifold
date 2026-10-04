@@ -37,15 +37,16 @@ properties:
     its actors.
   event: >-
     Anything that happens outside the current state: a task field changed on
-    GitHub, an issue closed, a thread settled, a notification action pressed,
-    an answer on the Task page, a tool call from an agent, a message from
+    GitHub, an issue closed, a thread settled, an escalation answered on
+    any channel, a tool call from an agent, a message from
     another thread, a dispatch from a parent actor. A state declares the
     events it accepts as transitions; the first to arrive wins. Every operator
     interaction, in or out of Manifold, is an event an actor can subscribe to.
   event-source: >-
     A shared origin of events Manifold owns and routes: GitHub webhooks and
-    polling, notification actions from apprise-api, usage from each host CLI,
-    and one thread stream per environment. A blueprint declares event names; Manifold
+    polling, usage from each host CLI, and one thread stream per
+    environment. An answer to an escalation is not routed: it reaches the
+    actor through the state that asked. A blueprint declares event names; Manifold
     derives the subscriptions from the actor's identity, its Project, issue,
     and thread ids, over hierarchical topics.
   durability: >-
@@ -170,9 +171,9 @@ features:
     templates, waits for handoff or escalation, and re-attaches to the same
     thread after a restart.
   escalate-on-any-channel: >-
-    Sends an escalation through apprise-api, to the thread, and to the Task page,
-    waits on the first answer, and retracts the others where the channel
-    allows. The answer goes back to the T3 Code thread that raised the
+    Sends an escalation through apprise-api, with links to answer it, and to
+    the Task page and Manifold's API, takes the first answer, and closes the
+    others where the channel allows. The answer goes back to the T3 Code thread that raised the
     escalation. An escalation raised by automation, with no thread, is
     answered through Manifold's API, which takes a reply or an action from
     any channel.

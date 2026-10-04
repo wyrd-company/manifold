@@ -11,7 +11,7 @@ description: |-
   and what the router answers. `docs/specifications/router-events.schema.yml`
   is the machine-readable definition of the source event, the subscription,
   the publish outcome, and the event issue. Every event source, the GitHub
-  source, the T3 Code environment source, notification actions, and usage,
+  source, the T3 Code environment source, and usage,
   publishes through this seam and no other.
 
   Source event. A source calls `router.publish(event)` with a source event:

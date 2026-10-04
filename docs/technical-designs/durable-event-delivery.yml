@@ -5,6 +5,7 @@ relationships:
     - github-event-source
     - portfolio
     - store
+    - escalations
 objective: >-
   Deliver events from shared sources to state machine actors so that no
   event is lost across a service interruption, a resumed actor continues
@@ -69,7 +70,6 @@ proposed-design:
     and every Project item event, beside the item's issue topic;
     `t3.environment.<name>.thread.<id>` carries thread changes, the thread
     id encoded so that it holds no `.`;
-    `notify.action.<id>` carries notification actions;
     `usage.environment.<id>.session.<id>` carries usage; and
     `deadline.<deadline-id>` carries a fired deadline. What happened is the
     event's `type`, never a topic segment, so an event type may hold `.` as
@@ -171,8 +171,15 @@ proposed-design:
     returns `errored`. The router drops its loaded target, keeps it in the
     subscription index so that new events still reach its inbox, delivers
     nothing to it, and calls `onHeld` with the actor id, the reason, and the
-    row that errored when there is one. A held actor stays held until the
-    service restarts, when resume restores and drains it again.
+    row that errored when there is one. A held actor stays held until
+    `release(actorId)` restores it, or until the service restarts, when
+    resume restores and drains it again. `release` asks the host to restore
+    the actor from its stored snapshot; a restore that succeeds loads it and
+    schedules it to drain its pending rows, and a refusal holds it again
+    and calls `onHeld` with the new reason. `release` of an actor that is
+    not held does nothing. The escalations module calls it when an operator
+    answers a held-actor escalation with `retry`, as `escalations`
+    describes.
   host-saves: >-
     An actor changes without a delivery when an invoked promise or callback
     sends it an internal event. The host calls `persist(actorId)`, and the
@@ -204,8 +211,7 @@ proposed-design:
   idempotency: >-
     Every event carries an id from its source: the GitHub mirror revision,
     the thread change's own identity, a turn id or a request id within its
-    environment, server, and thread, the notification action id, the token
-    id. The
+    environment, server, and thread, the token id. The
     inbox holds one row per actor and namespaced event id, consumed rows
     included, so a source event delivered twice reaches an actor once. A
     delivery replayed after a crash runs against the snapshot saved before
@@ -274,6 +280,8 @@ proposed-design:
       publish(event: SourceEvent): PublishOutcome;
       attach(target: DeliveryTarget): void;
       persist(actorId: string): void;
+      /** Restores a held actor again; does nothing for one that is not held. */
+      release(actorId: string): void;
       stop(): void;
     }
 

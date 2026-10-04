@@ -76,6 +76,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **deadline loop** the router's one timer that fires due deadlines into their actors' inboxes and re-arms at the earliest unfired deadline.
 - **decision model** a GoRules JDM graph in the process repository whose tables, expressions, and switches are JSONata, evaluated by the Zen engine.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
+- **escalation** a question put to a person, with up to three choices or a free-text answer, by a blueprint state or by the service, closed by the first answer.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
 - **event match** a JSONata expression over an event that decides whether a transition takes it.
 - **event source** a shared origin of events that Manifold routes to actors.
@@ -87,6 +88,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
 - **issue** a way to track tasks related to a repository on GitHub
 - **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, or an event payload assigned into context.
+- **notification destination** a name the process repository uses for where an escalation is sent, mapped in service configuration to an apprise-api key and tags.
 - **pacing** a limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.
 - **parent** a task with subtasks
 - **population** the task actors in a gated state that hold no token from its gate.

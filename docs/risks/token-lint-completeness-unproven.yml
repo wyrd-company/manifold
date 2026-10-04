@@ -8,34 +8,37 @@ title: Blueprint token lint may accept a path that never returns a token
 relationships:
   mitigated-by:
     - gate-xstate
-  related-to:
     - gates
+  related-to:
+    - blueprint-loader
 
 description: >-
-  The gate design requires blueprint lint to prove that every path after a
-  guarded transition reaches the declared token return point or a final
-  state. The probe stops at the return point or root actor completion; its
-  region-final fixture remains active and reports an unreachable return.
-  Whether the design means any final state or actor completion is unresolved;
-  this wording gap selects no blueprint restriction. Configuration traversal
-  catches the tested parallel, ancestor,
-  eventless, multi-target, dead-end, cycle, and history traps, but active-state
-  sets alone merge different remembered histories and accept a runnable
-  counterexample. Sound graph identity needs history memory or equivalent
-  successor expansion, internal event semantics, and transient return entry.
-  Branching opaque guards true and false can reject a valid blueprint whose
-  named guard is always false; abstract cycle diagnostics need feasible
-  witnesses. Invocation lifetimes and outputs, delay cancellation, named
-  action behavior, wildcard event classes, and payload/context-dependent
-  execution remain undecided. Three four-state regions produce 65 graph
-  nodes; eight produce 65537 and take about six seconds in the probe. Nine
-  exceed its 100000-node research cutoff. No supported-shape restriction or
-  production resource limit is selected. The universal supported-shape
-  guarantee remains unproved before the loader relies on it.
+  The gate design requires blueprint lint to show that every token a gate
+  grants can be returned: from every configuration reachable after the
+  grant, the declared return point or actor completion stays reachable.
+  The gate-xstate spike showed that a configuration graph catches the
+  parallel, ancestor, eventless, multi-target, dead-end, cycle, and history
+  traps it tested, once a node holds remembered histories as well as
+  active states and the return is observed per microstep. The spike's
+  probe left invocations, delays, named actions, and wildcard events
+  undecided; the gates design now gives each a meaning. Expression and
+  named guards cannot be evaluated by the lint, so a trap behind one is a
+  potential path, not a proved one, and a graph past the configuration
+  bound is unexplored. If the lint built from the design accepts a
+  blueprint whose run strands a token, a gate stays held and no task
+  behind it is released.
 
 categories:
   - technical
-likelihood: 4
+likelihood: 3
 impact: 4
 response-strategy: mitigate
+# Mitigation: the gates design rejects a trap reachable on exact guard
+# choices, warns on a potential or unknown verdict, and checks each holder's
+# saved configuration against the trap configurations of its gate at run
+# time, raising an escalation for a stranded token. The trap set is sound
+# because the graph over-approximates the actor. The risk closes when the
+# token lint built from the design passes the spike's fixtures, including
+# the history counterexample, and the run-time check raises an escalation
+# for a holder in a trap.
 status: open

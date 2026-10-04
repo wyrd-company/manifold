@@ -1,0 +1,278 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - durable-event-delivery
+    - gates
+    - blueprint-loader
+    - service-configuration
+    - store
+objective: >-
+  Let a blueprint state, and the service itself, put a question to a person
+  with up to three choices or a free-text answer, reach them through
+  apprise-api and through Manifold's own API, take the first answer and only
+  the first, and hand it to whoever asked, so that no answer is lost or
+  taken twice across a restart.
+background:
+  problems:
+    - >-
+      apprise-api sends one-way notifications. Its `/notify/{KEY}` endpoint
+      takes a body, a title, a type, a format, and tags, and sends them to
+      the services saved under the key. It has no action buttons, no
+      callback when a person reads or answers, and no way to retract a
+      notification it has sent.
+    - >-
+      Chat and push clients fetch the links in a message to preview them, so
+      a link that answers a question when it is fetched answers it by itself.
+    - >-
+      A held actor takes no event, so nothing a blueprint declares can
+      release it, and a token held by an actor that cannot reach its return
+      point keeps every task behind its gate waiting.
+    - >-
+      An invoked callback that was running at a crash starts again with its
+      actor, so whatever it did when it started, it does again.
+design-challenges:
+  first-answer: >-
+    An escalation reaches a person on several channels at once. Two answers
+    that arrive together must give one winner, and the loser must learn
+    which answer won.
+  durability: >-
+    An answer given while the service is down, or in the moment between the
+    answer and the actor's save, must reach the actor once.
+  stale-answers: >-
+    An answer that arrives after the asking state has exited must not be
+    taken by a later state that happens to accept the same event.
+  one-way-channel: >-
+    The answer path must work through a channel that only sends text, and
+    the recipients' addresses and secrets must stay out of Manifold.
+  service-questions: >-
+    Some questions are the service's, not a blueprint's: a held actor and a
+    stranded token. They need the same channels and an answer that the
+    service acts on.
+proposed-design:
+  high-level-overview: >-
+    An escalation is a row in the store: who raised it, the question, its
+    choices, whether it takes free text, the destinations it is sent to, its
+    status, and its answer. The escalations module,
+    `packages/service/src/escalations/`, raises escalations, sends each one
+    to its destinations through apprise-api with a link to an answer page on
+    the service's HTTP host, takes answers from that page and from
+    Manifold's API, and records the first answer in one transaction. A
+    blueprint raises one by invoking the `escalate` callback in a state; the
+    callback lives as long as the state, reads its escalation's row, and
+    sends the answer back to its actor as an event. The service raises its
+    own for held actors and stranded tokens, and acts on the answer itself.
+  escalation: >-
+    An escalation has an id, a raiser, a question in Markdown, zero to three
+    choices, each with an id and a label, a flag that allows a free-text
+    answer, and the names of its destinations. It has at least one choice
+    or allows free text. Its status is `open`, `answered`, or `withdrawn`.
+    An answered escalation records the answer, a choice id or text, the
+    channel it came through, `link` or `api`, and the time. Status moves
+    only from `open`, so an answer and a withdrawal that race give one
+    outcome.
+  raising-from-a-blueprint: >-
+    `escalate` is a callback actor implementation in the implementation
+    registry. Its input, a mapping from the actor's context, is the
+    question, the choices, the free-text flag, and the destination names;
+    with no destination named it uses `default`. Its id is derived from the
+    actor id, the invoke id, and the entry id of the state entry that
+    invoked it, the id of the event that caused the entry, as deadlines are,
+    so the callback that a restart starts again raises nothing new, and a
+    new entry into the state raises a new escalation. When it starts, it
+    raises the escalation if the row does not exist. If the row is
+    answered, it sends the answer back at once; otherwise it waits for the
+    module to report the answer and then sends it back. The event it sends
+    is `escalation.answered`, with the escalation id, the choice id or the
+    text, and the channel. The actor host persists the actor after the
+    event, as it does for every event an invoked actor sends. When the
+    state exits, the callback stops and withdraws its escalation if it is
+    still open.
+  answer-to-the-asking-state: >-
+    The answer reaches the actor only through the callback of the state
+    that asked, so a state that has exited cannot take it and no later
+    state can. An answer committed after the actor's save that exits the
+    state finds the escalation `withdrawn` and is refused. An answer
+    committed before that save and not yet sent back is sent again by the
+    callback that the restart starts, which reads the answered row. The
+    decision record `hand-escalation-answers-to-the-asking-state` records
+    the choice.
+  raising-from-an-agent: >-
+    An agent raises an escalation with the harness plugin's `escalate`
+    tool. The tool call reaches the task actor as an event, and the
+    blueprint's state that takes it invokes `escalate` with the agent's
+    question and choices. The tool returns at once and the agent ends its
+    turn, so no tool call waits on a person. The blueprint gives the answer
+    back to the thread by starting a turn in it. An operator who answers in
+    the thread starts a turn there; the blueprint may take that thread
+    change as the answer and leave the escalating state, which withdraws
+    the escalation.
+  raising-from-the-service: >-
+    The service raises an escalation with `raise({ kind, subject, question,
+    choices })`, whose id is derived from the kind and the subject, so a
+    cause raised twice raises one escalation. Two kinds exist. `held-actor`
+    is raised from the router's `onHeld`, with the actor id and the inbox
+    row that errored, or the restore mismatch, as its subject; its choices
+    are `retry` and `dismiss`. `stranded-token` is raised by a gate when a
+    holder's saved configuration is a trap, with the gate and the token as
+    its subject; its choices are `return` and `dismiss`. Each kind has a
+    handler: `retry` calls the router's `release` for the actor, `return`
+    records the token returned so the gate runs its comparator again, and
+    `dismiss` does nothing. The handler runs after the answer commits and
+    records that it ran in the escalation's row. At start the module runs
+    the handler of every answered service escalation whose handling is not
+    recorded. Each handler converges: `release` of an actor that is not
+    held does nothing, and `return` of a token already returned does
+    nothing.
+  router-release: >-
+    The router gains `release(actorId)`. For a held actor it asks the host
+    to restore the actor from its stored snapshot again; a restore that
+    succeeds loads the actor and schedules it to drain its pending rows in
+    order, and a refusal holds it again and calls `onHeld` with the new
+    reason. For an actor that is not held it does nothing. A delivery that
+    errored again holds the actor again, so `retry` after a fix in a new
+    blueprint version, or after a transient failure, resumes the actor
+    without a restart.
+  destinations: >-
+    A destination is a name the process repository uses, mapped in service
+    configuration to an apprise-api configuration key and an optional list
+    of tags. The addresses and secrets of the services a person is reached
+    on stay in apprise-api under that key. A blueprint names destinations;
+    the service's own escalations use `default`. A name with no mapping is
+    a lint finding where the name is static and an error recorded on the
+    escalation where it comes from context; the escalation stays open on
+    Manifold's API.
+  notification: >-
+    Raising an escalation writes one notification row per destination in
+    the same transaction. A sender sends each unsent row with
+    `POST {appriseUrl}/notify/{key}`, with `tag` when the destination has
+    tags, `format: markdown`, `type: warning`, a title naming the raiser,
+    and a body holding the question, one link per choice, and a link to
+    answer with text when free text is allowed. Each link opens the answer
+    page for that escalation. A `2xx` answer marks the row sent. A network
+    failure, a `424`, or a `5xx` leaves it unsent and the sender tries it
+    again after `retryIntervalMs`. Any other `4xx` marks it failed with the
+    status, logs it, and does not try again. Each request is bounded by
+    `requestTimeoutMs`. A crash after apprise-api accepts a notification
+    and before the row is marked sent sends it again after the restart, so
+    a person can receive one escalation twice; both carry the same links.
+    apprise-api cannot retract a notification, so an answered or withdrawn
+    escalation's links open a page that says how it ended.
+  answer-page: >-
+    The service's HTTP host serves `GET /escalations/{id}` and
+    `POST /escalations/{id}/answer`. Each escalation has a key of 32 random
+    bytes, written in base64url into its links and stored only as its
+    SHA-256 digest. `GET` with the key shows the question, the choices as
+    buttons, and the text field, and never answers, so a link preview
+    changes nothing. `POST` with the key and a choice id or text answers
+    the escalation through the channel `link`. A wrong or missing key
+    answers `404`, so a key cannot be told apart from an escalation id that
+    does not exist. A `POST` to an escalation that is no longer open shows
+    how it ended.
+  api: >-
+    Manifold's API, on the same host, lists escalations with
+    `GET /api/escalations?status=open`, reads one with
+    `GET /api/escalations/{id}`, and answers one with
+    `POST /api/escalations/{id}/answer` through the channel `api`. The
+    console's Task page and any automation answer through it. Requests
+    carry a bearer token checked against the `operator-token` credential
+    named by `apiCredential`; with no credential named, the API is not
+    mounted.
+  first-answer-wins: >-
+    `answer(id, answer, channel)` runs in one `store.connection.transaction`:
+    it updates the row from `open` to `answered` with the answer, and when
+    no row changes it returns the row's current status and answer. So of
+    two answers the first to commit wins and the second learns the outcome.
+    After the commit it reports the answer to the escalation's callback
+    when one is waiting, or runs the handler of a service escalation.
+  configuration: >-
+    The `escalations` section of service configuration holds `appriseUrl`,
+    the base URL of the apprise-api; `appriseCredential`, an optional
+    credential name for apprise-api's authentication; `publicUrl`, the base
+    URL the links in a notification use; `destinations`, a map from
+    declared name to `{ key, tags }`; `apiCredential`, an optional
+    `operator-token` credential name; `requestTimeoutMs`, default 30000;
+    and `retryIntervalMs`, default 60000. With no `appriseUrl`, no
+    notification is sent and escalations are answered through the API.
+  store-tables: >-
+    The module owns its tables in the store's file, migrated with
+    `migrate("escalations", steps)`: `escalation`, one row per escalation,
+    and `escalation_notification`, one row per escalation and destination
+    with its status, attempts, last error, and sent time. Rows are kept
+    after an escalation ends, so the console can show what was asked and
+    how it was answered. The tables are specified in
+    `escalations-database-schema`.
+  public-interface: |-
+    `packages/service/src/escalations/index.ts` exports these names.
+
+    ```ts
+    export function openEscalations(options: EscalationsOptions): Escalations;
+
+    export interface EscalationsOptions {
+      readonly store: Store;
+      readonly configuration: EscalationsConfiguration;
+      readonly clock?: { now(): number };
+      readonly fetch?: typeof globalThis.fetch;
+      /** Service escalation handlers by kind. */
+      readonly handlers: Readonly<Record<ServiceEscalationKind, (escalation: Escalation) => void>>;
+    }
+
+    export interface Escalations {
+      /** The `escalate` callback logic the implementation registry binds. */
+      readonly escalate: CallbackActorLogic<EventObject, EscalateInput>;
+      raise(request: ServiceEscalationRequest): Escalation;
+      answer(id: string, answer: EscalationAnswer, channel: "link" | "api"): AnswerOutcome;
+      get(id: string): Escalation | undefined;
+      list(filter: { readonly status?: EscalationStatus }): readonly Escalation[];
+      /** Mounted by the service's HTTP host at `/escalations` and `/api/escalations`. */
+      readonly requestListener: RequestListener;
+      stop(): Promise<void>;
+    }
+
+    export type ServiceEscalationKind = "held-actor" | "stranded-token";
+    export type EscalationStatus = "open" | "answered" | "withdrawn";
+    export type EscalationAnswer =
+      | { readonly choice: string }
+      | { readonly text: string };
+    export type AnswerOutcome =
+      | { readonly status: "answered"; readonly escalation: Escalation }
+      | { readonly status: "closed"; readonly escalation: Escalation };
+    ```
+  convergence: >-
+    `raise` twice with the same id writes one escalation and one set of
+    notification rows. A crash inside it writes nothing, and the callback
+    or the `onHeld` that a restart repeats raises it then. `answer` twice
+    gives one answer. A crash after the answer commits and before the
+    callback's event is saved sends the event again from the restarted
+    callback; a crash after that save leaves the actor in its next state,
+    and the answered row is not withdrawn. A
+    crash after the answer of a service escalation and before its handler
+    records that it ran runs the handler at start, and the handler
+    converges. A withdrawal twice withdraws once. The sender sends a row
+    until it is marked sent or failed.
+  errors: >-
+    A raise whose input fails the escalation's schema, more than three
+    choices, no choice and no free text, or an empty question, fails the
+    callback with a typed error, which the blueprint handles as an invoke
+    error. An answer whose choice is not one of the escalation's, or text
+    to an escalation that takes none, answers `400` on the page and the API
+    and changes nothing. A notification that fails is recorded on its row
+    and never fails the escalation. SQLite errors propagate unchanged.
+  tests: >-
+    Tests import only the module's `index.ts`, the store's, and the
+    router's, run against a real file, and serve apprise-api with a fake
+    HTTP server that records each request and answers as the test sets.
+    Behaviours proved, each red before green: a blueprint state that
+    invokes `escalate` receives `escalation.answered` once after an answer
+    through the page and through the API; two answers posted together give
+    one winner and the second learns the outcome; an answer after the
+    state exits is refused and no later state receives it; `GET` of a link
+    changes nothing; a wrong key answers `404`; a notification that gets
+    `500` is sent again after the retry interval and one that gets `400` is
+    not; no destination address or apprise-api secret appears in the store
+    or a log line. Fault tests in a child process that sends itself
+    `SIGKILL`: a kill after the answer commits and before the actor's save
+    delivers the answer once after restart; a kill after apprise-api
+    accepts and before the row is marked sent sends at most one more
+    notification; a kill after a `retry` answer and before its handler
+    records the run releases the held actor once after restart. Values are
+    generic and never drawn from Manifold's own domain.

@@ -1,11 +1,15 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
+  mitigates:
+    - token-lint-completeness-unproven
   related-to:
     - durable-event-delivery
     - portfolio
     - expressions
     - store
     - gate-xstate
+    - escalations
+    - blueprint-loader
 objective: >-
   Let a process decide which tasks may proceed past a state, in what order,
   and with what budget, without a state machine above the task and without
@@ -89,19 +93,81 @@ proposed-design:
     unconsumed and consumed token rows, so a gate rebuilt after a restart
     counts a token in flight as held.
   token-lint: >-
-    The blueprint lint, in the service on load and in the host CLI, proves
-    that every granted token is returned. It checks that the declared return
-    point is the guarded transition out of the gated state or a state
-    reachable from it, and that every path from that transition reaches the
-    return point or a final state; any other path is an error, named by its
-    states. A path is a sequence of configurations, the sets of states active
-    together, not of single states: from each configuration the lint follows
-    every transition XState v5 can take there, including transitions declared
-    in other parallel regions and on ancestors, eventless transitions,
-    history targets, and multi-target transitions, and it treats a guarded
-    transition as one that may or may not be taken. At run time the gate
+    The blueprint lint, in the service on load and in the host CLI, checks
+    that every granted token can be returned. For each gate it builds the
+    configuration graph from the guarded transition out of the gated state
+    and checks that the declared return point is the guarded transition or
+    is entered after it, and that from every configuration reachable after
+    the grant the return point or actor completion is still reachable.
+    Actor completion is the actor reaching a top-level final state, which
+    returns every token it holds. A final state inside a region does not
+    end the actor and returns nothing. Every other configuration, a dead
+    end or a cycle with no route out, is a trap, reported with the path of
+    configurations that reaches it.
+  token-lint-graph: >-
+    A node of the graph is a configuration with everything XState v5 needs
+    to choose its next step: the active states with their ancestors, the
+    states each history state remembers, the queue of internal events, and
+    the actor's status. Active states alone are not enough, since two
+    configurations with the same active states and different remembered
+    histories have different successors. From each node the lint follows
+    every transition XState v5 can take there: transitions declared in any
+    parallel region and on any ancestor, eventless transitions in XState's
+    order of priority, history targets resolved from the node's memory, and
+    every target of a multi-target transition. The return point counts as
+    reached when the microstep enters it, so a return state that an
+    eventless transition leaves at once still returns the token.
+  token-lint-semantics: >-
+    The lint gives every shape in `blueprint` a meaning, so no supported
+    shape is left undecided. An external event may arrive in any
+    configuration whose states take it. A delayed transition is an event
+    that may arrive while its state stays active. An invoked actor's
+    `onDone` and `onError` are events that may arrive while its state stays
+    active. A wildcard transition is taken by one symbolic event that
+    stands for every event type the state does not name. An `in` guard is
+    evaluated exactly against the configuration. Every other guard, an
+    expression or a named guard, may be true or false at each evaluation.
+    An expression action changes context and raises nothing. A named action
+    raises only the events its implementation declares in the
+    implementation registry, and Manifold's registry declares them for
+    every action it ships, so the host CLI and the service read the same
+    declaration.
+  token-lint-verdicts: >-
+    Each gate gets one verdict. `proved`: no trap is reachable. `violation`:
+    a trap is reachable on a path whose every guard choice is exact, so a
+    run of the actor can strand the token; this is an error and the
+    blueprint does not load. `potential`: every reachable trap depends on at
+    least one choice of an expression or named guard, which the lint
+    cannot evaluate; the finding names the path and each guard choice on
+    it, and the blueprint loads with a warning. `unknown`: the graph
+    exceeded the lint's configuration bound before exploration finished;
+    the finding names the gate and the bound, and the blueprint loads with
+    a warning. The bound is an option of the lint, set in service
+    configuration for the service and by a flag for the host CLI, with a
+    default of 20000 configurations, where one gate on a blueprint with
+    three parallel regions of four states needs 65 and seven such regions
+    take about a second.
+  stranded-token: >-
+    The graph is an over-approximation of what the actor can do, so a
+    configuration from which the graph reaches neither the return point nor
+    actor completion is one from which no run can. The lint gives each gate
+    whose exploration finished the set of its trap configurations. After
+    each save of an actor that holds a token, the gate checks the saved
+    configuration against that set, and a holder that has entered a trap
+    raises an escalation naming the actor, the gate, and the configuration,
+    as `escalations` describes. A held token is never returned without that
+    escalation's answer or the actor's end. At run time the gate also
     records, per token, the state in which it was returned, so a held token
     can be traced to the actor and state holding it.
+  population-across-versions: >-
+    A gate is identified by its blueprint's path and the gated state's path.
+    Its population is every task actor in that state on any version of the
+    blueprint at that path, so a push that changes the blueprint neither
+    splits a gate's population nor resets its holders. The comparator and
+    whether a reservation accompanies the token come from the newest
+    loaded version of the blueprint. Each actor returns its token at the
+    return point its own version declares, and the trap configurations it
+    is checked against are its own version's.
   reservation: >-
     When the comparator's output carries reservations, the gate writes them
     to the ledger in the same transaction that records the token, under an
