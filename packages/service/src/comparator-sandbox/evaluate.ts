@@ -59,7 +59,7 @@ function selection(
         typeof reservation["account"] === "string" &&
         reservation["account"].length > 0 &&
         typeof reservation["amount"] === "number" &&
-        Number.isFinite(reservation["amount"]) &&
+        Number.isSafeInteger(reservation["amount"]) &&
         reservation["amount"] > 0,
     )
   );

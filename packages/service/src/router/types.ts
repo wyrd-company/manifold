@@ -18,7 +18,7 @@ export interface RouterOptions {
   /** Defaults to Date.now and setTimeout. */
   readonly clock?: RouterClock;
   /** Runs once, after every restored actor's inbox is drained. */
-  readonly afterDrain?: () => void;
+  readonly afterDrain?: (router: Router) => void;
   /** Called each time an actor becomes held. */
   readonly onHeld?: (held: HeldActor) => void;
 }
@@ -28,6 +28,7 @@ export interface Router {
   attach(target: DeliveryTarget): void;
   persist(actorId: string): void;
   release(actorId: string): void;
+  schedule(actorId: string): void;
   stop(): void;
 }
 

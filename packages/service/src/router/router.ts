@@ -103,6 +103,7 @@ export function startRouter({
     });
   }
   const router: Router = {
+    schedule,
     publish(event) {
       requireRunning();
       const issues = validateSourceEvent(event);
@@ -186,7 +187,11 @@ export function startRouter({
       if (stopped) break;
       drainPass();
     }
-    afterDrain?.();
+    afterDrain?.(router);
+    while (scheduled.size) {
+      if (stopped) break;
+      drainPass();
+    }
     resuming = false;
     for (const actorId of scheduled) schedule(actorId);
     if (!stopped) deadlines.arm();

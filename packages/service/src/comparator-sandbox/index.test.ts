@@ -92,7 +92,7 @@ describe("comparator sandbox", () => {
   });
   it("copies input, resets module state, and produces seeded draws", async () => {
     const { comparator } = await loaded(
-      `let count = 0; export default input => { count++; input.population[0].fields.weight = 9; return { task: 'a', reservations: [{ account: 'credit', amount: count + input.random() + input.random() + input.population[0].age }] }; };`,
+      `let count = 0; export default input => { count++; input.population[0].fields.weight = 9; return { task: 'a', reservations: [{ account: 'credit', amount: count + Math.ceil((input.random() + input.random()) * 100) + input.population[0].age }] }; };`,
     );
     const first = comparator.evaluate(input, 1234);
     expect(first).toMatchObject({ ok: true });
@@ -353,11 +353,11 @@ describe("comparator sandbox", () => {
   });
   it("protects prelude functions from module global rebinding and does not run pending jobs", async () => {
     const { comparator } = await loaded(
-      `JSON.parse = () => { throw new Error('rebound'); }; JSON.stringify = () => 'null'; Math.imul = () => 0; let task = 'a'; Promise.resolve().then(() => task = 'missing'); export default input => ({ task, reservations: [{ account: 'credit', amount: input.random() + input.random() }] });`,
+      `JSON.parse = () => { throw new Error('rebound'); }; JSON.stringify = () => 'null'; Math.imul = () => 0; let task = 'a'; Promise.resolve().then(() => task = 'missing'); export default input => ({ task, reservations: [{ account: 'credit', amount: Math.ceil((input.random() + input.random()) * 100) }] });`,
     );
     expect(comparator.evaluate(input, 1234)).toMatchObject({
       ok: true,
-      selection: { task: "a", reservations: [{ account: "credit", amount: 0.7767069679684937 }] },
+      selection: { task: "a", reservations: [{ account: "credit", amount: 78 }] },
     });
     comparator.dispose();
   });
@@ -394,4 +394,24 @@ describe("comparator sandbox", () => {
     expect(records.every((record) => record.durationMs >= 0)).toBe(true);
     comparator.dispose();
   });
+});
+it("rejects fractional reservations under the whole-amount ledger contract", async () => {
+  const { comparator } = await loaded(
+    `export default () => ({task:'a',reservations:[{account:'credit',amount:0.5}]});`,
+  );
+  expect(comparator.evaluate(input, 1)).toMatchObject({
+    ok: false,
+    failure: { kind: "invalid-output" },
+  });
+  comparator.dispose();
+});
+it("rejects reservation amounts beyond the safe integer bound", async () => {
+  const { comparator } = await loaded(
+    `export default () => ({task:'a',reservations:[{account:'credit',amount:9007199254740992}]});`,
+  );
+  expect(comparator.evaluate(input, 1)).toMatchObject({
+    ok: false,
+    failure: { kind: "invalid-output" },
+  });
+  comparator.dispose();
 });

@@ -123,6 +123,8 @@ export function createMirror(store: Store, now: () => number) {
     };
   }
   function write(before: MirrorState, after: MirrorState) {
+    const count = () => db.prepare("SELECT total_changes() AS count").get()!["count"];
+    const previousCount = count();
     for (const [id, row] of after.issues)
       if (JSON.stringify(before.issues.get(id)) !== JSON.stringify(row))
         db.prepare(
@@ -187,6 +189,7 @@ export function createMirror(store: Store, now: () => number) {
           db.prepare(
             `INSERT INTO ${table} VALUES (?, ?, ?, ?) ON CONFLICT(${left},${right}) DO UPDATE SET present=excluded.present,revision=excluded.revision`,
           ).run(row.from, row.to, Number(row.present), row.revision);
+    return count() !== previousCount;
   }
   return {
     read,

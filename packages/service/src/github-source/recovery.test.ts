@@ -26,7 +26,10 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const fn of cleanup.splice(0).toReversed()) await fn();
 });
-async function setup(intervals: { sweepIntervalMs?: number; redeliveryIntervalMs?: number } = {}) {
+async function setup(
+  intervals: { sweepIntervalMs?: number; redeliveryIntervalMs?: number } = {},
+  onMirrorChanged?: () => void,
+) {
   const fake = await githubFake();
   cleanup.push(fake.close);
   const directory = mkdtempSync(join(tmpdir(), "github-recovery-"));
@@ -65,6 +68,7 @@ async function setup(intervals: { sweepIntervalMs?: number; redeliveryIntervalMs
     },
   });
   const options = {
+    ...(onMirrorChanged ? { onMirrorChanged } : {}),
     store,
     router,
     clock,
@@ -957,4 +961,136 @@ test("exports flat item facts in the same order as the issue's Projects", async 
   ];
   expect(tracked.items).toEqual(expected);
   expect(tracked.items.map((item) => item.project)).toEqual(tracked.projects);
+});
+
+test("notifies committed mirror changes, including tracking removal and silent absence, but not no-change sweeps", async () => {
+  let changes = 0;
+  const s = await setup({}, () => {
+    changes++;
+    const observer = new DatabaseSync(s.path);
+    try {
+      for (const table of ["github_issue", "github_item", "github_project", "github_dependency"])
+        expect(observer.prepare(`SELECT * FROM ${table}`).all()).toEqual(
+          s.store.connection.database.prepare(`SELECT * FROM ${table}`).all(),
+        );
+    } finally {
+      observer.close();
+    }
+  });
+  s.fake.addItem("IT_A", "I_A");
+  s.fake.addItem("IT_B", "I_B");
+  s.source.requestSweep();
+  await s.idle();
+  expect(changes).toBeGreaterThan(0);
+  const initial = changes;
+  s.source.requestSweep();
+  await s.idle();
+  expect(changes).toBe(initial);
+  s.fake.items.delete("IT_B");
+  s.source.requestSweep();
+  await s.idle();
+  expect(changes).toBeGreaterThan(initial);
+  const removed = changes;
+  s.fake.issues.delete("I_A");
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }, "absent-notification"));
+  await expect.poll(() => s.source.trackedIssue("I_A")).toBeUndefined();
+  expect(changes).toBeGreaterThan(removed);
+});
+test("mirror notifications rerun gate critical paths on a transitive close, tracking removal, and silent absence without member saves", async () => {
+  const { createGates, gatesMigrationSteps } = await import("../gates/index.ts");
+  const { createComparatorSandbox } = await import("../comparator-sandbox/index.ts");
+  const { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } =
+    await import("../ledger/index.ts");
+  let gates: import("../gates/index.ts").Gates | undefined;
+  const s = await setup({}, () => gates?.inputChanged());
+  s.fake.addItem("IT_A", "I_A");
+  s.fake.addItem("IT_B", "I_B");
+  s.fake.addItem("IT_C", "I_C");
+  s.fake.dependencies.push(["I_B", "I_A"], ["I_C", "I_B"]);
+  s.source.requestSweep();
+  await s.idle();
+  s.store.connection.migrate("gates", gatesMigrationSteps);
+  s.store.connection.migrate("ledger", ledgerMigrationSteps);
+  const ledger = createLedger({
+    connection: s.store.connection,
+    portfolio: parseLedgerPortfolio({ items: [{ id: "left", parent: null }], allocations: [] }),
+    now: () => 100,
+  });
+  const path = "blueprints/parcels/sorting.yml",
+    commit = "a".repeat(40),
+    key = `${commit}:${path}`;
+  const document = {
+    schemas: { input: true, output: true, context: true, events: {} },
+    machine: {
+      states: {
+        waiting: { meta: { gate: { comparator: "comparators/order.ts", return: "exit" } } },
+      },
+    },
+  };
+  const blueprint = { key, document },
+    revision = { commit, read: async () => `export default i=>null;` };
+  gates = createGates({
+    store: s.store,
+    version: async () => ({ status: "loaded", blueprint }),
+    revisionAt: async () => revision,
+    sandbox: await createComparatorSandbox(),
+    portfolio: {
+      ledger,
+      current: () => ({ declaration: { ledger: { items: [{ id: "left" }], allocations: [] } } }),
+    },
+    lintTokens: () => ({ gates: [], configurationKey: () => "" }),
+    trackedIssue: s.source.trackedIssue,
+    escalations: { raise: () => {}, withdraw: () => {} },
+  });
+  cleanup.push(async () => gates!.stop());
+  s.store.saveSnapshot({
+    actorId: "parcel-waiting",
+    machine: key,
+    snapshot: {
+      status: "active",
+      value: "waiting",
+      context: { manifold: { issue: "I_A", portfolioItem: "left" } },
+    },
+  });
+  const savedAt = s.store.loadSnapshot("parcel-waiting")!.savedAt;
+  await gates.revision({ blueprints: new Map([[path, blueprint]]) }, revision);
+  await gates.prepare();
+  gates.afterDrain({ schedule: () => {} });
+  const length = () =>
+    JSON.parse(
+      String(
+        s.store.connection.database
+          .prepare("SELECT input FROM gates_evaluation ORDER BY evaluation_id DESC LIMIT 1")
+          .get()?.["input"],
+      ),
+    ).population[0].criticalPath;
+  expect(length()).toBe(3);
+  s.fake.issues.get("I_C")!.state = "CLOSED";
+  s.source.requestSweep();
+  await s.idle();
+  await expect.poll(length).toBe(2);
+  s.fake.issues.get("I_C")!.state = "OPEN";
+  s.source.requestSweep();
+  await s.idle();
+  await expect.poll(length).toBe(3);
+  s.fake.items.delete("IT_C");
+  s.source.requestSweep();
+  await s.idle();
+  await expect.poll(length).toBe(2);
+  s.fake.addItem("IT_C", "I_C");
+  s.source.requestSweep();
+  await s.idle();
+  await expect.poll(length).toBe(3);
+  const before = s.store.connection.database
+    .prepare("SELECT count(*) AS n FROM router_source_event")
+    .get()?.["n"];
+  s.fake.issues.delete("I_C");
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_C" } }, "silent-absence"));
+  await expect.poll(length).toBe(2);
+  expect(
+    s.store.connection.database.prepare("SELECT count(*) AS n FROM router_source_event").get()?.[
+      "n"
+    ],
+  ).toBe(before);
+  expect(s.store.loadSnapshot("parcel-waiting")!.savedAt).toBe(savedAt);
 });

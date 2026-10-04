@@ -216,7 +216,8 @@ proposed-design:
     set, so a row a later actor writes to an earlier one is delivered before
     `afterDrain`, and when `afterDrain` runs every loaded actor's inbox is
     empty. Rows of held actors stay pending and are not waited for. Rows
-    written by `afterDrain` itself, a gate's tokens, and by fired deadlines
+    written by `afterDrain` itself, including a gate's tokens, are drained
+    to quiescence before `startRouter` returns. Rows written by fired deadlines
     are delivered by the scheduler after resume. Every active actor is loaded at resume, so
     an invoked promise or callback that was running at the crash starts
     again with its actor.

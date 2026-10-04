@@ -138,12 +138,19 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         : undefined;
     },
     findActorsInState({ machine, statePath }) {
-      return database
-        .prepare(
-          "SELECT snapshot.* FROM store_snapshot_state state JOIN store_snapshot snapshot ON snapshot.actor_id = state.actor_id WHERE state.machine = ? AND state.state_path = ? ORDER BY state.actor_id",
-        )
-        .all(machine, statePath)
-        .map(readSnapshot);
+      const query =
+        machine === undefined
+          ? database
+              .prepare(
+                "SELECT snapshot.* FROM store_snapshot_state state JOIN store_snapshot snapshot ON snapshot.actor_id = state.actor_id WHERE state.state_path = ? ORDER BY state.actor_id",
+              )
+              .all(statePath)
+          : database
+              .prepare(
+                "SELECT snapshot.* FROM store_snapshot_state state JOIN store_snapshot snapshot ON snapshot.actor_id = state.actor_id WHERE state.machine = ? AND state.state_path = ? ORDER BY state.actor_id",
+              )
+              .all(machine, statePath);
+      return query.map(readSnapshot);
     },
     writeInbox(event, actorIds) {
       return connection.transaction(() => {

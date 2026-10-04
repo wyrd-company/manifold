@@ -193,7 +193,8 @@ proposed-design:
     granted, and a real re-entry gets a new entry id. `entry_id` is an
     `AUTOINCREMENT` key, so no two entries share one.
   bootstrap-entries: >-
-    `afterDrain` writes the entry row of a population member that has none,
+    `afterDrain` and the first pass after a live revision introduces a gate
+    write the entry row of a population member that has none,
     such as an actor already in a state that a new revision gates, with the
     snapshot's saved time as its entry time and no host entry id, since the
     host gives that id only with a save. A grant to such an entry copies the
@@ -300,8 +301,8 @@ proposed-design:
     `returned_at`, `return_reason`, and `return_state` on the token row
     where `returned_at` is null, so a second return of the same token
     changes nothing. A token is never returned on any other condition,
-    except an escalation answer of `return`. A return of a token marked
-    `trapped` also calls the escalations module's `withdraw` with kind
+    except an escalation answer of `return`. Every token return also calls
+    the escalations module's `withdraw` with kind
     `stranded-token` and the token's subject, in the same transaction, so an
     escalation whose token came back by another path is closed.
   stranded-tokens: >-

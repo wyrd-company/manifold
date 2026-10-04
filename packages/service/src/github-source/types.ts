@@ -43,6 +43,8 @@ export interface GitHubSourceOptions {
   readonly onError?: (error: GitHubSourceError) => void;
   readonly probe?: () => void;
   readonly onTracked?: (issueNodeIds: readonly string[]) => void;
+  /** Runs after a transaction commits changed mirror rows, including silent changes. */
+  readonly onMirrorChanged?: () => void;
 }
 export interface GitHubSource {
   receive(delivery: WebhookDelivery): DeliveryOutcome;

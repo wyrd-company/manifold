@@ -499,7 +499,7 @@ test("each committed delivery refreshes subscriptions before the next send, even
   ]);
 });
 
-test("afterDrain events use deferred delivery and source payloads arrive unchanged", async () => {
+test("afterDrain events drain before resume returns and source payloads arrive unchanged", async () => {
   let resumedRouter: Router | undefined;
   const restore = host.restore;
   host.restore = (stored, r) => {
@@ -515,8 +515,14 @@ test("afterDrain events use deferred delivery and source payloads arrive unchang
       expect(seen()).toEqual([]);
     },
   });
-  const row = store.pendingInbox("counter-00")[0]!;
-  expect(row.payload).toEqual({ type: "reading", detail: { units: [1, null, true, "warm"] } });
+  const row = store.connection.database
+    .prepare("SELECT payload FROM store_inbox WHERE event_id = ? AND actor_id = ?")
+    .get("weather:after-drain", "counter-00")!;
+  expect(JSON.parse(row["payload"] as string)).toEqual({
+    type: "reading",
+    detail: { units: [1, null, true, "warm"] },
+  });
+  expect(store.pendingInbox("counter-00")).toEqual([]);
   await idle();
   expect(seen()).toEqual(["weather:after-drain"]);
   r.stop();

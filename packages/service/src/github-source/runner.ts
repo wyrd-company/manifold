@@ -82,12 +82,13 @@ export function createRunner(
         if (!project) {
           const resolved = await api.resolveProject(owner, reference.number);
           project = resolved.project;
-          options.store.connection.transaction(() => {
+          const changed = options.store.connection.transaction(() => {
             const before = mirror.read();
             const after = structuredClone(before);
             after.projects.set(project!.nodeId, { ...resolved, revision: 0 });
-            mirror.write(before, after);
+            return mirror.write(before, after);
           });
+          if (changed) options.onMirrorChanged?.();
         }
         next.set(project.nodeId, project);
       } catch (error) {
@@ -145,11 +146,11 @@ export function createRunner(
     if (stopped) return;
     options.probe?.();
     const discovered: string[] = [];
-    options.store.connection.transaction(() => {
+    const changed = options.store.connection.transaction(() => {
       const before = mirror.read();
       const after = structuredClone(before);
       const events = work(after);
-      mirror.write(before, after);
+      const mirrorChanged = mirror.write(before, after);
       for (const event of events) {
         if (!validEvent(event.event)) throw new TypeError("Invalid normalized GitHub event");
         if (options.router.publish(event).status === "rejected")
@@ -163,8 +164,10 @@ export function createRunner(
         }
       }
       for (const row of completed) mirror.complete(row);
+      return mirrorChanged;
     });
     if (discovered.length) options.onTracked?.([...new Set(discovered)]);
+    if (changed) options.onMirrorChanged?.();
   }
   function compareItems(
     state: MirrorState,

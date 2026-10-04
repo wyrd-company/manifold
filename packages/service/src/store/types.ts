@@ -81,7 +81,7 @@ export interface StoredErroredSnapshot extends StoredSnapshot {
 }
 
 export interface StateQuery {
-  readonly machine: string;
+  readonly machine?: string;
   readonly statePath: string;
 }
 

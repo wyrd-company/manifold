@@ -71,4 +71,5 @@ UPDATE sqlite_sequence SET seq = max(seq, coalesce((SELECT seq FROM sqlite_seque
 INSERT INTO sqlite_sequence(name, seq) SELECT 'store_deadline', seq FROM sqlite_sequence WHERE name = 'store_deadline_old' AND NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'store_deadline');
 DROP TABLE store_deadline_old;
 CREATE INDEX store_deadline_due ON store_deadline (fire_at, actor_id) WHERE fired_at IS NULL;`,
+  `CREATE INDEX store_snapshot_state_by_state ON store_snapshot_state (state_path, actor_id);`,
 ];
