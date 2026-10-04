@@ -2,6 +2,7 @@
 // relationships:
 //   implements: service-configuration
 // ---
+import { createHash, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { inspect } from "node:util";
 import { createAppAuth } from "@octokit/auth-app";
@@ -15,6 +16,7 @@ import type {
   GitHubAppCredential,
   GitHubAppSettings,
   InstallationTokenRequest,
+  OperatorTokenCredential,
 } from "./types.ts";
 
 export class SecretValue {
@@ -81,6 +83,23 @@ function githubApp(name: string, settings: GitHubAppSettings): GitHubAppCredenti
     },
   });
 }
+function operatorToken(name: string, tokenFile: string): OperatorTokenCredential {
+  return Object.freeze({
+    kind: "operator-token",
+    name,
+    async verify(presented: string) {
+      let token: string;
+      try {
+        token = (await readFile(tokenFile, "utf8")).trim();
+        if (!token) throw new Error("Empty token file");
+      } catch {
+        throw new Error(`Credential ${name}: unreadable operator token`);
+      }
+      const digest = (value: string) => createHash("sha256").update(value).digest();
+      return timingSafeEqual(digest(presented), digest(token));
+    },
+  });
+}
 export function createCredentials(
   settings: Readonly<Record<string, CredentialSettings>>,
 ): Credentials {
@@ -89,7 +108,9 @@ export function createCredentials(
       name,
       value.kind === "github-app"
         ? githubApp(name, value)
-        : Object.freeze({ kind: "t3code-token" as const, name, tokenFile: value.tokenFile }),
+        : value.kind === "operator-token"
+          ? operatorToken(name, value.tokenFile)
+          : Object.freeze({ kind: "t3code-token" as const, name, tokenFile: value.tokenFile }),
     ]),
   );
   return Object.freeze({

@@ -14,7 +14,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "pnpm --filter @wyrd-company/manifold-shared build && tsc --noEmit",
-    "test": "pnpm --filter @wyrd-company/manifold-shared build && vp test run"
+    "test": "pnpm --filter @wyrd-company/manifold-shared build && vp test run",
+    "start": "node dist/main.js"
   },
   "dependencies": {
     "@gorules/zen-engine": "2.0.2",

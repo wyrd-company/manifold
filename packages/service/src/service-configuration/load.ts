@@ -18,6 +18,7 @@ import type { ConfigurationIssue, CredentialSettings, ServiceConfiguration } fro
 const credentialFileFields = {
   "github-app": ["privateKeyFile"],
   "t3code-token": ["tokenFile"],
+  "operator-token": ["tokenFile"],
 } as const;
 
 type ConfigurationDocument = Omit<ServiceConfiguration, "file" | "credentials"> & {
@@ -103,15 +104,25 @@ export async function loadServiceConfiguration(file: string): Promise<ServiceCon
       try {
         await access(path, constants.R_OK);
         if (!(await stat(path)).isFile()) throw new Error("Not a file");
+        if (settings.kind === "operator-token" && !(await readFile(path, "utf8")).trim())
+          throw new Error("Empty token file");
       } catch (error) {
         issues.push({ path: `/credentials/${pointer(name)}/${field}`, message: code(error) });
       }
     }
   }
+  const operator = configuration.http.operatorCredential;
+  if (operator && configuration.credentials[operator]?.kind !== "operator-token")
+    issues.push({
+      path: "/http/operatorCredential",
+      message: `Requires an operator-token credential: ${operator}`,
+    });
   if (issues.length) throw new ServiceConfigurationError(file, issues);
   return freeze({
     ...configuration,
     file,
+    store: { file: resolve(dirname(file), configuration.store.file) },
+    http: { ...configuration.http, operatorCredential: operator },
     processRepository: {
       ...repository,
       credential: repository.credential,

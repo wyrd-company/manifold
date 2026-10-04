@@ -7,6 +7,9 @@ export { SecretValue } from "./credentials.ts";
 export { ServiceConfigurationError, UnknownCredentialError } from "./types.ts";
 export type {
   ServiceConfiguration,
+  HttpHostConfiguration,
+  StoreConfiguration,
+  OperatorTokenCredential,
   ProcessRepositoryConfiguration,
   Credentials,
   Credential,

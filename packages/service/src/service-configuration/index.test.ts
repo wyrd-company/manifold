@@ -29,6 +29,7 @@ async function config(value: unknown) {
   return { directory, file };
 }
 const minimal = {
+  store: { file: "state.sqlite" },
   processRepository: { url: "https://example.test/recipes.git", directory: "clone" },
 };
 test("loads defaults, freezes configuration and resolves relative paths", async () => {
@@ -67,6 +68,7 @@ test("reports all schema paths including unknown and missing properties", async 
     ]),
   );
   const unknown = await config({
+    ...minimal,
     processRepository: { ...minimal.processRepository, extra: true },
   });
   await expect(loadServiceConfiguration(unknown.file)).rejects.toMatchObject({
@@ -80,6 +82,7 @@ test("reports duplicate YAML keys with a line and unreadable files with their co
 });
 test("checks named credentials, cleartext authentication and readable key paths", async () => {
   const missing = await config({
+    ...minimal,
     processRepository: { ...minimal.processRepository, credential: "missing" },
   });
   await expect(loadServiceConfiguration(missing.file)).rejects.toMatchObject({
@@ -88,6 +91,7 @@ test("checks named credentials, cleartext authentication and readable key paths"
     ],
   });
   const { file, directory } = await config({
+    ...minimal,
     processRepository: {
       ...minimal.processRepository,
       url: "http://example.test/recipes.git",
@@ -127,6 +131,7 @@ test.each(["http", "https"])(
   async (protocol) => {
     for (const credential of [undefined, "missing"]) {
       const { file } = await config({
+        ...minimal,
         processRepository: {
           ...minimal.processRepository,
           url: `${protocol}://generic-user:generic-password@example.test/recipes.git`,
@@ -179,6 +184,7 @@ test("a key path naming a directory fails configuration loading", async () => {
 
 test("WHATWG URL validation rejects a malformed port at its path", async () => {
   const { file } = await config({
+    ...minimal,
     processRepository: {
       ...minimal.processRepository,
       url: "https://example.test:invalid/recipes.git",
@@ -343,5 +349,71 @@ test("validates token file readability through the credential file dispatch", as
   });
   await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
     issues: [{ path: "/credentials/reader/tokenFile", message: "ENOENT" }],
+  });
+});
+
+test("loads HTTP defaults and the store path", async () => {
+  const { file, directory } = await config({ ...minimal, store: { file: "data/state.sqlite" } });
+  const loaded = await loadServiceConfiguration(file);
+  expect(loaded.http).toEqual({ host: "127.0.0.1", port: 7480, operatorCredential: undefined });
+  expect(loaded.store.file).toBe(join(directory, "data/state.sqlite"));
+});
+test.each([
+  [{ processRepository: minimal.processRepository }, "/store"],
+  [{ ...minimal, store: {} }, "/store/file"],
+  [{ ...minimal, store: { file: "" } }, "/store/file"],
+  [{ ...minimal, store: { file: "state", extra: true } }, "/store/extra"],
+  [{ ...minimal, store: { file: "state" }, http: { port: -1 } }, "/http/port"],
+  [{ ...minimal, store: { file: "state" }, http: { port: 65536 } }, "/http/port"],
+  [{ ...minimal, store: { file: "state" }, http: { host: "" } }, "/http/host"],
+  [{ ...minimal, store: { file: "state" }, http: { extra: true } }, "/http/extra"],
+  [
+    { ...minimal, store: { file: "state" }, http: { operatorCredential: "absent" } },
+    "/http/operatorCredential",
+  ],
+])("reports assembly configuration boundary %j", async (value, path) => {
+  const { file } = await config(value);
+  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+    issues: expect.arrayContaining([{ path, message: expect.any(String) }]),
+  });
+});
+test("operator verification rereads the file and exposes no token on errors", async () => {
+  const { file, directory } = await config({
+    ...minimal,
+    store: { file: "state" },
+    credentials: { operator: { kind: "operator-token", tokenFile: "operator.token" } },
+    http: { operatorCredential: "operator" },
+  });
+  const token = join(directory, "operator.token");
+  await writeFile(token, "synthetic-first\n");
+  const credential = (await loadServiceConfiguration(file)).credentials.resolve("operator");
+  expect(credential.kind).toBe("operator-token");
+  if (credential.kind !== "operator-token") throw new Error("Wrong kind");
+  expect(await credential.verify("synthetic-first")).toBe(true);
+  expect(await credential.verify("wrong")).toBe(false);
+  await writeFile(token, "synthetic-second");
+  expect(await credential.verify("synthetic-first")).toBe(false);
+  expect(await credential.verify("synthetic-second")).toBe(true);
+  await writeFile(token, " \n");
+  await expect(credential.verify("synthetic-second")).rejects.toThrow("operator");
+  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+    issues: [{ path: "/credentials/operator/tokenFile", message: expect.any(String) }],
+  });
+  await rm(token);
+  await expect(credential.verify("synthetic-second")).rejects.toThrow("operator");
+  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+    issues: [{ path: "/credentials/operator/tokenFile", message: "ENOENT" }],
+  });
+});
+test("HTTP operator credential requires the operator kind", async () => {
+  const { file, directory } = await config({
+    ...minimal,
+    store: { file: "state" },
+    credentials: { reader: { kind: "t3code-token", tokenFile: "token" } },
+    http: { operatorCredential: "reader" },
+  });
+  await writeFile(join(directory, "token"), "synthetic-token");
+  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+    issues: [{ path: "/http/operatorCredential", message: expect.any(String) }],
   });
 });

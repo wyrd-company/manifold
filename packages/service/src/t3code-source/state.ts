@@ -25,7 +25,12 @@ const sessionStatuses = new Set([
   "stopped",
   "error",
 ]);
-export function threadState(thread: OrchestrationThread) {
+export function threadState(thread: OrchestrationThread): {
+  projectId: OrchestrationThread["projectId"];
+  turn: OrchestrationThread["latestTurn"];
+  requests: ReturnType<typeof pendingRequests>;
+  session: OrchestrationThread["session"];
+} {
   return {
     projectId: thread.projectId,
     turn:

@@ -86,7 +86,7 @@ export function persistence(store: Store, environment: string) {
       status: ThreadRow["status"],
       cursor: number,
       thread: OrchestrationThread | null,
-      projectId = thread?.projectId ?? null,
+      projectId: OrchestrationThread["projectId"] | null = thread?.projectId ?? null,
     ) {
       db.prepare(
         "INSERT INTO t3_thread (environment, thread_id, status, cursor, thread, project_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (environment, thread_id) DO UPDATE SET status=excluded.status, cursor=excluded.cursor, thread=excluded.thread, project_id=coalesce(excluded.project_id, t3_thread.project_id)",

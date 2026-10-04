@@ -1,0 +1,111 @@
+// ---
+// relationships:
+//   implements: service-assembly
+// ---
+import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
+import type { ActorHost, Router } from "../router/index.ts";
+import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
+import type { Portfolio } from "../portfolio/index.ts";
+import type {
+  ProcessRepository,
+  PullOutcome,
+  PullProbe,
+  PullRequest,
+} from "../process-repository/index.ts";
+import type { GitHubSource } from "../github-source/index.ts";
+import type { T3CodeSource } from "../t3code-source/index.ts";
+import type { HttpListener } from "../http-host/index.ts";
+import type { ServiceConfiguration } from "../service-configuration/index.ts";
+
+export interface StartServiceOptions {
+  /** Path of the service configuration file. */
+  readonly configurationFile: string;
+  /** Aborting it stops the start at the next step boundary. */
+  readonly signal?: AbortSignal;
+  /** Builds the router's actor host from the parts started before the router. */
+  readonly actorHost?: (parts: Omit<ServiceParts, "actorHost">) => ActorHost | Promise<ActorHost>;
+  /** Receives every log entry. Defaults to one JSON line per entry on stderr. */
+  readonly log?: (entry: ServiceLogEntry) => void;
+  readonly probes?: ServiceProbes;
+}
+
+export interface ServiceProbes {
+  /** Called after each start and stop step completes. */
+  readonly step?: (step: ServiceStep) => void;
+  /** Passed to the process repository. */
+  readonly pull?: PullProbe;
+  /** Passed to the store. */
+  readonly delivery?: DeliveryProbe;
+  /** Called after the revision follower applies a revision. */
+  readonly applied?: (applied: AppliedRevision) => void;
+}
+
+export type ServiceStep =
+  | "configuration-loaded"
+  | "store-opened"
+  | "portfolio-opened"
+  | "process-repository-opened"
+  | "revision-followed"
+  | "pulled"
+  | "router-started"
+  | "github-started"
+  | "t3code-started"
+  | "listening"
+  | "http-closed"
+  | "sources-stopped"
+  | "revisions-idle"
+  | "router-stopped"
+  | "store-closed";
+
+export interface ServiceParts {
+  readonly actorHost: ActorHost;
+  readonly configuration: ServiceConfiguration;
+  readonly store: Store;
+  readonly portfolio: Portfolio;
+  readonly processRepository: ProcessRepository;
+  readonly blueprints: BlueprintLoader;
+  readonly revisions: Revisions;
+  readonly log: (entry: ServiceLogEntry) => void;
+}
+
+export interface Service extends ServiceParts {
+  readonly router: Router;
+  readonly github: GitHubSource;
+  readonly t3code: T3CodeSource;
+  readonly http: ServiceHttp;
+  /** Stops the service; every call returns the first call's promise. */
+  stop(): Promise<void>;
+}
+
+export interface Revisions {
+  /** The blueprint load of the latest revision the follower applied. */
+  latest(): RevisionLoad | undefined;
+  /** Queues a pull and the apply of its commit as one job; resolves after both. */
+  pull(request?: PullRequest): Promise<PullOutcome>;
+  /** Queues the apply of the current commit; resolves when it is applied. */
+  follow(): Promise<void>;
+}
+
+export interface AppliedRevision {
+  readonly commit: string;
+  readonly blueprints: RevisionLoad;
+  readonly portfolio: "applied" | "unchanged" | "rejected";
+}
+
+export interface ServiceHttp {
+  mount(pathPrefix: string, listener: HttpListener): void;
+  mountOperator(pathPrefix: string, listener: HttpListener): void;
+  /** The address the host listens on. */
+  address(): { readonly host: string; readonly port: number };
+}
+
+export interface ServiceLogEntry {
+  readonly level: "info" | "warn" | "error";
+  /** A kebab-case name of what happened, such as `pull-failed`. */
+  readonly event: string;
+  readonly message: string;
+  readonly detail?: Readonly<Record<string, JsonValue>>;
+}
+
+/** The path the GitHub source's listener is mounted at. */
+export const githubWebhookPath = "/webhooks/github";

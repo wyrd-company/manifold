@@ -804,6 +804,7 @@ test("uses the loaded GitHub section and named installation credential for fetch
   writeFileSync(
     file,
     stringify({
+      store: { file: "state.sqlite" },
       processRepository: { url: s.options.processRepository.url, directory: "clone" },
       credentials: {
         "example-app": {

@@ -38,6 +38,7 @@ async function setup() {
   await fs.writeFile(
     file,
     stringify({
+      store: { file: "state.sqlite" },
       processRepository: {
         url: "https://example.test/recipes.git",
         credential: "example-app",

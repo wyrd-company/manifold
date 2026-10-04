@@ -1,29 +1,23 @@
 // ---
 // relationships:
-//   verifies: [process-repository, blueprint-loader, portfolio, durable-event-delivery, github-event-source, t3code-environment-source]
+//   verifies: [service-assembly, process-repository, blueprint-loader, portfolio, durable-event-delivery, github-event-source, t3code-environment-source]
 // ---
 import { createActor } from "xstate";
 import type { Snapshot } from "xstate";
 import { parseBlueprintVersionKey } from "@wyrd-company/manifold-shared";
-import { openProcessRepository } from "../process-repository/index.ts";
-import { createBlueprintLoader } from "../blueprint-loader/index.ts";
 import type { LoadedBlueprint } from "../blueprint-loader/index.ts";
-import { openStore } from "../store/index.ts";
-import type { DeliveryTarget, StoredSnapshot, PersistedSnapshot } from "../store/index.ts";
-import { ledgerMigrationSteps } from "../ledger/index.ts";
-import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
-import { startRouter } from "../router/index.ts";
-import { startGitHubSource } from "../github-source/index.ts";
+import type { DeliveryTarget, StoredSnapshot, PersistedSnapshot, Store } from "../store/index.ts";
+import type { Portfolio } from "../portfolio/index.ts";
 import type { GitHubConfiguration } from "../github-source/index.ts";
-import { startT3CodeSource, threadTopic } from "../t3code-source/index.ts";
+import { threadTopic } from "../t3code-source/index.ts";
 import type { EnvironmentsConfiguration } from "../t3code-source/index.ts";
-import { SecretValue } from "../service-configuration/index.ts";
-import type {
-  Credentials,
-  ProcessRepositoryConfiguration,
-} from "../service-configuration/index.ts";
+import type { ProcessRepositoryConfiguration } from "../service-configuration/index.ts";
 import { signedDelivery } from "../github-source/test-fixtures/api.ts";
-
+import { startService } from "../service/index.ts";
+import { generateKeyPairSync } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { stringify } from "yaml";
 export interface FoundationWorkerConfiguration {
   path: string;
   repository: ProcessRepositoryConfiguration;
@@ -34,73 +28,39 @@ export interface FoundationWorkerConfiguration {
 }
 const configuration = JSON.parse(process.argv[2]!) as FoundationWorkerConfiguration;
 const notify = (type: string, detail?: unknown) => process.send?.({ type, detail });
-const credentials: Credentials = {
-  names: ["api-reader"],
-  resolve: (name) => ({
-    kind: "github-app",
-    name,
-    installationToken: async () => new SecretValue(name, "synthetic-token"),
+const directory = dirname(configuration.path);
+const privateKeyFile = join(directory, "key.pem");
+const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+await writeFile(privateKeyFile, privateKey.export({ type: "pkcs1", format: "pem" }));
+const configurationFile = join(directory, "service.yml");
+await writeFile(
+  configurationFile,
+  stringify({
+    store: { file: configuration.path },
+    processRepository: configuration.repository,
+    github: configuration.github,
+    environments: configuration.environments,
+    http: { port: 0 },
+    credentials: {
+      "api-reader": {
+        kind: "github-app",
+        appId: 1,
+        installationId: 2,
+        privateKeyFile,
+        apiUrl: configuration.github.apiUrl,
+      },
+      reader: { kind: "t3code-token", tokenFile: configuration.token },
+    },
   }),
-};
-const repository = await openProcessRepository({
-  configuration: configuration.repository,
-  credentials,
-});
-await repository.pull();
-const revision = repository.current()!;
-const store = openStore({
-  path: configuration.path,
-  now: () => 10,
-  probe(step, row) {
-    const type = (row.payload as { type: string }).type;
-    if (configuration.crash && step === "saved" && type === "github.issue.closed") {
-      notify("inside-delivery", { eventId: row.eventId, type });
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
-    }
-    if (step === "saved") setImmediate(() => notify("delivered", { eventId: row.eventId, type }));
-  },
-});
-store.connection.migrate("ledger", ledgerMigrationSteps);
-store.connection.migrate("portfolio", portfolioMigrationSteps);
-const portfolio = openPortfolio({ connection: store.connection, now: () => 10 });
-const loader = createBlueprintLoader({
-  implementations: { actors: {}, actions: {}, guards: {}, delays: {} },
-  revisionAt: repository.revisionAt,
-  onExpressionError: (error) => {
-    throw error;
-  },
-});
-const loaded = await loader.loadRevision(revision);
-if (loaded.failures.size) throw new Error(JSON.stringify([...loaded.failures]));
+);
+let store!: Store;
+let portfolio!: Portfolio;
 const blueprints = new Map<string, LoadedBlueprint>();
-for (const blueprint of loaded.blueprints.values()) blueprints.set(blueprint.key, blueprint);
 const actorId = "oven-one";
-const previous = store.loadSnapshot(actorId);
-if (!previous) {
-  const applied = await portfolio.apply(revision);
-  if (applied.status !== "applied") throw new Error(JSON.stringify(applied));
-  portfolio.ledger.credit({
-    key: "credit-one",
-    account: "meter",
-    window: "morning",
-    opensAt: 0,
-    closesAt: 1000,
-    amount: 100,
-  });
-  portfolio.ledger.reserve({
-    key: "reserve-one",
-    actor: actorId,
-    item: "baking",
-    account: "meter",
-    amount: 20,
-  });
-} else {
-  const version = parseBlueprintVersionKey(previous.machine);
-  if (!version) throw new Error("Invalid stored blueprint identity");
-  const result = await loader.version(version);
-  if (result.status !== "loaded") throw new Error(JSON.stringify(result));
-  blueprints.set(result.blueprint.key, result.blueprint);
-}
+let previous: StoredSnapshot | undefined;
+let loaded!: Awaited<
+  ReturnType<import("../blueprint-loader/index.ts").BlueprintLoader["loadRevision"]>
+>;
 const actors: ReturnType<typeof createActor>[] = [];
 function target(blueprint: LoadedBlueprint, stored?: StoredSnapshot): DeliveryTarget {
   const snapshot = stored?.snapshot as Snapshot<unknown> | undefined;
@@ -127,54 +87,74 @@ function target(blueprint: LoadedBlueprint, stored?: StoredSnapshot): DeliveryTa
     }),
   };
 }
-const router = startRouter({
-  store,
-  host: {
-    subscription(record) {
-      const blueprint = blueprints.get(record.machine)!;
-      return {
-        topics: ["github.issue.I_A", threadTopic("station", "conversation")],
-        events: Object.keys(blueprint.document.schemas.events),
-      };
-    },
-    restore(stored) {
-      return { status: "restored", target: target(blueprints.get(stored.machine)!, stored) };
+const service = await startService({
+  configurationFile,
+  log: () => {},
+  probes: {
+    delivery(step, row) {
+      const type = (row.payload as { type: string }).type;
+      if (configuration.crash && step === "saved" && type === "github.issue.closed") {
+        notify("inside-delivery", { eventId: row.eventId, type });
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+      }
+      if (step === "saved") setImmediate(() => notify("delivered", { eventId: row.eventId, type }));
     },
   },
-  onHeld: (held) => {
-    throw new Error(JSON.stringify(held));
+  actorHost: async (parts) => {
+    store = parts.store;
+    portfolio = parts.portfolio;
+    const loader = parts.blueprints;
+    loaded = parts.revisions.latest()!;
+    if (loaded.failures.size) throw new Error(JSON.stringify([...loaded.failures]));
+    for (const blueprint of loaded.blueprints.values()) blueprints.set(blueprint.key, blueprint);
+    previous = store.loadSnapshot(actorId);
+    if (!previous) {
+      portfolio.ledger.credit({
+        key: "credit-one",
+        account: "meter",
+        window: "morning",
+        opensAt: 0,
+        closesAt: Number.MAX_SAFE_INTEGER,
+        amount: 100,
+      });
+      portfolio.ledger.reserve({
+        key: "reserve-one",
+        actor: actorId,
+        item: "baking",
+        account: "meter",
+        amount: 20,
+      });
+    } else {
+      const version = parseBlueprintVersionKey(previous.machine);
+      if (!version) throw new Error("Invalid stored blueprint identity");
+      const result = await loader.version(version);
+      if (result.status !== "loaded") throw new Error(JSON.stringify(result));
+      blueprints.set(result.blueprint.key, result.blueprint);
+    }
+    return {
+      subscription(record) {
+        const blueprint = blueprints.get(record.machine)!;
+        return {
+          topics: ["github.issue.I_A", threadTopic("station", "conversation")],
+          events: Object.keys(blueprint.document.schemas.events),
+        };
+      },
+      restore(stored) {
+        return { status: "restored", target: target(blueprints.get(stored.machine)!, stored) };
+      },
+    };
   },
 });
+const { router, github } = service;
 if (!previous) router.attach(target(loaded.blueprints.get("blueprints/oven.yml")!));
-const github = startGitHubSource({
-  configuration: configuration.github,
-  credentials,
-  store,
-  router,
-  boundProjects: () =>
-    portfolio.current().declaration.githubProjects.map(({ owner, number }) => ({ owner, number })),
-  processRepository: {
-    ...repository,
-    url: configuration.repository.url,
-    branch: configuration.repository.branch,
-  },
-  onError: (error) => {
-    throw error;
-  },
-  probe() {
-    setImmediate(() => {
-      if (github.trackedIssue("I_A")) notify("github-baseline");
-    });
-  },
-});
-const t3 = startT3CodeSource({
-  store,
-  router,
-  environments: configuration.environments,
-  tokenFile: () => configuration.token,
-});
+const baseline = setInterval(() => {
+  if (github.trackedIssue("I_A")) {
+    clearInterval(baseline);
+    notify("github-baseline");
+  }
+}, 10);
 notify("started", {
-  current: revision.commit,
+  current: service.processRepository.current()!.commit,
   machine: store.loadSnapshot(actorId)!.machine,
   portfolio: portfolio.current().commit,
 });
@@ -185,7 +165,7 @@ process.on("message", async (message) => {
       github.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }, "closed-one")),
     );
   } else if (message === "stop") {
-    await Promise.all([github.stop(), t3.stop()]);
+    await Promise.all([github.stop(), service.t3code.stop()]);
     notify("report", {
       snapshot: store.loadSnapshot(actorId),
       pending: store.pendingInbox(actorId),
@@ -193,9 +173,10 @@ process.on("message", async (message) => {
       balance: portfolio.ledger.balance({ item: "baking", account: "meter", waiting: [] }),
       portfolio: portfolio.current().commit,
     });
-    router.stop();
+    clearInterval(baseline);
+    await service.stop();
     for (const actor of actors) actor.stop();
-    store.close();
+
     process.disconnect?.();
   }
 });

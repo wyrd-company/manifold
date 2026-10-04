@@ -31,6 +31,7 @@ async function setup() {
   await writeFile(
     file,
     stringify({
+      store: { file: "state.sqlite" },
       processRepository: { url: "https://example.test/recipes.git", directory: "clone" },
       credentials: {
         "example-app": {

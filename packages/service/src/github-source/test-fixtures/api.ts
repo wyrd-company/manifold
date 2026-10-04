@@ -212,6 +212,19 @@ export async function githubFake() {
       res
         .writeHead(200, { "content-type": "application/json" })
         .end(JSON.stringify({ data, ...(errors.length ? { errors } : {}) }));
+    } else if (
+      /^\/app\/installations\/\d+\/access_tokens$/.test(url.pathname) &&
+      req.method === "POST"
+    ) {
+      req.resume();
+      res.writeHead(201, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          token: "synthetic-token",
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+          permissions: { contents: "read" },
+          repositories: [],
+        }),
+      );
     } else if (url.pathname.endsWith("/deliveries") && req.method === "GET") {
       deliveryRequests.push(url);
       const cursor = url.searchParams.get("cursor");

@@ -48,7 +48,7 @@ it("loads defaulted and explicit expressions sections through the service root",
   const directory = await mkdtemp(join(tmpdir(), "configuration-"));
   const file = join(directory, "service.yml");
   const root =
-    "processRepository:\n  url: https://example.invalid/process.git\n  directory: ./process\n";
+    "store:\n  file: state.sqlite\nprocessRepository:\n  url: https://example.invalid/process.git\n  directory: ./process\n";
   try {
     for (const [section, expected] of [
       ["", 1000],

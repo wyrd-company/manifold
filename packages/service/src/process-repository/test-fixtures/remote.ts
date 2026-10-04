@@ -60,6 +60,7 @@ export async function fixture(directory: string) {
     auth: string | undefined;
     replay: Buffer | undefined;
     packStarted?: () => void;
+    hold?: { reached: () => void; released: Promise<void> };
   } = { mode: "healthy", auth: undefined, replay: undefined };
   const server = createServer((request, response) => {
     request.on("error", () => response.destroy());
@@ -81,6 +82,12 @@ export async function fixture(directory: string) {
         response.writeHead(401, { "www-authenticate": 'Basic realm="example"' });
         response.end();
         return;
+      }
+      if (state.hold) {
+        const hold = state.hold;
+        delete state.hold;
+        hold.reached();
+        await hold.released;
       }
       if (state.mode === "headers") {
         response.writeHead(200, { "content-type": "application/x-git-upload-pack-advertisement" });
@@ -165,6 +172,18 @@ export async function fixture(directory: string) {
     async close() {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+    holdNext() {
+      let release!: () => void;
+      let entered!: () => void;
+      const reached = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      state.hold = { reached: entered, released };
+      return { reached, release };
     },
     async force(commit: string) {
       await git.writeRef({ fs, gitdir, ref: "refs/heads/main", value: commit, force: true });

@@ -15,10 +15,13 @@ export const serviceConfigurationSchema = {
     "The root document of the service configuration file. Each section other than `credentials` is specified by the module that owns it and composed here by `$ref` to that section's `$id`.",
   type: "object",
   additionalProperties: false,
-  required: ["processRepository"],
+  required: ["processRepository", "store"],
   properties: {
     processRepository: {
       $ref: "https://manifold.wyrd.company/schemas/process-repository-configuration",
+    },
+    store: {
+      $ref: "https://manifold.wyrd.company/schemas/store-configuration",
     },
     credentials: {
       description:
@@ -48,6 +51,10 @@ export const serviceConfigurationSchema = {
       $ref: "https://manifold.wyrd.company/schemas/t3code-environments-configuration",
       default: {},
     },
+    http: {
+      $ref: "https://manifold.wyrd.company/schemas/http-host-configuration",
+      default: {},
+    },
   },
   $defs: {
     "declared-name": {
@@ -64,7 +71,7 @@ export const serviceConfigurationSchema = {
       required: ["kind"],
       properties: {
         kind: {
-          enum: ["github-app", "t3code-token"],
+          enum: ["github-app", "t3code-token", "operator-token"],
         },
       },
       allOf: [
@@ -90,6 +97,18 @@ export const serviceConfigurationSchema = {
           },
           then: {
             $ref: "https://manifold.wyrd.company/schemas/t3code-environments-configuration#/$defs/t3code-token-credential",
+          },
+        },
+        {
+          if: {
+            properties: {
+              kind: {
+                const: "operator-token",
+              },
+            },
+          },
+          then: {
+            $ref: "https://manifold.wyrd.company/schemas/http-host-configuration#/$defs/operator-token-credential",
           },
         },
       ],
@@ -196,10 +215,77 @@ export const comparatorSandboxConfigurationSchema = {
     },
   },
 } as const;
+export const httpHostConfigurationSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://manifold.wyrd.company/schemas/http-host-configuration",
+  title: "HTTP host configuration",
+  description:
+    "The value of the `http` section of the service configuration: where the service's HTTP host listens and which credential authenticates an operator.",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    host: {
+      description: "The address the HTTP host binds.",
+      type: "string",
+      minLength: 1,
+      default: "127.0.0.1",
+    },
+    port: {
+      description: "The TCP port the HTTP host binds; 0 binds a free port.",
+      type: "integer",
+      minimum: 0,
+      maximum: 65535,
+      default: 7480,
+    },
+    operatorCredential: {
+      description: "The name of an `operator-token` credential.",
+      $ref: "https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name",
+    },
+  },
+  $defs: {
+    "operator-token-credential": {
+      description:
+        "A bearer token an operator presents, read from a file at each operator request.",
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "tokenFile"],
+      properties: {
+        kind: {
+          const: "operator-token",
+        },
+        tokenFile: {
+          description:
+            "Path of the file holding the token. A relative path resolves against the directory of the configuration file.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+  },
+} as const;
+export const storeConfigurationSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://manifold.wyrd.company/schemas/store-configuration",
+  title: "Store configuration",
+  description: "The value of the `store` section of the service configuration.",
+  type: "object",
+  additionalProperties: false,
+  required: ["file"],
+  properties: {
+    file: {
+      description:
+        "Path of the store's SQLite database file. A relative path resolves against the directory of the configuration file. Created, with its directory, when absent.",
+      type: "string",
+      minLength: 1,
+    },
+  },
+} as const;
 export const serviceConfigurationSchemas = [
   serviceConfigurationSchema,
   processRepositoryConfigurationSchema,
   comparatorSandboxConfigurationSchema,
+  httpHostConfigurationSchema,
+  storeConfigurationSchema,
   expressionsConfigurationSchema,
   githubSourceConfigurationSchema,
   t3codeEnvironmentsConfigurationSchema,

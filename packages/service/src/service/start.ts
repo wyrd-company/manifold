@@ -1,0 +1,207 @@
+// ---
+// relationships:
+//   implements: service-assembly
+// ---
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { loadServiceConfiguration } from "../service-configuration/index.ts";
+import { configureBlueprintExpressions } from "../blueprint-expressions.ts";
+import { openStore } from "../store/index.ts";
+import type { Store } from "../store/index.ts";
+import { ledgerMigrationSteps } from "../ledger/index.ts";
+import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
+import { openProcessRepository } from "../process-repository/index.ts";
+import { createBlueprintLoader } from "../blueprint-loader/index.ts";
+import { serviceImplementations } from "../implementations.ts";
+import { startRouter } from "../router/index.ts";
+import type { Router, ActorHost } from "../router/index.ts";
+import { startGitHubSource } from "../github-source/index.ts";
+import type { GitHubSource } from "../github-source/index.ts";
+import { startT3CodeSource } from "../t3code-source/index.ts";
+import type { T3CodeSource } from "../t3code-source/index.ts";
+import { createHttpHost } from "../http-host/index.ts";
+import type { HttpHost } from "../http-host/index.ts";
+import { createRevisions } from "./revisions.ts";
+import { stderrLog } from "./log.ts";
+import { githubWebhookPath } from "./types.ts";
+import type { Service, ServiceParts, ServiceStep, StartServiceOptions } from "./types.ts";
+const defaultHost: ActorHost = {
+  subscription: () => ({ topics: [] }),
+  restore: () => ({ status: "held", reason: "no actor host" }),
+};
+export async function startService(options: StartServiceOptions): Promise<Service> {
+  const log = options.log ?? stderrLog;
+  let store: Store | undefined;
+  let router: Router | undefined;
+  let github: GitHubSource | undefined;
+  let t3code: T3CodeSource | undefined;
+  let http: HttpHost | undefined;
+  let revisions: ReturnType<typeof createRevisions> | undefined;
+  let stopping: Promise<void> | undefined;
+  function step(name: ServiceStep, phase: "start" | "stop") {
+    log({ level: "info", event: `${phase}-step`, message: name, detail: { step: name } });
+    options.probes?.step?.(name);
+    if (phase === "start") options.signal?.throwIfAborted();
+  }
+  function stop(): Promise<void> {
+    stopping ??= (async () => {
+      const errors: unknown[] = [];
+      async function finish(name: ServiceStep, operation: () => void | Promise<void>) {
+        try {
+          await operation();
+          step(name, "stop");
+        } catch (error) {
+          errors.push(error);
+          log({ level: "error", event: "stop-failed", message: `Failed stop step: ${name}` });
+        }
+      }
+      if (http) await finish("http-closed", () => http!.close());
+      if (github || t3code)
+        await finish("sources-stopped", async () => {
+          const outcomes = await Promise.allSettled([github?.stop(), t3code?.stop()]);
+          const failed = outcomes.find((outcome) => outcome.status === "rejected");
+          if (failed?.status === "rejected") throw failed.reason;
+        });
+      if (revisions) await finish("revisions-idle", () => revisions!.close());
+      if (router) await finish("router-stopped", () => router!.stop());
+      if (store) await finish("store-closed", () => store!.close());
+      log({ level: "info", event: "stopped", message: "Service stopped" });
+      if (errors.length) throw errors[0];
+    })();
+    return stopping;
+  }
+  try {
+    options.signal?.throwIfAborted();
+    const configuration = await loadServiceConfiguration(options.configurationFile);
+    configureBlueprintExpressions(configuration.expressions);
+    step("configuration-loaded", "start");
+    await mkdir(dirname(configuration.store.file), { recursive: true });
+    store = openStore({
+      path: configuration.store.file,
+      ...(options.probes?.delivery ? { probe: options.probes.delivery } : {}),
+    });
+    store.connection.migrate("ledger", ledgerMigrationSteps);
+    store.connection.migrate("portfolio", portfolioMigrationSteps);
+    step("store-opened", "start");
+    const portfolio = openPortfolio({ connection: store.connection });
+    step("portfolio-opened", "start");
+    const processRepository = await openProcessRepository({
+      configuration: configuration.processRepository,
+      credentials: configuration.credentials,
+      ...(options.probes?.pull ? { probe: options.probes.pull } : {}),
+    });
+    const blueprints = createBlueprintLoader({
+      implementations: serviceImplementations,
+      revisionAt: processRepository.revisionAt,
+      onExpressionError: (error, version) =>
+        log({
+          level: "error",
+          event: "expression-error",
+          message: error.message,
+          detail: { commit: version.commit, path: version.path },
+        }),
+    });
+    step("process-repository-opened", "start");
+    revisions = createRevisions({
+      repository: processRepository,
+      blueprints,
+      portfolio,
+      log,
+      ...(options.probes?.applied ? { applied: options.probes.applied } : {}),
+    });
+    await revisions.follow();
+    step("revision-followed", "start");
+    try {
+      await revisions.pull();
+    } catch {
+      log({ level: "error", event: "pull-failed", message: "Process repository pull failed" });
+    }
+    step("pulled", "start");
+    const beforeHost = {
+      configuration,
+      store,
+      portfolio,
+      processRepository,
+      blueprints,
+      revisions,
+      log,
+    };
+    const actorHost = options.actorHost ? await options.actorHost(beforeHost) : defaultHost;
+    options.signal?.throwIfAborted();
+    const parts: ServiceParts = { ...beforeHost, actorHost };
+    router = startRouter({
+      store,
+      host: actorHost,
+      onHeld: (held) =>
+        log({
+          level: "warn",
+          event: "actor-held",
+          message: held.reason,
+          detail: { actorId: held.actorId },
+        }),
+    });
+    step("router-started", "start");
+    github = startGitHubSource({
+      configuration: configuration.github,
+      credentials: configuration.credentials,
+      store,
+      router,
+      boundProjects: () =>
+        portfolio
+          .current()
+          .declaration.githubProjects.map(({ owner, number }) => ({ owner, number })),
+      processRepository: {
+        url: configuration.processRepository.url,
+        branch: configuration.processRepository.branch,
+        pull: revisions.pull,
+      },
+      onError: (error) =>
+        log({
+          level: "error",
+          event: "github-error",
+          message: error.message,
+          detail: { kind: error.kind },
+        }),
+    });
+    step("github-started", "start");
+    const sourceLog = (level: "info" | "warn" | "error") => (message: string) =>
+      log({ level, event: "t3code-log", message });
+    t3code = startT3CodeSource({
+      store,
+      router,
+      environments: configuration.environments,
+      tokenFile: (name) => {
+        const credential = configuration.credentials.resolve(name);
+        if (credential.kind !== "t3code-token")
+          throw new TypeError(`Credential ${name}: requires t3code-token`);
+        return credential.tokenFile;
+      },
+      logger: {
+        debug: sourceLog("info"),
+        info: sourceLog("info"),
+        warn: sourceLog("warn"),
+        error: sourceLog("error"),
+      },
+    });
+    step("t3code-started", "start");
+    http = createHttpHost({
+      configuration: configuration.http,
+      credentials: configuration.credentials,
+      onError: (error, request) =>
+        log({
+          level: "error",
+          event: "http-listener-error",
+          message: error.message,
+          detail: { ...request },
+        }),
+    });
+    http.mount(githubWebhookPath, github.requestListener);
+    const address = await http.listen();
+    step("listening", "start");
+    log({ level: "info", event: "started", message: "Service started", detail: address });
+    return { ...parts, router, github, t3code, http, stop };
+  } catch (error) {
+    await stop().catch(() => {});
+    throw error;
+  }
+}

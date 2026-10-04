@@ -96,7 +96,7 @@ proposed-design:
       /** Aborting it stops the start at the next step boundary. */
       readonly signal?: AbortSignal;
       /** Builds the router's actor host from the parts started before the router. */
-      readonly actorHost?: (parts: ServiceParts) => ActorHost;
+      readonly actorHost?: (parts: Omit<ServiceParts, "actorHost">) => ActorHost | Promise<ActorHost>;
       /** Receives every log entry. Defaults to one JSON line per entry on stderr. */
       readonly log?: (entry: ServiceLogEntry) => void;
       readonly probes?: ServiceProbes;
@@ -131,6 +131,7 @@ proposed-design:
       | "store-closed";
 
     export interface ServiceParts {
+      readonly actorHost: ActorHost;
       readonly configuration: ServiceConfiguration;
       readonly store: Store;
       readonly portfolio: Portfolio;
@@ -245,8 +246,8 @@ proposed-design:
     `revisions.pull()`; a pull that fails logs `pull-failed` and start
     continues on the current commit, or with no revision when there is
     none, since every sweep pulls again. (7) `router-started`: calls
-    `startRouter` with the store, the actor host the `actorHost` option
-    builds from the parts of steps 1 to 6, and an `onHeld` that logs
+    `startRouter` with the store, the actor host awaited from the `actorHost` option
+    built from the parts of steps 1 to 6, and an `onHeld` that logs
     `actor-held`. `startRouter` restores and drains every stored actor and
     returns. (8) `github-started`: `startGitHubSource` with the `github`
     section, the credentials, the store, the router, `boundProjects` read
