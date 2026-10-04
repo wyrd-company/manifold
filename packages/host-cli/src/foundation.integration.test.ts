@@ -55,6 +55,17 @@ describe("host CLI runs the comparator lint and the expressions lint", () => {
     writeFileSync(join(directory, "counting.yml"), blueprint("event.level + 1"));
     writeFileSync(join(directory, "broken.yml"), blueprint("event.level >"));
     writeFileSync(join(directory, "shapeless.yml"), "- just a list\n");
+    const invalid = {
+      context: "machine: {}\nschemas: { context: 42, events: {} }\n",
+      event: blueprint("event.level > context.level").replace(
+        /lamp\.switch:\n      type: object[\s\S]*$/,
+        "lamp.switch: 42\n",
+      ),
+      actors: "machine: {}\nschemas: { events: {}, actors: { fetch: { output: 7 } } }\n",
+      actorList: "machine: {}\nschemas: { events: {}, actors: [fetch] }\n",
+    };
+    for (const [name, text] of Object.entries(invalid))
+      writeFileSync(join(directory, `invalid-${name}.yml`), text);
   }, 30_000);
   afterAll(() => rmSync(directory, { recursive: true, force: true }));
 
@@ -82,6 +93,16 @@ describe("host CLI runs the comparator lint and the expressions lint", () => {
     const shapeless = run("expressions", "lint", "valid.yml", "shapeless.yml");
     expect([shapeless.status, shapeless.stdout]).toEqual([2, ""]);
     expect(shapeless.stderr).toContain("shapeless.yml: expected a YAML mapping");
+    for (const [name, reason] of [
+      ["context", "`schemas.context` must be a JSON Schema"],
+      ["event", "`schemas.events.lamp.switch` must be a JSON Schema"],
+      ["actors", "`schemas.actors.fetch.output` must be a JSON Schema"],
+      ["actorList", "`schemas.actors` must be a mapping"],
+    ]) {
+      const result = run("expressions", "lint", "counting.yml", `invalid-${name}.yml`);
+      expect([result.status, result.stdout]).toEqual([2, ""]);
+      expect(result.stderr).toContain(`invalid-${name}.yml: ${reason}`);
+    }
     const missing = run("expressions", "lint", "counting.yml", "absent.yml");
     expect([missing.status, missing.stdout]).toEqual([2, ""]);
     expect(missing.stderr).toContain("absent.yml");

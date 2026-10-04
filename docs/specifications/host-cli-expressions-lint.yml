@@ -16,8 +16,12 @@ description: >-
   The command reads each file argument as a YAML document with the
   `ExpressionBlueprint` shape: a `machine` mapping, the machine
   configuration, and a `schemas` mapping, the expression schemas, whose
-  `events` is a mapping. A file that cannot be read, does not parse as
-  YAML, or does not have that shape is reported on standard error as
+  `events` is a mapping. Every schema the file gives, `input`, `output`,
+  `context`, each event schema, and each actor's `input` and `output`, is a
+  mapping or a boolean, and `actors`, when present, is a mapping of
+  mappings. An absent schema is left to the lint, which reports it as
+  `schema-missing`, and other keys are accepted. A file that cannot be read,
+  does not parse as YAML, or does not have that shape is reported on standard error as
   `<file>: <reason>` and ends the command with exit code 2 before any file
   is linted. Otherwise the command reports every finding on standard output
   as one line, `<file>:<location> <kind> <message>`, with the file as given
@@ -35,5 +39,6 @@ validation-criteria: >-
   `node_modules`. It observes exit 0 and no output for a clean blueprint;
   exit 1 with a `result` line for a guard whose result is not a boolean and
   a `syntax` line for a guard that does not parse; and exit 2 with no
-  standard output for no file, an unreadable file, and a file without the
-  blueprint shape.
+  standard output for no file, an unreadable file, a file without the
+  blueprint shape, and a file whose context, event, or actor schema is not
+  a mapping or a boolean, each after a valid file.

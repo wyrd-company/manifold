@@ -10,13 +10,38 @@ import type { ExpressionBlueprint, ExpressionFinding } from "@wyrd-company/manif
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const isSchema = (value: unknown) => typeof value === "boolean" || isRecord(value);
+
+// Checks every schema value the lint reads, so a malformed file is refused before any lint
+// output. An absent schema is the lint's own `schema-missing` finding, and other keys pass.
+function schemaProblem(schemas: Record<string, unknown>): string | undefined {
+  for (const key of ["input", "output", "context"])
+    if (schemas[key] !== undefined && !isSchema(schemas[key]))
+      return `\`schemas.${key}\` must be a JSON Schema (a mapping or a boolean)`;
+  const events = schemas["events"];
+  if (!isRecord(events)) return "expected `schemas` with an `events` mapping";
+  for (const [type, schema] of Object.entries(events))
+    if (!isSchema(schema)) return `\`schemas.events.${type}\` must be a JSON Schema`;
+  const actors = schemas["actors"];
+  if (actors === undefined) return undefined;
+  if (!isRecord(actors)) return "`schemas.actors` must be a mapping";
+  for (const [src, boundary] of Object.entries(actors)) {
+    if (!isRecord(boundary)) return `\`schemas.actors.${src}\` must be a mapping`;
+    for (const key of ["input", "output"])
+      if (boundary[key] !== undefined && !isSchema(boundary[key]))
+        return `\`schemas.actors.${src}.${key}\` must be a JSON Schema`;
+  }
+  return undefined;
+}
+
 function readBlueprint(text: string): ExpressionBlueprint {
   const document: unknown = parse(text);
   if (!isRecord(document) || !isRecord(document["machine"]))
     throw new Error("expected a YAML mapping with a `machine` mapping");
   const schemas = document["schemas"];
-  if (!isRecord(schemas) || !isRecord(schemas["events"]))
-    throw new Error("expected `schemas` with an `events` mapping");
+  if (!isRecord(schemas)) throw new Error("expected `schemas` with an `events` mapping");
+  const problem = schemaProblem(schemas);
+  if (problem) throw new Error(problem);
   return document as ExpressionBlueprint;
 }
 
