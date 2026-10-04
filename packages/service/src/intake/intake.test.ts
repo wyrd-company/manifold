@@ -544,6 +544,9 @@ it("captures the previous whole publication while the follower awaits load and a
   revision = b;
   const job = follower.follow();
   await inLoad;
+  expect(follower.latest()?.commit).toBe(first);
+  expect(follower.current()?.revision.commit).toBe(first);
+  expect(published).toHaveLength(1);
   s.tracked.set("I2", issue("I2"));
   s.intake.discovered(["I2"]);
   await s.intake.idle();
@@ -556,7 +559,8 @@ it("captures the previous whole publication while the follower awaits load and a
   await inApply;
   expect(realPortfolio.current().commit).toBe(second);
   expect(follower.current()?.revision.commit).toBe(first);
-  expect(follower.latest()?.commit).toBe(first);
+  expect(follower.latest()?.commit).toBe(second);
+  expect(published).toHaveLength(1);
   s.tracked.set("I3", issue("I3"));
   s.intake.discovered(["I3"]);
   await s.intake.idle();

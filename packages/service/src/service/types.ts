@@ -100,7 +100,7 @@ export interface Service extends ServiceParts {
 export interface Revisions {
   /** One publication after blueprint loading and portfolio application finish. */
   current(): IntakeRevision | undefined;
-  /** The blueprint load of the latest revision the follower applied. */
+  /** The latest blueprint load, available before portfolio application finishes. */
   latest(): RevisionLoad | undefined;
   /** Queues a pull and the apply of its commit as one job; resolves after both. */
   pull(request?: PullRequest): Promise<PullOutcome>;

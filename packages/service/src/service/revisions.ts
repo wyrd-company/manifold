@@ -2,7 +2,7 @@
 // relationships:
 //   implements: service-assembly
 // ---
-import type { BlueprintLoader } from "../blueprint-loader/index.ts";
+import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
 import type { IntakeRevision } from "../intake/index.ts";
 import type { Usage } from "../usage/index.ts";
 import type { Portfolio } from "../portfolio/index.ts";
@@ -18,12 +18,14 @@ export function createRevisions(options: {
 }): Revisions & { close(): Promise<void> } {
   let followed: string | undefined;
   let current: IntakeRevision | undefined;
+  let latest: RevisionLoad | undefined;
   let queue: Promise<void> = Promise.resolve();
   let closed = false;
   async function apply() {
     const revision = options.repository.current();
     if (!revision || revision.commit === followed) return;
     const loaded = await options.blueprints.loadRevision(revision);
+    latest = loaded;
     for (const [path, findings] of loaded.failures)
       options.log({
         level: "warn",
@@ -91,7 +93,7 @@ export function createRevisions(options: {
     return operation;
   }
   return {
-    latest: () => current?.blueprints,
+    latest: () => latest,
     current: () => current,
     follow: () => enqueue(apply),
     pull: (request) =>
