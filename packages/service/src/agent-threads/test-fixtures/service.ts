@@ -1,17 +1,19 @@
 // ---
 // relationships:
-//   verifies: [agent-threads, durable-event-delivery]
+//   verifies: [agent-threads, durable-event-delivery, actor-host]
 // ---
-import { assign, createActor, createMachine } from "xstate";
-import type { AnyActorRef, Snapshot } from "xstate";
+import { stringify } from "yaml";
 import { memoryRevision } from "@wyrd-company/manifold-shared";
 import { openAgentThreads } from "../index.ts";
 import type { AcceptedCommand } from "../index.ts";
 import { openStore } from "../../store/index.ts";
-import type { PersistedSnapshot, DeliveryTarget, StoredSnapshot } from "../../store/index.ts";
+import type { PersistedSnapshot } from "../../store/index.ts";
 import { startRouter } from "../../router/index.ts";
-import type { Router } from "../../router/index.ts";
-import { startT3CodeSource, threadTopic } from "../../t3code-source/index.ts";
+import { openActorHost, invocationOf, recordStateEntry } from "../../actor-host/index.ts";
+import type { ActorHost } from "../../actor-host/index.ts";
+import { createBlueprintLoader } from "../../blueprint-loader/index.ts";
+import { serviceImplementations } from "../../implementations.ts";
+import { startT3CodeSource } from "../../t3code-source/index.ts";
 import type { EnvironmentsConfiguration, T3CodeSource } from "../../t3code-source/index.ts";
 export interface FixtureConfiguration {
   path: string;
@@ -21,66 +23,47 @@ export interface FixtureConfiguration {
   onSave?: (snapshot: PersistedSnapshot) => void;
   probe?: (command: AcceptedCommand) => void;
 }
-export function fixtureService(configuration: FixtureConfiguration) {
+export async function fixtureService(configuration: FixtureConfiguration) {
   const store = openStore({ path: configuration.path });
   const commit = "a".repeat(40);
   const actorId = "worker";
-  let actor: AnyActorRef;
+  let host: ActorHost;
   let source: T3CodeSource;
-  let router: Router;
-  let attached = false;
-  const module = openAgentThreads({
-    environments: configuration.environments,
-    tokenFile: () => configuration.token,
-    invocationOf: (args) => ({ actorId, invokeId: args.self.id, entryId: "entry-one" }),
-    actorOf: () => ({ manifold: actor.getSnapshot().context.manifold, commit }),
-    bindingArchived: () => false,
-    sourceReady: (environment, signal) => source.ready(environment, signal),
-    revisionAt: async () =>
-      memoryRevision(commit, { "templates/parcel.njk": "Process {{ parcel }}" }),
-    probe(command) {
-      configuration.probe?.(command);
-      if (configuration.crash === command.implementation) process.kill(process.pid, "SIGKILL");
-    },
+  const mapping = (expression: string) => ({ type: "expression.map", params: { expression } });
+  const assignment = (expression: string) => ({
+    type: "expression.assign",
+    params: { expression },
   });
-  const machine = createMachine(
-    {
+  const own = {
+    type: "expression.guard",
+    params: { expression: "event.threadId = context.thread and event.messageId = context.message" },
+  };
+  const document = {
+    machine: {
       id: "parcel",
-      context: {
-        manifold: { environment: "station", project: "binding", threads: [] as string[] },
-        thread: "",
-        message: "",
-        started: 0,
-      },
+      context: { thread: "", message: "", started: 0 },
       initial: "working",
       states: {
         working: {
           initial: "opening",
           on: {
             "t3.turn.started": {
-              guard: "own",
-              actions: assign({ started: ({ context }) => context["started"] + 1 }),
+              guard: own,
+              actions: assignment('{ "started": context.started + 1 }'),
             },
-            "t3.turn.settled": { guard: "own", target: "done" },
+            "t3.turn.settled": { guard: own, target: "done" },
           },
           states: {
             opening: {
               invoke: {
                 id: "opening",
                 src: "thread-create",
-                input: {
-                  project: "project",
-                  title: "Parcel {{ parcel }}",
-                  values: { parcel: "sample" },
-                  model: { instanceId: "provider", model: "model" },
-                  runtimeMode: "approval-required",
-                },
+                input: mapping(
+                  '{ "project": "project", "title": "Parcel {{ parcel }}", "values": { "parcel": "sample" }, "model": { "instanceId": "provider", "model": "model" }, "runtimeMode": "approval-required" }',
+                ),
                 onDone: {
                   target: "preparing",
-                  actions: [
-                    "follow-thread",
-                    assign({ thread: ({ event }) => event.output.threadId }),
-                  ],
+                  actions: ["follow-thread", assignment('{ "thread": event.output.threadId }')],
                 },
               },
             },
@@ -90,7 +73,7 @@ export function fixtureService(configuration: FixtureConfiguration) {
                 src: "turn-prepare",
                 onDone: {
                   target: "prompting",
-                  actions: assign({ message: ({ event }) => event.output.messageId }),
+                  actions: assignment('{ "message": event.output.messageId }'),
                 },
               },
             },
@@ -98,12 +81,9 @@ export function fixtureService(configuration: FixtureConfiguration) {
               invoke: {
                 id: "prompting",
                 src: "turn-start",
-                input: ({ context }) => ({
-                  threadId: context["thread"],
-                  messageId: context["message"],
-                  prompt: "templates/parcel.njk",
-                  values: { parcel: "sample" },
-                }),
+                input: mapping(
+                  '{ "threadId": context.thread, "messageId": context.message, "prompt": "templates/parcel.njk", "values": { "parcel": "sample" } }',
+                ),
                 onDone: "waiting",
               },
             },
@@ -113,73 +93,86 @@ export function fixtureService(configuration: FixtureConfiguration) {
         done: { type: "final" },
       },
     },
-    {
-      actors: module.implementations.actors,
-      actions: module.implementations.actions as NonNullable<
-        NonNullable<Parameters<typeof createMachine>[1]>["actions"]
-      >,
-      guards: {
-        own: ({ context, event }) =>
-          event["threadId"] === context["thread"] && event["messageId"] === context["message"],
+    schemas: {
+      input: true,
+      output: true,
+      context: true,
+      events: { "t3.turn.started": true, "t3.turn.settled": true },
+      actors: {
+        "thread-create": { input: true, output: true },
+        "turn-prepare": { input: true, output: true },
+        "turn-start": { input: true, output: true },
       },
     },
-  );
-  function restore(stored?: StoredSnapshot): DeliveryTarget {
-    actor = createActor(
-      machine,
-      stored ? { snapshot: stored.snapshot as Snapshot<unknown> } : { id: actorId },
-    );
-    const target: DeliveryTarget = {
-      actorId,
-      send: (row) => actor.send(row.payload),
-      persist: () => ({
-        machine: "parcel",
-        snapshot: actor.getPersistedSnapshot() as PersistedSnapshot,
-      }),
-    };
-    actor.subscribe(() => {
-      if (attached) {
-        router.persist(actorId);
-        configuration.onSave?.(actor.getPersistedSnapshot() as PersistedSnapshot);
-      }
-    });
-    return target;
-  }
-  router = startRouter({
-    store,
-    host: {
-      subscription(record) {
-        const context = record.snapshot["context"] as { manifold: { threads: string[] } };
-        return {
-          topics: context.manifold.threads.map((id) => threadTopic("station", id)),
-          events: ["t3.turn.started", "t3.turn.settled"],
-        };
-      },
-      restore(stored) {
-        return { status: "restored", target: restore(stored) };
-      },
+  };
+  const revision = memoryRevision(commit, {
+    "blueprints/parcel.yml": stringify(document),
+    "templates/parcel.njk": "Process {{ parcel }}",
+  });
+  const module = openAgentThreads({
+    environments: configuration.environments,
+    tokenFile: () => configuration.token,
+    invocationOf,
+    actorOf: (id) => host.actorOf(id),
+    bindingArchived: () => false,
+    sourceWrite: (environment, signal, send) => source.write(environment, signal, send),
+    sourceReady: (environment, signal) => source.ready(environment, signal),
+    revisionAt: async () => revision,
+    probe(command) {
+      configuration.probe?.(command);
+      if (configuration.crash === command.implementation) process.kill(process.pid, "SIGKILL");
     },
   });
-  if (!store.loadSnapshot(actorId)) {
-    const target = restore();
-    router.attach(target);
-  }
-  attached = true;
+  const loader = createBlueprintLoader({
+    implementations: serviceImplementations({ agentThreads: module.implementations }),
+    revisionAt: async () => revision,
+    onExpressionError: () => {},
+    onStateEntry: recordStateEntry,
+  });
+  const loaded = await loader.version({ commit, path: "blueprints/parcel.yml" });
+  if (loaded.status !== "loaded") throw new Error(JSON.stringify(loaded));
+  const listeners = new Set<(snapshot: PersistedSnapshot) => void>();
+  host = await openActorHost({
+    store,
+    blueprints: loader,
+    log: () => {},
+    saveHooks: [
+      (save) => {
+        configuration.onSave?.(save.snapshot);
+        for (const listener of listeners) listener(save.snapshot);
+      },
+    ],
+  });
+  const router = startRouter({ store, host });
   source = startT3CodeSource({
     store,
     router,
     environments: configuration.environments,
     tokenFile: () => configuration.token,
   });
-  actor!.start();
+  if (!store.loadSnapshot(actorId))
+    host.start({
+      actorId,
+      blueprint: loaded.blueprint,
+      input: { manifold: { environment: "station", project: "binding", threads: [] } },
+    });
+  // Observe only durable snapshots, including saves made by the real host on restore.
+  const actor = {
+    getSnapshot: () =>
+      store.loadSnapshot(actorId)!.snapshot as PersistedSnapshot & {
+        context: { thread: string; message: string; started: number };
+      },
+    subscribe(listener: (snapshot: PersistedSnapshot) => void) {
+      listeners.add(listener);
+      return { unsubscribe: () => listeners.delete(listener) };
+    },
+  };
   return {
-    actor: actor!,
+    actor,
     source,
     router,
     store,
     async stop() {
-      attached = false;
-      actor.stop();
       await module.stop();
       await source.stop();
       router.stop();

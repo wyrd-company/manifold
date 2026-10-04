@@ -16,7 +16,7 @@ import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
 import { openProcessRepository } from "../process-repository/index.ts";
 import { createBlueprintLoader } from "../blueprint-loader/index.ts";
 import { openAgentThreads } from "../agent-threads/index.ts";
-import type { AgentThreads, AgentThreadError } from "../agent-threads/index.ts";
+import type { AgentThreads } from "../agent-threads/index.ts";
 import { serviceImplementations } from "../implementations.ts";
 import {
   openEscalations,
@@ -29,7 +29,7 @@ import { startRouter } from "../router/index.ts";
 import type { Router } from "../router/index.ts";
 import { createServiceActorHost } from "../actor-host/service.ts";
 import type { ActorHost } from "../actor-host/index.ts";
-import { recordStateEntry } from "../actor-host/index.ts";
+import { recordStateEntry, invocationOf } from "../actor-host/index.ts";
 import { startGitHubSource } from "../github-source/index.ts";
 import type { GitHubSource } from "../github-source/index.ts";
 import { startT3CodeSource, readThreadProject } from "../t3code-source/index.ts";
@@ -189,16 +189,8 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     agentThreads = openAgentThreads({
       environments: configuration.environments,
       tokenFile,
-      actorOf: (id) => actorHost?.actorOf?.(id),
-      invocationOf: (args) => {
-        if (!actorHost?.invocationOf)
-          throw {
-            name: "AgentThreadError",
-            kind: "environment",
-            message: "Actor host has no invocation identity",
-          } satisfies AgentThreadError;
-        return actorHost.invocationOf(args);
-      },
+      actorOf: (id) => actorHost?.actorOf(id),
+      invocationOf,
       bindingArchived: (project) =>
         portfolio.current().declaration.githubProjects.find((binding) => binding.name === project)
           ?.archived ?? false,
@@ -219,6 +211,10 @@ export async function startService(options: StartServiceOptions): Promise<Servic
             });
           }));
         await source.ready(environment, signal);
+      },
+      sourceWrite: async (environment, signal, send) => {
+        signal.throwIfAborted();
+        return t3code!.write(environment, signal, send);
       },
       logger: {
         debug: commandLog("info"),

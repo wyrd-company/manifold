@@ -25,6 +25,7 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
       return { promise, resolve, reject, ready: false };
     }
     let readiness = pendingReadiness();
+    const writes = new Set<Promise<void>>();
     const loop = environmentLoop(
       options,
       name,
@@ -33,8 +34,9 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
         readiness.ready = true;
         readiness.resolve();
       },
-      () => {
+      async () => {
         if (readiness.ready) readiness = pendingReadiness();
+        await Promise.all(writes);
       },
     );
     void loop.done.then(
@@ -43,12 +45,13 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
     );
     return {
       ...loop,
+      writes,
       get readiness() {
         return readiness;
       },
     };
   });
-  return {
+  const source: T3CodeSource = {
     status: () => environments.map((e) => ({ ...e.status })),
     ready(name, signal) {
       const environment = environments.find((entry) => entry.status.environment === name);
@@ -73,9 +76,30 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
         );
       });
     },
+    async write(name, signal, send) {
+      const environment = environments.find((entry) => entry.status.environment === name);
+      while (true) {
+        await source.ready(name, signal);
+        signal.throwIfAborted();
+        // Check and acquire without yielding: invalidation cannot interleave.
+        if (!environment!.readiness.ready) continue;
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        environment!.writes.add(pending);
+        try {
+          return await send();
+        } finally {
+          environment!.writes.delete(pending);
+          release();
+        }
+      }
+    },
     async stop() {
       stop.abort();
       await Promise.all(environments.map((e) => e.done));
     },
   };
+  return source;
 }

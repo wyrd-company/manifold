@@ -125,8 +125,8 @@ proposed-design:
     server release the environment source targets.
   thread-create: >-
     `thread-create` takes a T3code project id, a title template, the values
-    the templates render against, a model selection, a runtime mode, and
-    optionally an interaction mode, a branch, and a worktree path. It reads
+    the templates render against, a model selection, and optionally a
+    runtime mode, an interaction mode, a branch, and a worktree path. It reads
     the invoking actor through `actorOf`, refuses an actor with no
     environment, or whose binding is archived, renders the title, waits for
     the source, and sends `thread.create` with the derived command id and
@@ -194,7 +194,11 @@ proposed-design:
     source's first transaction for the environment commits leaves no row,
     so commands wait again until the next origin commits. While the source
     resets an environment whose `environmentId` changed, the environment is
-    not ready. An environment the source stops fails the waiting command
+    not ready. Each send enters the source's `write` boundary after any
+    thread shell read, so it checks readiness again immediately before
+    dispatch. An identity change blocks new sends and waits for admitted
+    sends to finish or fail before reading the replacement origin.
+    An environment the source stops fails the waiting command
     with `environment`. Every turn and thread a command makes is therefore
     created after the origin, so the source publishes its changes: a thread
     the shell lists with no row is subscribed with no cursor and compared
@@ -280,7 +284,8 @@ proposed-design:
     ```ts
     import type { Logger } from "@wyrd-company/t3code-client";
     import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
-    import type { ManifoldIdentity } from "../actor-host/index.ts";
+    import type { fromPromise } from "xstate";
+    import type { Invocation, ActorHost } from "../actor-host/index.ts";
     import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
     import type { EnvironmentsConfiguration } from "../t3code-source/index.ts";
 
@@ -292,13 +297,15 @@ proposed-design:
       /** Resolves a `t3code-token` credential name to its token file path. */
       readonly tokenFile: (credential: string) => string;
       /** The actor host's `actorOf`; undefined for an actor it does not hold. */
-      readonly actorOf: (
-        actorId: string,
-      ) => { readonly manifold: ManifoldIdentity; readonly commit: string } | undefined;
+      readonly actorOf: ActorHost["actorOf"];
+      /** The actor host's invocation reader receives the full creator args. */
+      readonly invocationOf: (args: Parameters<Parameters<typeof fromPromise>[0]>[0]) => Invocation;
       /** Whether the binding of a GitHub Project binding name is archived, at the current revision. */
       readonly bindingArchived: (project: string) => boolean;
       /** The environment source's `ready`. */
       readonly sourceReady: (environment: string, signal?: AbortSignal) => Promise<void>;
+      /** The environment source's write admission boundary. */
+      readonly sourceWrite: <T>(environment: string, signal: AbortSignal, send: () => Promise<T>) => Promise<T>;
       readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
       /** Called after the server answers a command and before the promise resolves. */
       readonly probe?: (accepted: AcceptedCommand) => void;

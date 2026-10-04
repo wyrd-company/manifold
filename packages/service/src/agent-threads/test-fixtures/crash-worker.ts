@@ -5,7 +5,7 @@
 import { fixtureService } from "./service.ts";
 import type { FixtureConfiguration } from "./service.ts";
 const config = JSON.parse(process.argv[2]!) as FixtureConfiguration;
-const service = fixtureService({
+const service = await fixtureService({
   ...config,
   onSave: (snapshot) =>
     process.send?.({

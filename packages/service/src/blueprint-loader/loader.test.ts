@@ -8,6 +8,7 @@ import { stringify } from "yaml";
 import { manifoldImplementationNames, memoryRevision } from "@wyrd-company/manifold-shared";
 import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
 import type { ProcessRepository } from "../process-repository/index.ts";
+import { serviceImplementations } from "../implementations.ts";
 import { createBlueprintLoader } from "./index.ts";
 import type { ImplementationRegistry, LoadedBlueprint } from "./index.ts";
 import { serviceImplementations } from "../implementations.ts";

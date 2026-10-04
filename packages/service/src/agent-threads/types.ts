@@ -2,30 +2,26 @@
 // relationships:
 //   implements: agent-threads
 // ---
+import type { fromPromise } from "xstate";
 import type { Logger } from "@wyrd-company/t3code-client";
 import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
 import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
 import type { EnvironmentsConfiguration } from "../t3code-source/index.ts";
-// Structural stand-ins for actor-host until its implementation joins the branch.
-export interface Invocation {
-  readonly actorId: string;
-  readonly invokeId: string;
-  readonly entryId: string;
-}
-export interface ManifoldIdentity {
-  readonly environment?: string;
-  readonly project?: string;
-  readonly threads?: readonly string[];
-}
+import type { Invocation, ActorHost } from "../actor-host/index.ts";
+import type { ManifoldIdentity } from "@wyrd-company/manifold-shared";
+export type { Invocation, ManifoldIdentity };
 export interface AgentThreadsOptions {
   readonly environments: EnvironmentsConfiguration;
   readonly tokenFile: (credential: string) => string;
-  readonly actorOf: (
-    actorId: string,
-  ) => { readonly manifold: ManifoldIdentity; readonly commit: string } | undefined;
-  readonly invocationOf: (args: { readonly self: { readonly id: string } }) => Invocation;
+  readonly actorOf: ActorHost["actorOf"];
+  readonly invocationOf: (args: Parameters<Parameters<typeof fromPromise>[0]>[0]) => Invocation;
   readonly bindingArchived: (project: string) => boolean;
   readonly sourceReady: (environment: string, signal?: AbortSignal) => Promise<void>;
+  readonly sourceWrite: <T>(
+    environment: string,
+    signal: AbortSignal,
+    send: () => Promise<T>,
+  ) => Promise<T>;
   readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
   readonly probe?: (accepted: AcceptedCommand) => void;
   readonly logger?: Logger;

@@ -15,8 +15,6 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "pnpm --filter @wyrd-company/manifold-shared build && tsc --noEmit",
     "test": "pnpm --filter @wyrd-company/manifold-console build && vp test run",
-    "start": "node dist/main.js"
-    "test": "pnpm --filter @wyrd-company/manifold-shared build && vp test run",
     "start": "node dist/main.js",
     "test:live": "node src/agent-threads/live/receipt-check.ts"
   },

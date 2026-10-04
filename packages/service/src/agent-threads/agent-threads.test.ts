@@ -76,6 +76,7 @@ async function setup(overrides: Partial<AgentThreadsOptions> = {}) {
     invocationOf: () => invocation,
     bindingArchived: () => false,
     sourceReady: async () => {},
+    sourceWrite: (_environment, _signal, send) => send(),
     revisionAt: async () =>
       memoryRevision(commit, {
         "templates/prompt.njk": '{% include "templates/fragment.njk" %} {{ parcel }}',
@@ -352,9 +353,9 @@ test("module stop aborts an invoke waiting for readiness", async () => {
 
 test("opened registry composes the same names offered by blueprint lint", async () => {
   const fixture = await setup();
-  const { composeServiceImplementations } = await import("../implementations.ts");
+  const { serviceImplementations } = await import("../implementations.ts");
   const { manifoldImplementationNames } = await import("@wyrd-company/manifold-shared");
-  const composed = composeServiceImplementations(fixture.module.implementations);
+  const composed = serviceImplementations({ agentThreads: fixture.module.implementations });
   for (const kind of ["actors", "actions", "guards", "delays"] as const)
     for (const name of Object.keys(composed[kind]))
       expect(manifoldImplementationNames[kind].has(name)).toBe(true);
@@ -381,7 +382,6 @@ test("specification example lints and binds all agent thread implementations", a
         parcel: "sample",
         thread: "",
         turn: "",
-        manifold: { environment: "station", threads: [] },
       },
       states: { ...states, reviewing: { type: "final" } },
     },

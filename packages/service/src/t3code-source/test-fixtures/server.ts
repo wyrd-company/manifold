@@ -35,6 +35,7 @@ export async function fakeServer() {
     readModel?: () => void;
     ticketStatus?: number;
     beforeReadModel?: () => Promise<void>;
+    beforeShellRead?: () => Promise<void>;
     dispatch?: (command: unknown) => { sequence: number };
     beforeDispatchResponse?: (command: unknown) => Promise<void>;
     acknowledged?: (tag: string) => void;
@@ -100,6 +101,7 @@ export async function fakeServer() {
       return;
     }
     if (request.url === "/api/orchestration/shell") {
+      await hooks.beforeShellRead?.();
       response.end(JSON.stringify(shell()));
       return;
     }

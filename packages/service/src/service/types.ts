@@ -2,7 +2,7 @@
 // relationships:
 //   implements: service-assembly
 // ---
-import type { AgentThreads, AgentThreadsOptions } from "../agent-threads/index.ts";
+import type { AgentThreads } from "../agent-threads/index.ts";
 import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
 import type { Intake, IntakeRevision } from "../intake/index.ts";
 import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
@@ -28,9 +28,7 @@ export interface StartServiceOptions {
   /** Aborting it stops the start at the next step boundary. */
   readonly signal?: AbortSignal;
   /** Builds the router's actor host from the parts started before the router. */
-  readonly actorHost?: (
-    parts: Omit<ServiceParts, "actorHost">,
-  ) => ServiceActorHost | Promise<ServiceActorHost>;
+  readonly actorHost?: (parts: Omit<ServiceParts, "actorHost">) => ActorHost | Promise<ActorHost>;
   /** Receives every log entry. Defaults to one JSON line per entry on stderr. */
   readonly log?: (entry: ServiceLogEntry) => void;
   readonly probes?: ServiceProbes;
@@ -71,12 +69,6 @@ export type ServiceStep =
   | "intake-stopped"
   | "router-stopped"
   | "store-closed";
-
-// Structural actor-host seams until the actor host joins the service.
-export interface ServiceActorHost extends ActorHost {
-  readonly actorOf?: AgentThreadsOptions["actorOf"];
-  readonly invocationOf?: AgentThreadsOptions["invocationOf"];
-}
 
 export interface ServiceParts {
   readonly escalations: Escalations;

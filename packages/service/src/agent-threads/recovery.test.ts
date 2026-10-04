@@ -61,7 +61,7 @@ test("source readiness precedes a fast turn and settlement before invoke onDone"
       });
     }
   };
-  const service = fixtureService(config);
+  const service = await fixtureService(config);
   cleanup.push(() => service.stop());
   await expect.poll(() => typeof release).toBe("function");
   expect(server.commands).toHaveLength(0);
@@ -72,9 +72,46 @@ test("source readiness precedes a fast turn and settlement before invoke onDone"
   expect([...server.threads.values()][0]!.messages).toHaveLength(1);
   expect(service.actor.getSnapshot().context.started).toBe(1);
 });
+test("turn shell read cannot carry a send into a replacement origin", async () => {
+  const { server, config } = await setup();
+  let releaseShell!: () => void;
+  server.hooks.beforeShellRead = () =>
+    new Promise<void>((resolve) => {
+      releaseShell = resolve;
+    });
+  const service = await fixtureService(config);
+  cleanup.push(() => service.stop());
+  await expect.poll(() => typeof releaseShell).toBe("function");
+  let releaseOrigin!: () => void;
+  server.hooks.beforeReadModel = () =>
+    new Promise<void>((resolve) => {
+      releaseOrigin = resolve;
+    });
+  server.setIdentity("server-two");
+  server.failShell();
+  await expect.poll(() => typeof releaseOrigin).toBe("function");
+  let acceptedOrigin: unknown;
+  server.commandHooks.accepted = (command) => {
+    if (command.type === "thread.turn.start")
+      acceptedOrigin = service.store.connection.database
+        .prepare("SELECT environment_id FROM t3_environment WHERE environment = ?")
+        .get("station")?.["environment_id"];
+  };
+  delete server.hooks.beforeShellRead;
+  releaseShell();
+  // Allow the released shell read to complete while the origin remains held.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(server.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(0);
+  releaseOrigin();
+  await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
+  expect(server.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(1);
+  expect(acceptedOrigin).toBe("server-two");
+  server.settle(service.actor.getSnapshot().context.thread);
+  await expect.poll(() => service.actor.getSnapshot().status).toBe("done");
+});
 test("guard ignores old, other-thread and ambiguous settlements then takes its turn", async () => {
   const { server, config } = await setup();
-  const service = fixtureService(config);
+  const service = await fixtureService(config);
   cleanup.push(() => service.stop());
   await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
   const context = service.actor.getSnapshot().context;
@@ -82,7 +119,7 @@ test("guard ignores old, other-thread and ambiguous settlements then takes its t
     [context.thread, "old-message"],
     ["other", context.message],
     [context.thread, null],
-  ]) {
+  ] as const) {
     service.router.publish({
       source: "fixture",
       eventId: `${threadId}:${messageId}`,
@@ -95,6 +132,40 @@ test("guard ignores old, other-thread and ambiguous settlements then takes its t
   server.settle(context.thread);
   await expect.poll(() => service.actor.getSnapshot().status).toBe("done");
 });
+test.each(["response", "failure"])(
+  "replacement origin waits for an in-flight command %s",
+  async (outcome) => {
+    const { server, config } = await setup();
+    let releaseWrite!: () => void;
+    server.hooks.beforeDispatchResponse = (command) =>
+      (command as { type: string }).type === "thread.turn.start"
+        ? new Promise<void>((resolve) => {
+            releaseWrite = resolve;
+          })
+        : Promise.resolve();
+    const service = await fixtureService(config);
+    cleanup.push(() => service.stop());
+    await expect.poll(() => typeof releaseWrite).toBe("function");
+    let originRead = false;
+    server.hooks.beforeReadModel = async () => {
+      originRead = true;
+    };
+    server.setIdentity("server-two");
+    server.failShell();
+    // The source has confirmed the new identity, but cannot read its origin yet.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(originRead).toBe(false);
+    delete server.hooks.beforeDispatchResponse;
+    if (outcome === "failure") server.drop();
+    releaseWrite();
+    await expect.poll(() => originRead).toBe(true);
+    await service.source.ready("station");
+    await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
+    expect(server.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(
+      outcome === "failure" ? 2 : 1,
+    );
+  },
+);
 test("dropped response retries the exact command and gives one turn", async () => {
   const { server, config } = await setup();
   let dropped = false;
@@ -104,7 +175,7 @@ test("dropped response retries the exact command and gives one turn", async () =
       server.drop();
     }
   };
-  const service = fixtureService(config);
+  const service = await fixtureService(config);
   cleanup.push(() => service.stop());
   await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
   const turns = server.commands.filter((command) => command.type === "thread.turn.start");

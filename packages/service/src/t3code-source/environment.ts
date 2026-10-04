@@ -33,7 +33,7 @@ export function environmentLoop(
   environment: string,
   signal: AbortSignal,
   onReady: () => void,
-  onNotReady: () => void,
+  onNotReady: () => Promise<void>,
 ) {
   const configuration = options.environments[environment]!;
   const stored = persistence(options.store, environment);
@@ -256,7 +256,7 @@ export function environmentLoop(
         server = (await client.server.environment(lifetime.signal)).environmentId;
         const previous = stored.environment();
         if (!previous || previous.environment_id !== server) {
-          onNotReady();
+          await onNotReady();
           const model = await client.shell.readModel(lifetime.signal);
           stored.atomic(() => {
             stored.reset();

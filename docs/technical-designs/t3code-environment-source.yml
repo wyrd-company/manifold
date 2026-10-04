@@ -223,6 +223,9 @@ proposed-design:
     ordinary connection loss. When a connection finds a different
     `environmentId`, readiness resets before the source reads its new
     baseline and resolves only after the replacement origin commits.
+    The source drains writes admitted by `write` before it reads the
+    replacement baseline. `write` checks readiness and admits a send
+    without yielding, and holds admission until the send finishes or fails.
     `ready` resolves at that
     moment, or at once after it, so a writer that sends a command only
     after `ready` creates every thread and turn after the origin, and the
@@ -286,6 +289,7 @@ proposed-design:
        * environment stops, is not configured, or `signal` aborts.
        */
       ready(environment: string, signal?: AbortSignal): Promise<void>;
+      write<T>(environment: string, signal: AbortSignal, send: () => Promise<T>): Promise<T>;
       /** Closes every client; resolves when every environment loop has ended. */
       stop(): Promise<void>;
     }
