@@ -3,6 +3,8 @@ relationships:
   related-to:
     - service-configuration
     - store
+  mitigates:
+    - process-repository-pull-unbounded
 objective: >-
   Keep a clone of the user's process repository in the service, pulled in
   process on request, and give every loader the repository's declared files
@@ -23,9 +25,14 @@ background:
       `git` subprocess.
     - >-
       isomorphic-git's fetch writes the tracking ref before it writes the
-      pack file and its index, and writes each file in place. A crash
-      between those writes leaves a ref naming objects the clone lacks, or a
-      truncated index that fails every object read.
+      pack file and its index, and writes each file in place, over any file
+      already at that path. A crash between those writes leaves a ref naming
+      objects the clone lacks, and a crash during a write leaves a truncated
+      file, which may be a pack an earlier revision reads.
+    - >-
+      isomorphic-git's Node HTTP client sets no limit on a request, so a
+      remote that stops sending holds a pull, and every pull after it,
+      forever.
     - >-
       An actor started at one commit keeps reading that commit's files while
       later pulls advance the repository.
@@ -133,16 +140,22 @@ proposed-design:
     export class ProcessRepositoryPullError extends Error {
       readonly kind: "authentication" | "remote" | "branch-missing" | "incomplete";
     }
+
+    export class ProcessRepositoryOpenError extends Error {
+      readonly commit: string;
+      readonly directory: string;
+    }
     ```
   module-layout: >-
     `index.ts` re-exports the public names and nothing else. `layout.ts`
     holds the paths inside `directory` and the atomic pointer write.
-    `recover.ts` holds the open-time recovery. `pull.ts` holds the fetch,
-    verification, and publication. `revision.ts` implements
-    `ProcessRepositoryRevision` over the object database. Tests import only
-    `index.ts`. The module adds `isomorphic-git` as a service dependency, and
-    passes it `node:fs`, `isomorphic-git/http/node`, and one object cache per
-    open repository.
+    `git-fs.ts` holds the file system client and `git-http.ts` the HTTP
+    client the module gives isomorphic-git. `recover.ts` holds the open-time
+    recovery. `pull.ts` holds the fetch, verification, and publication.
+    `revision.ts` implements `ProcessRepositoryRevision` over the object
+    database. Tests import only `index.ts`. The module adds `isomorphic-git`
+    as a service dependency, and passes it the `git-fs.ts` client, the
+    `git-http.ts` client, and one object cache per open repository.
   library: >-
     Git runs in process through isomorphic-git, per
     `use-isomorphic-git-for-the-process-repository`. The module calls
@@ -157,34 +170,57 @@ proposed-design:
     `current.<random>.tmp`, calling `fsync` on it, renaming it over
     `current`, and calling `fsync` on `directory`, so a reader finds the old
     pointer or the new one and never a partial one. Manifold writes nothing
-    else inside `directory`; isomorphic-git writes inside `git/`.
+    else inside `directory`; isomorphic-git writes inside `git/`, through
+    the client described under object writes.
+  object-writes: >-
+    isomorphic-git writes every file through the file system client it is
+    given, and the module gives it a client over `node:fs/promises` whose
+    `writeFile` never leaves a partial file at its target path. The client
+    writes the content to `<target>.<random>.manifold-tmp` in the target's
+    directory and calls `fsync` on it. For a target under `git/objects/`, it
+    then calls `link` from the temporary file to the target and removes the
+    temporary file; when `link` fails with `EEXIST`, the target is kept
+    unchanged and the write counts as done. Every file under `objects/` is
+    named by a checksum of its content, so a file already at that path
+    holds the content being written, and a published pack or index is never
+    opened for writing. For any other target, such as a ref or `config`, it
+    renames the temporary file over the target. It then calls `fsync` on the
+    target's directory. Every other method passes through to
+    `node:fs/promises`. A crash during a write leaves the target absent or
+    complete, and at most one `.manifold-tmp` file. The object cache needs
+    no invalidation: isomorphic-git lists `objects/pack/` on each packed
+    read and caches each index by file name, and a file at a name never
+    changes.
   opening: >-
     `openProcessRepository` creates `directory` when absent and runs, in
     order: `init` with `bare: true` on `git/`, which leaves an existing
-    repository unchanged; removal of every `current.*.tmp` file; removal of
-    every incomplete pack pair; and the read of `current`. A pack pair is
-    complete when `objects/pack/pack-<sha>.pack` ends with the SHA-1 of its
-    preceding bytes and that SHA-1 is `<sha>`, and `pack-<sha>.idx` exists,
-    ends with the SHA-1 of its preceding bytes, and names `<sha>` as its
-    pack checksum. These are git's pack and index formats. Recovery deletes
-    the `.pack` and `.idx` of every pair that is not complete. A deleted
-    pair held only objects of a pull that never published, since a pull
-    publishes after its pack and index are complete. When `current` is
-    absent, `current()` returns `undefined` until a pull completes. When
-    `current` names a commit whose tree fails verification,
-    `openProcessRepository` deletes `current`, so the next pull fetches that
-    commit again. Opening twice in a row recovers nothing the second time.
+    repository unchanged; removal of every `current.*.tmp` file in
+    `directory` and every `.manifold-tmp` file under `git/`; removal of
+    every `objects/pack/pack-<sha>.pack` that has no `pack-<sha>.idx`, since
+    isomorphic-git reads a pack only through its index and a pull that wrote
+    the pack and stopped before the index never published; and the read of
+    `current`. When `current` names a commit, open walks its tree as a
+    pull's verification step does, and fails with
+    `ProcessRepositoryOpenError` naming the commit and `directory` when an
+    object is missing or unreadable. A write never truncates a file, so only
+    a change made outside the service fails this check, and the operator
+    restores or removes `directory`. When `current` is absent, `current()`
+    returns `undefined` until a pull completes. Opening twice in a row
+    removes nothing the second time.
   pull: >-
     `pull(request)` runs in five steps. Pulls are serialized: a pull
     requested while one runs waits for it, and every request made while one
     runs shares the single pull that runs next. (1) When `request.commit`
     equals the current commit, it returns `unchanged` with no network
     request. (2) It deletes every ref under `git/refs/` and
-    `git/packed-refs`, then writes `refs/remotes/origin/<branch>` as the
-    current commit when there is one. isomorphic-git sends a `have` line for
-    each local ref, so the only commit the fetch claims to hold is one this
-    module verified. (3) It calls `fetch` with the configured `url`, `ref`
-    set to the branch, `singleBranch: true`, `tags: false`, and `onAuth`
+    `git/packed-refs`, then writes `refs/heads/<branch>` as the current
+    commit when there is one. With `singleBranch: true`, isomorphic-git
+    sends one `have` line: the commit its `ref` argument resolves to
+    locally, and `refs/heads/<branch>` is the first path that resolution
+    tries for `ref` `refs/heads/<branch>`. The only commit the fetch claims
+    to hold is therefore the current commit, which this module verified.
+    (3) It calls `fetch` with the configured `url`, `ref` set to
+    `refs/heads/<branch>`, `singleBranch: true`, `tags: false`, and `onAuth`
     and `onAuthFailure` as described under authentication, and calls the
     probe with `fetched` and `fetchHead`. A remote with no such branch fails
     with kind `branch-missing`; an authentication the remote refuses fails
@@ -192,19 +228,36 @@ proposed-design:
     fails with kind `remote`. (4) It reads the `fetchHead` commit and walks
     its tree, reading every tree and blob object, and calls the probe with
     `verified`. A missing or unreadable object fails with kind `incomplete`.
+    Steps 2 to 4 run under the pull timeout described below.
     (5) When `fetchHead` equals the current commit it returns `unchanged`.
     Otherwise it writes the pointer, calls the probe with `published`, and
     returns `advanced` with the previous commit. A pull that fails leaves
     the current commit and every revision unchanged. The commit follows
     the branch: after a force push, the next pull makes the remote's commit
     current whether or not it descends from the previous one.
+  pull-timeout: >-
+    `pullTimeoutMs` in the `processRepository` section bounds the network
+    work of each pull, default 60000. At step 2 the pull creates
+    `AbortSignal.timeout(pullTimeoutMs)`. `git-http.ts` is
+    isomorphic-git's `http/web` client, which calls Node's global `fetch`,
+    with that signal on every request, so the signal aborts a request that
+    is waiting for a response and a response body that is still arriving.
+    The same signal goes to `installationToken` as `signal` when `onAuth`
+    mints a token. A request aborted by the signal fails the pull with kind
+    `remote` and a message naming the timeout, the URL, and the branch. The
+    failed pull leaves the current commit and every revision unchanged, as
+    any failed pull does, and the next pull runs. The signal bounds only
+    requests: a pull whose requests completed in time finishes its local
+    verification and publication, so no write of a timed-out pull runs
+    beside the next pull.
   convergence: >-
-    A second pull of the same commit fetches an empty pack, which
-    isomorphic-git does not write, finds `fetchHead` equal to the current
-    commit, and returns `unchanged`. A pull after a crash at any point
-    before the pointer rename finds the previous pointer, resets the refs to
-    it in step 2, and fetches every object the crashed pull may have left
-    incomplete. A crash after the rename leaves the new commit current. A
+    A second pull of the same commit sends the current commit as its
+    `have`, receives an empty pack, which isomorphic-git does not write,
+    finds `fetchHead` equal to the current commit, and returns `unchanged`.
+    A pull after a crash at any point before the pointer rename finds the
+    previous pointer, resets the refs to it in step 2, and fetches every
+    object the crashed pull did not publish; a pack it already holds is
+    kept as it is. A crash after the rename leaves the new commit current. A
     crash during `init` leaves a directory that `init` completes on the next
     open.
   authentication: >-
@@ -250,22 +303,36 @@ proposed-design:
     bare repository in a temporary directory; the fixture commits are
     written with isomorphic-git. `git` runs only in the test fixture, never
     in the module. Tests cover: a first pull advances from `undefined`; a
-    second pull with no new commit returns `unchanged` and writes no pack; a
+    second pull with no new commit sends the current commit as its only
+    `have` line, which the test server records from the upload-pack
+    request, and returns `unchanged` with no new file under `objects/`; a
     pull with `request.commit` equal to the current commit makes no request;
     a file read at an older commit returns the same text after a newer pull
     and after reopening; `read` of a directory, a symbolic link, and an
     absent path resolves to `undefined`; `list` with `""`, a directory, and
     a file prefix; malformed paths throw; an unknown branch, a refused
     credential, and a server that closes the connection during the pack
-    each fail with their kind and leave the current commit readable. Crash
-    tests: a probe that throws at `fetched` and at `verified`, then a new
-    open and pull, ends at the remote commit with the old commit readable
-    throughout; a truncated `.idx`, a truncated `.pack` with no `.idx`, a
-    leftover `current.*.tmp`, and a tracking ref naming a missing commit,
-    each placed in the git directory before open, recover and pull to the
-    remote commit; and a child process killed during a pull of a large
-    fixture leaves a directory that opens at the previous commit and pulls
-    to the remote commit. A credential test serves a repository that
+    each fail with their kind and leave the current commit readable. A
+    server that sends headers and then stops, and a server that stops partway
+    through the pack, each fail a pull with `pullTimeoutMs` 200 with kind
+    `remote` once the timeout passes, and the next pull against a healthy
+    server advances. Crash tests: a probe that throws at `fetched` and at
+    `verified`, then a new open and pull, ends at the remote commit with the
+    old commit readable throughout; a `.pack` with no `.idx`, leftover
+    `.manifold-tmp` and `current.*.tmp` files, and a branch ref naming a
+    missing commit, each placed in the git directory before open, recover
+    and pull to the remote commit; a child process killed during a pull of a
+    large fixture leaves a directory that opens at the previous commit and
+    pulls to the remote commit. A held-pack test pulls commit A and then
+    commit B, so the clone holds A's pack, then has the test server replay
+    its recorded response for the pull of A, so the next pull receives a
+    pack whose name the clone holds. That pull runs once in a child process
+    killed after the server has sent the response, and once to completion.
+    After each run, the held pack's inode, size, and content hash are
+    unchanged, and after reopening, A reads through `revisionAt` and B
+    through `current()` with their original text. A corrupted object placed
+    in the current commit's tree fails open with
+    `ProcessRepositoryOpenError`. A credential test serves a repository that
     requires basic authentication, mints from the in-test GitHub API, and
     asserts the token appears in no error, no file under `directory`, and
     no row of a store opened beside it.

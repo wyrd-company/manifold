@@ -16,10 +16,10 @@ required:
 properties:
   url:
     description: >-
-      The smart HTTP URL of the process repository's remote. An `http://`
-      URL is accepted only without a credential.
+      The smart HTTP URL of the process repository's remote, with no user
+      information. An `http://` URL is accepted only without a credential.
     type: string
-    pattern: "^https?://[^\\s]+$"
+    pattern: "^https?://[^\\s/?#@]+([/?#][^\\s]*)?$"
   branch:
     description: The branch the service follows.
     type: string
@@ -37,3 +37,10 @@ properties:
       configuration file. Created when absent.
     type: string
     minLength: 1
+  pullTimeoutMs:
+    description: >-
+      The most time in milliseconds a pull's requests to the remote may
+      take, measured from the start of the pull.
+    type: integer
+    minimum: 1
+    default: 60000

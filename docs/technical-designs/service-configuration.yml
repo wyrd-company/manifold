@@ -72,6 +72,7 @@ proposed-design:
       readonly credential: string | undefined;
       /** Absolute; resolved against the configuration file's directory. */
       readonly directory: string;
+      readonly pullTimeoutMs: number;
     }
 
     export interface Credentials {
@@ -94,6 +95,8 @@ proposed-design:
       readonly repositories?: readonly string[];
       /** GitHub App permission names to levels; the installation's when absent. */
       readonly permissions?: Readonly<Record<string, "read" | "write">>;
+      /** Aborts the token request. */
+      readonly signal?: AbortSignal;
     }
 
     export class SecretValue {
@@ -118,29 +121,36 @@ proposed-design:
     }
     ```
   module-layout: >-
-    `index.ts` re-exports the public names and nothing else. `schemas.ts`
-    holds one constant per schema file the root composes, generated from
+    The schema constants live in `packages/shared`, so that the service's
+    loader and the host CLI lints compile the same schemas.
+    `packages/shared/src/service-configuration-schemas.ts` holds one
+    constant per schema file the root composes, generated from
     `docs/specifications/service-configuration.schema.yml`,
     `process-repository-configuration.schema.yml`, and
     `comparator-sandbox-configuration.schema.yml`, as
-    `decision-model-schema.ts` is generated from its YAML. `load.ts` reads,
-    parses, validates, and checks. `credentials.ts` implements `Credentials`,
-    `GitHubAppCredential`, and `SecretValue`. A test parses each YAML schema
-    file and asserts it equals its constant. Other tests import only
-    `index.ts`. `yaml` and `ajv` move from the service's development
-    dependencies to its dependencies, and `@octokit/auth-app` is added.
+    `decision-model-schema.ts` is generated from its YAML. It also exports
+    `serviceConfigurationSchemas`, the list of every constant, and
+    `serviceConfigurationSchemaId`, the root's `$id`, and the shared
+    package's `index.ts` exports all three kinds of name. A shared test
+    parses each YAML schema file and asserts it equals its constant. In the
+    service, `index.ts` re-exports the public names and nothing else;
+    `load.ts` reads, parses, validates, and checks; `credentials.ts`
+    implements `Credentials`, `GitHubAppCredential`, and `SecretValue`.
+    Service tests import only `index.ts`. `yaml` and `ajv` move from the
+    service's development dependencies to its dependencies, and
+    `@octokit/auth-app` is added.
   composition: >-
     Each schema file has an `$id` under
     `https://manifold.wyrd.company/schemas/`. `load.ts` creates one
     `Ajv2020` with `allErrors: true` and `useDefaults: true`, adds every
-    section schema constant with `addSchema`, and compiles the root. The
-    root names each section under `properties` with a `$ref` to the
-    section's `$id`, gives each optional section `default: {}`, and sets
-    `additionalProperties: false`. A section module adds its schema file and
-    constant, and one `properties` entry to the root; `load.ts` adds every
-    constant in `schemas.ts`, so it needs no other change. The
-    `ServiceConfiguration` interface gains the section's property with the
-    type the section module exports.
+    schema in `serviceConfigurationSchemas` with `addSchema`, and gets the
+    validator for `serviceConfigurationSchemaId`. The root names each
+    section under `properties` with a `$ref` to the section's `$id`, gives
+    each optional section `default: {}`, and sets `additionalProperties:
+    false`. A section module adds its schema file, its constant to
+    `serviceConfigurationSchemas`, and one `properties` entry to the root;
+    `load.ts` needs no change. The `ServiceConfiguration` interface gains
+    the section's property with the type the section module exports.
   loading: >-
     `loadServiceConfiguration(file)` resolves `file` to an absolute path and
     reads it as UTF-8. A file that cannot be read throws a
@@ -153,7 +163,9 @@ proposed-design:
     errors so the pointer names the missing or unknown property. After the
     schema passes, it checks, in order of the document: each credential name
     a section uses is a key of `credentials`, an issue at the property that
-    holds the name; `processRepository.url` is `https://` when
+    holds the name; `processRepository.url`, parsed with the WHATWG
+    `URL` class, has an empty `username` and `password`, an issue at
+    `/processRepository/url`; `processRepository.url` is `https://` when
     `processRepository.credential` is present, an issue at
     `/processRepository/url`; and each `privateKeyFile`, resolved against
     the file's directory, is readable, an issue at its property. Any issue
@@ -174,9 +186,10 @@ proposed-design:
     absolute `privateKeyFile`, and `apiUrl`. `installationToken(request)`
     reads the key file, calls `createAppAuth` from `@octokit/auth-app` with
     the app ID, the key, the installation ID, and a `request` whose base URL
-    is `apiUrl`, requests an installation token with
-    the request's `repositoryNames` and `permissions`, and returns the token
-    as a `SecretValue`. `@octokit/auth-app` signs the App JWT and caches
+    is `apiUrl`, requests an installation token with `repositoryNames` set
+    to the request's `repositories` and `permissions` set to its
+    `permissions`, passes the request's `signal` to the token request, and
+    returns the token as a `SecretValue`. `@octokit/auth-app` signs the App JWT and caches
     each installation token in memory until shortly before it expires, so
     repeated requests reuse a token. The private key and the tokens stay in
     process memory; the module writes neither to a file, the store, nor a
@@ -201,7 +214,9 @@ proposed-design:
     undefined credential is an issue at `/processRepository/credential`;
     `credentials.resolve` of an undefined name throws
     `UnknownCredentialError` naming it; an `http://` URL with a credential
-    is an issue; a missing key file is an issue; relative paths resolve
+    is an issue; an `http://` URL and an `https://` URL each carrying a user
+    name and password, with and without `credential`, are each an issue at
+    `/processRepository/url`, and the issue's message holds neither; a missing key file is an issue; relative paths resolve
     against the file's directory. A `SecretValue` made from a known string
     does not contain that string in `String`, `JSON.stringify`, or
     `util.inspect` output, nor in the message or inspected form of an error

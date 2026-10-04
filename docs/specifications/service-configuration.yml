@@ -71,12 +71,19 @@ description: |-
   section uses is a key of `credentials`, and every `privateKeyFile` names a
   readable file. A failure of either is an issue at the path of the property
   that holds the name or the file path.
+
+  The schemas are bundled once, in `packages/shared`, which exports one
+  constant per schema file, `serviceConfigurationSchemas`, the list of
+  them all, and `serviceConfigurationSchemaId`, the root's `$id`. The
+  service's configuration loader and every host CLI lint that checks a
+  declared name or a configuration value compile these same constants.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/service-configuration.schema.yml` is a valid JSON
   Schema 2020-12 document, and resolves every `$ref` against the section
-  schemas in `docs/specifications/`. The schema constants the service
-  bundles equal these files, checked by a test that parses each YAML file.
+  schemas in `docs/specifications/`. The schema constants
+  `packages/shared` exports equal these files, checked by a test that parses
+  each YAML file.
   Loading a file the schema rejects fails with a `ServiceConfigurationError`
   whose issues name each failing property by JSON Pointer. Loading a file
   with no optional sections returns every section with its defaults,

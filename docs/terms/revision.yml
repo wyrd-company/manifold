@@ -1,4 +1,9 @@
 $schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - process-repository
 title: Revision
 description: >-
   The process repository's declared files at one commit, read-only.

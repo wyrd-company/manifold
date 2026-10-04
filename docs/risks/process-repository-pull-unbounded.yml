@@ -15,11 +15,9 @@ relationships:
 description: >-
   Pulls of the process repository are serialized, and isomorphic-git's Node
   HTTP client sets no timeout on a request. A remote that accepts the
-  connection and then stops sending leaves the pull waiting, and every pull
-  requested after it waits behind it, so the service keeps its current
-  commit and no push applies until the service restarts. The current commit
-  stays readable throughout. A bounded wait on each pull is a new timeout
-  mechanic and needs the user's approval.
+  connection and then stops sending would leave the pull waiting, and every
+  pull requested after it waiting behind it, so the service would keep its
+  current commit and no push would apply until the service restarts.
 
 categories:
   - technical
@@ -28,8 +26,11 @@ likelihood: 2
 impact: 3
 
 response-strategy: mitigate
-# Mitigation candidate: a per-pull timeout in the `processRepository`
-# section with a shipped default, after which the pull fails with kind
-# `remote`, its request is aborted, and the next pull runs.
+# Mitigation: `pullTimeoutMs` in the `processRepository` section, default
+# 60000, bounds each pull's requests with an abort signal on isomorphic-git's
+# web HTTP client and the token mint. An aborted pull fails with kind
+# `remote`, leaves the current commit unchanged, and the next pull runs. The
+# process-repository design's tests prove it against a server that stalls
+# before and during the pack.
 
-status: open
+status: mitigated
