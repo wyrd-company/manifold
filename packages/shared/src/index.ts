@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   implements: blueprint-expressions
+//   implements: [blueprint-expressions, decision-models]
 // ---
 export const packageName = "@wyrd-company/manifold-shared";
 
@@ -22,3 +22,6 @@ export type {
   ComparatorSelection,
   ComparatorReservation,
 } from "./comparator.d.ts";
+export { lintDecisionModel, collectDecisionModelExpressions } from "./decision-models.ts";
+export { decisionModelBlank, decisionModelLocation } from "./decision-model-types.ts";
+export type * from "./decision-model-types.ts";

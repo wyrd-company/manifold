@@ -1,0 +1,50 @@
+# ---
+# relationships:
+#   verifies: decision-models
+# ---
+nodes:
+  - { id: input, type: inputNode }
+  - id: quote
+    type: customNode
+    content:
+      kind: jsonataDecisionTable
+      config:
+        hitPolicy: first
+        inputs: [{ id: weight, field: parcel.kg }]
+        outputs: [{ id: rate, field: quote.rate }]
+        rules:
+          - { _id: heavy, weight: "$ > 20", rate: "parcel.kg * 1.5" }
+          - { _id: any, rate: "10" }
+  - id: calculate
+    type: customNode
+    content:
+      kind: jsonataExpression
+      config: { expression: "$" }
+  - id: route
+    type: customNode
+    content:
+      kind: jsonataSwitch
+      config:
+        hitPolicy: first
+        statements:
+          - { id: express, condition: "quote.rate > 10" }
+          - { id: standard, condition: "" }
+  - id: express
+    type: customNode
+    content:
+      kind: jsonataExpression
+      config: { expression: '{"rate": quote.rate, "service": "express"}' }
+  - id: standard
+    type: customNode
+    content:
+      kind: jsonataExpression
+      config: { expression: '{"rate": quote.rate, "service": "standard"}' }
+  - { id: output, type: outputNode }
+edges:
+  - { id: a, sourceId: input, targetId: quote }
+  - { id: b, sourceId: quote, targetId: calculate }
+  - { id: c, sourceId: calculate, targetId: route }
+  - { id: d, sourceId: route, sourceHandle: express, targetId: express }
+  - { id: e, sourceId: route, sourceHandle: standard, targetId: standard }
+  - { id: f, sourceId: express, targetId: output }
+  - { id: g, sourceId: standard, targetId: output }

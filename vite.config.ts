@@ -5,7 +5,14 @@ export default defineConfig({
     "*": "vp fmt --no-error-on-unmatched-pattern",
   },
   fmt: {
-    ignorePatterns: ["coverage", "dist", "node_modules", "pnpm-lock.yaml", "*.tsbuildinfo"],
+    ignorePatterns: [
+      "coverage",
+      "dist",
+      "node_modules",
+      "pnpm-lock.yaml",
+      "*.tsbuildinfo",
+      "packages/service/src/decision-model-fixtures/editor-export.yml",
+    ],
     sortPackageJson: {},
   },
   lint: {
