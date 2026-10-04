@@ -172,14 +172,15 @@ describe("comparator sandbox", () => {
     if (next.ok) next.comparator.dispose();
   });
   it.each([
-    ["infinite loop", "for (;;) {}", "timeout", 32, 50],
-    ["small-array churn", "for (;;) { new Array(1024).fill(1); }", "timeout", 32, 50],
+    ["infinite loop", "for (;;) {}", "timeout", 32, 50, 1000],
+    ["small-array churn", "for (;;) { new Array(1024).fill(1); }", "timeout", 32, 50, 1000],
     [
       "small-array hoard",
       "const h = []; for (;;) h.push(new Array(1024).fill(1));",
       "memory",
       16,
       500,
+      1000,
     ],
     [
       "large-array hoard",
@@ -187,12 +188,16 @@ describe("comparator sandbox", () => {
       "memory",
       32,
       500,
+      1000,
     ],
-    ["native join", "new Array(2_000_000).fill(1).join();", "timeout", 256, 50],
-    ["native sort", "new Array(2_000_000).fill(1).sort();", "timeout", 256, 50],
+    // A native builtin does not poll the interrupt handler, so it runs to completion past the
+    // deadline at the host's speed. Its wall-clock bound proves it returns, not how fast.
+    ["native join", "new Array(2_000_000).fill(1).join();", "timeout", 256, 50, 5000],
+    ["native sort", "new Array(2_000_000).fill(1).sort();", "timeout", 256, 50, 5000],
   ] as const)(
     "contains %s within time and host memory bounds",
-    async (_name, body, kind, memoryLimitMiB, timeoutMs) => {
+    { timeout: 10_000 },
+    async (_name, body, kind, memoryLimitMiB, timeoutMs, wallMs) => {
       const { sandbox, comparator } = await loaded(
         `export default () => { ${body} return { task: 'a' }; };`,
         { timeoutMs, memoryLimitMiB },
@@ -205,7 +210,7 @@ describe("comparator sandbox", () => {
         failure: { kind },
         durationMs: expect.any(Number),
       });
-      expect(performance.now() - start).toBeLessThan(1000);
+      expect(performance.now() - start).toBeLessThan(wallMs);
       expect(process.memoryUsage().rss - rss).toBeLessThan((memoryLimitMiB + 64) * 1024 * 1024);
       comparator.dispose();
       const next = await sandbox.load({ name: "next.ts", text: good });

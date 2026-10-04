@@ -46,6 +46,9 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -59,9 +62,6 @@ importers:
       vite-plus:
         specifier: 'catalog:'
         version: 0.3.3(@types/node@24.19.0)(typescript@6.0.3)(yaml@2.9.1)
-      yaml:
-        specifier: ^2.9.1
-        version: 2.9.1
 
   packages/service:
     dependencies:

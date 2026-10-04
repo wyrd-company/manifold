@@ -1,0 +1,48 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: host-cli-expressions-lint
+# ---
+$schema: https://commonclischema.org/draft/2026-04/schema
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+commands:
+  - name: expressions
+    summary: Work with blueprint expressions in a process repository.
+    mode: non-interactive
+    subcommands:
+      - name: lint
+        summary: Lint the JSONata guards, matches, assignments, and mappings of blueprints.
+        mode: non-interactive
+        positional-arguments:
+          - name: files
+            description: Paths to YAML documents with `machine` and `schemas`.
+            position: 0
+            greedy: true
+            required: true
+            value:
+              type: path-list
+              arity:
+                min: 1
+                max: unbounded
+        output:
+          modes:
+            - name: text
+              description: >-
+                One line per finding on standard output,
+                `<file>:<location> <kind> <message>`, followed by
+                ` (sample <sample>[, event <type>])` when the finding names
+                a sample; nothing when every file is clean.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: Every file is clean.
+            - code: 1
+              meaning: At least one file has a finding.
+            - code: 2
+              meaning: No file was given, or a file could not be read or is not a blueprint.
+        examples:
+          - manifold-host expressions lint blueprints/review.yml
