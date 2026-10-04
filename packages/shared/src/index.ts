@@ -1,3 +1,7 @@
+// ---
+// relationships:
+//   implements: blueprint-expressions
+// ---
 export const packageName = "@wyrd-company/manifold-shared";
 
 export { compileExpression, evaluateExpression, ExpressionError } from "./expressions.ts";
