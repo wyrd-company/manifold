@@ -63,6 +63,7 @@ proposed-design:
       readonly file: string;
       readonly processRepository: ProcessRepositoryConfiguration;
       readonly comparatorSandbox: ComparatorSandboxLimits;
+      readonly blueprintLint: { readonly configurationBound: number };
       readonly credentials: Credentials;
     }
 

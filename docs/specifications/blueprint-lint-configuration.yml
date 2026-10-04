@@ -1,0 +1,37 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose bound this is.
+  realizes:
+    - token-lint
+  # GAP-EDGE: no edge names the specification that composes this section;
+  # `references` is the best fit for the root it is a section of.
+  references:
+    - service-configuration
+    - blueprint
+description: >-
+  Defines the `blueprintLint` section of the service configuration, whose
+  root is specified by `service-configuration`: the options the service
+  passes to the blueprint lint when it loads a blueprint.
+  `docs/specifications/blueprint-lint-configuration.schema.yml` is the
+  machine-readable definition of the section's value, with the `$id` the
+  root references.
+
+  `configurationBound` is the token lint's configuration bound: the
+  configurations one blueprint's graph may hold before exploration stops
+  and each of its gates has the verdict `unknown`, which loads the
+  blueprint with a warning. It is an integer of at least 1. Default 20000,
+  `defaultConfigurationBound` in `packages/shared`, the same default the
+  host CLI's `--configuration-bound` takes.
+
+  The section and its property are optional; an absent value takes its
+  default. The service reads the section when it starts, and the bound
+  applies to every blueprint version it loads.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/blueprint-lint-configuration.schema.yml` is a valid
+  JSON Schema 2020-12 document, and its default equals
+  `defaultConfigurationBound`. The service rejects a configuration whose
+  `blueprintLint` value the schema rejects, naming the property. A service
+  test loads a blueprint whose graph exceeds a configured bound of 10 and
+  sees a `token-unknown` warning on a blueprint that loads.

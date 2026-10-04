@@ -9,13 +9,14 @@ relationships:
   mitigated-by:
     - gate-xstate
     - gates
+    - token-lint
   related-to:
     - blueprint-loader
 
 description: >-
   The gate design requires blueprint lint to show that every token a gate
   grants can be returned: from every configuration reachable after the
-  grant, the declared return point or actor completion stays reachable.
+  grant, the declared return point stays reachable.
   The gate-xstate spike showed that a configuration graph catches the
   parallel, ancestor, eventless, multi-target, dead-end, cycle, and history
   traps it tested, once a node holds remembered histories as well as

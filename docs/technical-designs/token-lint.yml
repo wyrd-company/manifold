@@ -1,0 +1,393 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  mitigates:
+    - token-lint-completeness-unproven
+  related-to:
+    - gates
+    - gate-runtime
+    - blueprint-loader
+    - gate-xstate
+objective: >-
+  Decide, for each gate a blueprint declares, whether a run of the actor can
+  strand the gate's token, and give the gate runtime the configurations from
+  which a held token can no longer be returned, with one pure function that
+  the service on load and the host CLI both run.
+background:
+  current-design: >-
+    `gates` states what the lint establishes: the configuration graph after
+    the grant, the meaning of every blueprint shape in it, the four
+    verdicts, and the trap configurations the gate runtime checks holders
+    against. `blueprint` specifies the gate declaration the lint reads.
+    `blueprint-loader` runs `lintBlueprint` in the service and the host
+    CLI, and every finding it reports fails the blueprint.
+  problems:
+    - >-
+      The gate-xstate spike stepped XState through two unexported functions
+      patched into the installed package. Production code cannot depend on
+      a patched package or on names XState does not export.
+    - >-
+      A node identified by active states alone accepts a runnable history
+      trap, and a return observed only where a macrostep comes to rest
+      misses a return state that an eventless transition leaves at once.
+    - >-
+      A guard the lint cannot evaluate makes some traps possible but not
+      certain, and a blueprint with such a trap must still load, so the
+      blueprint lint needs findings that warn without failing.
+    - >-
+      The host CLI cannot read the code behind a named action, so the
+      events an action raises must be declared where both the service and
+      the host CLI read them.
+    - >-
+      A blueprint can guard a transition on the configuration only through
+      a guard the lint cannot evaluate, so the token-holding region the
+      gate design relies on cannot be read exactly.
+design-challenges:
+  public-stepping: >-
+    Every step must run through XState's own transition selection, conflict
+    resolution, history, and completion semantics, through functions XState
+    exports, so an XState upgrade that keeps its public interface keeps the
+    lint correct.
+  opaque-choices: >-
+    An expression or named guard may be true or false at each evaluation,
+    independently, and a named action may raise any of its declared events.
+    The lint must follow every combination without evaluating any of them,
+    and must know which choices a path depends on.
+  return-per-microstep: >-
+    A return state can be entered and left within one macrostep. The lint
+    must see each microstep's entries and exits, not only where the
+    macrostep comes to rest.
+  runtime-identity: >-
+    The gate runtime tests a holder's persisted snapshot against the trap
+    set. The key the lint gives a configuration and the key the runtime
+    computes from a snapshot must be the same function of the same data.
+  escape-by-ending: >-
+    Most task blueprints let an operator end the actor from any
+    configuration, such as an issue closed. If a route that ends the actor
+    made a configuration safe, every strand in such a blueprint would pass.
+  bounded-work: >-
+    The graph grows with the product of parallel regions. Exploration must
+    stop at a bound the operator sets, and stopping must never read as
+    acceptance.
+proposed-design:
+  high-level-overview: >-
+    `lintTokens(document, options)` in `packages/shared` takes a blueprint
+    document that the earlier blueprint lint rules accepted. It builds a
+    lint machine from the blueprint: the same state nodes and transitions,
+    with each `in` guard exact, each other guard replaced by a choice, each
+    named action replaced by the raises its declaration allows, expression
+    actions removed, and a marker action where each gate's token is
+    returned. It explores the machine's settled configurations from its
+    initial configuration with XState's exported pure functions, one
+    macrostep per edge, observing every microstep. For each gate it
+    delivers the token at every configuration in which the gated state is
+    active, follows the edges from there, finds the configurations from
+    which the return point can no longer be reached, and gives a verdict
+    with findings, the trap set, and a key function for persisted
+    snapshots. `lintBlueprint` runs it as its last rule; a `violation`
+    fails the blueprint, and `potential` and `unknown` are warnings on a
+    blueprint that loads.
+  public-interface: |-
+    `packages/shared` exports these names from its index. `lintTokens` is
+    the seam the gate runtime designs against; `statePath`, `verdict`,
+    `findings`, `traps.has`, and `configurationKey` keep their names and
+    meanings.
+
+    ```ts
+    import type { Snapshot } from "xstate";
+
+    export function lintTokens(document: BlueprintDocument, options: TokenLintOptions): TokenLintResult;
+
+    export interface TokenLintOptions {
+      /** Implementation names, with the events each named action raises. */
+      readonly names: ImplementationNames;
+      /** Configurations the graph may hold before every gate's verdict is `unknown`. Default 20000. */
+      readonly configurationBound?: number;
+    }
+
+    export const defaultConfigurationBound = 20000;
+
+    export type TokenVerdict = "proved" | "violation" | "potential" | "unknown";
+
+    export interface TokenLintResult {
+      /** One entry per state that declares `meta.gate`, in document order. */
+      readonly gates: readonly GateTokenLint[];
+      /** Configurations the graph held when exploration ended. */
+      readonly configurations: number;
+      /** The configuration key of a persisted snapshot of this blueprint's machine. */
+      configurationKey(snapshot: Snapshot<unknown>): string;
+    }
+
+    export interface GateTokenLint {
+      /** The gated state's keys from the root joined with ".". */
+      readonly statePath: string;
+      /** The JSON Pointer of the gate declaration, `/machine/.../meta/gate`. */
+      readonly location: string;
+      readonly verdict: TokenVerdict;
+      /** Empty for `proved`. */
+      readonly findings: readonly BlueprintFinding[];
+      /** Present unless the verdict is `unknown`: the keys of the trap configurations. */
+      readonly traps?: ReadonlySet<string>;
+    }
+
+    export interface ImplementationNames {
+      readonly actors: ReadonlySet<string>;
+      readonly actions: ReadonlySet<string>;
+      readonly guards: ReadonlySet<string>;
+      readonly delays: ReadonlySet<string>;
+      /** Event types each named action may raise; an action not listed raises none. */
+      readonly raises?: ReadonlyMap<string, readonly string[]>;
+    }
+    ```
+
+    The function reads no file, network, clock, random source, or
+    environment. The same document and options give the same result,
+    including the order of gates, findings, steps, and choices.
+  module-layout: >-
+    `packages/shared/src/token-lint/` holds the module. `index.ts`
+    re-exports `lintTokens`, `defaultConfigurationBound`, and the types, and
+    nothing else. `lint-machine.ts` builds the lint machine from the
+    document. `explore.ts` enumerates macrosteps and builds the graph.
+    `verdict.ts` computes traps, paths, and verdicts as pure functions of
+    the graph. `configuration-key.ts` holds the key function.
+    `packages/shared/src/state-guards.ts` turns `in` guards into XState
+    guards for both the lint machine and the loader. `blueprint-lint.ts`
+    calls `lintTokens` as its last rule. Tests live beside the module and
+    import only its `index.ts` or `lintBlueprint`.
+  in-guard: >-
+    `blueprint` specifies the `in` guard: `{ type: in, params: { states } }`,
+    true when every state path in `states` is active. `state-guards.ts`
+    exports one function that copies a machine configuration and replaces
+    each `in` guard with XState's `stateIn` of each state's id, joined with
+    XState's `and`. The loader applies it to the configuration it passes
+    to `createMachine`, and the lint machine applies the same function, so
+    the guard means one thing at run time and in the lint. The name `in` is
+    reserved like the `expression.` prefix: a registry entry named `in` is
+    a `TypeError` in `createBlueprintLoader`.
+  gates-read: >-
+    A gate is a state node whose `meta.gate` the `gate` rule of
+    `blueprint` accepted. The lint reads three of its keys. `token` is the
+    type of the event that delivers the token, default `token`, unique among
+    the blueprint's gates. `return` is where the token comes back: `exit`,
+    when a microstep exits the gated state, or `{ state }`, when a
+    microstep enters the state at that path. The gated state's path is the
+    gate's `statePath`. The other keys belong to the gate runtime and do not
+    change the lint.
+  lint-machine: >-
+    The lint machine is built with XState's `createMachine` from a copy of
+    the document's machine configuration with these substitutions, so its
+    state ids, transition order, and history states are the blueprint's
+    own. An `in` guard becomes exact, as above. Any other guard, a named
+    guard or `expression.guard` or `expression.match`, becomes the lint
+    guard `choice` with its JSON Pointer as a parameter. An
+    `expression.assign` action is removed, since context is not part of a
+    configuration. A named action becomes an `enqueueActions` action that,
+    for each event type its declaration lists, in declared order, takes a
+    choice and raises the event when the choice is true. For each gate, a
+    marker action naming the gate is added to the exit actions of the gated
+    state when its return is `exit`, or to the entry actions of the return
+    state otherwise. Every invoke `src` is an inert actor logic that never
+    emits, and every named delay resolves to 1 millisecond, so neither runs
+    anything. Context starts as an empty object and stays empty. The
+    copy's `options.maxIterations`, XState's runtime option for the
+    microsteps of one macrostep, is the configuration bound, so a macrostep
+    that never comes to rest stops with XState's error instead of running
+    without end.
+  stepping: >-
+    Every step uses XState's exported pure functions. `getInitialMicrosteps`
+    gives the microsteps of the initial macrostep, `getMicrosteps` the
+    microsteps of one event from a settled snapshot, and
+    `getNextTransitions` the transitions of a settled snapshot, from which
+    the events are drawn. Each microstep is a snapshot with the actions it
+    resolved, so a marker in a microstep's actions shows that the microstep
+    returned a gate's token. XState processes raised events and eventless
+    transitions inside the macrostep in its own order of priority, so the
+    lint never orders them itself. No unexported XState function is used
+    and no XState module is patched.
+  choices: >-
+    The lint guard `choice` and the raise choices of named actions read a
+    choice script: a list of booleans consumed in evaluation order. A run
+    of one macrostep under a script answers each choice from the script
+    and, past its end, answers false and records the choice point with its
+    pointer, and for a raise its event type. Each recorded choice point
+    past the script is then branched with true, depth first, so every
+    combination of answers that XState can reach in the macrostep is run
+    once, and no other. Each run yields one edge, which carries its choices
+    in order. Two runs that end in the same configuration with the same
+    markers are kept as separate edges, since they differ in the choices a
+    path through them depends on.
+  events: >-
+    From a settled configuration the lint sends each event that can change
+    it: every event type named by a transition that `getNextTransitions`
+    returns, other than eventless transitions and the `xstate.done.state.`
+    events XState raises itself; and, for each wildcard descriptor, `*` or
+    a prefix ending `.*`, one symbolic event whose type that descriptor
+    matches and no other descriptor of the configuration names. An
+    invoke's `onDone`, `onError`, and `onSnapshot` and a state's `after`
+    are transitions there while their state is active, so an invoked
+    actor's result and a delay may arrive at any settled configuration in
+    which their state stays active. An error event that no transition
+    handles is not sent: XState would put the actor in status `error`,
+    which the service treats as a held actor that its escalation resolves,
+    not as an end or a move. A gate's token event is never sent as an
+    ordinary event, since only the gate sends it and only once per entry;
+    it is sent as the grant below. Events are sent in code point order of
+    their type, and the choice scripts of one event in the depth-first
+    order above.
+  graph: >-
+    A node is a settled configuration: the configuration at which a
+    macrostep comes to rest. Its identity is its key. Between macrosteps
+    XState's internal event queue is always empty, so the key need not hold
+    it; a raised event is followed inside the edge that raised it. An edge
+    is one run of one macrostep: its event, its choices, the gates whose
+    return markers its microsteps carry, and the settled configuration it
+    ends in. The lint builds one graph from the initial configuration, and
+    adds, at each configuration in which a gate's state is active, an edge
+    for that gate's token event, so every gate's held configurations are in
+    the one graph.
+  grant: >-
+    The gate grants a token only to an actor in the gated state with no
+    undelivered event, so the token event is the next event the actor takes
+    there. A gate's grants are its token edges from the configurations
+    reachable from the initial configuration without that gate's token
+    edge. The token is held from the start of the grant's macrostep. A
+    held path continues along edges other than the gate's token edge, since
+    a holder is never offered a second token. A held path ends when an edge
+    carries the gate's return marker, at the grant or later, or when its
+    last snapshot's status is `done`, since an actor that ends returns
+    every token it holds. The held configurations are the configurations
+    held paths reach.
+  configuration-key: >-
+    The key of a configuration is computed from its persisted snapshot
+    alone: the ids of the active state nodes with their ancestors, sorted by
+    code point; each history state id with the state ids it remembers,
+    sorted; and the status. They are joined into one string in a fixed
+    form, `{a,b,c}`, then `history[h=x,y]` for each history entry, then the
+    status. The lint computes a node's key with the same function, from
+    `machine.getPersistedSnapshot` of the lint snapshot, so a holder's saved
+    snapshot and the lint's node give the same key. Context, children, and
+    event payloads are not part of the key. `configurationKey` resolves
+    the snapshot's `value` to state nodes through the lint machine, which
+    has the blueprint's state ids, and returns a key for any snapshot of
+    the blueprint's machine, whether or not the graph reached it.
+  traps: >-
+    A held configuration is a trap when no held path from it reaches an
+    edge that carries the gate's return marker. The lint finds them by
+    following held edges backwards from every edge that returns the token
+    at the return point; a held configuration it does not reach is a trap.
+    This catches a dead end, a closed cycle, a configuration whose every
+    route leads into one, and a return point that is never reached after
+    the grant. A cycle with a route to the return point is not a trap. An
+    edge that ends the actor returns the token on that path, but a route
+    that ends the actor does not make the configuration it leaves from
+    safe; otherwise an ancestor transition that ends the actor from every
+    configuration, an issue closed, would accept every strand, as the
+    spike's parallel-region strand shows. The trap set is sound for the
+    runtime check because the graph holds every step the actor can take: a
+    configuration the lint calls a trap is one from which no run reaches
+    the return point, so the token stays held until the actor ends or an
+    escalation answers.
+  verdicts: >-
+    A gate's verdict follows from the graph. `unknown`: before exploration
+    finished, the graph reached the configuration bound, a macrostep
+    reached XState's `maxIterations`, or one macrostep's choice scripts
+    reached the bound; there is no trap set, for this gate or any other.
+    `violation`: a trap is reachable on a path from the initial
+    configuration through a grant on which every choice is fixed, so a run
+    of the actor can strand the token. `potential`: traps exist and every
+    path to them takes at least one choice of an expression guard, a named
+    guard, or a raise. `proved`: no held configuration is a trap, which
+    includes a gate whose every grant returns the token within its own
+    macrostep and a gate whose state no reachable configuration holds.
+  findings: >-
+    Each verdict other than `proved` gives one finding at the gate's
+    location, with `gate` set to its state path. Kind `token-violation` is
+    an error; `token-potential` and `token-unknown` are warnings. A
+    `token-violation` or `token-potential` finding carries `steps`, the
+    path with the fewest choices, and among those the fewest edges, from
+    the initial configuration through the grant to the first trap on it:
+    each step the event sent and the key of the configuration reached, with
+    the grant step marked. A `token-potential` finding also carries
+    `choices`, each choice on the path: the step, the pointer of the guard
+    or action, the event type for a raise, and the value. When no held edge
+    reaches the return point, the message says so. A `token-unknown`
+    finding carries `configurationBound` and `configurations`. The trap set
+    names every trap; the finding names one. The message states the
+    verdict, the reason, and the path in one line, so the host CLI prints
+    it as is.
+  in-blueprint-lint: >-
+    `lintBlueprint(path, text, names, options)` runs `lintTokens` as its
+    ninth rule, after the `gate` rule and the expression lint, only when
+    the first eight found nothing, with `names` and
+    `options.configurationBound`. `token-violation` findings join the
+    blueprint's findings and fail it. `token-potential` and `token-unknown`
+    findings are its warnings. A blueprint with no findings returns
+    `{ ok: true, blueprint, warnings, tokens }`, where `tokens` is the
+    `TokenLintResult`; a failing blueprint returns `{ ok: false, findings,
+    warnings }`. The service and the host CLI read the same result, so they
+    report the same verdicts and findings.
+  raises-declaration: >-
+    `ImplementationNames.raises` maps a named action to the event types it
+    may raise into the actor's internal queue. An action not in the map
+    raises none. `manifoldImplementationNames.raises` lists the declaration
+    of every action the service registers, and the loader's registry
+    declares the same map, so the service test that compares the two name
+    sets compares the declarations too. An event an action sends to its
+    own actor through the inbox is an external event, which the lint
+    already allows at any configuration that takes it, so only raises need
+    declaring.
+  cost: >-
+    The graph is built once per blueprint, and each gate's verdict is a
+    walk of it. A blueprint with no gate runs no exploration. The spike
+    measured 65 configurations and a few milliseconds for one gate on three
+    parallel regions of four states, and about a second for seven such
+    regions; the default bound of 20000 configurations sits near that
+    second. The lint runs on the thread that calls it.
+  convergence: >-
+    `lintTokens` writes nothing and holds no state between calls, so a
+    second call returns the same result and a crash mid-call leaves
+    nothing to repair. The loader's cache keeps one result per blueprint
+    version.
+  limits: >-
+    The verdicts hold under the meaning `gates` gives every shape. A named
+    action that raises an event its declaration omits, or that spawns,
+    stops, or sends to another actor in a way that changes this actor's
+    configuration, is outside that meaning. A trap behind an opaque guard
+    that is always false at run time is reported as `potential`, and a
+    route out of a trap through such a guard keeps that configuration out
+    of the trap set, so the runtime check cannot see a holder stuck there.
+  tests: >-
+    Tests call `lintTokens` and `lintBlueprint` on fixture text and check
+    each gate's verdict, each finding's kind, steps, and choices, and the
+    trap set. The fixtures are the spike's, reconstructed from `gate-xstate`
+    with a `meta.gate` on the gated state, the spike's token event as
+    `token`, and the spike's return as `return`. In the spike's flat
+    fixtures the token event's transition carries the abstract guard
+    `allowed`, which stood for the token-holding read; the reconstruction
+    drops it, since the token event is now the grant, and one further test
+    keeps it and shows the same fixture is `potential`. The fixtures: the
+    valid two-gate blueprint, `proved` for each gate; the parallel-region
+    strand, the ancestor trap, and the multi-target trap, each a
+    `violation`, though `cancel` ends the actor from each trap; the dead
+    end, the closed cycle, and the unreachable return, each a `violation`;
+    the eventless bypass, a `violation`; shallow and deep history traps,
+    each a `violation`; the history counterexample, the active-set false
+    acceptance, a `violation`; the transient return, `proved`; region-final
+    completion, the spike's region-final fixture, a `violation`, against
+    root-final completion, the same fixture with `working` always going to
+    the root final `done`, `proved`; and the named-guard false positive,
+    `potential` with its choice. Further fixtures show a review cycle with
+    a route to the return point, `proved`; a holder that leaves the gated
+    state by an unguarded transition into a dead end, a `violation`; an
+    `exit` return reached by that transition, `proved`; an invoke's
+    `onDone` that returns and an unhandled error that is not a move; a
+    delay that returns; a wildcard that strands; a named action whose
+    declared raise strands, `potential`; and a nine-region blueprint at a
+    bound of 1000, `unknown`. A test runs a real actor of the history
+    counterexample into its trap, persists its snapshot, and shows
+    `configurationKey` of it is in the gate's trap set. Each part of the
+    lint is killed by a named test when it is removed: history in the key,
+    the microstep return, exact `in` guards, the choice branch, the
+    wildcard event, the exclusion of the token event, and the bound. A
+    host CLI test runs every fixture through `manifold-host blueprint lint`
+    and compares its lines with the loader's findings and warnings for the
+    same text. Test values use a domain unrelated to Manifold.

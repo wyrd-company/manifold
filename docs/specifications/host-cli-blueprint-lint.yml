@@ -7,6 +7,7 @@ relationships:
   references:
     - blueprint
     - blueprint-expressions
+    - token-lint
 description: >-
   Defines the host CLI command `manifold-host blueprint lint`, which runs
   the blueprint lint of `blueprint` on the host. It is the same
@@ -15,6 +16,12 @@ description: >-
   implementation names the service registers.
   `docs/specifications/host-cli-blueprint-lint.cli.yml` is the
   machine-readable definition.
+
+  `--configuration-bound <n>` sets the token lint's configuration bound,
+  an integer of at least 1, default 20000, the default of the service's
+  `blueprintLint.configurationBound`. A value that is not such an integer
+  is reported on standard error and ends the command with exit code 2
+  before any file is read.
 
   The command reads every file argument as UTF-8 text before it lints any.
   A file that cannot be read is reported on standard error as
@@ -26,11 +33,15 @@ description: >-
   finding ends with ` (line <line>, column <column>)`; an
   `implementation-unknown` finding ends with ` (<implementationKind>
   <name>)`; a finding that names a sample ends with ` (sample <sample>)`,
-  or ` (sample <sample>, event <type>)` when it names an event type. A
-  file that is not YAML or not a blueprint is a finding, not an error of
-  the command. Files are reported in argument order, and findings in the
-  lint's order within a file. The command prints nothing when every file
-  is clean.
+  or ` (sample <sample>, event <type>)` when it names an event type; a
+  token finding ends with ` (gate <statePath>)`. The lint's warnings,
+  `token-potential` and `token-unknown`, are reported on standard output
+  in the same form, after the file's findings. A file that is not YAML or
+  not a blueprint is a finding, not an error of the command. Files are
+  reported in argument order, and findings and warnings in the lint's
+  order within a file. The command prints nothing when every file is
+  clean and has no warning. It exits 1 when any file has a finding, and 0
+  when files have only warnings.
 format: cli
 validation-criteria: >-
   `docs/specifications/host-cli-blueprint-lint.cli.yml` validates against
@@ -41,5 +52,12 @@ validation-criteria: >-
   a document with no `schemas`, an `implementation-unknown` line for an
   invoke `src` Manifold does not register, a `machine` line for a target
   that names no state, and a `result` line for a guard whose result is not
-  a boolean, each located in the document; and exit 2 with no standard
-  output for no file and for an unreadable file after a valid file.
+  a boolean, each located in the document, and a `token-violation` line
+  for a gate whose token can be stranded; exit 0 with a `token-potential`
+  line for a gate whose strand needs a named guard's choice, and with a
+  `token-unknown` line for a gate linted with `--configuration-bound 10`
+  on a graph larger than that; and exit 2 with no standard output for no
+  file, for an unreadable file after a valid file, and for
+  `--configuration-bound 0`. For each token-lint fixture of `token-lint`,
+  the lines equal those built from the loader's findings and warnings for
+  the same text.

@@ -178,7 +178,7 @@ $defs:
           target:
             $ref: "#/$defs/targets"
           guard:
-            $ref: "#/$defs/reference"
+            $ref: "#/$defs/guard"
           actions:
             $ref: "#/$defs/actions"
           reenter:
@@ -187,6 +187,49 @@ $defs:
             type: string
           meta:
             type: object
+  guard:
+    description: >-
+      A guard: an implementation reference, an expression reference, or the
+      built-in `in` guard, which is never written by its bare name.
+    allOf:
+      - $ref: "#/$defs/reference"
+      - not:
+          const: in
+      - if:
+          type: object
+          required:
+            - type
+          properties:
+            type:
+              const: in
+        then:
+          $ref: "#/$defs/in-guard"
+  in-guard:
+    description: >-
+      The built-in guard that is true when every listed state is active.
+    type: object
+    required:
+      - type
+      - params
+    additionalProperties: false
+    properties:
+      type:
+        const: in
+      params:
+        type: object
+        required:
+          - states
+        additionalProperties: false
+        properties:
+          states:
+            type: array
+            minItems: 1
+            items:
+              $ref: "#/$defs/state-path"
+  state-path:
+    description: A state node's keys from the root, joined with `.`.
+    type: string
+    pattern: "^[^.#]+(\\.[^.#]+)*$"
   actions:
     oneOf:
       - $ref: "#/$defs/reference"
@@ -360,6 +403,9 @@ $defs:
           - schema
           - schema-missing
           - site-unsupported
+          - token-violation
+          - token-potential
+          - token-unknown
       location:
         description: The RFC 6901 JSON Pointer of the failing value in the document.
         type: string
@@ -397,3 +443,67 @@ $defs:
         pattern: ^(examples\[[0-9]+\]|full|required)$
       eventType:
         type: string
+      gate:
+        description: For a token finding, the gated state's path.
+        $ref: "#/$defs/state-path"
+      steps:
+        description: >-
+          For `token-violation` and `token-potential`, the path from the
+          initial configuration through the grant to the first trap on it.
+        type: array
+        minItems: 1
+        items:
+          $ref: "#/$defs/token-step"
+      choices:
+        description: For `token-potential`, each choice of a guard or a raise on the path.
+        type: array
+        minItems: 1
+        items:
+          $ref: "#/$defs/token-choice"
+      configurationBound:
+        description: For `token-unknown`, the bound the graph reached.
+        type: integer
+        minimum: 1
+      configurations:
+        description: For `token-unknown`, the configurations the graph held when it stopped.
+        type: integer
+        minimum: 0
+  token-step:
+    description: >-
+      One step of a token finding's path: the event sent, or `xstate.init`
+      for the initial configuration, and the key of the configuration
+      reached.
+    type: object
+    required:
+      - event
+      - configuration
+    additionalProperties: false
+    properties:
+      event:
+        type: string
+      configuration:
+        type: string
+      grant:
+        description: True on the step that delivers the gate's token.
+        const: true
+  token-choice:
+    description: One choice a token finding's path takes.
+    type: object
+    required:
+      - step
+      - location
+      - value
+    additionalProperties: false
+    properties:
+      step:
+        description: The 0-based index into `steps` of the step that takes the choice.
+        type: integer
+        minimum: 0
+      location:
+        description: The JSON Pointer of the guard, or of the action that raises.
+        type: string
+      raises:
+        description: For a raise, the event type raised.
+        type: string
+      value:
+        type: boolean

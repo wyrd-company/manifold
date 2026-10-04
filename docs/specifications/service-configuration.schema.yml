@@ -46,6 +46,9 @@ properties:
   http:
     $ref: https://manifold.wyrd.company/schemas/http-host-configuration
     default: {}
+  blueprintLint:
+    $ref: https://manifold.wyrd.company/schemas/blueprint-lint-configuration
+    default: {}
 $defs:
   declared-name:
     description: >-

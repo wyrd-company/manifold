@@ -6,6 +6,7 @@ relationships:
     - blueprint-loader
   references:
     - blueprint-expressions
+    - token-lint
 description: |-
   Defines the blueprint file: the YAML document in a process repository
   from which Manifold builds an XState v5 state machine, the version
@@ -142,6 +143,25 @@ description: |-
         onError: sorting
   ```
 
+  The guard `in` is built in: `{ type: in, params: { states } }`, where
+  `states` is a non-empty list of state paths, each a state node's keys
+  from the root joined with `.`. It is true when every listed state is
+  active, and reads only the configuration, so the token lint evaluates it
+  exactly. It is how a transition reads an orthogonal region, such as the
+  region that holds a gate's token:
+
+  ```yaml
+  always:
+    target: loading
+    guard:
+      type: in
+      params:
+        states: [open.slot.held, open.dock.clear]
+  ```
+
+  A bare `guard: in`, and an `in` guard without `states`, are `shape`
+  findings. No implementation that code registers is named `in`.
+
   `params` is a mapping passed to the implementation. Names beginning with
   `expression.` belong to the four expression implementations of
   `blueprint-expressions`, and every other name is an implementation that
@@ -196,24 +216,37 @@ description: |-
      message.
   4. `implementation-unknown`: a reference names no implementation of its
      kind among the names the lint is given, and is not an expression
-     implementation of the right kind. An invoke `src` that is a blueprint
+     implementation of the right kind or the guard `in`. An invoke `src` that is a blueprint
      path is a child blueprint, never an unknown implementation; the lint
      reads no other file. The finding carries
      `implementationKind` and `name`, at the reference.
   5. `machine`: XState v5 rejects the configuration when it resolves a
      state node, such as a target or an `initial` that names no state.
      The finding is at the state node XState was resolving, with XState's
-     message.
+     message. A state path in an `in` guard that names no state node is a
+     `machine` finding at that entry of `params/states`.
   6. `final-state-missing`: the machine has no top-level final state,
      at `/machine/states`.
   7. The expression lint of `blueprint-expressions`, with its kinds
      `syntax`, `evaluation`, `result`, `schema`, `schema-missing`, and
      `site-unsupported` and its fields, with the location rewritten from
      the machine to the document. It runs only when rule 3 found nothing.
+  8. The token lint of `token-lint`, for each gate: `token-violation`
+     when a run of the actor can strand the gate's token, `token-potential`
+     when every run that can strand it takes a choice of an expression
+     guard, a named guard, or a raise, and `token-unknown` when the
+     configuration graph reached the lint's bound first. Each finding is
+     at the gate's `meta/gate` and carries `gate`, the gated state's path;
+     `token-violation` and `token-potential` carry `steps`, and
+     `token-potential` also `choices`; `token-unknown` carries
+     `configurationBound` and `configurations`. It runs only when rules 1
+     to 7 found nothing.
 
   Findings are ordered by rule, then by location; expression findings
   keep the expression lint's order. A blueprint with no findings loads.
-  Every finding fails the blueprint. A blueprint with no findings builds
+  Every finding fails the blueprint, except `token-potential` and
+  `token-unknown`, which are warnings: they are reported apart from the
+  findings, and the blueprint loads with them. A blueprint with no findings builds
   with `createBlueprintExpressions` without a throw: the lint reports
   every syntax error, `schema-missing`, and `site-unsupported` site,
   reachable or not, and rule 3 compiles every schema a site can use.
@@ -226,20 +259,43 @@ description: |-
     readonly actions: ReadonlySet<string>;
     readonly guards: ReadonlySet<string>;
     readonly delays: ReadonlySet<string>;
+    /** Event types each named action may raise; an action not listed raises none. */
+    readonly raises?: ReadonlyMap<string, readonly string[]>;
+  }
+  interface BlueprintLintOptions {
+    /** The token lint's configuration bound. Default `defaultConfigurationBound`, 20000. */
+    readonly configurationBound?: number;
   }
   type BlueprintLint =
-    | { readonly ok: true; readonly blueprint: BlueprintDocument }
-    | { readonly ok: false; readonly findings: readonly BlueprintFinding[] };
-  function lintBlueprint(path: string, text: string, names: ImplementationNames): Promise<BlueprintLint>;
+    | {
+        readonly ok: true;
+        readonly blueprint: BlueprintDocument;
+        readonly warnings: readonly BlueprintFinding[];
+        readonly tokens: TokenLintResult;
+      }
+    | {
+        readonly ok: false;
+        readonly findings: readonly BlueprintFinding[];
+        readonly warnings: readonly BlueprintFinding[];
+      };
+  function lintBlueprint(
+    path: string,
+    text: string,
+    names: ImplementationNames,
+    options?: BlueprintLintOptions,
+  ): Promise<BlueprintLint>;
   const manifoldImplementationNames: ImplementationNames;
   function blueprintVersionKey(version: BlueprintVersion): string;
   function parseBlueprintVersionKey(key: string): BlueprintVersion | undefined;
   ```
 
   `lintBlueprint` reads no file, network, clock, random source, or
-  environment; the same path, text, and names give the same result.
-  `manifoldImplementationNames` lists every implementation name Manifold's
-  service registers, so a lint outside the service checks names against
+  environment; the same path, text, names, and options give the same
+  result. `warnings` is empty unless rule 8 ran. `tokens` is the token
+  lint's result, which the gate runtime reads for each gate's verdict and
+  trap set. `manifoldImplementationNames` lists every implementation name
+  Manifold's service registers, with the events each of its actions
+  raises, so a lint outside the service checks names against
   the same set the service loads with. `parseBlueprintVersionKey` returns
   `undefined` for a string that is not a version key.
 format: json-schema
@@ -259,7 +315,13 @@ validation-criteria: >-
   implementation kind; an expression reference of the wrong kind, such
   as `expression.assign` as a guard; a
   target that names no state; a machine with no top-level final state;
-  and a guard whose result is not a boolean, located in the document. A
+  a bare `guard: in`, a `shape` finding; an `in` guard whose state path
+  names no state, a `machine` finding at that entry; a gate whose token
+  can be stranded, a `token-violation` finding with its steps; a gate
+  whose strand needs a named guard's choice, a `token-potential` warning
+  on a blueprint that loads; a gate whose graph passes a bound of 10, a
+  `token-unknown` warning; and a guard whose result is not a boolean,
+  located in the document. A
   clean fixture returns the parsed document, and the same call twice
   returns the same result. A test round-trips a version through its key,
   including a path that contains `:`, and shows that a string with no

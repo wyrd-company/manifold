@@ -17,6 +17,20 @@ commands:
       - name: lint
         summary: Lint blueprint files with the rules the service runs when it loads them.
         mode: non-interactive
+        options:
+          - name: configuration-bound
+            flags: [--configuration-bound]
+            kind: option
+            description: >-
+              The token lint's configuration bound: the configurations a
+              blueprint's graph may hold before each gate's verdict is
+              `unknown`. An integer of at least 1.
+            required: false
+            default: 20000
+            value:
+              type: integer
+            examples:
+              - "50000"
         positional-arguments:
           - name: files
             description: Paths to blueprint files.
@@ -38,17 +52,23 @@ commands:
                 ` (<implementationKind> <name>)` for an
                 `implementation-unknown` finding, or
                 ` (sample <sample>[, event <type>])` when the finding names
-                a sample; nothing when every file is clean.
+                a sample, or ` (gate <statePath>)` for a token finding;
+                then the file's warnings in the same form; nothing when
+                every file is clean and has no warning.
               machine-readable: true
           exit-codes:
             - code: 0
-              meaning: Every file is clean.
+              meaning: No file has a finding; files may have warnings.
             - code: 1
               meaning: At least one file has a finding.
             - code: 2
-              meaning: No file was given, or a file could not be read.
+              meaning: >-
+                No file was given, a file could not be read, or
+                `--configuration-bound` is not an integer of at least 1.
         examples:
           - manifold-host blueprint lint blueprints/delivery.yml
           - manifold-host blueprint lint blueprints/delivery.yml blueprints/returns.yml
+          - manifold-host blueprint lint --configuration-bound 50000 blueprints/delivery.yml
         notes:
           - Implementation names are checked against the names the service registers.
+          - "`token-potential` and `token-unknown` are warnings: they are printed and do not change the exit code."

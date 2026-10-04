@@ -34,6 +34,8 @@ description: |-
   - `environments`, optional, default `{}`, specified by
     `t3code-environments-configuration`.
   - `http`, optional, default `{}`, specified by `http-host-configuration`.
+  - `blueprintLint`, optional, default `{}`, specified by
+    `blueprint-lint-configuration`.
 
   An optional section that is absent takes `{}` and then the defaults of
   its own properties, so the loaded configuration has every section and
