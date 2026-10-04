@@ -94,7 +94,6 @@ export interface AppliedRevision {
 
 export interface ServiceHttp {
   mount(pathPrefix: string, listener: HttpListener): void;
-  mountOperator(pathPrefix: string, listener: HttpListener): void;
   /** The address the host listens on. */
   address(): { readonly host: string; readonly port: number };
 }

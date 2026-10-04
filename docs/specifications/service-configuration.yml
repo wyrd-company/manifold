@@ -50,8 +50,7 @@ description: |-
   itself exists only in this file and the files it points to. A credential
   has a `kind`, and the kind fixes its other properties. Kind `github-app`
   is specified here; kind `t3code-token` by
-  `t3code-environments-configuration`; and kind `operator-token` by
-  `http-host-configuration`. The root lists each kind and composes the
+  `t3code-environments-configuration`. The root lists each kind and composes the
   kind's schema by `$ref`.
 
   Kind `github-app` is a GitHub App installation. `appId` is the App's

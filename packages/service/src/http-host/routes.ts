@@ -6,7 +6,6 @@ import type { HttpListener } from "./types.ts";
 export interface Mount {
   readonly prefix: string;
   readonly listener: HttpListener;
-  readonly operator: boolean;
 }
 export function validatePrefix(prefix: string, mounts: readonly Mount[]) {
   if (

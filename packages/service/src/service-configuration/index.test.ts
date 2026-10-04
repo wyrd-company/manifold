@@ -355,7 +355,7 @@ test("validates token file readability through the credential file dispatch", as
 test("loads HTTP defaults and the store path", async () => {
   const { file, directory } = await config({ ...minimal, store: { file: "data/state.sqlite" } });
   const loaded = await loadServiceConfiguration(file);
-  expect(loaded.http).toEqual({ host: "127.0.0.1", port: 7480, operatorCredential: undefined });
+  expect(loaded.http).toEqual({ host: "127.0.0.1", port: 7480 });
   expect(loaded.store.file).toBe(join(directory, "data/state.sqlite"));
 });
 test.each([
@@ -377,43 +377,14 @@ test.each([
     issues: expect.arrayContaining([{ path, message: expect.any(String) }]),
   });
 });
-test("operator verification rereads the file and exposes no token on errors", async () => {
-  const { file, directory } = await config({
+test("rejects unknown credential kinds before reading credential files", async () => {
+  const { file } = await config({
     ...minimal,
-    store: { file: "state" },
-    credentials: { operator: { kind: "operator-token", tokenFile: "operator.token" } },
-    http: { operatorCredential: "operator" },
+    credentials: { reader: { kind: "operator-token", tokenFile: "absent" } },
   });
-  const token = join(directory, "operator.token");
-  await writeFile(token, "synthetic-first\n");
-  const credential = (await loadServiceConfiguration(file)).credentials.resolve("operator");
-  expect(credential.kind).toBe("operator-token");
-  if (credential.kind !== "operator-token") throw new Error("Wrong kind");
-  expect(await credential.verify("synthetic-first")).toBe(true);
-  expect(await credential.verify("wrong")).toBe(false);
-  await writeFile(token, "synthetic-second");
-  expect(await credential.verify("synthetic-first")).toBe(false);
-  expect(await credential.verify("synthetic-second")).toBe(true);
-  await writeFile(token, " \n");
-  await expect(credential.verify("synthetic-second")).rejects.toThrow("operator");
   await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
-    issues: [{ path: "/credentials/operator/tokenFile", message: expect.any(String) }],
-  });
-  await rm(token);
-  await expect(credential.verify("synthetic-second")).rejects.toThrow("operator");
-  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
-    issues: [{ path: "/credentials/operator/tokenFile", message: "ENOENT" }],
-  });
-});
-test("HTTP operator credential requires the operator kind", async () => {
-  const { file, directory } = await config({
-    ...minimal,
-    store: { file: "state" },
-    credentials: { reader: { kind: "t3code-token", tokenFile: "token" } },
-    http: { operatorCredential: "reader" },
-  });
-  await writeFile(join(directory, "token"), "synthetic-token");
-  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
-    issues: [{ path: "/http/operatorCredential", message: expect.any(String) }],
+    issues: expect.arrayContaining([
+      { path: "/credentials/reader/kind", message: "must be equal to one of the allowed values" },
+    ]),
   });
 });

@@ -8,55 +8,32 @@ relationships:
   references:
     - service-configuration
 description: |-
-  Defines the `http` section of the service configuration and the
-  `operator-token` credential kind.
-  `docs/specifications/http-host-configuration.schema.yml` is the
-  machine-readable definition of both. The root of the service
-  configuration names the section under `properties` as `http`, optional
-  with default `{}`, by `$ref` to
-  `https://manifold.wyrd.company/schemas/http-host-configuration`, and
-  lists `operator-token` among its credential kinds by `$ref` to
-  `https://manifold.wyrd.company/schemas/http-host-configuration#/$defs/operator-token-credential`.
+  Defines the `http` section of the service configuration.
+  `docs/specifications/http-host-configuration.schema.yml` is its
+  machine-readable definition. The root of the service configuration
+  names the section under `properties` as `http`, optional with default
+  `{}`, by `$ref` to
+  `https://manifold.wyrd.company/schemas/http-host-configuration`.
 
-  The section sets where the service's one HTTP host listens, and which
-  credential authenticates an operator.
+  The section sets where the service's one HTTP host listens.
 
   - `host` is the address the host binds: an IP address or a host name.
     Default `127.0.0.1`.
   - `port` is the TCP port the host binds, from 0 to 65535; 0 binds a free
     port the operating system chooses. Default 7480.
-  - `operatorCredential` names a credential of kind `operator-token` in
-    `credentials`. When it is absent, the host serves no operator endpoint.
 
-  Credential kind `operator-token`. A bearer token an operator presents in
-  the `Authorization` header as `Bearer <token>`. `tokenFile` is the path
-  of a file holding the token as its only content, surrounding whitespace
-  ignored; a relative path resolves against the directory of the
-  configuration file. The service reads the file at each operator request,
-  so a replaced token applies without a restart.
+  The API is always served without authentication. Access control belongs
+  to the deployment: loopback by default, or a proxy in front.
 
   ```yaml
-  credentials:
-    console-operator:
-      kind: operator-token
-      tokenFile: operator.token
   http:
+    host: 127.0.0.1
     port: 7480
-    operatorCredential: console-operator
   ```
-
-  Beyond the schema, the section is valid only when `operatorCredential`
-  names a key of `credentials` whose kind is `operator-token`, and every
-  `operator-token` credential's `tokenFile` names a readable file holding
-  at least one character that is not whitespace. A failure of either is an
-  issue at the path of the property that holds the name or the file path.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/http-host-configuration.schema.yml` is a valid JSON
-  Schema 2020-12 document and resolves its `$ref` to the root's
-  `declared-name`. Loading a configuration with no `http` section gives
-  `host` `127.0.0.1`, `port` 7480, and no `operatorCredential`. A `port`
-  outside 0 to 65535, an empty `host`, an unknown property, an
-  `operatorCredential` naming an undefined credential or a credential of
-  another kind, and a `tokenFile` that is missing or holds only whitespace
-  each fail with an issue at its JSON Pointer.
+  Schema 2020-12 document. Loading a configuration with no `http` section
+  gives `host` `127.0.0.1` and `port` 7480. A `port` outside 0 to 65535,
+  an empty `host`, and an unknown property each fail with an issue at its
+  JSON Pointer.

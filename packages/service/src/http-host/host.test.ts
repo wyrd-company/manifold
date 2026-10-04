@@ -9,39 +9,16 @@ const hosts: HttpHost[] = [];
 afterEach(async () => {
   for (const host of hosts.splice(0)) await host.close();
 });
-async function fixture(operatorCredential?: string) {
+async function fixture() {
   const errors: Error[] = [];
-  let token = "synthetic-token";
-  let unreadable = false;
   const host = createHttpHost({
-    configuration: { host: "127.0.0.1", port: 0, operatorCredential },
-    credentials: {
-      names: ["operator"],
-      resolve: (name) => ({
-        kind: "operator-token",
-        name,
-        verify: async (presented) => {
-          if (unreadable) throw new Error("Credential operator: unreadable");
-          return presented === token;
-        },
-      }),
-    },
+    configuration: { host: "127.0.0.1", port: 0 },
     onError: (error) => errors.push(error),
   });
   hosts.push(host);
   expect(() => host.address()).toThrow(TypeError);
   const address = await host.listen();
-  return {
-    host,
-    errors,
-    url: `http://${address.host}:${address.port}`,
-    rotate: () => {
-      token = "synthetic-new";
-    },
-    unreadable: () => {
-      unreadable = true;
-    },
-  };
+  return { host, errors, url: `http://${address.host}:${address.port}` };
 }
 test("routes full raw paths by longest segment prefix and validates mounts", async () => {
   const f = await fixture();
@@ -49,47 +26,21 @@ test("routes full raw paths by longest segment prefix and validates mounts", asy
   f.host.mount("/a/b", (_request, response) => response.end("longest"));
   for (const prefix of ["/", "a", "/a/", "/a//b", "/a?b", "/a#b", "/a%b", "/a"])
     expect(() => f.host.mount(prefix, () => {})).toThrow(TypeError);
-  expect(() => f.host.mountOperator("/a", () => {})).toThrow(TypeError);
   expect(await (await fetch(f.url + "/a/b/c")).text()).toBe("longest");
   expect(await (await fetch(f.url + "/a/%62?q=1")).text()).toBe("/a/%62?q=1");
   for (const path of ["/", "/ab", "/missing"]) expect((await fetch(f.url + path)).status).toBe(404);
 });
-test("operator mounts hide without configuration and authenticate each request", async () => {
-  const hidden = await fixture();
-  hidden.host.mountOperator("/api", (_request, response) => response.end("private"));
-  expect((await fetch(hidden.url + "/api")).status).toBe(404);
-  const f = await fixture("operator");
-  f.host.mountOperator("/api", (_request, response) => response.end("private"));
-  for (const authorization of [
-    undefined,
-    "Basic synthetic-token",
-    "Bearer wrong",
-    "Bearer  synthetic-token",
-  ]) {
+test("serves API mounts without authentication", async () => {
+  const f = await fixture();
+  f.host.mount("/api", (_request, response) => response.end("ready"));
+  for (const authorization of [undefined, "Basic synthetic-token", "Bearer wrong"]) {
     const response = await fetch(f.url + "/api", {
       headers: authorization ? { authorization } : {},
     });
-    expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toBe("Bearer");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("www-authenticate")).toBeNull();
+    expect(await response.text()).toBe("ready");
   }
-  expect(
-    await (
-      await fetch(f.url + "/api", { headers: { authorization: "Bearer synthetic-token" } })
-    ).text(),
-  ).toBe("private");
-  f.rotate();
-  expect(
-    (await fetch(f.url + "/api", { headers: { authorization: "Bearer synthetic-token" } })).status,
-  ).toBe(401);
-  expect(
-    (await fetch(f.url + "/api", { headers: { authorization: "Bearer synthetic-new" } })).status,
-  ).toBe(200);
-  f.unreadable();
-  expect(
-    (await fetch(f.url + "/api", { headers: { authorization: "Bearer synthetic-new" } })).status,
-  ).toBe(500);
-  expect(f.errors.map(String).join()).toContain("operator");
-  expect(f.errors.map(String).join()).not.toContain("synthetic-new");
 });
 test("listener errors answer 500 and reach the error sink", async () => {
   const f = await fixture();

@@ -16,42 +16,28 @@ export function createHttpHost(options: HttpHostOptions): HttpHost {
     const answer = (status: number) => {
       response.writeHead(status).end();
     };
-    if (!mount || (mount.operator && !options.configuration.operatorCredential)) {
+    if (!mount) {
       answer(404);
       return;
     }
-    void (async () => {
-      if (mount.operator) {
-        const name = options.configuration.operatorCredential!;
-        const credential = options.credentials.resolve(name);
-        if (credential.kind !== "operator-token")
-          throw new TypeError(`Credential ${name}: requires operator-token`);
-        const header = request.headers.authorization;
-        const presented = header?.match(/^Bearer ([^\s]+)$/)?.[1];
-        if (!presented || !(await credential.verify(presented))) {
-          response.setHeader("WWW-Authenticate", "Bearer");
-          answer(401);
-          return;
-        }
-      }
+    try {
       mount.listener(request, response);
-    })().catch((error: unknown) => {
+    } catch (error: unknown) {
       options.onError(error instanceof Error ? error : new Error(String(error)), {
         method: request.method ?? "",
         path,
       });
       if (!response.headersSent) answer(500);
       else response.destroy();
-    });
+    }
   });
-  function mount(prefix: string, listener: HttpListener, operator: boolean) {
+  function mount(prefix: string, listener: HttpListener) {
     validatePrefix(prefix, mounts);
-    mounts.push({ prefix, listener, operator });
+    mounts.push({ prefix, listener });
     mounts.sort((a, b) => b.prefix.length - a.prefix.length);
   }
   return {
-    mount: (prefix, listener) => mount(prefix, listener, false),
-    mountOperator: (prefix, listener) => mount(prefix, listener, true),
+    mount,
     listen() {
       return new Promise((resolve, reject) => {
         server.once("error", reject);

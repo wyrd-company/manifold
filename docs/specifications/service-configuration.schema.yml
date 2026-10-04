@@ -68,7 +68,6 @@ $defs:
         enum:
           - github-app
           - t3code-token
-          - operator-token
     allOf:
       - if:
           properties:
@@ -82,12 +81,6 @@ $defs:
               const: t3code-token
         then:
           $ref: https://manifold.wyrd.company/schemas/t3code-environments-configuration#/$defs/t3code-token-credential
-      - if:
-          properties:
-            kind:
-              const: operator-token
-        then:
-          $ref: https://manifold.wyrd.company/schemas/http-host-configuration#/$defs/operator-token-credential
   github-app-credential:
     description: >-
       A GitHub App installation. The service mints a short-lived installation

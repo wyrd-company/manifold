@@ -9,7 +9,6 @@ export type {
   ServiceConfiguration,
   HttpHostConfiguration,
   StoreConfiguration,
-  OperatorTokenCredential,
   ProcessRepositoryConfiguration,
   Credentials,
   Credential,

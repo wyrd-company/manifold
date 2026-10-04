@@ -29,15 +29,13 @@ export interface Credentials {
   readonly names: readonly string[];
   resolve(name: string): Credential;
 }
-export type Credential = GitHubAppCredential | T3CodeTokenCredential | OperatorTokenCredential;
+export type Credential = GitHubAppCredential | T3CodeTokenCredential;
 export interface T3CodeTokenCredential {
   readonly kind: "t3code-token";
   readonly name: string;
   readonly tokenFile: string;
 }
-export type CredentialSettings =
-  | GitHubAppSettings
-  | { kind: "t3code-token" | "operator-token"; tokenFile: string };
+export type CredentialSettings = GitHubAppSettings | { kind: "t3code-token"; tokenFile: string };
 export interface GitHubAppCredential {
   readonly kind: "github-app";
   readonly name: string;
@@ -81,13 +79,7 @@ export interface GitHubAppSettings {
 export interface HttpHostConfiguration {
   readonly host: string;
   readonly port: number;
-  readonly operatorCredential: string | undefined;
 }
 export interface StoreConfiguration {
   readonly file: string;
-}
-export interface OperatorTokenCredential {
-  readonly kind: "operator-token";
-  readonly name: string;
-  verify(presented: string): Promise<boolean>;
 }

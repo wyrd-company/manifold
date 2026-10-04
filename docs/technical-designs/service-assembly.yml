@@ -50,9 +50,9 @@ design-challenges:
     commit whatever ran before: a crash after publish, a failed read, a
     pull no one awaited.
   one-host: >-
-    One listener serves endpoints that need no authentication, such as
-    signed webhooks, and operator endpoints that do, under prefixes owned
-    by different modules.
+    One listener serves signed webhooks and operator endpoints under
+    prefixes owned by different modules. Access control belongs to the
+    deployment.
 proposed-design:
   high-level-overview: >-
     `packages/service/src/service/` is the assembly. `startService` loads
@@ -65,9 +65,8 @@ proposed-design:
     current revision into the blueprint loader and applies it to the
     portfolio, one revision at a time. `packages/service/src/http-host/`
     is the HTTP host: one `node:http` server whose request handler
-    dispatches by path prefix to the listeners mounted on it, with operator
-    prefixes behind a bearer token. `packages/service/src/main.ts` is the
-    process entry point: it starts the service from the file named on its
+    dispatches by path prefix to the listeners mounted on it.
+    `packages/service/src/main.ts` is the process entry point: it starts the service from the file named on its
     command line and stops it on `SIGTERM` and `SIGINT`.
   public-interface: |-
     `packages/service/src/service/index.ts` exports exactly these names.
@@ -167,7 +166,6 @@ proposed-design:
 
     export interface ServiceHttp {
       mount(pathPrefix: string, listener: HttpListener): void;
-      mountOperator(pathPrefix: string, listener: HttpListener): void;
       /** The address the host listens on. */
       address(): { readonly host: string; readonly port: number };
     }
@@ -188,7 +186,7 @@ proposed-design:
 
     ```ts
     import type { IncomingMessage, ServerResponse } from "node:http";
-    import type { Credentials, HttpHostConfiguration } from "../service-configuration/index.ts";
+    import type { HttpHostConfiguration } from "../service-configuration/index.ts";
 
     export type HttpListener = (request: IncomingMessage, response: ServerResponse) => void;
 
@@ -196,14 +194,12 @@ proposed-design:
 
     export interface HttpHostOptions {
       readonly configuration: HttpHostConfiguration;
-      readonly credentials: Credentials;
-      /** Called for a listener that throws and for an operator token that cannot be read. */
+      /** Called for a listener that throws. */
       readonly onError: (error: Error, request: { readonly method: string; readonly path: string }) => void;
     }
 
     export interface HttpHost {
       mount(pathPrefix: string, listener: HttpListener): void;
-      mountOperator(pathPrefix: string, listener: HttpListener): void;
       /** Binds the configured address; resolves with the bound address. */
       listen(): Promise<{ readonly host: string; readonly port: number }>;
       /** The bound address; throws a TypeError before `listen` resolves. */
@@ -277,7 +273,7 @@ proposed-design:
     A module joins the service by adding its start to `start.ts` at the
     step its dependencies fix, its stop at the mirrored point of the stop
     order, its member to `Service` when other modules read it, and its
-    endpoints with `mount` or `mountOperator` before step 10's `listen`. A
+    endpoints with `mount` before step 10's `listen`. A
     module that publishes starts after step 7. A module whose state the
     actor host reads, such as the implementations a blueprint binds, is
     built before step 7 and reaches the host through `ServiceParts`.
@@ -351,15 +347,14 @@ proposed-design:
     which `address` reports. `close` calls `server.close()`, which stops
     accepting and closes each connection when its request in progress
     ends, then `server.closeIdleConnections()`, and resolves when the
-    server's `close` event fires. `mount` and `mountOperator` may be called
+    server's `close` event fires. `mount` may be called
     before or after `listen`.
   mounts: >-
     A path prefix is `/` followed by one or more segments joined by `/`,
     each non-empty and holding no `?`, `#`, or `%`, with no trailing `/`.
-    `mount` and `mountOperator` throw a `TypeError` naming the prefix for
-    any other string, `/` included, and for a prefix already mounted by
-    either. A request's path is the path of its request target, before the
-    query, compared as sent with no decoding. A prefix matches a path that
+    `mount` throws a `TypeError` naming the prefix for
+    any other string, `/` included, and for a prefix already mounted. A
+    request's path is the path of its request target, before the query, compared as sent with no decoding. A prefix matches a path that
     equals it or continues it with `/`, so `/webhooks/github` matches
     `/webhooks/github` and `/webhooks/github/1` and never
     `/webhooks/githubx`. The path `/` is under no prefix. The longest
@@ -370,22 +365,10 @@ proposed-design:
     error goes to `onError`, which the service logs as
     `http-listener-error`. A listener owns its method checks, body limits,
     and answers.
-  operator-authentication: >-
-    A prefix mounted with `mountOperator` answers `404` for every request
-    when `http.operatorCredential` is absent, as an unmounted prefix does.
-    Otherwise the request's `Authorization` header must be `Bearer`, one
-    space, and the token; the host passes the presented token to the
-    `operator-token` credential's `verify`, and a missing header, another
-    scheme, or a token that does not verify answers `401` with
-    `WWW-Authenticate: Bearer` and an empty body, without calling the
-    listener. `verify` reads the credential's token file at each call, so
-    a replaced token applies to the next request, and compares the SHA-256
-    digests of the presented and stored tokens with
-    `crypto.timingSafeEqual`, so the comparison takes the same time
-    whatever the tokens hold. A token file that cannot be read, or holds
-    only whitespace, answers `500` and goes to `onError` naming the
-    credential, never the token. The host writes no token to a log, an
-    error, or a response.
+  api-access: >-
+    The API is always served without authentication. Operator endpoints
+    mount with `mount`. Access control belongs to the deployment:
+    loopback by default, or a proxy in front.
   entry-point: >-
     `node dist/main.js <configuration-file>` starts the service. With no
     argument or more than one, it writes a usage line to stderr and exits
@@ -412,31 +395,20 @@ proposed-design:
   configuration: >-
     Two sections join the service configuration root. `http`, specified
     by `http-host-configuration`, sets the listen address, default
-    `127.0.0.1` port 7480, and names the operator credential;
-    `http-host-configuration` also specifies the `operator-token`
-    credential kind. `store`, specified by `store-configuration`, sets the
+    `127.0.0.1` port 7480. `store`, specified by `store-configuration`, sets the
     path of the store's database file and is required. `ServiceConfiguration`
     gains `http: HttpHostConfiguration` and `store: StoreConfiguration`,
-    `Credential` gains `OperatorTokenCredential`, and
-    `service-configuration`'s module exports the three types.
+    and `service-configuration`'s module exports both types.
 
     ```ts
     export interface HttpHostConfiguration {
       readonly host: string;
       readonly port: number;
-      readonly operatorCredential: string | undefined;
     }
 
     export interface StoreConfiguration {
       /** Absolute; resolved against the configuration file's directory. */
       readonly file: string;
-    }
-
-    export interface OperatorTokenCredential {
-      readonly kind: "operator-token";
-      readonly name: string;
-      /** Resolves true when the presented token equals the token file's content. */
-      verify(presented: string): Promise<boolean>;
     }
     ```
   tests: >-
@@ -448,12 +420,9 @@ proposed-design:
     longest prefix takes a request; `/a` does not take `/ab`; `/` answers
     404 while other prefixes are mounted; a path under no prefix answers
     404; `mount("/")`, a malformed prefix, and a repeated prefix throw; a listener that throws answers 500 and
-    reaches `onError`; an operator prefix answers 404 with no operator
-    credential, 401 with `WWW-Authenticate` for no header, another scheme,
-    and a wrong token, and reaches its listener with the token; a replaced
-    token file takes effect on the next request; a token file holding only
-    whitespace answers 500 and the error names the credential and holds
-    no token; `close` resolves after a request in progress is answered,
+    reaches `onError`; an API prefix reaches its listener with no
+    authorization header, another scheme, or an arbitrary bearer token;
+    `close` resolves after a request in progress is answered,
     refuses new connections, and returns the same promise twice. Service
     tests write a configuration file to a temporary directory naming a
     fixture repository served over smart HTTP by the process repository's

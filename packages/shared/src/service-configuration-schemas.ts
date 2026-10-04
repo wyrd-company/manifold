@@ -71,7 +71,7 @@ export const serviceConfigurationSchema = {
       required: ["kind"],
       properties: {
         kind: {
-          enum: ["github-app", "t3code-token", "operator-token"],
+          enum: ["github-app", "t3code-token"],
         },
       },
       allOf: [
@@ -97,18 +97,6 @@ export const serviceConfigurationSchema = {
           },
           then: {
             $ref: "https://manifold.wyrd.company/schemas/t3code-environments-configuration#/$defs/t3code-token-credential",
-          },
-        },
-        {
-          if: {
-            properties: {
-              kind: {
-                const: "operator-token",
-              },
-            },
-          },
-          then: {
-            $ref: "https://manifold.wyrd.company/schemas/http-host-configuration#/$defs/operator-token-credential",
           },
         },
       ],
@@ -220,7 +208,7 @@ export const httpHostConfigurationSchema = {
   $id: "https://manifold.wyrd.company/schemas/http-host-configuration",
   title: "HTTP host configuration",
   description:
-    "The value of the `http` section of the service configuration: where the service's HTTP host listens and which credential authenticates an operator.",
+    "The value of the `http` section of the service configuration: where the service's HTTP host listens.",
   type: "object",
   additionalProperties: false,
   properties: {
@@ -236,30 +224,6 @@ export const httpHostConfigurationSchema = {
       minimum: 0,
       maximum: 65535,
       default: 7480,
-    },
-    operatorCredential: {
-      description: "The name of an `operator-token` credential.",
-      $ref: "https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name",
-    },
-  },
-  $defs: {
-    "operator-token-credential": {
-      description:
-        "A bearer token an operator presents, read from a file at each operator request.",
-      type: "object",
-      additionalProperties: false,
-      required: ["kind", "tokenFile"],
-      properties: {
-        kind: {
-          const: "operator-token",
-        },
-        tokenFile: {
-          description:
-            "Path of the file holding the token. A relative path resolves against the directory of the configuration file.",
-          type: "string",
-          minLength: 1,
-        },
-      },
     },
   },
 } as const;

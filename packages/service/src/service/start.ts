@@ -186,7 +186,6 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     step("t3code-started", "start");
     http = createHttpHost({
       configuration: configuration.http,
-      credentials: configuration.credentials,
       onError: (error, request) =>
         log({
           level: "error",
