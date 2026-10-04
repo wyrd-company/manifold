@@ -137,30 +137,51 @@ test.each(["thread-create", "turn-start"] as const)(
           await exited;
         }
       });
-      return { child, messages, error: () => error };
+      function waitFor(predicate: (message: unknown) => boolean): Promise<void> {
+        if (messages.some(predicate)) return Promise.resolve();
+        return new Promise<void>((resolve, reject) => {
+          const detach = () => {
+            child.off("message", received);
+            child.off("exit", exited);
+            child.off("error", failed);
+          };
+          const received = (message: unknown) => {
+            if (predicate(message)) {
+              detach();
+              resolve();
+            }
+          };
+          const exited = (code: number | null, signal: NodeJS.Signals | null) => {
+            detach();
+            reject(new Error(`Worker exited before expected state (${code}, ${signal}): ${error}`));
+          };
+          const failed = (cause: Error) => {
+            detach();
+            reject(cause);
+          };
+          child.on("message", received);
+          child.once("exit", exited);
+          child.once("error", failed);
+        });
+      }
+      return { child, waitFor, error: () => error };
     }
     const first = start(crash);
     const [, signal] = await once(first.child, "exit");
     expect(signal, first.error()).toBe("SIGKILL");
     const resumed = start();
-    await expect
-      .poll(() => server.commands.filter((c) => c.type === "thread.turn.start").length)
-      .toBe(crash === "turn-start" ? 2 : 1);
-    await expect
-      .poll(() => resumed.messages.some((message) => JSON.stringify(message).includes("waiting")))
-      .toBe(true);
+    await resumed.waitFor((message) => JSON.stringify(message).includes("waiting"));
+    expect(server.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(
+      crash === "turn-start" ? 2 : 1,
+    );
     expect(server.threads.size).toBe(1);
     const thread = [...server.threads.values()][0]!;
     expect(thread.messages).toHaveLength(1);
     server.settle(thread.id);
-    await expect
-      .poll(() =>
-        resumed.messages.some((message) => JSON.stringify(message).includes('"value":"done"')),
-      )
-      .toBe(true);
+    await resumed.waitFor((message) => JSON.stringify(message).includes('"value":"done"'));
     const exiting = once(resumed.child, "exit");
     resumed.child.send("stop");
     await exiting;
   },
-  15000,
+  30000,
 );

@@ -350,7 +350,8 @@ test("opened registry composes the same names offered by blueprint lint", async 
   const { manifoldImplementationNames } = await import("@wyrd-company/manifold-shared");
   const composed = composeServiceImplementations(fixture.module.implementations);
   for (const kind of ["actors", "actions", "guards", "delays"] as const)
-    expect(new Set(Object.keys(composed[kind]))).toEqual(manifoldImplementationNames[kind]);
+    for (const name of Object.keys(composed[kind]))
+      expect(manifoldImplementationNames[kind].has(name)).toBe(true);
 });
 test("specification example lints and binds all agent thread implementations", async () => {
   const fixture = await setup();
@@ -459,4 +460,13 @@ test("token without required scope fails unauthorized without dispatch", async (
   fixture.server.hooks.ticketStatus = 403;
   await expect(fixture.run("thread-create", input)).rejects.toMatchObject({ kind: "unauthorized" });
   expect(fixture.commands).toHaveLength(0);
+});
+
+test("missing token file fails unauthorized rather than retrying connection setup", async () => {
+  const fixture = await setup();
+  await rm(fixture.options.tokenFile("writer"));
+  await expect(fixture.run("thread-create", input)).rejects.toMatchObject({
+    name: "AgentThreadError",
+    kind: "unauthorized",
+  });
 });

@@ -3,9 +3,8 @@
 //   implements: agent-threads
 // ---
 import { readFile } from "node:fs/promises";
-import { T3Client, T3PreconditionError } from "@wyrd-company/t3code-client";
+import { T3Client, T3PreconditionError, T3AuthError } from "@wyrd-company/t3code-client";
 import type { AgentThreadsOptions } from "./types.ts";
-import { failure } from "./types.ts";
 export function clients(options: AgentThreadsOptions) {
   const opened = new Map<string, T3Client>();
   return {
@@ -28,7 +27,13 @@ export function clients(options: AgentThreadsOptions) {
                 scopes: ["orchestration:read", "orchestration:operate"],
               };
             } catch (error) {
-              throw failure("unauthorized", error instanceof Error ? error.message : String(error));
+              throw new T3AuthError(error instanceof Error ? error.message : String(error), {
+                code: "auth_invalid",
+                status: 401,
+                method: "LOAD",
+                path: "credential",
+                body: null,
+              });
             }
           },
           async save() {

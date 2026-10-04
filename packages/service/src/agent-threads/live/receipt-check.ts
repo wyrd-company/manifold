@@ -136,9 +136,32 @@ try {
     createdAt,
   });
   const created = await client.threads.dispatch(create);
-  assert.deepEqual(await client.threads.dispatch(create), created);
+  assert.deepEqual(
+    await client.threads.dispatch(
+      schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+        ...create,
+        title: "A different title",
+        createdAt: new Date().toISOString(),
+      }),
+    ),
+    created,
+  );
   const started = await client.threads.dispatch(turn);
-  assert.deepEqual(await client.threads.dispatch(turn), started);
+  assert.deepEqual(
+    await client.threads.dispatch(
+      schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+        ...turn,
+        message: {
+          messageId: "recipe-message",
+          role: "user",
+          text: "A different recipe",
+          attachments: [],
+        },
+        createdAt: new Date().toISOString(),
+      }),
+    ),
+    started,
+  );
   let observedMessageCreatedAt: string | undefined;
   async function verify() {
     assert(client);
@@ -148,6 +171,8 @@ try {
     const users = thread.messages.filter((message) => message.role === "user");
     assert.equal(users.length, 1);
     assert.equal(users[0]!.id, "recipe-message");
+    assert.equal(thread.title, "Bake bread");
+    assert.equal(users[0]!.text, "Describe a bread recipe");
     observedMessageCreatedAt ??= users[0]!.createdAt;
     assert.equal(users[0]!.createdAt, observedMessageCreatedAt);
     assert.equal(thread.latestTurn, null, "An unconfigured provider must not run an agent turn");
@@ -159,8 +184,31 @@ try {
   await launch();
   client = T3Client.create({ baseUrl, accessToken });
   await client.connect();
-  assert.deepEqual(await client.threads.dispatch(create), created);
-  assert.deepEqual(await client.threads.dispatch(turn), started);
+  assert.deepEqual(
+    await client.threads.dispatch(
+      schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+        ...create,
+        title: "A different title",
+        createdAt: new Date().toISOString(),
+      }),
+    ),
+    created,
+  );
+  assert.deepEqual(
+    await client.threads.dispatch(
+      schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+        ...turn,
+        message: {
+          messageId: "recipe-message",
+          role: "user",
+          text: "A different recipe",
+          attachments: [],
+        },
+        createdAt: new Date().toISOString(),
+      }),
+    ),
+    started,
+  );
   await verify();
   console.log(
     JSON.stringify({

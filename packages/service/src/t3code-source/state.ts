@@ -74,12 +74,15 @@ const sessionStatuses = new Set([
   "stopped",
   "error",
 ]);
-export function threadState(thread: OrchestrationThread, attribution = emptyAttribution): {
+export function threadState(
+  thread: OrchestrationThread,
+  attribution = emptyAttribution,
+): {
   projectId: OrchestrationThread["projectId"];
   turn: OrchestrationThread["latestTurn"];
   requests: ReturnType<typeof pendingRequests>;
   session: OrchestrationThread["session"];
-  messageId:string|null;
+  messageId: string | null;
 } {
   return {
     projectId: thread.projectId,
