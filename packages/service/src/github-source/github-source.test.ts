@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: github-event-source
 // ---
+import { SecretValue } from "../service-configuration/index.ts";
 import { createHmac } from "node:crypto";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -50,10 +51,7 @@ function setup() {
       resolve: () => ({
         kind: "github-app",
         name: "sample-token",
-        installationToken: async () => ({
-          credential: "sample-token",
-          reveal: () => "synthetic-token",
-        }),
+        installationToken: async () => new SecretValue("example-app", "synthetic-token"),
       }),
     },
     boundProjects: () => [],

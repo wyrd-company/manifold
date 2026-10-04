@@ -34,6 +34,9 @@ properties:
   expressions:
     $ref: https://manifold.wyrd.company/schemas/expressions-configuration
     default: {}
+  github:
+    $ref: https://manifold.wyrd.company/schemas/github-source-configuration
+    default: {}
 $defs:
   declared-name:
     description: >-

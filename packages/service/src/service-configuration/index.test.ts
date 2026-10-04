@@ -207,3 +207,92 @@ test("an existing unreadable key fails configuration loading", async () => {
     await chmod(key, 0o600);
   }
 });
+
+test("loads the GitHub section with defaults and resolves hook secret paths", async () => {
+  const defaults = await config(minimal);
+  expect((await loadServiceConfiguration(defaults.file)).github).toEqual({
+    apiUrl: "https://api.github.com",
+    owners: {},
+    sweepIntervalMs: 900000,
+    redeliveryIntervalMs: 60000,
+    requestTimeoutMs: 30000,
+  });
+  const { file, directory } = await config({
+    ...minimal,
+    credentials: {
+      "example-app": { kind: "github-app", appId: 1, installationId: 2, privateKeyFile: "key.pem" },
+    },
+    github: {
+      owners: {
+        Example: { credential: "example-app", hooks: [{ id: 1, secretFile: "hook.secret" }] },
+      },
+      sweepIntervalMs: 12,
+      redeliveryIntervalMs: 13,
+      requestTimeoutMs: 14,
+    },
+  });
+  await writeFile(join(directory, "key.pem"), "generic-key");
+  await writeFile(join(directory, "hook.secret"), "generic-secret\n");
+  const loaded = await loadServiceConfiguration(file);
+  expect(loaded.github.owners["Example"]?.hooks[0]).toEqual({
+    id: 1,
+    repository: undefined,
+    secretFile: join(directory, "hook.secret"),
+  });
+  expect(loaded.github).toMatchObject({
+    sweepIntervalMs: 12,
+    redeliveryIntervalMs: 13,
+    requestTimeoutMs: 14,
+  });
+  expect(Object.isFrozen(loaded.github.owners["Example"]?.hooks)).toBe(true);
+});
+
+test("reports GitHub credential, secret file, repeated hook and owner paths", async () => {
+  const { file } = await config({
+    ...minimal,
+    github: {
+      owners: {
+        Example: { credential: "missing", hooks: [{ id: 1, secretFile: "absent" }] },
+        example: { credential: "missing", hooks: [{ id: 1, secretFile: "." }] },
+      },
+    },
+  });
+  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+    issues: expect.arrayContaining([
+      { path: "/github/owners/Example/credential", message: expect.any(String) },
+      { path: "/github/owners/Example/hooks/0/secretFile", message: expect.any(String) },
+      { path: "/github/owners/example", message: expect.any(String) },
+      { path: "/github/owners/example/hooks/0/id", message: expect.any(String) },
+      { path: "/github/owners/example/hooks/0/secretFile", message: expect.any(String) },
+    ]),
+  });
+});
+
+test("reports the GitHub schema property and an unreadable hook secret", async () => {
+  const invalid = await config({ ...minimal, github: { requestTimeoutMs: 0 } });
+  await expect(loadServiceConfiguration(invalid.file)).rejects.toMatchObject({
+    issues: [{ path: "/github/requestTimeoutMs", message: expect.any(String) }],
+  });
+  const { file, directory } = await config({
+    ...minimal,
+    credentials: {
+      "example-app": { kind: "github-app", appId: 1, installationId: 2, privateKeyFile: "key.pem" },
+    },
+    github: {
+      owners: {
+        Example: { credential: "example-app", hooks: [{ id: 1, secretFile: "hook.secret" }] },
+      },
+    },
+  });
+  await writeFile(join(directory, "key.pem"), "generic-key");
+  const secret = join(directory, "hook.secret");
+  await writeFile(secret, "generic-secret");
+  await chmod(secret, 0);
+  try {
+    await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+      issues: [{ path: "/github/owners/Example/hooks/0/secretFile", message: "EACCES" }],
+    });
+  } finally {
+    await chmod(secret, 0o600);
+  }
+});

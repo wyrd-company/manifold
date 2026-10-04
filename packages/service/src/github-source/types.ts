@@ -3,6 +3,8 @@
 //   implements: github-event-source
 // ---
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Credentials } from "../service-configuration/index.ts";
+import type { ProcessRepository } from "../process-repository/index.ts";
 import type { Store } from "../store/index.ts";
 import type { Router, RouterClock } from "../router/index.ts";
 
@@ -26,30 +28,13 @@ export interface ProjectReference {
   readonly owner: string;
   readonly number: number;
 }
-// Structural contracts until the process repository and configuration merge.
-export interface ProcessRepositoryTrigger {
+export interface ProcessRepositoryTrigger extends Pick<ProcessRepository, "pull"> {
   readonly url: string;
   readonly branch: string;
-  pull(request?: {
-    readonly commit?: string;
-  }): Promise<
-    | { readonly kind: "unchanged"; readonly commit: string }
-    | { readonly kind: "advanced"; readonly commit: string; readonly previous: string | undefined }
-  >;
-}
-export interface SourceCredentials {
-  readonly names: readonly string[];
-  resolve(name: string): {
-    readonly kind: "github-app";
-    readonly name: string;
-    installationToken(request: {
-      readonly signal?: AbortSignal;
-    }): Promise<{ readonly credential: string; reveal(): string }>;
-  };
 }
 export interface GitHubSourceOptions {
   readonly configuration: GitHubConfiguration;
-  readonly credentials: SourceCredentials;
+  readonly credentials: Credentials;
   readonly store: Store;
   readonly router: Router;
   readonly boundProjects: () => readonly ProjectReference[];

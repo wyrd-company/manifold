@@ -77,6 +77,7 @@ export async function githubFake() {
   const dependencies: [string, string][] = [];
   const subIssues: [string, string][] = [];
   const project = { id: "P_one", number: 1, owner: { login: "sample" }, closed: false };
+  const authorizations: (string | undefined)[] = [];
   const log: { operation: string; variables: Record<string, unknown> }[] = [];
   const deliveries: {
     id: number;
@@ -121,6 +122,7 @@ export async function githubFake() {
       : null;
   };
   const server = createServer(async (req, res) => {
+    authorizations.push(req.headers.authorization);
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = Buffer.concat(chunks).toString();
@@ -239,6 +241,7 @@ export async function githubFake() {
     subIssues,
     project,
     log,
+    authorizations,
     deliveries,
     redeliveries,
     deliveryRequests,

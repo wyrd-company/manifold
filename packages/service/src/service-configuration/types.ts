@@ -2,10 +2,12 @@
 // relationships:
 //   implements: service-configuration
 // ---
+import type { GitHubConfiguration } from "../github-source/types.ts";
 import type { ExpressionsConfiguration } from "../blueprint-expressions.ts";
 import type { ComparatorSandboxLimits } from "../comparator-sandbox/index.ts";
 import type { SecretValue } from "./credentials.ts";
 export interface ServiceConfiguration {
+  readonly github: GitHubConfiguration;
   readonly file: string;
   readonly processRepository: ProcessRepositoryConfiguration;
   readonly comparatorSandbox: ComparatorSandboxLimits;

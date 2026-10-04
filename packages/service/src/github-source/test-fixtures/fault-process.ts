@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: github-event-source
 // ---
+import { SecretValue } from "../../service-configuration/index.ts";
 import { openStore } from "../../store/index.ts";
 import { startRouter } from "../../router/index.ts";
 import { startGitHubSource } from "../index.ts";
@@ -35,10 +36,7 @@ startGitHubSource({
     resolve: () => ({
       kind: "github-app",
       name: "sample-token",
-      installationToken: async () => ({
-        credential: "sample-token",
-        reveal: () => "synthetic-token",
-      }),
+      installationToken: async () => new SecretValue("example-app", "synthetic-token"),
     }),
   },
   boundProjects: () => [{ owner: "sample", number: 1 }],

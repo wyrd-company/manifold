@@ -2,6 +2,9 @@
 // relationships:
 //   verifies: github-event-source
 // ---
+import { generateKeyPairSync } from "node:crypto";
+import { apiFixture } from "../process-repository/test-fixtures/remote.ts";
+import { SecretValue, loadServiceConfiguration } from "../service-configuration/index.ts";
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +13,7 @@ import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import { afterEach, expect, test } from "vite-plus/test";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 import { openStore } from "../store/index.ts";
 import { startRouter } from "../router/index.ts";
 import type { JsonValue } from "../store/index.ts";
@@ -81,10 +84,7 @@ async function setup(intervals: { sweepIntervalMs?: number; redeliveryIntervalMs
       resolve: () => ({
         kind: "github-app" as const,
         name: "sample-token",
-        installationToken: async () => ({
-          credential: "sample-token",
-          reveal: () => "synthetic-token",
-        }),
+        installationToken: async () => new SecretValue("example-app", "synthetic-token"),
       }),
     },
     boundProjects: () => [{ owner: "sample", number: 1 }],
@@ -782,4 +782,59 @@ test("the issue-presence migration preserves populated mirrors from version one"
       .prepare("SELECT version FROM schema_migration WHERE owner='github'")
       .get()?.["version"],
   ).toBe(2);
+});
+
+test("uses the loaded GitHub section and named installation credential for fetched state", async () => {
+  const s = await setup();
+  await s.source.stop();
+  const api = await apiFixture();
+  cleanup.push(() => api.close());
+  const directory = mkdtempSync(join(tmpdir(), "github-configuration-"));
+  cleanup.push(async () => {
+    rmSync(directory, { recursive: true });
+  });
+  const { privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  writeFileSync(join(directory, "key.pem"), privateKey);
+  writeFileSync(join(directory, "hook.secret"), "synthetic-secret\n");
+  const file = join(directory, "service.yml");
+  writeFileSync(
+    file,
+    stringify({
+      processRepository: { url: s.options.processRepository.url, directory: "clone" },
+      credentials: {
+        "example-app": {
+          kind: "github-app",
+          appId: 1,
+          installationId: 2,
+          privateKeyFile: "key.pem",
+          apiUrl: api.url,
+        },
+      },
+      github: {
+        apiUrl: s.fake.url,
+        owners: {
+          sample: { credential: "example-app", hooks: [{ id: 1, secretFile: "hook.secret" }] },
+        },
+      },
+    }),
+  );
+  const loaded = await loadServiceConfiguration(file);
+  const source = startGitHubSource({
+    ...s.options,
+    configuration: loaded.github,
+    credentials: loaded.credentials,
+  });
+  cleanup.push(() => source.stop());
+  s.fake.addItem("IT_A", "I_A");
+  source.requestSweep();
+  await s.idle();
+  expect(source.trackedIssue("I_A")?.issue.state).toBe("open");
+  expect(api.calls).toEqual([{ path: "/app/installations/2/access_tokens", body: {} }]);
+  expect(s.fake.authorizations.length).toBeGreaterThan(0);
+  expect(s.fake.authorizations.every((value) => value === `token ${api.state.token}`)).toBe(true);
+  expect(s.errors).toEqual([]);
 });

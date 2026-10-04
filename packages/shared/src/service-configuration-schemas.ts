@@ -4,6 +4,7 @@
 // ---
 /* eslint-disable unicorn/no-thenable -- JSON Schema uses the then keyword. */
 import { expressionsConfigurationSchema } from "./expressions-configuration-schema.ts";
+import { githubSourceConfigurationSchema } from "./github-source-configuration-schema.ts";
 // Generated from the specification assets; agreement is tested.
 export const serviceConfigurationSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -36,6 +37,10 @@ export const serviceConfigurationSchema = {
     },
     expressions: {
       $ref: "https://manifold.wyrd.company/schemas/expressions-configuration",
+      default: {},
+    },
+    github: {
+      $ref: "https://manifold.wyrd.company/schemas/github-source-configuration",
       default: {},
     },
   },
@@ -179,5 +184,6 @@ export const serviceConfigurationSchemas = [
   processRepositoryConfigurationSchema,
   comparatorSandboxConfigurationSchema,
   expressionsConfigurationSchema,
+  githubSourceConfigurationSchema,
 ];
 export const serviceConfigurationSchemaId = serviceConfigurationSchema.$id;
