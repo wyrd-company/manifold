@@ -6,6 +6,7 @@ import { createActor, createMachine } from "xstate";
 import type { AnyActorRef, InspectionEvent, Snapshot } from "xstate";
 import { parseBlueprintVersionKey } from "@wyrd-company/manifold-shared";
 import type { LoadedBlueprint, VersionLoad } from "../blueprint-loader/index.ts";
+import { ActorNotLoadedError } from "../router/index.ts";
 import type { ActorRecord as RouterActorRecord, Router } from "../router/index.ts";
 import type { DeliveryTarget, PersistedSnapshot } from "../store/index.ts";
 import { activeEntries, activeInvokes, deadlineArms, deliverDeadline } from "./entries.ts";
@@ -97,12 +98,15 @@ export async function openActorHost({
           try {
             connected().persist(actorId);
           } catch (error) {
+            // A completed or held actor can leave the router before this queued save.
+            if (error instanceof ActorNotLoadedError) return;
             log({
               level: "error",
               event: "actor-save",
               message: error instanceof Error ? error.message : String(error),
               detail: { actorId },
             });
+            throw error;
           }
         });
       }

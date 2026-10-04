@@ -2,7 +2,7 @@
 // relationships:
 //   implements: durable-event-delivery
 // ---
-export { startRouter } from "./router.ts";
+export { startRouter, ActorNotLoadedError } from "./router.ts";
 export type {
   RouterOptions,
   Router,

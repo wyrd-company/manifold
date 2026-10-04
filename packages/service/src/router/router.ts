@@ -10,6 +10,12 @@ import { subscriptionIndex } from "./topics.ts";
 import type { Router, RouterOptions } from "./types.ts";
 import { validateSourceEvent } from "./validate.ts";
 
+export class ActorNotLoadedError extends TypeError {
+  constructor(actorId: string) {
+    super(`Actor ${actorId} is not loaded`);
+  }
+}
+
 export function startRouter({
   store,
   host,
@@ -131,7 +137,7 @@ export function startRouter({
       requireRunning();
       if (delivering.has(actorId)) return;
       const target = targets.get(actorId);
-      if (!target) return;
+      if (!target) throw new ActorNotLoadedError(actorId);
       const write = { ...target.persist(), actorId };
       if (save(write) === "errored") hold(actorId, "Actor returned an errored snapshot");
       else update(write);

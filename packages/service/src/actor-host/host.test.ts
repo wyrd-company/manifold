@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { assign, fromPromise } from "xstate";
 import { stringify } from "yaml";
 import { memoryRevision } from "@wyrd-company/manifold-shared";
@@ -15,12 +15,13 @@ import { openStore } from "../store/index.ts";
 import type { StoreOptions, Store } from "../store/index.ts";
 import { startRouter } from "../router/index.ts";
 import { invocationOf, openActorHost, recordStateEntry } from "./index.ts";
-import type { ActorSave, SaveHook } from "./index.ts";
+import type { ActorSave, SaveHook, ActorHostOptions } from "./index.ts";
 
 const commit = "a".repeat(40);
 const directories: string[] = [];
 const cleanups: (() => void)[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const cleanup of cleanups.splice(0).toReversed()) cleanup();
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
@@ -45,6 +46,7 @@ async function fixture(
   options: {
     implementations?: Partial<ImplementationRegistry>;
     hooks?: SaveHook[];
+    log?: ActorHostOptions["log"];
     probe?: StoreOptions["probe"];
     files?: Record<string, string>;
   } = {},
@@ -87,7 +89,7 @@ async function fixture(
     store,
     blueprints: loader,
     saveHooks: options.hooks ?? [],
-    log: () => {},
+    log: options.log ?? (() => {}),
     now: () => time,
   });
   const clock = { now: () => time, setTimer: () => () => {} };
@@ -122,7 +124,7 @@ async function fixture(
         store,
         blueprints: loader,
         saveHooks: options.hooks ?? [],
-        log: () => {},
+        log: options.log ?? (() => {}),
         now: () => time,
       });
       router = startRouter({ store, host, clock });
@@ -285,7 +287,11 @@ test("save hooks see transient entries and retry them after a transaction rolls 
   let hookStore: Store;
   let fail = false;
   const f = await fixture(
-    parcel({ waiting: { on: { scanned: "sorting" } }, sorting: { always: "ready" }, ready: {} }),
+    parcel({
+      waiting: { on: { scanned: "sorting" } },
+      sorting: { always: "ready" },
+      ready: { on: { repeat: { target: "ready", reenter: true } } },
+    }),
     {
       hooks: [
         (save) => {
@@ -319,8 +325,14 @@ test("save hooks see transient entries and retry them after a transaction rolls 
   fail = false;
   f.router.attach(restored.target);
   expect(saves.at(-1)?.entered).toEqual(["sorting", "ready"]);
+  const readyId = saves.at(-1)!.entries["ready"];
+  expect(readyId).toEqual(expect.any(String));
   f.router.persist("parcel");
+  expect(saves.at(-1)?.entries).toEqual({ ready: readyId });
   expect(saves.at(-1)?.entered).toEqual([]);
+  await f.send("repeat");
+  expect(saves.at(-1)?.entries).toEqual({ ready: expect.any(String) });
+  expect(saves.at(-1)?.entries["ready"]).not.toBe(readyId);
   expect(
     hookStore.connection.database.prepare("SELECT * FROM test_hook WHERE path = 'sorting'").all(),
   ).toEqual([{ path: "sorting" }]);
@@ -708,4 +720,95 @@ test("start and release require the router connection", async () => {
     "not connected",
   );
   await expect(host.release("parcel")).rejects.toThrow("not connected");
+});
+
+test.each(["hook error", "hook TypeError", "store error"])(
+  "queued saves propagate the original %s after logging and rollback",
+  async (kind) => {
+    const failure = kind === "hook TypeError" ? new TypeError("hook failure") : new Error(kind);
+    let fail = false;
+    let finish!: () => void;
+    const log = vi.fn();
+    const f = await fixture(
+      parcel({ waiting: { invoke: { src: "deliver", onDone: "ready" } }, ready: {} }),
+      {
+        implementations: {
+          actors: {
+            deliver: fromPromise(
+              () =>
+                new Promise<void>((resolve) => {
+                  finish = resolve;
+                }),
+            ),
+          },
+        },
+        hooks: [
+          () => {
+            if (fail && kind.startsWith("hook")) throw failure;
+          },
+        ],
+        log,
+      },
+    );
+    f.start();
+    if (kind === "store error") {
+      const save = f.store.saveSnapshot.bind(f.store);
+      vi.spyOn(f.store, "saveSnapshot").mockImplementation((write) => {
+        const result = save(write);
+        if (fail) throw failure;
+        return result;
+      });
+    }
+    const queued: (() => void)[] = [];
+    vi.spyOn(globalThis, "queueMicrotask").mockImplementation((callback) => queued.push(callback));
+    fail = true;
+    finish();
+    await idle();
+    expect(queued).toHaveLength(1);
+    let caught: unknown;
+    try {
+      queued.shift()!();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(failure);
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "actor-save", message: failure.message }),
+    );
+    expect(f.snapshot().value).toBe("waiting");
+    fail = false;
+    f.router.persist("parcel");
+    expect(f.snapshot().value).toBe("ready");
+  },
+);
+
+test("a queued save of a removed actor does nothing without logging", async () => {
+  let finish!: () => void;
+  const log = vi.fn();
+  const f = await fixture(
+    parcel({ waiting: { invoke: { src: "deliver", onDone: "delivered" } } }),
+    {
+      implementations: {
+        actors: {
+          deliver: fromPromise(
+            () =>
+              new Promise<void>((resolve) => {
+                finish = resolve;
+              }),
+          ),
+        },
+      },
+      log,
+    },
+  );
+  f.start();
+  const queued: (() => void)[] = [];
+  vi.spyOn(globalThis, "queueMicrotask").mockImplementation((callback) => queued.push(callback));
+  finish();
+  await idle();
+  expect(queued).toHaveLength(1);
+  f.router.persist("parcel");
+  expect(() => f.router.persist("parcel")).toThrow(TypeError);
+  expect(() => queued.shift()!()).not.toThrow();
+  expect(log).not.toHaveBeenCalled();
 });

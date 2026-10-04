@@ -384,7 +384,7 @@ test("distant deadlines use clamped wakes without firing early, and stop cancels
   expect(() => r.attach(target("other", context()))).toThrow(TypeError);
 });
 
-test("two sources with the same event id remain distinct and an unloaded persist is ignored", async () => {
+test("two sources with the same event id remain distinct and an unloaded persist throws", async () => {
   const r = start();
   states.get("counter-00")!.topics = ["weather", "sensor"];
   r.persist("counter-00");
@@ -392,7 +392,7 @@ test("two sources with the same event id remain distinct and an unloaded persist
   r.publish({ ...event("same"), source: "sensor", topics: ["sensor.station"] });
   await idle();
   expect(seen()).toEqual(["weather:same", "sensor:same"]);
-  expect(() => r.persist("missing")).not.toThrow();
+  expect(() => r.persist("missing")).toThrow(TypeError);
 });
 
 test("router schema matches its approved DDL and migrations stay isolated and idempotent", () => {
@@ -559,16 +559,16 @@ test("terminal actors are removed after delivery; persist and attach can also fi
   r.publish(event("finish"));
   await idle();
   expect(r.publish(event("later"))).toMatchObject({ rows: [{ actorId: "counter-01" }] });
-  expect(() => r.persist("counter-00")).not.toThrow();
+  expect(() => r.persist("counter-00")).toThrow(TypeError);
   await idle();
   states.get("counter-01")!.status = "done";
   r.persist("counter-01");
-  expect(() => r.persist("counter-01")).not.toThrow();
+  expect(() => r.persist("counter-01")).toThrow(TypeError);
   const data = context();
   data.status = "done";
   r.attach(target("terminal", data));
   await idle();
-  expect(() => r.persist("terminal")).not.toThrow();
+  expect(() => r.persist("terminal")).toThrow(TypeError);
 });
 
 test("persist errors keep the last subscription and attach errors retain the stored actor", async () => {
