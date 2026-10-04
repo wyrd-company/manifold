@@ -50,11 +50,13 @@ CREATE TABLE store_inbox (
 CREATE INDEX store_inbox_pending ON store_inbox (actor_id, sequence) WHERE consumed_at IS NULL;
 
 CREATE TABLE store_deadline (
+  deadline_id INTEGER PRIMARY KEY AUTOINCREMENT,
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
   state_path TEXT NOT NULL CHECK (length(state_path) > 0),
   event_name TEXT NOT NULL CHECK (length(event_name) > 0),
   fire_at INTEGER NOT NULL,
-  PRIMARY KEY (actor_id, state_path, event_name)
-) STRICT, WITHOUT ROWID;
+  entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
+  UNIQUE (actor_id, state_path, event_name)
+) STRICT;
 
 CREATE INDEX store_deadline_by_fire_at ON store_deadline (fire_at, actor_id);

@@ -44,8 +44,11 @@ description: >-
   null.
 
   Deadlines. `store_deadline` holds one armed deadline per actor, state path,
-  and event name. `fire_at` is the time at which the event is due. A row
-  exists only while its state path is active in the actor's snapshot.
+  and event name. `deadline_id` identifies one arm and is never reused, so a
+  re-entry of the state that arms the deadline again gets a new id.
+  `fire_at` is the time at which the event is due. `entry_id` names the
+  entry into the state that armed the row. A row exists only while its state
+  path is active in the actor's snapshot.
 
   Times. Every time is an integer count of milliseconds since the Unix epoch.
 format: sql-ddl

@@ -100,9 +100,11 @@ proposed-design:
     rows of states the actor has left, so a row exists only while its state
     is active and survives a restart armed. A deadline loop fires a due row
     by deleting it and writing its event to the actor's inbox in one
-    transaction, then publishes the event. An armed deadline keeps its fire
-    time across saves, so the delay is not restarted on history re-entry
-    unless the blueprint says so.
+    transaction, then publishes the event. Each arm names the state entry
+    that armed it. A save that keeps the actor in the same entry keeps the
+    fire time, so a replay or a later event does not restart the delay; a
+    save from a new entry into the state replaces it, so the delay restarts
+    when the blueprint exits and re-enters the state.
   environment-streams: >-
     One connection per environment carries every thread's events. The
     source handler stamps each event with its thread id and publishes under

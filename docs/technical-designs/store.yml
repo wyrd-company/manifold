@@ -171,9 +171,11 @@ proposed-design:
       readonly statePath: string;
       readonly eventName: string;
       readonly fireAt: number;
+      readonly entryId: string;
     }
 
     export interface DeadlineRow extends DeadlineArm {
+      readonly deadlineId: number;
       readonly actorId: string;
     }
     ```
@@ -289,22 +291,38 @@ proposed-design:
   deadlines: >-
     A deadline is armed by the snapshot save that enters its state.
     `SnapshotWrite.deadlines` lists the deadlines of the states the snapshot
-    is in. In the transaction of a `saved` write, the store first deletes
-    every deadline row of the actor whose state path is not in the new
-    snapshot's state paths, then inserts each listed deadline with `ON
-    CONFLICT (actor_id, state_path, event_name) DO NOTHING`, so a deadline
-    already armed keeps its fire time and a replayed save does not restart
-    it. A listed deadline whose state path is not in the snapshot's state
-    paths makes `saveSnapshot` throw a `RangeError` and write nothing.
-    `dueDeadlines(at)` returns every row with `fire_at` at or before `at`,
-    ordered by `fire_at` and actor id. `fireDeadline(deadline, topic)`, in
-    one transaction, deletes the row matching the actor, state path, event
-    name, and fire time; when that deleted a row, it writes an inbox row to
-    the actor with event id `deadline:<statePath>:<eventName>:<fireAt>`,
-    the given topic, and payload `{ "type": <eventName> }`, and returns it.
-    When no row matched, because it was already fired or the actor left the
-    state, it returns `undefined` and writes nothing. The deadline loop that
-    calls these and publishes the rows belongs to the router.
+    is in. A listed deadline's `entryId` names the entry into its state that
+    armed it: the target sets it, on the transition that enters the state,
+    to the id of the event that caused the entry, and lists the same
+    `entryId` on every later save while the state stays active. A replayed
+    delivery carries the same event id, so a replayed save lists the same
+    `entryId`; an exit and re-entry of the state, in one delivery or across
+    several, gives a new one. In the transaction of a `saved` write, the
+    store first deletes every deadline row of the actor whose state path is
+    not in the new snapshot's state paths. Then for each listed deadline,
+    keyed by actor, state path, and event name: when no row exists it
+    inserts one; when a row exists with the same `entryId` it leaves the
+    row unchanged, so a retained deadline and a replayed save keep the first
+    fire time; when a row exists with a different `entryId` it deletes that
+    row and inserts the listed one, so a re-entry restarts the delay. A
+    listed deadline whose state path is not in the snapshot's state paths
+    makes `saveSnapshot` throw a `RangeError` and write nothing. Every
+    inserted row takes a new `deadline_id` from an `AUTOINCREMENT` key,
+    which SQLite never reuses, so each arm has its own id that stays the
+    same across saves that retain it. `dueDeadlines(at)` returns every row
+    with `fire_at` at or before `at`, ordered by `fire_at` and actor id.
+    `fireDeadline(deadline, topic)`, in one transaction, deletes the row
+    whose `deadline_id` is `deadline.deadlineId`; when that deleted a row,
+    it writes an inbox row to the actor with event id
+    `deadline:<deadlineId>`, the given topic, and payload `{ "type":
+    <eventName> }`, and returns it. The event id is the decimal deadline id,
+    so it names exactly one arm whatever characters the state path and event
+    name hold, stays the same when a crashed fire is retried, and differs
+    for every later arm of the same state and event. When no row matched,
+    because the arm was already fired, was replaced by a re-entry, or the
+    actor left the state, it returns `undefined` and writes nothing. The
+    deadline loop that calls these and publishes the rows belongs to the
+    router.
   probe: >-
     `probe` observes a delivery between its steps: `sent` after the target
     took the event, `saved` after the snapshot statement and before the
@@ -312,7 +330,8 @@ proposed-design:
     crash at each step, and how the service traces deliveries.
   convergence: >-
     Every write converges. `migrate` twice runs nothing more. `saveSnapshot`
-    twice holds the same rows and the first fire time of every deadline.
+    twice holds the same rows, and the same deadline id and first fire time
+    of every deadline, since the second call lists the same entry ids.
     `writeInbox` twice holds one row per actor and event and returns nothing
     the second time. `markConsumed` twice keeps the first consumed time.
     `deliver` on a consumed row is a no-op. `fireDeadline` twice writes one
@@ -347,7 +366,18 @@ proposed-design:
     only new rows; `pendingInbox` returns insertion order; a deadline
     survives closing and reopening the store; a save that leaves a state
     deletes only that state's deadlines and keeps the fire time of the rest;
-    `fireDeadline` writes one inbox row once. Fault tests, for each crash
+    a save that lists a retained deadline with its `entryId` and a later
+    fire time keeps the first fire time and deadline id; a save that
+    re-enters the same state with a new `entryId` replaces the fire time and
+    the deadline id, saving that write again changes nothing, and the
+    replaced fire time survives closing and reopening the store; a
+    `fireDeadline` for the replaced arm returns `undefined`; `fireDeadline`
+    writes one inbox row once; one actor's two deadlines whose
+    state paths and event names contain `:` and `.`, such as state path
+    `phase.one` with event `tick` and state path `phase` with event
+    `one:tick`, due at the same time, each fire with their own inbox row;
+    and a state re-entered and its deadline fired again at the same fire
+    time writes a second inbox row beside the consumed first. Fault tests, for each crash
     after the inbox write, after `sent`, and after `saved`: the crashed
     store is closed, a fresh store opens on the same file, `drain` with a
     target restored from `loadSnapshot` leaves the total applied once, no
