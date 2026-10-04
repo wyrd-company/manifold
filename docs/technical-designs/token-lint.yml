@@ -222,7 +222,10 @@ proposed-design:
     returns, other than eventless transitions and the `xstate.done.state.`
     events XState raises itself; and, for each wildcard descriptor, `*` or
     a prefix ending `.*`, one symbolic event whose type that descriptor
-    matches and no other descriptor of the configuration names. An
+    matches and no more-specific wildcard or exact descriptor of the
+    configuration names. Ancestor wildcard descriptors also match a
+    more-specific wildcard's representative, and XState selects the most
+    specific matching descriptor. An
     invoke's `onDone`, `onError`, and `onSnapshot` and a state's `after`
     are transitions there while their state is active, so an invoked
     actor's result and a delay may arrive at any settled configuration in

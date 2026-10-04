@@ -74,7 +74,9 @@ export function explore(lint: LintMachine, bound: number, graph: Graph) {
           [...descriptors].some(
             (other) =>
               other !== descriptor &&
-              (other.endsWith(".*") ? event.startsWith(other.slice(0, -1)) : other === event),
+              (other.endsWith(".*")
+                ? other.length - 1 > prefix.length && event.startsWith(other.slice(0, -1))
+                : other === event),
           )
         )
           event += "-";

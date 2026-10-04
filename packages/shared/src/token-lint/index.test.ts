@@ -306,3 +306,9 @@ it("orders ids by code point and includes actor status in the key", () => {
   expect(lint.configurationKey(stopped)).not.toBe(key);
   actor.stop();
 });
+
+it("explores overlapping wildcard prefixes without trying to avoid their ancestors", () => {
+  const doc = flat({ on: { "parcel.*": "returned", "parcel.scan.*": "broken" } });
+  (doc.machine["states"] as Record<string, unknown>)["broken"] = {};
+  expect(verdict(doc)).toBe("violation");
+});
