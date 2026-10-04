@@ -62,6 +62,8 @@ export async function fixture(directory: string) {
     packStarted?: () => void;
   } = { mode: "healthy", auth: undefined, replay: undefined };
   const server = createServer((request, response) => {
+    request.on("error", () => response.destroy());
+    response.on("error", () => response.destroy());
     void (async () => {
       const parts: Buffer[] = [];
       for await (const part of request) parts.push(Buffer.from(part));
@@ -103,6 +105,23 @@ export async function fixture(directory: string) {
           CONTENT_LENGTH: String(body.length),
         },
       });
+      const stop = () => {
+        response.destroy();
+        backend.stdin.destroy();
+        backend.stdout.destroy();
+        backend.stderr.destroy();
+        backend.kill();
+      };
+      // Stream errors arrive after writes return, outside the async handler's catch.
+      backend.on("error", stop);
+      backend.stdin.on("error", stop);
+      backend.stdout.on("error", stop);
+      backend.stderr.on("error", stop);
+      response.on("close", stop);
+      if (response.destroyed) {
+        stop();
+        return;
+      }
       const chunks: Buffer[] = [];
       backend.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
       backend.stderr.resume();
@@ -157,6 +176,8 @@ export async function apiFixture() {
   const calls: { path: string; body: unknown }[] = [];
   const state = { stall: false, status: 201, token: "generic-installation-token" };
   const server = createServer((request, response: ServerResponse) => {
+    request.on("error", () => response.destroy());
+    response.on("error", () => response.destroy());
     void (async () => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
