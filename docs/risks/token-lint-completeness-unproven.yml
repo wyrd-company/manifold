@@ -13,16 +13,21 @@ relationships:
 
 description: >-
   The gate design requires blueprint lint to prove that every path after a
-  guarded transition reaches the declared token return point or a final state.
-  A flow-region graph checks dead ends, cycles, and return reachability but
-  omits transitions declared in other parallel regions. The gate-xstate probe
-  accepts a blueprint whose token region moves the flow into a dead-end trap
-  while the token stays held. A one-at-a-time gate then blocks subsequent
-  actors indefinitely. History targets, guard predicates, always ordering,
-  compound entry, inherited transitions, and multi-target transitions also
-  require configuration-level analysis. The flat graph does not establish
-  the promised proof for these supported XState shapes. A sound analysis and
-  its limits need to be established before the loader relies on this guarantee.
+  guarded transition reaches the declared token return point or actor
+  completion. Configuration traversal catches the tested parallel, ancestor,
+  eventless, multi-target, dead-end, cycle, and history traps, but active-state
+  sets alone merge different remembered histories and accept a runnable
+  counterexample. Sound graph identity needs history memory or equivalent
+  successor expansion, internal event semantics, and transient return entry.
+  Branching opaque guards true and false can reject a valid blueprint whose
+  named guard is always false; abstract cycle diagnostics need feasible
+  witnesses. Invocation lifetimes and outputs, delay cancellation, named
+  action behavior, wildcard event classes, and payload/context-dependent
+  execution remain undecided. Three four-state regions produce 65 graph
+  nodes; eight produce 65537 and take about six seconds in the probe. Nine
+  exceed its 100000-node research cutoff. No supported-shape restriction or
+  production resource limit is selected. The universal supported-shape
+  guarantee remains unproved before the loader relies on it.
 
 categories:
   - technical

@@ -64,6 +64,7 @@ environment:
     - docs/technical-designs/gates.yml
     - docs/technical-designs/durable-event-delivery.yml
     - docs/spikes/sandbox.yml
+    - "Disposable configuration probe: XState 5.33.2, YAML 2.9.1, Vitest 4.1.11, Node 24.21.0"
 
 findings:
   blueprint-shape:
@@ -445,6 +446,472 @@ findings:
       fields, holders, account balances, seeded random, and worker messaging
       may change costs; this probe does not benchmark that complete contract.
 
+  configuration-lint-method:
+    verdict:
+      full-configuration traversal works for the tested structural subset;
+      universal completeness is unproven
+    measurements:
+      accepted-structural-fixture-configurations: 11
+      accepted-returns:
+        - parcel.open.flow.released
+        - parcel.done
+      guard-choices: every evaluation branches independently
+      graph-identity:
+        - sorted active state ids including ancestors
+        - history id to remembered state ids
+        - ordered internal event type queue
+        - actor status
+      reconstructed-blueprint:
+        id: parcel
+        initial: open
+        states:
+          open:
+            type: parallel
+            on:
+              cancel: "#parcel.done"
+            states:
+              flow:
+                initial: queued
+                states:
+                  queued:
+                    always:
+                      target: working
+                      guard:
+                        in:
+                          - parcel.open.firstToken.held
+                  working:
+                    on:
+                      advance: review
+                  review:
+                    always:
+                      target: packing
+                      guard:
+                        in:
+                          - parcel.open.secondToken.held
+                  packing:
+                    on:
+                      advance: released
+                  released:
+                    on:
+                      advance: "#parcel.done"
+              firstToken:
+                initial: empty
+                states:
+                  empty:
+                    on:
+                      first: held
+                  held: {}
+              secondToken:
+                initial: empty
+                states:
+                  empty:
+                    on:
+                      second: held
+                  held: {}
+          done:
+            type: final
+    notes: |-
+      Measured: The disposable function takes a loaded XState v5 machine, a guarded transition identified by source id, event descriptor (or always), and transition index, and a declared return state id. YAML in guards of the form {in: [state ids]} is translated to XState stateIn and and. Other named guards, including parameterized ones, branch true and false at each evaluation. The function first breadth-first enumerates reachable configurations from initial entry, including every pre-grant history, then seeds token-held traversal at every edge that takes the selected guarded transition. It stops that traversal on entry to the return state, including an ancestor, or when the root actor is done. A region final is not actor completion. It reports dead ends, repeated configurations on a path (including cycles with exits), and an unreachable declared return, each with a configuration path. Ignored external events do not count as progress; ignored internal completion events are consumed. Eventless transitions have priority over queued events, which have priority over external events. Individual microsteps preserve transient return entry before an always exit. Every parallel region and ancestor contributes event descriptors; transition selection, conflict resolution, compound initial entry, history resolution, multi-target entry, and completion events run through the installed XState engine.
+
+      Measured: The probe exposes XState's unexported microstep and selectEventlessTransitions functions by appending exports to the disposable installed CommonJS module. It uses an inert actor scope and never starts invoked implementations. This is a version-specific research adapter, not a public production API. Tests also replay the parallel trap and history trap with ordinary createActor, without the adapter.
+
+      Assumed: Named action bodies are inert for structural exploration; their presence makes the result unknown. The graph key omits context and event payload because stateIn is exact and other guards are independently abstracted. Internal queue keys contain event types only; payload-dependent execution is not proved. No fairness or eventual external-event delivery is assumed. A graph result is a structural proof under these conditions, not a proof that an actor will eventually receive an event.
+
+      Measured: The earlier disposable gate-xstate branch is unavailable locally. The valid two-gate fixture is reconstructed from this artifact's described states and transitions; both declared returns pass. It preserves structural behavior, not every original action implementation. Exact original fixture equivalence is not established. The complete reconstructed fixture is:
+
+      The complete blueprint is recorded in this finding's measurements.
+  configuration-lint-rejections:
+    verdict: parallel, dead-end, closed-cycle, unreachable-return, history, and
+      eventless counterexamples have configuration-path diagnostics
+    measurements:
+      valid-first:
+        verdict: accept
+        configurations: 11
+        violations: []
+      valid-second:
+        verdict: accept
+        configurations: 11
+        violations: []
+      parallel-trap:
+        verdict: reject
+        configurations: 15
+        violations:
+          - reason: cycle
+            path:
+              - "{parcel.open.firstToken.held,parcel.open.flow.queued,parcel.op\
+                en.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.working,parcel.o\
+                pen.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.review,parcel.op\
+                en.secondToken.empty}"
+              - "{parcel.open.firstToken.empty,parcel.open.flow.trap,parcel.ope\
+                n.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.trap,parcel.open\
+                .secondToken.empty}"
+              - "{parcel.open.firstToken.empty,parcel.open.flow.trap,parcel.ope\
+                n.secondToken.empty}"
+          - reason: cycle
+            path:
+              - "{parcel.open.firstToken.held,parcel.open.flow.queued,parcel.op\
+                en.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.working,parcel.o\
+                pen.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.review,parcel.op\
+                en.secondToken.empty}"
+              - "{parcel.open.firstToken.empty,parcel.open.flow.trap,parcel.ope\
+                n.secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.trap,parcel.open\
+                .secondToken.empty}"
+              - "{parcel.open.firstToken.held,parcel.open.flow.trap,parcel.open\
+                .secondToken.held}"
+              - "{parcel.open.firstToken.empty,parcel.open.flow.trap,parcel.ope\
+                n.secondToken.empty}"
+      dead-end:
+        verdict: reject
+        configurations: 4
+        violations:
+          - reason: dead end
+            path:
+              - "{sample.queued}"
+              - "{sample.working}"
+              - "{sample.trap}"
+      closed-cycle:
+        verdict: reject
+        configurations: 4
+        violations:
+          - reason: cycle
+            path:
+              - "{sample.queued}"
+              - "{sample.working}"
+              - "{sample.trap}"
+              - "{sample.trap}"
+      unreachable:
+        verdict: reject
+        configurations: 3
+        violations:
+          - reason: dead end
+            path:
+              - "{sample.queued}"
+              - "{sample.working}"
+              - "{sample.trap}"
+          - reason: unreachable return
+            path:
+              - "{sample.queued}"
+              - "{sample.working}"
+      eventless-bypass:
+        verdict: reject
+        configurations: 3
+        violations:
+          - reason: dead end
+            path:
+              - "{sample.queued}"
+              - "{sample.working}"
+              - "{sample.trap}"
+          - reason: unreachable return
+            path:
+              - "{sample.queued}"
+              - "{sample.working}"
+      history:
+        verdict: reject
+        configurations: 10
+        violations:
+          - reason: cycle
+            path:
+              - "{sample.queued} history[sample.box.memory=sample.box.trap]"
+              - "{sample.working} history[sample.box.memory=sample.box.trap]"
+              - "{sample.box.trap} history[sample.box.memory=sample.box.trap]"
+              - "{sample.queued} history[sample.box.memory=sample.box.trap]"
+              - "{sample.working} history[sample.box.memory=sample.box.trap]"
+          - reason: cycle
+            path:
+              - "{sample.queued} history[sample.box.memory=sample.box.trap]"
+              - "{sample.working} history[sample.box.memory=sample.box.trap]"
+              - "{sample.box.trap} history[sample.box.memory=sample.box.trap]"
+              - "{sample.box.trap} history[sample.box.memory=sample.box.trap]"
+    notes: |-
+      Measured: The diagnostics below use sets of active leaf states as the display; ancestors are retained in graph identity. History memory is displayed explicitly. The base flat fixture is sample with initial queued and queued.on.grant = {target: working, guard: allowed}; allowed is an abstract named guard. Return is sample.returned. Dead end adds working.on = {bad: trap, advance: returned}, trap = {}, returned = {}. Closed cycle adds trap.on.again = trap. Unreachable return removes working.on.advance while retaining returned. Eventless bypass uses working.always = trap and working.on.advance = returned: advance cannot run before always. A cycle with an exit uses working.on = {again: working, advance: returned}; it is rejected because the exit need not be chosen. Guarded eventless self-cycles with a fallback return are also detected.
+
+      Measured: The parallel trap adds flow.trap = {} and firstToken.held.on.strand = '#parcel.open.flow.trap' to the complete fixture in configuration-lint-method. A normal actor takes first, then strand. Its flow is trap. That cross-region transition resets firstToken to empty in XState, but the granted token remains outstanding: the replay test records first in context.tokens.first with an assign action on the first event and asserts that value remains true after strand. A region-state reset does not return a durable token. cancel remains an exit, so the graph detects a retention cycle rather than claiming trap has no exit. An ancestor strand targeting a root trap and a strand with simultaneous targets flow.trap and secondToken.held are rejected. Shallow and deep box history are separately exercised with queued -> working, bad -> trap, leave -> outside, back -> box.memory; both can re-enter trap. These are test results for those shapes, not exhaustive correctness proofs.
+  history-configuration-identity:
+    verdict: active-state-only graph identity is falsified by a runnable false
+      acceptance
+    measurements:
+      history-aware-verdict: reject
+      active-states-only-verdict: accept
+      history-aware-configurations: 10
+      runtime-events:
+        - bad
+        - leave
+        - grant
+        - again
+      runtime-final-active-state: sample.box.trap
+      declared-return: sample.box.safe
+      counterexample-blueprint:
+        id: sample
+        initial: choose
+        states:
+          choose:
+            on:
+              good: box
+              bad:
+                target: "#sample.box.trap"
+          box:
+            initial: safe
+            states:
+              safe:
+                on:
+                  leave: "#sample.queued"
+                  back: "#sample.returned"
+              trap:
+                on:
+                  leave: "#sample.queued"
+                  again: trap
+              memory:
+                type: history
+                history: deep
+          queued:
+            on:
+              grant:
+                target: working
+                guard: allowed
+          working:
+            always: "#sample.box.memory"
+          returned: {}
+    notes: |-
+      Measured: This complete YAML counterexample has two reachable queued configurations with identical active states and different remembered box states. The guarded transition is queued.on.grant, with allowed returning true in the replay. Return is box.safe. The good path remembers safe; the bad path remembers trap. On working's always transition to box.memory, those configurations have different successors. Removing history memory from graph identity retains the first encountered safe history and produces accept. Retaining history produces the cycle paths in configuration-lint-rejections. An ordinary XState actor taking bad, leave, grant, again remains active in box.trap without visiting box.safe after grant.
+
+      The complete blueprint is recorded in this finding's measurements.
+
+      Inferred: A sound finite graph needs history memory in node identity, or a sound union of every remembered successor at a merged active configuration. One snapshot per active-state set is insufficient. The gates token-lint description of configurations as sets of active states cannot serve as that complete identity without this additional semantics. This falsifies a literal active-set implementation; it does not falsify every possible history-expanding analysis.
+  configuration-lint-cost:
+    verdict: three four-state regions are practical in this probe; enumeration
+      becomes expensive at seven to eight regions
+    measurements:
+      runtime: v24.21.0
+      regions-width: 4
+      gated-states: 2
+      repetitions-per-size: 3
+      scope: machine load excluded; graph build plus first-gate traversal included
+      runs:
+        - regions: 3
+          width: 4
+          twoGates: true
+          runs:
+            - ms: 7.91
+              configurations: 65
+              postGrant: 49
+              verdict: accept
+              limited: false
+              rssMiB: 63.76
+            - ms: 3.178
+              configurations: 65
+              postGrant: 49
+              verdict: accept
+              limited: false
+              rssMiB: 64.01
+            - ms: 3.864
+              configurations: 65
+              postGrant: 49
+              verdict: accept
+              limited: false
+              rssMiB: 64.51
+        - regions: 4
+          width: 4
+          twoGates: true
+          runs:
+            - ms: 14.723
+              configurations: 257
+              postGrant: 193
+              verdict: accept
+              limited: false
+              rssMiB: 71.69
+            - ms: 12.632
+              configurations: 257
+              postGrant: 193
+              verdict: accept
+              limited: false
+              rssMiB: 71.95
+            - ms: 13.181
+              configurations: 257
+              postGrant: 193
+              verdict: accept
+              limited: false
+              rssMiB: 76.95
+        - regions: 5
+          width: 4
+          twoGates: true
+          runs:
+            - ms: 62.242
+              configurations: 1025
+              postGrant: 769
+              verdict: accept
+              limited: false
+              rssMiB: 85.25
+            - ms: 62.843
+              configurations: 1025
+              postGrant: 769
+              verdict: accept
+              limited: false
+              rssMiB: 102.65
+            - ms: 55.724
+              configurations: 1025
+              postGrant: 769
+              verdict: accept
+              limited: false
+              rssMiB: 107.44
+        - regions: 6
+          width: 4
+          twoGates: true
+          runs:
+            - ms: 257.963
+              configurations: 4097
+              postGrant: 3073
+              verdict: accept
+              limited: false
+              rssMiB: 155.25
+            - ms: 259.656
+              configurations: 4097
+              postGrant: 3073
+              verdict: accept
+              limited: false
+              rssMiB: 234.75
+            - ms: 242.25
+              configurations: 4097
+              postGrant: 3073
+              verdict: accept
+              limited: false
+              rssMiB: 247.37
+        - regions: 7
+          width: 4
+          twoGates: true
+          runs:
+            - ms: 1161.326
+              configurations: 16385
+              postGrant: 12289
+              verdict: accept
+              limited: false
+              rssMiB: 299.61
+            - ms: 1155.761
+              configurations: 16385
+              postGrant: 12289
+              verdict: accept
+              limited: false
+              rssMiB: 374.37
+            - ms: 1185.216
+              configurations: 16385
+              postGrant: 12289
+              verdict: accept
+              limited: false
+              rssMiB: 389.06
+        - regions: 8
+          width: 4
+          twoGates: true
+          runs:
+            - ms: 5935.311
+              configurations: 65537
+              postGrant: 49153
+              verdict: accept
+              limited: false
+              rssMiB: 651.21
+            - ms: 5762.439
+              configurations: 65537
+              postGrant: 49153
+              verdict: accept
+              limited: false
+              rssMiB: 957.17
+            - ms: 5862.51
+              configurations: 65537
+              postGrant: 49153
+              verdict: accept
+              limited: false
+              rssMiB: 1305.48
+      separate-both-gates:
+        - gate: 0
+          configurations: 65
+          postGrant: 49
+          ms: 7.1
+          verdict: accept
+        - gate: 1
+          configurations: 65
+          postGrant: 49
+          ms: 3.137
+          verdict: accept
+      nine-region-resource-probe:
+        regions: 9
+        configurations: 100000
+        ms: 8812.817
+        verdict: unknown
+        limited: true
+        rssMiB: 757.63
+    notes: |-
+      Measured: A synthetic YAML-compatible sample machine has open with N parallel regions r0 through rN-1. Each region starts at s0 and has four states s0, s1, s2, s3. Its nextN event advances s0 -> s1 -> s2 -> s3; s3 has no local transitions. Transitions s0 -> s1 in r0 and r1 are guarded by the named allowed implementation and are the two guarded transitions supplied to lint. open.on.finish targets the root final done, which is both declared returns. Thus every region combination is reachable, including every other region's configuration at either grant. Each run builds the whole pre-grant graph and traverses the first gate; separate measurements lint both gates and each passes with 65 total and 49 post-grant configurations. This benchmark measures state-graph size, not comparator evaluation or token persistence. The machine has two gated states identified through the lint argument; meta.gate adds no graph behavior.
+
+      Measured: There are 4^N + 1 graph nodes for these fixtures, with no history or internal queue expansion. Three runs at each N use fresh machines in one Node process. No warmup is discarded, no GC is forced, and observations are neither percentiles nor isolated peak-memory measurements. RSS is sampled after each run and includes retained heap from preceding runs. Eight regions reach roughly 1.3 GiB process RSS after three runs. A separate process with nine regions reaches the probe-only 100000-node resource cutoff before finishing; unknown means incomplete exploration, never acceptance. This cutoff is a research safeguard, not an operator restriction or a proposed product limit.
+
+      Inferred: Three regions are inexpensive on this host. Seven regions cross one second; eight approach six seconds. Under an interactive sub-second load goal (an assumption, not a product requirement), seven regions are already impractical for this implementation. No universal practical-size boundary is established: history, transition density, opaque guard branching, worker overhead, and payload-dependent context can change it. An implementation could share one graph across gates and improve memory layout; neither optimization is measured.
+  configuration-lint-undecided-shapes:
+    verdict:
+      guard abstraction is conservative and several supported shapes remain
+      undecided; no capability restriction is selected
+    measurements:
+      guard-false-positive: "working.always = [{target: trap, guard: uncertain},
+        {target: returned}]; uncertain returns false in the real actor"
+      guard-false-positive-results:
+        - abstract lint reject
+        - ordinary actor enters returned after grant
+      context-cycle-case:
+        remaining starts at 2; tick self-transitions while more
+        reads remaining > 0 and decrement assigns remaining - 1, then tick
+        returns
+      context-cycle-results:
+        - abstract graph reports cycle
+        - ordinary actor returns after three ticks
+      invocation-case: "working.invoke = {src: worker, onDone: returned}"
+      delay-case: "working.after = {100: returned}"
+      named-action-case:
+        working.entry = signal; working.on.signal = returned; the
+        implementation may raise signal
+      wildcard-case: "working.on = {'*': returned}"
+      resource-case: nine independent four-state regions exceeds the 100000-node probe bound
+    notes: |-
+      Measured: The state-independent uncertain implementation returning false is a valid pure named guard. Abstract true/false branching includes a trap path that this implementation never takes. A concrete context counter also terminates while its abstraction has a cycle. The counter's named action makes the overall probe result unknown; its cycle diagnostic is still a potential abstract path. These diagnostics must not be described as runnable violations without a feasible guard witness. Exact stateIn guards are evaluated against the entire active configuration; transition ordering is delegated to XState. Arbitrary named guards do not have that exact treatment.
+
+      Measured: The probe reports unknown for invocation and delay fixtures, named action bodies, wildcard descriptors, and resource exhaustion. It records no product rejection for them. Invocation is incomplete because the probe does not run worker or track its output and lifetime across exit/re-entry; treating onDone as an arbitrary external event alone cannot prove its availability or ordering. Delays are incomplete because enabling, cancellation, and delivery across state re-entry are not modeled. Named action bodies cannot be inferred from YAML; raised events, assign, spawn, send, and stop can change runtime behavior. Built-in or inline action objects are flagged outside the action model. Wildcard event types require symbolic event classes and payload abstraction; enumerating literal '*' is not the real event alphabet. Initial, transition, invoke, and final outputs dependent on context or event payload are not proved. Concurrent guard evaluations, guard correlations, and hidden implementation state have no decidability result in this probe.
+
+      Inferred: A finite acyclic over-approximation can establish a structural sufficient condition, but a path in that approximation does not establish an actual defect. General unbounded context/actions require an abstraction or invariants; this spike supplies no general decision procedure. State-read-only guards may permit a tighter finite analysis if their implementations expose their reads, but the named false guard demonstrates that opaque branching alone cannot classify all valid blueprints exactly. The design's universal token-return guarantee remains unproved for every supported shape. Choosing to reject undecided shapes or valid conservative false positives would narrow a capability and remains a user decision. No timeout, permissions change, or production resource limit is introduced.
+  configuration-lint-verification:
+    verdict:
+      30 tests pass; history identity, eventless priority, and parallel event
+      coverage mutations each fail the intended test
+    measurements:
+      command: npx vitest run
+      worktree: /workspaces/worktrees/manifold/spikes/token-lint
+      test-files: 1
+      tests: 30
+      failures: 0
+      mutations:
+        - change: drop history from graph identity
+          failed-test: falsifies graph identity based only on active states
+        - change: ignore eventless selection
+          failed-test: rejects eventless bypass
+        - change: omit strand from event alphabet
+          failed-test: rejects the parallel-region strand transition
+    notes: "Measured: The final suite covers YAML loading, parameterized guard
+      names, both reconstructed gate returns, parallel and ancestor traps,
+      simultaneous targets, dead ends, closed and escapable cycles, unreachable
+      return, shallow and deep history, active-set false acceptance, eventless
+      bypass and cycles, transient return entry, root versus region completion,
+      handled and ignored compound completion, named-guard false rejection,
+      concrete context termination, invocation/delay/action/wildcard unknowns,
+      and a probe resource cutoff. Ordinary XState actor replay verifies both
+      history stranding and a retained granted-token context flag after the
+      parallel strand. Each mutation is restored before the passing suite.
+      Thirty tests are evidence for these fixtures, not proof of all XState
+      shapes. Dependencies and spike code are local and never pushed. The
+      artifact carries the fixtures, method, diagnostics, measurements,
+      assumptions, and gaps so the disposable branch is not required to
+      interpret the result."
+
   verification:
     verdict: spike tests, typecheck, and artifact checks pass
     measurements:
@@ -474,12 +941,20 @@ conclusion: >-
   comparator produces the same grants as the stub and costs 2.797-2.884 ms per
   grant at 2000 actors under the stated benchmark conditions. Blueprint lint
   rejects dead ends and cycles in a flat flow graph, but that graph accepts a
-  runnable parallel transition that strands a token. A complete XState
-  token-return proof, including parallel regions, history, and guard semantics,
-  remains unproven and is tracked separately from gate durability.
+  runnable parallel transition that strands a token. Configuration traversal
+  catches the tested structural traps, but active-state-only identity falsely
+  accepts a history trap. Remembered history and microstep return entry are
+  essential. The three-region configuration graph has 65 nodes; independent
+  region growth reaches seconds and substantial memory at seven to eight
+  four-state regions. Opaque guards can falsely reject valid blueprints, and
+  invocation, delays, named actions, wildcard events, and resource exhaustion
+  remain undecided. A complete supported-shape token-return proof remains
+  unproven; token-lint-completeness-unproven stays open. No supported shape is
+  prohibited by these findings.
 
 next-steps:
   - Implement gate holder queries from outstanding token rows and population queries from persisted snapshot state values, with lazy recipient loading.
   - Preserve grant-and-inbox atomicity and event-id deduplication; make return recording atomic with snapshot persistence or repairable before another event is delivered.
-  - Resolve the token-lint completeness risk with a sound configuration-graph analysis and explicit treatment of parallel regions, history, guarded always transitions, and inherited transitions.
+  - Resolve token-lint completeness with history-aware configuration identity, microstep return observation, feasible guard witnesses, and explicit semantics for invocation, delays, named actions, wildcard events, and incomplete exploration.
+  - Present any proposed rejection of undecided shapes or conservative false positives to the user before enforcing it.
   - Measure production comparator payloads, worker messaging, evaluation frequency, and the chosen store synchronization on deployment storage.
