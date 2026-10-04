@@ -20,7 +20,16 @@ import {
   modificationTime,
 } from "./source.ts";
 import type { Source, UsageCall, UsageProvider, UsageRecord, UsageRoot } from "./types.ts";
-export type { UsageProvider, UsageRoot, UsageRecord } from "./types.ts";
+export type {
+  UsageProvider,
+  UsageRoot,
+  UsageRecord,
+  UsageSourceStamp,
+  UsageBatch,
+} from "./types.ts";
+
+import { sourceStamp } from "./stamps.ts";
+import type { UsageSourceStamp, UsageBatch } from "./types.ts";
 
 const providers = new Set<UsageProvider>(["claude", "codex", "cursor", "grok", "opencode"]);
 export function defaultUsageRoots(
@@ -41,6 +50,12 @@ export function defaultUsageRoots(
   ];
 }
 export async function* decodeUsage(roots: readonly UsageRoot[]): AsyncIterable<UsageRecord> {
+  for await (const batch of decodeUsageBatches(roots)) yield* batch.records;
+}
+export async function* decodeUsageBatches(
+  roots: readonly UsageRoot[],
+  options: { skip?: (source: UsageSourceStamp) => boolean } = {},
+): AsyncIterable<UsageBatch> {
   for (const provider of new Set(roots.map((root) => root.provider))) {
     let sources: Source[] = [];
     const paths = new Set<string>();
@@ -53,15 +68,25 @@ export async function* decodeUsage(roots: readonly UsageRoot[]): AsyncIterable<U
         for (const path of unreadable) {
           if (unreadablePaths.has(path)) continue;
           unreadablePaths.add(path);
-          yield { type: "source-error", provider, source: path, code: "unreadable", records: 1 };
+          yield {
+            sources: [],
+            records: [
+              { type: "source-error", provider, source: path, code: "unreadable", records: 1 },
+            ],
+          };
         }
       } catch {
         yield {
-          type: "source-error",
-          provider,
-          source: resolve(root.path),
-          code: "unreadable",
-          records: 1,
+          sources: [],
+          records: [
+            {
+              type: "source-error",
+              provider,
+              source: resolve(root.path),
+              code: "unreadable",
+              records: 1,
+            },
+          ],
         };
         continue;
       }
@@ -73,11 +98,16 @@ export async function* decodeUsage(roots: readonly UsageRoot[]): AsyncIterable<U
           sources.push({ ...source, path });
         } catch {
           yield {
-            type: "source-error",
-            provider,
-            source: source.path,
-            code: "unreadable",
-            records: 1,
+            sources: [],
+            records: [
+              {
+                type: "source-error",
+                provider,
+                source: source.path,
+                code: "unreadable",
+                records: 1,
+              },
+            ],
           };
         }
       }
@@ -88,11 +118,17 @@ export async function* decodeUsage(roots: readonly UsageRoot[]): AsyncIterable<U
     const seen = new DedupSet();
     let agentParents = new Map<string, string>();
     const totals = new Map<string, UsageCall>();
+    const totalSources: UsageSourceStamp[] = [];
     for (const source of sources) {
       const problems = new Problems(source);
+      const records: UsageRecord[] = [];
+      let stamp: UsageSourceStamp | undefined;
+      let hasTotal = false;
       // Commit dedup memory only after the entire source succeeds.
       const nextParents = new Map(agentParents);
       try {
+        stamp = await sourceStamp(source);
+        if (options.skip?.(stamp)) continue;
         const mtime = await modificationTime(source.path);
         const groups =
           provider === "claude"
@@ -111,9 +147,10 @@ export async function* decodeUsage(roots: readonly UsageRoot[]): AsyncIterable<U
         agentParents = nextParents;
         for (const call of calls) {
           if (call.granularity === "session-total") {
+            hasTotal = true;
             const previous = totals.get(call.key);
             if (!previous || compareTotals(call, previous) > 0) totals.set(call.key, call);
-          } else yield call;
+          } else records.push(call);
         }
       } catch (error) {
         seen.rollback();
@@ -127,10 +164,12 @@ export async function* decodeUsage(roots: readonly UsageRoot[]): AsyncIterable<U
         const key = `${error.source}/${error.code}`;
         if (reportedErrors.has(key)) continue;
         reportedErrors.add(key);
-        yield error;
+        records.push(error);
       }
+      if (hasTotal && stamp) totalSources.push(stamp);
+      yield { sources: !hasTotal && stamp ? [stamp] : [], records };
     }
-    yield* totals.values();
+    if (totals.size) yield { sources: totalSources, records: [...totals.values()] };
   }
 }
 export async function runUsageCommand(
@@ -142,6 +181,10 @@ export async function runUsageCommand(
     home: string;
   },
 ): Promise<number> {
+  if (args[0] === "push") {
+    const { runUsagePush } = await import("../usage-push/index.ts");
+    return runUsagePush(args.slice(1), io);
+  }
   const roots: UsageRoot[] = [];
   if (args[0] !== "decode") {
     io.stderr.write("Expected usage decode\n");
