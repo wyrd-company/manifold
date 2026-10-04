@@ -9,8 +9,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "bun build src/cli.ts --compile --outfile dist/manifold-host",
-    "build:targets": "for target in linux-x64 linux-arm64 darwin-arm64 windows-x64; do bun build src/cli.ts --compile --target=bun-$target --outfile dist/$target/manifold-host || exit 1; done",
+    "build": "bun build src/cli.ts --compile --bytecode --outfile dist/manifold-host",
+    "build:targets": "for target in linux-x64 linux-arm64 darwin-arm64 windows-x64; do bun build src/cli.ts --compile --bytecode --target=bun-$target --outfile dist/$target/manifold-host || exit 1; done",
     "typecheck": "pnpm --filter @wyrd-company/manifold-shared build && tsc --noEmit",
     "test": "pnpm --filter @wyrd-company/manifold-shared build && vp test run",
     "generate:comparator-library": "node scripts/generate-comparator-library.mjs && vp fmt src/comparator-lint/library.generated.ts"

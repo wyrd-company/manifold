@@ -43,6 +43,32 @@ async function findings(value: unknown) {
 }
 
 describe("blueprint lint", () => {
+  it("keeps each boundary's local references independent when schema ids repeat", async () => {
+    const value = document();
+    const schema = (type: string) => ({
+      $id: "https://example.invalid/schema",
+      $defs: { value: { type } },
+      $ref: "#/$defs/value",
+    });
+    const result = await lint({
+      ...value,
+      schemas: {
+        ...value.schemas,
+        input: schema("string"),
+        output: schema("number"),
+        context: schema("object"),
+      },
+    });
+    expect(result.ok).toBe(true);
+    const invalid = await findings({
+      ...value,
+      schemas: { ...value.schemas, input: schema("invalid"), output: schema("number") },
+    });
+    expect(invalid).toEqual([
+      expect.objectContaining({ kind: "schema-invalid", location: "/schemas/input" }),
+    ]);
+  });
+
   it("accepts a clean document deterministically and keeps embedded schemas in agreement", async () => {
     expect(await lint(document())).toEqual({ ok: true, blueprint: document() });
     expect(await lint(document())).toEqual(await lint(document()));

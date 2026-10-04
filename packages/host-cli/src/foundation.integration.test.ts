@@ -45,7 +45,14 @@ describe("host CLI runs the comparator lint and the expressions lint", () => {
     directory = mkdtempSync(join(cache, "foundation-binary-"));
     const build = spawnSync(
       "bun",
-      ["build", "src/cli.ts", "--compile", "--outfile", join(directory, "manifold-host")],
+      [
+        "build",
+        "src/cli.ts",
+        "--compile",
+        "--bytecode",
+        "--outfile",
+        join(directory, "manifold-host"),
+      ],
       { encoding: "utf8" },
     );
     expect(build.status, build.stderr).toBe(0);

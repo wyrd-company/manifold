@@ -2,6 +2,7 @@
 // relationships:
 //   implements: [blueprint, blueprint-loader]
 // ---
+import { createSchemaCompiler } from "./schema-compiler.ts";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 import { LineCounter, parseDocument } from "yaml";
@@ -123,11 +124,10 @@ export async function lintBlueprint(
   for (const [src, boundary] of Object.entries(blueprint.schemas.actors ?? {}))
     for (const key of ["input", "output"] as const)
       schemaEntries.push([`/schemas/actors/${pointer(src)}/${key}`, boundary[key]]);
+  const compileSchema = createSchemaCompiler();
   for (const [location, schema] of schemaEntries.sort(([a], [b]) => compareExpressionText(a, b))) {
     try {
-      new Ajv2020({ allErrors: true, strict: false, validateFormats: false }).compile(
-        schema as boolean | Record<string, unknown>,
-      );
+      compileSchema([schema as boolean | Record<string, unknown>]);
     } catch (error) {
       finding("schema-invalid", location, message(error));
     }
@@ -246,7 +246,7 @@ export async function lintBlueprint(
   )
     finding("final-state-missing", "/machine/states", "Machine requires a top-level final state");
   if (!schemaInvalid)
-    for (const row of await lintBlueprintExpressions(blueprint))
+    for (const row of await lintBlueprintExpressions(blueprint, compileSchema))
       findings.push({ ...row, path, location: `/machine${row.location}` });
   return findings.length ? { ok: false, findings } : { ok: true, blueprint };
 }

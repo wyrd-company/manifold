@@ -490,3 +490,16 @@ describe("assignment result shape", () => {
     },
   );
 });
+
+it("keeps an event schema's reference to its context schema when compiling a result", async () => {
+  const { compileExpressionResult } = await import("./expression-results.ts");
+  const check = compileExpressionResult({
+    kind: "expression.guard",
+    location: "/guard",
+    expression: "true",
+    contextSchema: { $id: "https://example.invalid/context", type: "object" },
+    outputSchema: undefined,
+    events: [{ type: "sample", schema: { $ref: "https://example.invalid/context" } }],
+  });
+  expect(check(true, {})).toBe(true);
+});

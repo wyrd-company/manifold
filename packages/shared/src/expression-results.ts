@@ -2,20 +2,25 @@
 // relationships:
 //   implements: blueprint-expressions
 // ---
-import { Ajv2020 } from "ajv/dist/2020.js";
+import { createSchemaCompiler } from "./schema-compiler.ts";
 import { ExpressionError, assertExpressionData } from "./expressions.ts";
 import type { ExpressionSite } from "./expression-sites.ts";
 import { record } from "./expression-sites.ts";
 
 export { assertExpressionData } from "./expressions.ts";
 
-export function compileExpressionResult(site: ExpressionSite) {
-  const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: false });
+export function compileExpressionResult(
+  site: ExpressionSite,
+  compileSchema = createSchemaCompiler(),
+) {
   const schema = site.kind === "expression.assign" ? site.contextSchema : site.outputSchema;
-  const validate = schema === undefined ? undefined : ajv.compile(schema);
-  // Compile input schemas at the same load boundary, including guards and matches.
-  if (site.contextSchema !== undefined) ajv.compile(site.contextSchema);
-  for (const event of site.events) if (event.schema !== undefined) ajv.compile(event.schema);
+  const schemas = [];
+  if (schema !== undefined) schemas.push(schema);
+  // Keep input schemas in the same scope so event refs can resolve context ids.
+  if (site.contextSchema !== undefined) schemas.push(site.contextSchema);
+  for (const event of site.events) if (event.schema !== undefined) schemas.push(event.schema);
+  const validators = compileSchema(schemas);
+  const validate = schema === undefined ? undefined : validators[0];
   return (result: unknown, context?: unknown): unknown => {
     const fail = (kind: "result" | "schema", message: string) => {
       throw new ExpressionError({

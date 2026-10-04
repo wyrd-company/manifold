@@ -3,6 +3,7 @@
 //   implements: decision-models
 // ---
 import { Ajv2020 } from "ajv/dist/2020.js";
+import type { ValidateFunction } from "ajv";
 import { compileExpression, ExpressionError } from "./expressions.ts";
 import { decisionModelSchema } from "./decision-model-schema.ts";
 import { decisionModelBlank, decisionModelLocation } from "./decision-model-types.ts";
@@ -12,10 +13,13 @@ import type {
   DecisionModelLocation,
 } from "./decision-model-types.ts";
 export type * from "./decision-model-types.ts";
-const validate = new Ajv2020({ allErrors: true, strict: false }).compile({
-  ...decisionModelSchema,
-  $ref: "#/$defs/decision-model",
-});
+let decisionModelValidator: ValidateFunction | undefined;
+function validator() {
+  return (decisionModelValidator ??= new Ajv2020({ allErrors: true, strict: false }).compile({
+    ...decisionModelSchema,
+    $ref: "#/$defs/decision-model",
+  }));
+}
 const object = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
 export type DecisionExpressionSite = DecisionModelLocation & {
@@ -122,6 +126,7 @@ export function lintDecisionModel(model: unknown, key: string): readonly Decisio
         return n;
       }),
     };
+  const validate = validator();
   if (!validate(checked))
     return (validate.errors ?? []).map((e) => ({
       severity: "error",

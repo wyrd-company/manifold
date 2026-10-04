@@ -19,9 +19,13 @@ describe("compiled portfolio lint", () => {
     mkdirSync(cache, { recursive: true });
     buildDirectory = mkdtempSync(join(cache, "portfolio-build-"));
     binary = join(buildDirectory, "manifold-host");
-    const build = spawnSync("bun", ["build", "src/cli.ts", "--compile", "--outfile", binary], {
-      encoding: "utf8",
-    });
+    const build = spawnSync(
+      "bun",
+      ["build", "src/cli.ts", "--compile", "--bytecode", "--outfile", binary],
+      {
+        encoding: "utf8",
+      },
+    );
     expect(build.status, build.stderr).toBe(0);
   }, 30_000);
   beforeEach(() => {

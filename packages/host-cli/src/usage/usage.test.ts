@@ -357,6 +357,7 @@ test("compiled Bun binary decodes all fixture roots to the golden JSON Lines", a
     "build",
     fileURLToPath(new URL("../cli.ts", import.meta.url)),
     "--compile",
+    "--bytecode",
     "--outfile",
     binary,
   ]);

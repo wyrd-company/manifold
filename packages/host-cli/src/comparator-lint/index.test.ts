@@ -115,7 +115,7 @@ describe("comparator lint", () => {
     try {
       const build = spawnSync(
         "bun",
-        ["build", "src/cli.ts", "--compile", "--outfile", executable],
+        ["build", "src/cli.ts", "--compile", "--bytecode", "--outfile", executable],
         { encoding: "utf8" },
       );
       expect(build.status, build.stderr).toBe(0);

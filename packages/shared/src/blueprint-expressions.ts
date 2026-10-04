@@ -2,6 +2,7 @@
 // relationships:
 //   implements: blueprint-expressions
 // ---
+import { createSchemaCompiler } from "./schema-compiler.ts";
 import { generateSync } from "json-schema-faker";
 import type { JsonSchema } from "json-schema-faker";
 import { compileExpression, evaluateExpression, ExpressionError } from "./expressions.ts";
@@ -50,6 +51,7 @@ function random(seed: string) {
 
 export async function lintBlueprintExpressions(
   blueprint: ExpressionBlueprint,
+  compileSchema = createSchemaCompiler(),
 ): Promise<readonly ExpressionFinding[]> {
   const findings: ExpressionFinding[] = [];
   for (const site of collectExpressionSites(blueprint)) {
@@ -74,7 +76,7 @@ export async function lintBlueprintExpressions(
     }
     if (!site.events.length) continue;
     try {
-      const check = compileExpressionResult(site);
+      const check = compileExpressionResult(site, compileSchema);
       const contexts =
         site.kind === "expression.match"
           ? [{ name: "required", value: undefined }]
