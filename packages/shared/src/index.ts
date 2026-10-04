@@ -14,3 +14,11 @@ export type {
   Schema,
 } from "./blueprint-expressions.ts";
 export { compileExpressionResult, assertExpressionData } from "./expression-results.ts";
+export type {
+  Comparator,
+  ComparatorInput,
+  ComparatorTask,
+  ComparatorHolder,
+  ComparatorSelection,
+  ComparatorReservation,
+} from "./comparator.d.ts";

@@ -9,10 +9,15 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./comparator.d.ts": {
+      "types": "./src/comparator.d.ts",
+      "bun": "./src/comparator.d.ts",
+      "default": "./dist/comparator.d.ts"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && cp src/comparator.d.ts dist/comparator.d.ts",
     "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },

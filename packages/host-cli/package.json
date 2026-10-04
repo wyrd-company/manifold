@@ -12,12 +12,16 @@
     "build": "bun build src/cli.ts --compile --outfile dist/manifold-host",
     "build:targets": "for target in linux-x64 linux-arm64 darwin-arm64 windows-x64; do bun build src/cli.ts --compile --target=bun-$target --outfile dist/$target/manifold-host || exit 1; done",
     "typecheck": "tsc --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "generate:comparator-library": "node scripts/generate-comparator-library.mjs && vp fmt src/comparator-lint/library.generated.ts"
+  },
+  "dependencies": {
+    "@wyrd-company/manifold-shared": "workspace:*",
+    "typescript": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "bun": "catalog:",
-    "typescript": "catalog:",
     "vite-plus": "catalog:"
   }
 }
