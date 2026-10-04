@@ -11,3 +11,4 @@ export type {
   EnvironmentsConfiguration,
   ThreadChangeEvent,
 } from "./types.ts";
+export { readThreadProject } from "./thread-project.ts";
