@@ -70,7 +70,10 @@ proposed-design:
     unallocated remainder. For each project attached to it, the operator
     chooses: move it up to the parent, where it lands on the parent's Other
     by the same rule as intake; reassign it to a sibling; or archive the
-    project. An archived item keeps its history.
+    project. An archived item keeps its history, and its usage stays
+    charged to its parent: the parent's guarantees to its remaining
+    sub-items are shares of the parent's amount less that usage, so
+    archiving never returns capacity already spent in the window.
   sharing-rule: >-
     An item may reserve while its usage counted as it arrives plus the new
     reservation stays within its guarantee, or within its guarantee plus the
