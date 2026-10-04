@@ -2,6 +2,8 @@ $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
     - gates
+  mitigates:
+    - expression-worker-wait-unbounded
 objective: >-
   Give the user two ways to put logic in the process repository, an
   expression for anything about one value and a function for anything over a
@@ -24,6 +26,11 @@ design-challenges:
   synchronous-guards: >-
     XState v5 guards, assignments, and mappings return their result
     synchronously, and JSONata 2 returns every result as a promise.
+  bounded-wait: >-
+    A thread blocked in `Atomics.wait` runs no event loop, so it cannot
+    observe the `exit` event of the worker it waits on, and a JSONata
+    recursive function in tail position runs in the worker until something
+    stops it.
   one-language-per-shape: >-
     A user should be able to say in one sentence why a piece of logic is
     written the way it is.
@@ -70,14 +77,72 @@ proposed-design:
   synchronous-evaluation: >-
     XState calls guards, assignments, and input and output mappings
     synchronously, and JSONata evaluates asynchronously. The service
-    evaluates blueprint expressions in one worker thread and waits for each
-    result on a shared buffer with `Atomics.wait`, so every implementation
-    is an ordinary synchronous function and works the same in an initial
-    transition, an eventless transition, a restored actor, and a child
-    machine. The worker compiles each expression once and keeps the compiled
-    form by its source text. The worker holds no state the service needs:
-    a restarted service starts a new worker, and a replayed event evaluates
-    again from the same snapshot.
+    evaluates blueprint expressions in one expression worker thread per
+    process and blocks the calling thread with `Atomics.wait` on a shared
+    buffer until the result arrives or the wait reaches its bound, so every
+    implementation is an ordinary synchronous function and works the same in
+    an initial transition, an eventless transition, a restored actor, and a
+    child machine. The worker compiles each expression once and keeps the
+    compiled form by its source text. The worker holds no state the service
+    needs: a restarted worker or service starts empty, and a replayed event
+    evaluates again from the same snapshot.
+  worker-wait: |-
+    The expression worker runs under a supervisor thread. On the first
+    evaluation the calling thread starts the supervisor, unreferenced so that
+    it does not keep the process alive, and the supervisor starts the
+    expression worker and watches it. The calling thread and the expression
+    worker share one `SharedArrayBuffer` and one `MessagePort`: the calling
+    thread posts the request on the port and waits on the buffer, and the
+    worker posts the result and wakes it, which the calling thread then reads
+    with `receiveMessageOnPort`. The supervisor's event loop never blocks, so
+    it receives the worker's `exit` event; it then writes the exit code to
+    the buffer and wakes the calling thread at once. The service implements
+    this channel on `node:worker_threads` in one module,
+    `packages/service/src/expression-worker-channel.ts`, which exports the
+    calling side and the worker side, so a test can run the channel against
+    a fixture worker through the same interface.
+
+    The wait is bounded by `timeoutMs` of the `expressions` section of
+    service configuration, per `expressions-configuration`, default 1000.
+    The bound covers the whole round trip: a worker start when one is due,
+    compilation, evaluation, and the result. A worker start, which loads
+    JSONata and `packages/shared`, takes about a hundred milliseconds and a
+    typical evaluation well under one, so the default holds several starts
+    and the minimum of 250 holds one, and the first evaluation after a
+    restart is not failed by the start alone. The maximum of 60000 caps how
+    long one runaway expression holds the calling thread.
+
+    A wait that reaches the bound, or that ends because the expression
+    worker exited, fails that evaluation with an `ExpressionError` of kind
+    `evaluation` naming the expression, its location, and the cause. The
+    calling thread then terminates the supervisor, which ends the expression
+    worker with it; `Worker.terminate` interrupts the isolate, so it stops a
+    worker that is inside a JSONata loop. The next evaluation starts a new
+    supervisor and worker with a new buffer and port, so a result a
+    terminated worker posts late is never read. A worker that exits between
+    evaluations is replaced the same way before the next evaluation, which
+    runs on the new worker and does not fail. Evaluations on one pair are
+    strictly sequential, because the calling thread blocks for each.
+
+    Restarting converges. Discarding a pair that is already discarded does
+    nothing, and the next evaluation finds either a live pair or none and
+    starts one; however many failures come first, the process holds at most
+    one live pair after the next evaluation. A service that stops during a
+    wait loses only the two threads, and the event replays from the last
+    saved snapshot.
+
+    The failure takes the existing expression error path, so an actor sees
+    it as it sees any other evaluation error: a guard or match does not
+    pass, an assignment raises `expression.error`, and a mapping stops the
+    actor in error, each reported to `onError`. An expression that never
+    finishes holds the calling thread, and every actor it runs, for the
+    bound each time it is evaluated.
+
+    `configureBlueprintExpressions` sets the bound for the process. The
+    service calls it once at start with the `expressions` section, before it
+    loads a blueprint; a later call applies from the next evaluation. The
+    expression lint and the host CLI await JSONata in their own thread and
+    do not use the worker or the bound.
   expression-errors: >-
     A failed expression yields an `ExpressionError` naming its kind (syntax,
     evaluation, result, or schema), the expression, its location in the

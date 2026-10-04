@@ -13,8 +13,11 @@ description: >-
 considered-options:
   "1": >-
     Evaluate in one worker thread with JSONata 2 and block the calling
-    thread on a shared buffer with `Atomics.wait` until the result arrives,
-    as the synckit package does.
+    thread on a shared buffer with `Atomics.wait` until the result arrives
+    or a bound set in service configuration runs out. A supervisor thread
+    watches the worker and wakes the calling thread when the worker exits.
+    A wait that ends without a result fails that evaluation as an
+    expression error and restarts the worker.
   "2": >-
     Resolve before sending: run XState's pure `transition` from the current
     snapshot, record each expression it needed, evaluate those
@@ -38,7 +41,9 @@ expected-outcomes:
     - Guards, matches, assignments, and mappings are synchronous functions XState calls directly.
     - Blueprints, the lint, and decision models share one JSONata version and one error shape.
     - The worker holds nothing the service needs after a restart.
+    - A worker that hangs or exits fails one evaluation and is replaced, and the service keeps running.
   negative:
     - Each evaluation copies its input to the worker and back, at a cost in microseconds per call.
     - The calling thread blocks during each evaluation, as it would for an in-thread evaluation.
-    - A worker that exits during an evaluation leaves the calling thread waiting, since the wait has no timeout.
+    - An expression that never finishes holds the calling thread, and every actor it runs, for the configured bound each time it is evaluated.
+    - Each process runs two threads for blueprint expressions, the worker and its supervisor.

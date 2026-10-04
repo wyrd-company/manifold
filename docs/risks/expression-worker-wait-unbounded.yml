@@ -4,38 +4,38 @@
 # `required` list names `response` but the property is `response-strategy` —
 # the property spelling is used.
 $schema: https://refinery.systems/ontology/risk
-title: A blueprint expression worker that exits mid-evaluation stalls the service thread
+title: A runaway blueprint expression or an exiting expression worker stalls the service thread
 
 # GAP-EDGE: the risk schema declares no relationship-types; these edges connect
-# the decision that accepts the exposure and the design it governs.
+# the decision that accepts the exposure, the design that mitigates it, and the
+# specifications that state the bound.
 relationships:
   related-to:
     - evaluate-blueprint-expressions-in-a-worker-thread
     - expressions
     - blueprint-expressions
+    - expressions-configuration
 
 description: >-
   Blueprint guards, matches, assignments, and mappings evaluate in one worker
   thread per service process, and the calling thread blocks on
-  `Atomics.wait` until the result arrives. The wait has no timeout. A worker
-  that exits or hangs during an evaluation leaves the calling thread, and
-  every actor it runs, waiting with no error and no recovery short of a
-  service restart. JSONata itself has no loop construct, but a recursive
-  user-defined function can run until it exhausts the worker's stack or
-  memory. A bounded wait is a new timeout mechanic and needs the user's
-  approval.
+  `Atomics.wait` until the result arrives. A worker that exits or hangs
+  during an evaluation would leave the calling thread, and every actor it
+  runs, waiting with no error. JSONata has no loop construct, but a
+  recursive user-defined function can run without end.
+  The wait is bounded by `timeoutMs` of the `expressions` section of
+  service configuration, and a supervisor thread wakes the calling thread
+  as soon as the worker exits. Either failure fails that one evaluation as
+  an expression error and restarts the worker. The remaining exposure is a
+  stall of the calling thread for the bound, 1000 ms by default, each time
+  a runaway expression is evaluated.
 
 categories:
   - technical
 
 likelihood: 2
-impact: 4
+impact: 2
 
 response-strategy: mitigate
-# Mitigation candidates: a bounded wait in service configuration with a
-# shipped default that fails the evaluation as an expression error and
-# restarts the worker; or detection of worker exit that releases the wait
-# with an error. Either is a timeout or failure-handling mechanic that needs
-# the user's approval before it is designed.
 
-status: open
+status: mitigated

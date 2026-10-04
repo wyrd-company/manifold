@@ -4,6 +4,7 @@ $schema: https://refinery.systems/ontology/specification
 relationships:
   references:
     - expressions
+    - expressions-configuration
 description: |-
   Defines how a blueprint carries JSONata guards, event matches, and
   mappings, what each expression sees and must return, how the service runs
@@ -174,6 +175,9 @@ description: |-
     guards: { "expression.guard": Guard; "expression.match": Guard };
     actions: { "expression.assign": Action };
   };
+  interface ExpressionsConfiguration { readonly timeoutMs: number }
+  const expressionsDefaults: ExpressionsConfiguration; // { timeoutMs: 1000 }
+  function configureBlueprintExpressions(configuration?: Partial<ExpressionsConfiguration>): void;
   ```
 
   The caller passes `guards` and `actions` to XState's `setup` and
@@ -186,6 +190,14 @@ description: |-
   implementation evaluates synchronously through one worker thread per
   service process, which compiles each source once and keeps it by source
   text, and which does not keep the process alive.
+
+  Each evaluation waits for the worker at most `timeoutMs` milliseconds,
+  per `expressions-configuration`. `configureBlueprintExpressions` sets it
+  for the process: each call replaces the whole configuration, a property
+  it omits takes its value from `expressionsDefaults`, and the value
+  applies from the next evaluation. It throws a `RangeError` naming the
+  property for a value outside its range. Until it is called, the defaults
+  apply.
 
   Errors. `ExpressionErrorDetail` has `kind`, `location`, `expression`,
   `message`, and, when they apply, the JSONata `code` (such as `S0211` or
@@ -202,6 +214,19 @@ description: |-
     partial write is possible.
   - An input or output mapping that fails reports the error to `onError` and
     throws it; XState stops the actor in error.
+
+  The worker yields two `evaluation` errors of its own, each naming the
+  expression and its location:
+
+  - An evaluation whose wait reaches `timeoutMs` has the message
+    `Expression did not finish within <timeoutMs> ms; the expression worker
+    was restarted`.
+  - An evaluation during which the worker exits has the message
+    `The expression worker exited with code <code> during evaluation; the
+    expression worker was restarted`, and fails as soon as the worker
+    exits.
+
+  After either, the next evaluation runs on a new worker.
 
   At run time, running an expression twice over the same input gives the
   same result, except through JSONata's clock and random functions. Evaluation writes
@@ -236,7 +261,14 @@ validation-criteria: >-
   `expression.error`. They run a machine with two top-level final states
   that each map `output`, invoked as a child, and assert both the child
   actor's output and the `output` of the parent's `onDone` event for each
-  final state. The lint tests in `packages/shared` use fixtures for a
+  final state. They show that a guard whose expression is a recursive
+  JSONata function that never ends does not pass, reports an `evaluation`
+  error naming its expression and location once the wait reaches
+  `timeoutMs`, and that the next evaluation succeeds. The channel tests run
+  `packages/service/src/expression-worker-channel.ts` against a fixture
+  worker that exits during an evaluation, and show that the evaluation
+  fails with the exit message well before `timeoutMs`, and that the next
+  evaluation succeeds. The lint tests in `packages/shared` use fixtures for a
   valid mapping, a mapping whose result breaks its output schema, a guard
   whose result is not a boolean, an expression that does not parse, and a
   mapping with no output schema, and check each finding's kind, location,

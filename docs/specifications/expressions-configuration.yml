@@ -1,0 +1,37 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose bound this is.
+  realizes:
+    - expressions
+  mitigates:
+    - expression-worker-wait-unbounded
+description: >-
+  Defines the `expressions` section of the service configuration: the bound
+  on every blueprint expression evaluation the service runs in its
+  expression worker. `docs/specifications/expressions-configuration.schema.yml`
+  is the machine-readable definition of the section's value.
+
+  `timeoutMs` is the longest the calling thread waits for one evaluation, in
+  milliseconds. The wait covers the whole round trip: starting the worker
+  when one is due, compiling the expression, evaluating it, and returning
+  the result. An evaluation whose wait reaches the bound fails with an
+  `ExpressionError` of kind `evaluation`, and the worker is restarted before
+  the next evaluation. It is an integer from 250 to 60000, so that a worker
+  start fits inside the bound and a runaway expression holds the calling
+  thread for at most one minute. Default 1000.
+
+  The section and its property are optional; an absent value takes its
+  default. The service reads the section when it starts and passes it to
+  `configureBlueprintExpressions`, before it loads a blueprint, and the
+  bound applies to every blueprint expression evaluation in the process.
+  The expression lint and the host CLI do not evaluate through the worker,
+  and the section does not apply to them.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/expressions-configuration.schema.yml` is a valid JSON
+  Schema 2020-12 document, and its defaults equal `expressionsDefaults`
+  exported by `packages/service`. The service rejects a configuration whose
+  `expressions` value the schema rejects, naming the property.
+  `configureBlueprintExpressions` throws a `RangeError` naming `timeoutMs`
+  for a value outside 250 to 60000.
