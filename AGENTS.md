@@ -18,7 +18,7 @@ Managing multiple agent sessions, following a process, and doing so across multi
 
 ### 3. Manifold is the glue
 
-Manifold is not meant to work alone. It glues common and useful systems together to make the sum greater than the parts. T3Code server provides an abstraction for coding agent harnesses/providers as well as an interactive chat surface. GitHub provides task storage and another user interface surface. Apprise, through apprise-api, provides user notification and alerting. Webhook handling allows Manifold to listen and react.
+Manifold is not meant to work alone. It glues common and useful systems together to make the sum greater than the parts. T3Code server provides an abstraction for coding agent harnesses/providers as well as an interactive chat surface. GitHub provides task storage and another user interface surface. ntfy provides user notification and alerting, and its action buttons let the user answer an escalation from the notification. Webhook handling allows Manifold to listen and react.
 
 ### 4. We never lose our place
 
@@ -88,7 +88,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
 - **issue** a way to track tasks related to a repository on GitHub
 - **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, or an event payload assigned into context.
-- **notification destination** a name the process repository uses for where an escalation is sent, mapped in service configuration to an apprise-api key and tags.
+- **notification destination** a name the process repository uses for where an escalation is sent, mapped in service configuration to an ntfy server, topic, security posture, and credential.
 - **pacing** a limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.
 - **parent** a task with subtasks
 - **population** the task actors in a gated state that hold no token from its gate.
