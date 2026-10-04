@@ -43,8 +43,11 @@ description: >-
   Derived quantities. For an actor, item, and account, the net reservation is
   the sum of its `reserve`, `settle`, and `move` amounts, and the posted usage
   is the sum of its `actual` amounts in every window. The outstanding
-  reservation is the net reservation less the posted usage, or zero when that
-  is negative. The capacity of an account window is the sum of its `credit`
+  reservation folds its entries in `seq` order from 0: a `reserve`, `move`,
+  or `settle` entry sets it to the greater of 0 and itself plus the amount,
+  and an `actual` entry sets it to the greater of 0 and itself less the
+  amount. An actual consumes only the hold that exists when it is posted.
+  The capacity of an account window is the sum of its `credit`
   amounts. The estimate of an actor for an account is the sum of its
   `reserve` amounts only; a move and a settlement leave it unchanged.
 format: sql-ddl
@@ -54,7 +57,8 @@ validation-criteria: >-
   steps in order to an empty database and compares the `type`, `name`,
   `tbl_name`, and `sql` of every `sqlite_schema` row whose name starts with
   `ledger_` with the rows this file produces on a second empty database,
-  with each run of whitespace in `sql` read as one space; they are equal. An `UPDATE` or `DELETE` on any of the four tables fails with the
+  with each run of whitespace in `sql` read as one space; they are equal.
+  An `UPDATE` or `DELETE` on any of the four tables fails with the
   table's append-only message. An entry that breaks a kind's rule, such as a
   credit naming an actor, a reserve carrying a window, or a non-negative
   settle, fails its CHECK constraint. The ledger's tests open their own

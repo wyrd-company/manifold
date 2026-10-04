@@ -2,9 +2,9 @@
 -- relationships:
 --   asset-of: portfolio-ledger-tables
 -- ---
--- The portfolio ledger's tables. The ledger runs this script on the
--- connection it receives, every time it is constructed. Every statement is
---, so a second run changes nothing.
+-- The portfolio ledger's tables: the schema that the ledger's migration
+-- steps produce. The store applies the steps with `migrate("ledger", steps)`
+-- and records the version in `schema_migration`; the ledger runs no DDL.
 
 -- One row per idempotent write: credit, reserve, actual, and move.
 -- `request` is the canonical JSON of the request (keys sorted), so a replay

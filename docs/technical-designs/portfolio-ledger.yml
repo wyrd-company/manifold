@@ -188,11 +188,14 @@ proposed-design:
     `LedgerError`. The console calls it to refuse a portfolio before it is
     saved; the service calls it on every portfolio it loads and passes the
     result to `createLedger` or `setPortfolio`. `setPortfolio` replaces the
-    portfolio for every later call and writes nothing.
+    portfolio for every later call and writes nothing. Entries are never
+    rewritten for a portfolio, so usage stays charged to the account
+    whatever portfolio is current: an item the portfolio holds charges its
+    ancestors, and an item it does not hold charges the top level.
 
     ```ts
     export type LedgerPortfolioInput = {
-      items: { id: string; parent: string | null }[];
+      items: { id: string; parent: string | null; archived?: boolean }[];
       allocations: {
         item: string;
         account: string;
@@ -207,9 +210,12 @@ proposed-design:
     An item with a null parent is top-level; the parent of every top-level
     item is the account's capacity. An item with no allocation row for an
     account has a guarantee of 0 and the default ceiling for that account.
-    Validation rejects, with code `invalid-portfolio`: an empty or duplicate
+    An archived item keeps its place in the tree, so that its history stays
+    charged to its parent: its guarantee is 0, it is never waiting, and it
+    takes no new reservation and no move. Validation rejects, with code `invalid-portfolio`: an empty or duplicate
     item id, a parent that is not an item, a cycle, two rows for one item and
-    account, a row for an unknown item, a percentage outside 0 to 100 or with
+    account, a row for an unknown or archived item, an item that is not
+    archived under an archived parent, a percentage outside 0 to 100 or with
     more than two decimal places, a ceiling below the guarantee, and a weight
     that is not a positive integer. Percentages convert to integer basis
     points (`Math.round(percent * 100)`) at this boundary, and every later
@@ -242,10 +248,15 @@ proposed-design:
     is posted after a reset; an actual whose `usedAt` precedes the account's
     first window throws `no-window`. A reservation counts against the
     account's current window for as long as it is outstanding, whichever
-    window it was written in. For one actor, item, and account, outstanding
-    is `max(0, net reservation - posted usage)`, where the net reservation
-    sums `reserve`, `settle`, and `move` entries and posted usage sums
-    `actual` entries in every window. This makes available balance
+    window it was written in. For one actor, item, and account, the
+    outstanding reservation is a fold over its entries in `seq` order,
+    across every window, starting at 0: a `reserve`, `move`, or `settle`
+    entry sets it to `max(0, outstanding + amount)`, and an `actual` entry
+    sets it to `max(0, outstanding - amount)`. An actual consumes only the
+    hold that exists when it is posted, so usage posted before a hold
+    arrives never consumes it. The net reservation, the sum of `reserve`,
+    `move`, and `settle` entries, is never less than the outstanding
+    reservation. This makes available balance
     allocation less usage counted as it arrives: a reservation holds its full
     amount until posted usage consumes it, usage beyond it reduces the
     balance further, and once every actor has settled the balance is
@@ -270,7 +281,8 @@ proposed-design:
     Calls are synchronous, so two calls in one process never interleave.
   reserve: >-
     Writes one `reserve` entry for the actor, item, and account. It throws
-    `invalid-input` for an item the portfolio does not hold or an amount
+    `invalid-input` for an item the portfolio does not hold, an archived
+    item, or an amount
     below 1, and `actor-settled` for a settled actor, after the replay check
     so a replayed grant still returns `replayed: true`. Reserve records what
     it is asked and does not consult the sharing rule: the gate never refuses
@@ -288,12 +300,15 @@ proposed-design:
     sharing rule what `to` could reserve, on the ledger as it would stand
     with `U` removed from `from`, with the caller's `waiting` items. When that
     answer is at least `U`, it writes a `move` entry of `-U` on `from` and
-    `+U` on `to` under one operation and returns `moved: true`. When it is
+    `+U` on `to` under one operation and returns `moved: true`. Since an
+    actual consumes only the hold that exists when it is posted, the actor's
+    earlier actuals on `to` leave the `+U` whole, and the outstanding amount
+    on `to` rises by exactly `U`. When it is
     less, it writes nothing, records no operation, and returns `moved:
     false` with `U` and the answer, so a retry with the same key asks again.
     Posted actuals stay on `from`. Later actuals are posted to `to` by the
-    caller. `from` equal to `to`, or `to` not in the portfolio, throws
-    `invalid-input`.
+    caller. `from` equal to `to`, or `to` not in the portfolio or archived,
+    throws `invalid-input`.
   settle: >-
     Inserts the actor into `ledger_settlements` unless it is there, then,
     for each item and account where the actor's net reservation is above 0,
@@ -304,7 +319,8 @@ proposed-design:
   balance-read: >-
     `balance` reads the account's current window at `now()`, its capacity,
     and, for the item and every descendant, actuals in that window and
-    outstanding reservations. `allocation` is the item's guarantee amount,
+    outstanding reservations, by the fold in `entries`. `allocation` is
+    the item's guarantee amount,
     `available` is allocation less actual less outstanding, and `reservable`
     is the sharing rule's answer for that item. Before the account's first
     credit, `window` is null and every amount is 0. An item the portfolio
@@ -320,8 +336,11 @@ proposed-design:
     `packages/service/src/ledger/sharing-rule.ts`. It receives the portfolio
     for one account, the window's capacity, `opensAt`, `closesAt`, `now`,
     the usage of every item (actual in the window plus outstanding,
-    descendants included), and the set of waiting items, and returns what an
-    item could reserve now. It is computed top down along the path from the
+    descendants included, archived items included), the usage on items the
+    portfolio does not hold, and the set of waiting items, and returns what
+    an item could reserve now. Usage on an item the portfolio does not hold
+    counts as the usage of one extra top-level child with a guarantee of 0
+    that is never waiting. It is computed top down along the path from the
     top level to the item. For each node `c` with parent `P`:
 
     - `G(top) = capacity` and `L(top) = capacity` stand for the account's
@@ -358,7 +377,11 @@ proposed-design:
     The answer for the item is the least `room` along the path. An item
     never borrows a sibling's guarantee, since borrowing draws only on
     `F(P)`, which excludes every child's guarantee and what siblings already
-    borrow. Weight divides only the free remainder, and only among items
+    borrow. An archived item, and usage on an item the portfolio does not
+    hold, has a guarantee of 0, so all of its usage is borrowed: it lowers
+    `F` at its parent and at the top level, and a portfolio change never
+    hands spent capacity back. Weight divides only the free remainder, and
+    only among items
     with waiting work, which the caller supplies. Pacing restarts at a reset
     because `elapsed` and usage are read from the current window. With
     guarantees totalling 100% and no ceiling, `R` is 0 up to rounding and the
@@ -391,7 +414,8 @@ proposed-design:
     temporary directory with `node:sqlite`, with an injected clock. A test
     helper applies `ledgerMigrationSteps` in order with `exec` and builds a
     `LedgerConnection` from the `DatabaseSync` and a `transaction` that uses
-    `BEGIN IMMEDIATE` at the outermost call and `SAVEPOINT` when nested. Values are generic: account
+    `BEGIN IMMEDIATE` at the outermost call and `SAVEPOINT` when nested.
+    Values are generic: account
     `acct`, items `alpha`, `beta`, `gamma`, actors `actor-1` and `actor-2`,
     one window `w1` from 0 to 1000 credited 100 unless a scenario says
     otherwise. The scenarios, each written red before green:
@@ -440,9 +464,24 @@ proposed-design:
       with `actor-2` holding 30 instead, it moves 12, leaving `alpha` usage
       18 and `beta` usage 42, and the estimate stays 30.
 
+    - Move onto prior usage: `alpha` and `beta` at 50%; `actor-1` posts an
+      actual of 20 on `beta` with no reservation, reserves 30 on `alpha`,
+      and posts 18 there; a move of `actor-1` to `beta` moves 12, leaving
+      `actor-1` outstanding 0 on `alpha` and 12 on `beta`, `beta` usage 32,
+      and `actorUsage` outstanding 12. Settle retires 18 on `alpha` and 12
+      on `beta`, and leaves `beta` usage 20.
+
+    - Archive: `alpha` and `beta` at 50%; `actor-1` posts 20 on `alpha`
+      and `actor-2` reserves 10 on `alpha`; after `setPortfolio` archives
+      `alpha` and keeps `beta` at 50%, `beta` reservable is 70, and a
+      reserve on `alpha` or a move to it throws `invalid-input`; settling
+      `actor-2` makes it 80; after `setPortfolio` drops `alpha` from the
+      portfolio, it is still 80; a late actual of 5 on `alpha` with
+      `usedAt` in `w1` makes it 75; a second `Ledger` on the same file with
+      the same portfolio reads 75.
+
     - Windows: reserve 40 and actual 30 in `w1`; after a credit of 100 opens
-      `w2` at 1000, `w1` keeps
-      the 30 and `w2` holds the outstanding 10; an actual of 10 with `usedAt`
+      `w2` at 1000, `w1` keeps the 30 and `w2` holds the outstanding 10; an actual of 10 with `usedAt`
       in `w2` consumes it.
 
     - Append-only: an `UPDATE` or `DELETE` on any ledger table, through the
