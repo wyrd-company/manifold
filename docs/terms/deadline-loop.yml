@@ -1,0 +1,10 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - durable-event-delivery
+title: Deadline Loop
+description: >-
+  The router's one timer that fires due deadlines into their actors' inboxes
+  and re-arms at the earliest unfired deadline.

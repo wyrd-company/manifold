@@ -1,0 +1,10 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - router-events
+title: Topic
+description: >-
+  A path of segments joined by `.` that names where an event comes from,
+  whose first segment is its event source.

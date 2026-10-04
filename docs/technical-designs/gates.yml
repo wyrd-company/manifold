@@ -119,8 +119,9 @@ proposed-design:
     After a restart, actors are restored from snapshots and inboxes are
     drained before any gate runs. A gate rebuilds its population with the
     store's state query over persisted snapshot state values, and its holders
-    from unconsumed and consumed token rows, without loading an actor; only
-    the actors an event is delivered to are loaded. The persisted state value
+    from unconsumed and consumed token rows, reading rows and never an
+    actor's memory. It runs in the router's `afterDrain` hook. The persisted
+    state value
     and context carry everything membership and the comparator input need,
     so no derived column is required. It does not learn the population by
     replaying invocations, since a replayed callback cannot see region state

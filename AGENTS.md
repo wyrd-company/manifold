@@ -73,6 +73,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **console** the web user interface to Manifold
 - **credit** a ledger entry that adds to an account's capacity for a window.
 - **deadline** a time at which an actor in a state receives an event.
+- **deadline loop** the router's one timer that fires due deadlines into their actors' inboxes and re-arms at the earliest unfired deadline.
 - **decision model** a GoRules JDM graph in the process repository whose tables, expressions, and switches are JSONata, evaluated by the Zen engine.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
@@ -101,10 +102,12 @@ We need to be on the same page with terminology. When communicating, use this la
 - **snapshot** the persisted state of an actor: its state value and context.
 - **state machine** a declarative stateful actor, built from a blueprint.
 - **state machine actor** an actor running a blueprint.
+- **subscription** (events) the topics an actor hears and the event types it takes, derived from its snapshot and its blueprint.
 - **T3code project** means an environment-local workspace record rooted at a directory.
 - **task** a specific piece of work that needs to be completed, documented as an issue and executed as an actor
 - **thread** means the durable conversation and work history for a T3code project.
 - **token** what a gate grants a task actor so it may leave the gated state.
+- **topic** a path of segments joined by `.` that names where an event comes from, whose first segment is its event source.
 - **turn** a single, complete cycle of work executed by an agent in response to a user prompt
 - **unallocated remainder** the part of a parent's limit that no child's allocation guarantees, which its children borrow up to their ceiling.
 - **usage unit** a session, subagent, or child thread whose calls one provider session file records.

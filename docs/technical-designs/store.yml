@@ -46,7 +46,8 @@ proposed-design:
     `node:sqlite`, applies the store's migrations, and returns a `Store`.
     The `Store` saves and loads snapshots, writes and lists inbox rows,
     delivers an inbox row to a delivery target in the crash-safe order,
-    drains an actor's pending rows, lists due deadlines, and fires them. Its
+    drains an actor's pending rows, lists due deadlines, and fires them. It
+    lists active snapshots and the next deadline for the router. Its
     `connection` is the seam to other modules that keep tables in the same
     file: it exposes the database, a nesting transaction, and per-owner
     migrations. Every method is synchronous, since `node:sqlite` is. The
@@ -75,6 +76,7 @@ proposed-design:
       loadSnapshot(actorId: string): StoredSnapshot | undefined;
       loadErroredSnapshot(actorId: string): StoredErroredSnapshot | undefined;
       findActorsInState(query: StateQuery): StoredSnapshot[];
+      activeSnapshots(): StoredSnapshot[];
 
       writeInbox(event: InboxEvent, actorIds: readonly string[]): InboxRow[];
       pendingInbox(actorId: string): InboxRow[];
@@ -84,6 +86,7 @@ proposed-design:
 
       dueDeadlines(at: number): DeadlineRow[];
       fireDeadline(deadline: DeadlineRow, topic: string): InboxRow | undefined;
+      nextDeadlineAt(): number | undefined;
 
       close(): void;
     }
@@ -255,6 +258,9 @@ proposed-design:
     ordered by actor id, through the `store_snapshot_state_by_path` index and
     a join to `store_snapshot`. It loads no actor. A gate calls it with its
     blueprint and gated state to rebuild its population.
+    `activeSnapshots()` returns the stored snapshot of every actor whose
+    status is `active`, ordered by actor id. The router calls it once at
+    resume to derive every subscription and restore every actor.
   inbox: >-
     `writeInbox(event, actorIds)` inserts one row per actor id in one
     transaction, with `received_at` from `now`, and `INSERT ... ON CONFLICT
@@ -327,8 +333,11 @@ proposed-design:
     row stays until a save leaves its state or replaces it with a new
     entry, so the knowledge that an entry has fired is durable across saves,
     replays, and restarts, and a new entry arms the deadline again. The
-    deadline loop that calls these and publishes the rows belongs to the
-    router.
+    deadline loop that calls these and delivers the rows belongs to the
+    router. `nextDeadlineAt()` returns the smallest `fire_at` of a row whose
+    `fired_at` is null, read through the `store_deadline_due` index, or
+    `undefined` when no row is armed; the deadline loop arms its one timer
+    from it.
   probe: >-
     `probe` observes a delivery between its steps: `sent` after the target
     took the event, `saved` after the snapshot statement and before the
@@ -368,7 +377,9 @@ proposed-design:
     with it; an errored snapshot does not overwrite the active one and is
     kept beside it; `findActorsInState` returns exactly the actors in a
     path, including ancestor paths and parallel regions, filtered by
-    machine; `writeInbox` holds one row for a repeated event id and returns
+    machine; `activeSnapshots` returns exactly the `active` actors in actor
+    id order; `nextDeadlineAt` returns the earliest unfired fire time,
+    skips fired rows, and is `undefined` with no armed row; `writeInbox` holds one row for a repeated event id and returns
     only new rows; `pendingInbox` returns insertion order; a deadline
     survives closing and reopening the store; a save that leaves a state
     deletes only that state's deadlines and keeps the fire time of the rest;

@@ -23,8 +23,10 @@ background:
       renamed stalls with no error. An errored snapshot has no value or
       context.
     - >-
-      An in-process publish-subscribe bus holds no queue. An event published
-      while its actor is not loaded is gone.
+      An in-process publish-subscribe bus holds no queue and knows only the
+      subscribers it holds in memory. An event published while its actor is
+      not loaded is gone, and the bus cannot name its receivers before it
+      calls them.
 design-challenges:
   ordering: >-
     A crash between delivering an event and persisting its effect must replay
@@ -32,6 +34,10 @@ design-challenges:
   identity: >-
     A source event names an issue, a thread, or a Project. The actor that owns
     it must be found without the blueprint knowing about subscriptions.
+  targets-before-delivery: >-
+    Every receiver of an event must be known, and its inbox row written,
+    before any receiver takes the event, including an actor that is held
+    and not loaded.
   deadlines: >-
     Timeouts a blueprint author writes must survive a restart and fire once.
   idempotency: >-
@@ -39,26 +45,305 @@ design-challenges:
 proposed-design:
   high-level-overview: >-
     One SQLite database holds the snapshots, the inbox, and the deadlines,
-    behind the store's interface. A router built
-    on PubSubJS with hierarchical topics fans events out from sources to
-    loaded actors. Every event is written to its target actors' inbox rows
-    before fan-out, and a row is marked consumed only after the actor's
-    snapshot is saved. Deadlines are rows too. Actors are addressed by
-    identity, and the blueprint declares only event names.
+    behind the store's interface. The router is one module,
+    `packages/service/src/router/`, started once per service with the store
+    and an actor host. Event sources call its one publishing function with a
+    source event: a source name, a source event id, one or more topics, and
+    the event. The router validates the event at that boundary, computes the
+    target actors from an in-memory subscription index derived from every
+    active snapshot, writes one inbox row per target through the store, and
+    schedules each loaded target to drain its inbox through the store's
+    snapshot-then-consume order. Deadlines are rows too, and the router's
+    deadline loop fires them with one timer armed at the earliest unfired
+    row. Actors are addressed by identity, and the blueprint declares only
+    event names. The event-source seam, the topic grammar, and the shape of
+    a source event are specified in `router-events`.
   topics: >-
-    Topics are paths. `github.issue.<node-id>.<event>` for issue,
-    dependency, sub-issue, and Project item events, keyed by the issue's
-    node id because Project item deliveries carry no issue number and no
-    repository; `github.project.<id>.<event>` for Project-level events;
-    `t3.environment.<id>.thread.<id>.<event>`; `notify.action.<id>`;
-    `usage.environment.<id>.session.<id>`. A subscriber to a prefix receives
-    everything under it, so a gate subscribed to a state's actors hears
-    every entry and exit.
+    A topic is a path of segments joined by `.`, and its first segment is the
+    name of the source that publishes it. `github.issue.<node-id>` carries
+    issue, dependency, sub-issue, and Project item events, keyed by the
+    issue's node id because Project item deliveries carry no issue number
+    and no repository; `github.project.<id>` carries Project-level events;
+    `t3.environment.<id>.thread.<id>` carries thread events;
+    `notify.action.<id>` carries notification actions;
+    `usage.environment.<id>.session.<id>` carries usage; and
+    `deadline.<deadline-id>` carries a fired deadline. What happened is the
+    event's `type`, never a topic segment, so an event type may hold `.` as
+    XState event types do. A subscriber to a topic receives every event
+    published under that topic or under any topic that extends it by whole
+    segments: `github.issue.abc` hears `github.issue.abc` and
+    `github.issue.abc.comment.1`, and never `github.issue.abcd`. Each
+    source's specification fixes its exact topics and event types.
   subscriptions: >-
-    Manifold derives each actor's subscriptions from its identity, its
-    Project, issue node id, and thread ids, and from the event names its
-    blueprint declares. Subscriptions are recreated on resume from the
-    snapshot's context. A blueprint never names a topic.
+    An actor's subscription is the topics it hears and the event types it
+    takes. The actor host derives it from a stored snapshot: the topics from
+    the actor's identity in the snapshot's context, its Project, issue node
+    id, and thread ids, and the event types from the `events` its blueprint
+    version declares. The derivation is a pure function of the snapshot and
+    the blueprint, so the router recreates every subscription on resume from
+    the stored snapshots alone and keeps no subscription on disk. An event
+    reaches an actor when one of the event's topics equals or extends one of
+    the actor's topics and the event's `type` is one the actor takes. A
+    blueprint never names a topic.
+  subscription-index: >-
+    The router keeps the subscription of every actor whose stored snapshot is
+    `active`, loaded or held, in a map from topic to actor ids. To find an
+    event's targets it looks up every prefix of each of the event's topics,
+    from the first segment to the whole topic, and keeps the actors whose
+    subscription takes the event's type, so the lookup costs one map read
+    per segment and never scans actors. The index changes only from a
+    snapshot: at resume, after every delivery the router saves, after
+    `attach`, and after `persist`. A saved snapshot whose status is `done`
+    or `stopped` removes the actor from the index.
+  library: >-
+    The router builds its index and its delivery scheduling on Node built-ins
+    and adds no dependency. Topic matching is a map read per topic segment,
+    and delivery is the store's `drain`; the decision record
+    `derive-routing-targets-from-snapshots` records the choice.
+  publish: >-
+    `publish(event)` validates the source event against `router-events` and
+    returns `rejected` with every issue, writing nothing and scheduling
+    nothing, when it fails. Otherwise it computes the targets, and in one
+    `store.connection.transaction` writes the inbox rows: one `writeInbox`
+    call per matched topic, each with the actors whose match was through that
+    topic, an actor matched through several topics taking the first of the
+    event's topics that matches it. The inbox event id is
+    `<source>:<eventId>` and the payload is the event. It schedules every
+    target that has a new row and returns `accepted` with the new rows. A
+    source event published again with the same source and id writes no row,
+    since the store keeps one row per actor and event id, and schedules
+    nothing. An event with no target is accepted with no rows. `publish` is
+    synchronous and joins a transaction the caller holds open, so a source
+    commits its own bookkeeping, a stream cursor or an accepted delivery id,
+    with the inbox rows or not at all.
+  inbox: >-
+    A row per target actor per event: event id, actor id, topic, payload,
+    received time, consumed time. Written by `publish` before any target
+    takes the event. A loaded actor takes it when the scheduler drains it; a
+    held actor keeps it pending; a resumed actor drains its pending rows in
+    insertion order before it takes live events.
+  delivery-scheduling: >-
+    Delivery never runs inside `publish`. The router keeps a set of actor ids
+    to drain and one `setImmediate` callback that, when it runs, takes the
+    set and calls `store.drain` for each loaded actor in it, in the
+    order they were scheduled. A delivery is therefore never re-entered: an
+    actor that publishes while taking an event adds rows that a later drain
+    delivers, and a caller's transaction around `publish` has committed or
+    rolled back before any drain reads the rows. `drain` delivers pending
+    rows lowest sequence first, so a live event never overtakes a pending
+    one. The router wraps each target's `persist` so that it updates the
+    actor's subscription from every write whose status is not `error`. An
+    actor whose write is `done` or `stopped` leaves the index, and the
+    router drops its target once its inbox is empty. While an actor is being
+    delivered to, a `persist` call for it does nothing, since the delivery
+    saves after `send`.
+  snapshot-then-consume: >-
+    Delivery to an actor is send, then save snapshot and mark consumed in
+    one transaction. A crash after send and before the commit replays the
+    event into the snapshot saved before it, which never saw it. A crash
+    after the commit replays nothing. The store never overwrites a snapshot
+    with one whose status is error; the errored snapshot is kept beside it
+    for inspection, and the event that produced it stays unconsumed, so it is
+    held and never lost.
+  held-actors: >-
+    An actor is held when the host cannot restore it or when a delivery to it
+    returns `errored`. The router drops its loaded target, keeps it in the
+    subscription index so that new events still reach its inbox, delivers
+    nothing to it, and calls `onHeld` with the actor id, the reason, and the
+    row that errored when there is one. A held actor stays held until the
+    service restarts, when resume restores and drains it again.
+  host-saves: >-
+    An actor changes without a delivery when an invoked promise or callback
+    sends it an internal event. The host calls `persist(actorId)`, and the
+    router saves the target's persisted write with `store.saveSnapshot`,
+    updates its subscription, and re-arms the deadline loop. An actor the
+    engine starts is given to `attach`, which persists its first snapshot,
+    indexes it, and drains it.
+  resume: >-
+    `startRouter` is the restart path and the start path, and it runs
+    synchronously. It indexes every active stored snapshot; restores each
+    through the host in actor id order, passing the router so that a
+    restored actor can publish from its first delivery, and holds the ones
+    the host refuses; drains each restored actor until its inbox is empty;
+    calls `afterDrain`;
+    starts the deadline loop, which fires every deadline that fell due while
+    the service was down; and then returns the router. No live event reaches
+    an actor before its pending rows, because no source holds the router
+    before `startRouter` returns. Rows written during resume, by an actor
+    that publishes while draining or by a fired deadline, are delivered by
+    the scheduler after resume. Every active actor is loaded at resume, so
+    an invoked promise or callback that was running at the crash starts
+    again with its actor.
+  idempotency: >-
+    Every event carries an id from its source: the webhook delivery id, the
+    thread event sequence, the notification action id, the token id. The
+    inbox holds one row per actor and namespaced event id, consumed rows
+    included, so a source event delivered twice reaches an actor once. A
+    delivery replayed after a crash runs against the snapshot saved before
+    the event, so the actor takes it as the first time. A source that learns
+    of one change through two paths, a webhook and a sweep, gives both the
+    same event id, as its specification defines. Commands an actor sends
+    carry ids derived from the actor id and the id of the event being
+    delivered, so a replayed delivery re-sends the same command and the
+    receiver deduplicates.
+  deadlines: >-
+    A delayed transition in a blueprint becomes a deadline row: actor id,
+    state path, fire time, event name. The row is armed in the transaction
+    that saves the snapshot entering its state, and the same save deletes the
+    rows of states the actor has left, so a row exists only while its state
+    is active and survives a restart armed. The deadline loop fires a due row
+    by marking it fired and writing its event to the actor's inbox in one
+    transaction, then schedules the actor. A fired row stays until its entry
+    ends, so a state entry fires its deadline once. Each arm names the state
+    entry that armed it. A save that keeps the actor in the same entry keeps
+    the fire time, so a replay or a later event does not restart the delay; a
+    save from a new entry into the state replaces it, so the delay restarts
+    when the blueprint exits and re-enters the state.
+  deadline-loop: >-
+    The router holds one timer, never one per deadline. It arms the timer at
+    `store.nextDeadlineAt()`, the earliest fire time of an unfired row, with a
+    delay of that time less `now`, at least zero and at most 2147483647
+    milliseconds, the longest delay a Node timer holds. On wake it calls
+    `store.dueDeadlines(now)`, calls `store.fireDeadline(row,
+    "deadline.<deadlineId>")` for each, schedules each actor whose fire
+    wrote a row, and arms the timer again. A wake with no due row, after a
+    clamped delay, only arms again. The router re-arms after every drain
+    pass, `persist`, and `attach`, since a save can arm a deadline earlier
+    than the timer. A deadline that fell due while the service was down
+    fires on the first wake after resume, once. A deadline whose state the
+    actor left before its fire time has no row and never fires. The loop
+    adds no delay of its own: an event fires at the fire time the blueprint
+    author's delayed transition set.
+  public-interface: |-
+    `packages/service/src/router/index.ts` exports exactly these names, and
+    re-exports nothing from the store.
+
+    ```ts
+    import type {
+      DeliveryTarget,
+      InboxRow,
+      JsonValue,
+      PersistedSnapshot,
+      Store,
+      StoredSnapshot,
+    } from "../store/index.ts";
+
+    export function startRouter(options: RouterOptions): Router;
+
+    export interface RouterOptions {
+      readonly store: Store;
+      readonly host: ActorHost;
+      /** Defaults to Date.now and setTimeout. */
+      readonly clock?: RouterClock;
+      /** Runs once, after every restored actor's inbox is drained. */
+      readonly afterDrain?: () => void;
+      /** Called each time an actor becomes held. */
+      readonly onHeld?: (held: HeldActor) => void;
+    }
+
+    export interface Router {
+      publish(event: SourceEvent): PublishOutcome;
+      attach(target: DeliveryTarget): void;
+      persist(actorId: string): void;
+      stop(): void;
+    }
+
+    export interface ActorHost {
+      subscription(actor: ActorRecord): Subscription;
+      /** `router` is the one the restored actor publishes through. */
+      restore(stored: StoredSnapshot, router: Router): RestoreOutcome;
+    }
+
+    export interface ActorRecord {
+      readonly actorId: string;
+      readonly machine: string;
+      readonly snapshot: PersistedSnapshot;
+    }
+
+    export interface Subscription {
+      readonly topics: readonly string[];
+      /** Absent when the blueprint version is not loaded: every type is taken. */
+      readonly events?: readonly string[];
+    }
+
+    export type RestoreOutcome =
+      | { readonly status: "restored"; readonly target: DeliveryTarget }
+      | { readonly status: "held"; readonly reason: string };
+
+    export interface HeldActor {
+      readonly actorId: string;
+      readonly reason: string;
+      readonly row: InboxRow | undefined;
+    }
+
+    export interface RouterClock {
+      now(): number;
+      /** Calls wake once after delay milliseconds; the result cancels it. */
+      setTimer(delay: number, wake: () => void): () => void;
+    }
+
+    export interface SourceEvent {
+      readonly source: string;
+      readonly eventId: string;
+      readonly topics: readonly string[];
+      readonly event: RoutedEvent;
+    }
+
+    export interface RoutedEvent {
+      readonly type: string;
+      readonly [key: string]: JsonValue;
+    }
+
+    export type PublishOutcome =
+      | { readonly status: "accepted"; readonly rows: readonly InboxRow[] }
+      | { readonly status: "rejected"; readonly issues: readonly EventIssue[] };
+
+    export interface EventIssue {
+      /** RFC 6901 JSON Pointer into the source event. */
+      readonly path: string;
+      readonly message: string;
+    }
+    ```
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `validate.ts`
+    holds the pure function from a value to its event issues. `topics.ts`
+    holds the pure functions that split a topic and list its prefixes, and
+    the subscription index. `router.ts` implements `startRouter`: resume,
+    publish, scheduling, held actors, and host saves. `deadline-loop.ts`
+    holds the timer and its wake. Tests live beside the module and import
+    only `index.ts` and the store's `index.ts`.
+  store-reads: >-
+    The router reads two things the store answers from its indexes:
+    `activeSnapshots()`, every stored snapshot whose status is `active`,
+    ordered by actor id, and `nextDeadlineAt()`, the earliest `fire_at` of an
+    unfired deadline row or `undefined`. Both are part of the store's
+    interface.
+  convergence: >-
+    `publish` twice with the same source and id writes one row per target
+    and schedules nothing the second time; a crash inside it rolls back
+    every row of that call. A crash after `publish` returns and before the
+    drain leaves the rows pending, and resume delivers each once. A crash
+    during a delivery is the store's: the row stays pending until its save
+    commits. `fireDeadline` twice writes one row; a crash after the fire and
+    before the drain leaves the row pending for resume, and a crash before
+    the fire leaves the deadline due for the first wake. `startRouter` twice
+    on the same file, with a stop or a crash between, drains nothing the
+    second time that the first delivered. `persist` and `attach` twice save
+    the same snapshot and keep the same deadline ids. `stop` twice does
+    nothing more.
+  errors: >-
+    An event that fails validation is a `rejected` outcome with an issue per
+    failing path, never a throw, so a source handles it as data: it logs the
+    event and decides whether its own cursor moves past it. Misuse by service
+    code throws: a `TypeError` for `persist` of an actor that is not
+    loaded, and for `publish`, `attach`, or `persist` after `stop`. SQLite
+    errors and errors the host throws propagate unchanged. Inputs are
+    trusted otherwise.
+  environment-streams: >-
+    One connection per environment carries every thread's events. The
+    source handler stamps each event with its thread id and publishes under
+    the thread topic. No actor holds a subscription to T3 Code of its own,
+    so re-attaching after a restart is routing by thread id and nothing else.
   github-source: >-
     The organization webhook is the source for Project item events; a
     repository webhook is the source for issue, dependency, and sub-issue
@@ -69,56 +354,54 @@ proposed-design:
     what never arrived; an issue's updated time does not move for those
     changes, so the sweep compares relationship lists, never a since
     timestamp. A blocking issue's close or reopen names only the blocker;
-    the source forwards it to every issue Manifold's dependency graph shows
-    as blocked by it.
-  inbox: >-
-    A row per target actor per event: event id, actor id, topic, payload,
-    received time, consumed time. Written inside the source handler before
-    publish. A loaded actor receives the event through the bus; a resumed
-    actor drains its unconsumed rows in insertion order before it subscribes
-    live.
-  snapshot-then-consume: >-
-    Delivery to an actor is send, then save snapshot and mark consumed in
-    one transaction. A crash after send and before the commit replays the
-    event, and the actor's idempotency makes that a no-op. A crash after the
-    commit replays nothing. The store never overwrites a snapshot with one
-    whose status is error; the errored snapshot is kept beside it for
-    inspection, and the event that produced it stays unconsumed, so it is
-    held and never lost.
-  idempotency: >-
-    Every event carries an id from its source, the webhook delivery id, the
-    thread event sequence, the notification action id, the token id. Source
-    ids are not ordered, so an actor's context holds the set of consumed
-    event ids per source, bounded by the source's redelivery window, and a
-    transition guard drops an event whose id is in the set. Commands an
-    actor sends carry ids fixed in context before sending, so a resumed
-    actor re-sends the same command and the receiver deduplicates.
-  deadlines: >-
-    A delayed transition in a blueprint becomes a deadline row: actor id,
-    state path, fire time, event name. The row is armed in the transaction
-    that saves the snapshot entering its state, and the same save deletes the
-    rows of states the actor has left, so a row exists only while its state
-    is active and survives a restart armed. A deadline loop fires a due row
-    by marking it fired and writing its event to the actor's inbox in one
-    transaction, then publishes the event. A fired row stays until its
-    entry ends, so a state entry fires its deadline once. Each arm names the state entry
-    that armed it. A save that keeps the actor in the same entry keeps the
-    fire time, so a replay or a later event does not restart the delay; a
-    save from a new entry into the state replaces it, so the delay restarts
-    when the blueprint exits and re-enters the state.
-  environment-streams: >-
-    One connection per environment carries every thread's events. The
-    source handler stamps each event with its thread id and publishes under
-    the thread topic. No actor holds a subscription to T3 Code of its own,
-    so re-attaching after a restart is routing by thread id and nothing else.
+    the source publishes it under the topic of every issue Manifold's
+    dependency graph shows as blocked by it, as one source event with one
+    topic per issue.
   gate-restore: >-
-    Gates are rebuilt only after every actor's inbox has been drained. A
-    gate's holders are counted from token rows, consumed or not, so a token
-    in flight at the crash is held and never granted twice. Its population
-    is a query over snapshots for actors in its state.
+    Gates are rebuilt in `afterDrain`, after every actor's inbox has been
+    drained. A gate's holders are counted from token rows, consumed or not,
+    so a token in flight at the crash is held and never granted twice. Its
+    population is a query over snapshots for actors in its state.
   restore-checks: >-
     Before restoring a snapshot into a blueprint version, every state path
     in the snapshot's value, every child id, and every implementation name
     is checked against the machine. A mismatch routes the actor through the
     version's migration path or holds it at its current version, and is
-    never a silent stall.
+    never a silent stall. The host runs the checks in `restore` and returns
+    `held` with the mismatch as its reason.
+  tests: >-
+    Tests import only the router's and the store's `index.ts`, run against a
+    real file in a temporary directory, and start from a populated fixture:
+    twenty actors of a generic counting machine whose context names the
+    topics it watches, with snapshots in different states, pending and
+    consumed inbox rows, and armed deadlines. The test host restores an
+    idempotent counter target and derives subscriptions from the context
+    and a fixed event list; a fake clock records every armed timer.
+    Behaviours proved, each written red before green: an event reaches
+    exactly the actors whose topic it equals or extends by whole segments
+    and whose events include its type; an event with two topics writes one
+    row per actor; a replayed source event writes no row and delivers
+    nothing; two sources with the same event id each write their row; each
+    validation rule rejects with its path and writes nothing, and the
+    validation agrees with `router-events.schema.yml` on every fixture the
+    schema expresses;
+    `publish` inside a caller's transaction that rolls back writes and
+    delivers nothing; an actor that publishes while taking an event has
+    the new row delivered after its own delivery returns; resumed actors
+    drain their pending rows in insertion order before a live event, and
+    `afterDrain` runs after every drain and before any live delivery or
+    deadline fire; a held actor keeps receiving rows, takes none, and drains
+    them after a restart whose host restores it; an errored delivery holds
+    only its actor; a delivery or `persist` that adds a topic to the
+    context makes the next event under it reach the actor; an actor saved
+    `done` receives no later event. Fault tests, in a child Node process
+    that sends itself `SIGKILL` and whose kill signal the parent asserts
+    before it reopens the file: a kill after `publish` returns and before
+    the drain, and a kill at the store's `sent` probe; after `startRouter`
+    on the same file each target's total is applied once and no row is
+    pending. Deadline tests: one timer is armed for any number of deadlines,
+    at the earliest; a save that arms an earlier deadline re-arms it; a
+    deadline due while the router was stopped fires once after
+    `startRouter`, and not again after a second restart; a deadline whose
+    state was left before its fire time never fires; a fire time beyond the
+    longest timer delay is reached through clamped wakes.

@@ -1,0 +1,91 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design;
+# `references` is the best fit for the design this specification realizes.
+relationships:
+  references:
+    - durable-event-delivery
+    - store
+description: |-
+  Defines the event-source seam: how an event source hands an event to the
+  router, the topic grammar, how a topic and an event type reach an actor,
+  and what the router answers. `docs/specifications/router-events.schema.yml`
+  is the machine-readable definition of the source event, the subscription,
+  the publish outcome, and the event issue. Every event source, the GitHub
+  source, the T3 Code environment source, notification actions, and usage,
+  publishes through this seam and no other.
+
+  Source event. A source calls `router.publish(event)` with a source event:
+
+  ```ts
+  const outcome = router.publish({
+    source: "weather",
+    eventId: "4f1c",
+    topics: ["weather.station.s1"],
+    event: { type: "weather.reading.taken", celsius: 21.5 },
+  });
+  ```
+
+  - `source` names the event source: a lower-case letter followed by at most
+    62 lower-case letters, digits, and `-`. The name `deadline` belongs to
+    the router's deadline loop, and no source publishes under it.
+  - `eventId` is the source's id for this event, a non-empty string unique
+    among the source's events: a webhook delivery id, a stream sequence, an
+    action id. A source that learns of one change through two paths gives
+    both the same id.
+  - `topics` lists one or more distinct topics the event is published under.
+  - `event` is the event an actor takes: a JSON object whose `type` is a
+    non-empty string that does not start with `xstate.`, the prefix of
+    XState's own events. Its other properties are JSON values. The router
+    delivers it unchanged as the inbox row's payload.
+
+  Topic grammar. A topic is one or more segments joined by `.`. A segment is
+  a non-empty string with no `.`, no whitespace, and no control character.
+  The first segment of every topic of a source event is the event's
+  `source`. A topic names where an event comes from, never what happened:
+  what happened is the event's `type`. A source encodes an identifier that
+  holds `.` before placing it in a segment, and its specification says how.
+
+  Matching. A topic `T` extends a topic `P` when `T` equals `P` or `T`
+  starts with `P` followed by `.`. A subscription is the topics an actor
+  hears and the event types it takes. An event reaches an actor when one of
+  the event's topics extends one of the subscription's topics and, when the
+  subscription lists event types, the event's `type` is one of them.
+  `weather.station.s1` extends `weather.station` and `weather`; it does not
+  extend `weather.station.s` or `weather.station.s10`.
+
+  Inbox event id. The router writes each target's inbox row with event id
+  `<source>:<eventId>` and, as its topic, the first of the event's topics
+  that reaches the actor. Since a source name holds no `:`, two sources
+  never share an inbox event id. A fired deadline's inbox event id is
+  `deadline:<deadlineId>` and its topic `deadline.<deadlineId>`.
+
+  Outcome. `publish` returns a publish outcome. `accepted` carries the inbox
+  rows the call wrote, one per target that did not already hold a row with
+  the same inbox event id; an event published again, or with no target,
+  is accepted with no rows. `rejected` carries one event issue per rule the
+  event breaks, each with the RFC 6901 JSON Pointer of the failing value in
+  the source event and a message; a rejected event writes nothing and
+  reaches no actor. `publish` never throws for an event that breaks a rule.
+
+  Durability point. When `publish` returns `accepted` outside a transaction,
+  the rows are committed: the source may acknowledge the event to its
+  origin, move its cursor, or record its delivery id. A source that keeps
+  bookkeeping in the store's file calls `publish` inside
+  `store.connection.transaction` with its own write, and the rows and the
+  write commit together or not at all. No actor takes the event before
+  `publish` and every transaction around it have returned.
+
+  Delivery. Each target takes the event in its inbox order, after every row
+  written to it before. An actor that is held keeps the row pending and
+  takes it after it is restored. A source learns nothing of delivery: an
+  accepted event is the router's to deliver.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/router-events.schema.yml` compiles with Ajv in JSON
+  Schema 2020-12 mode. The router's validation and the schema's
+  `#/$defs/source-event` accept and reject the same events across the
+  router's fixture suite of valid and invalid source events, each with the
+  same failing paths; the rule that a topic's first segment is the event's
+  source and the rule that every value is a JSON value are checked by the
+  router beyond the schema, and have their own fixtures. Every publish
+  outcome the router returns validates against `#/$defs/publish-outcome`.
