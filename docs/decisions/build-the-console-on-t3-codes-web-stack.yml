@@ -47,7 +47,13 @@ decision-outcome:
     JDM editor. Using T3 Code's own stack and primitives is the shortest
     path to looking and behaving like T3 Code, and lets a T3 Code change in
     `components/ui` or `index.css` be taken by comparison, not translation.
-    Each dependency meets the adoption bar. A static build needs nothing
+    Each dependency is widely adopted, with thousands of GitHub stars or,
+    for `sirv`, tens of millions of weekly downloads and a place inside
+    Vite's own build; each project is maintained, with a release in the last
+    year and most in the last month; and no package the console or the
+    service ships runs an install script, spawns a process, or evaluates
+    generated code. `sirv` releases about once a year, which suits a
+    small static file listener whose interface has not changed. A static build needs nothing
     from the service but a request listener under a path prefix, which the
     HTTP host already gives every module, while a server-rendering
     framework adds a second server with nothing to render that the API

@@ -182,8 +182,9 @@ proposed-design:
     `failed`, an error alert shows the message with "Try again".
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It
-    takes the request's path, removes `/console` from its start when the
-    path has it, and serves the rest from the directory. A `GET` or `HEAD`
+    takes the request's path, which the HTTP host passes unchanged,
+    removes `/console` from its start, and serves the rest from the
+    directory. A `GET` or `HEAD`
     of a file answers it. A path with no file extension and no file
     answers `index.html`, so a client route loads the application; a path
     with an extension and no file answers `404`. Files under `assets/` are

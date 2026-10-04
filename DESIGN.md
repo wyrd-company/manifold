@@ -4,6 +4,11 @@ description: >-
   Operator dashboard for Manifold. It uses the visual language of T3 Code so that
   a T3 Code user reads it without learning a new vocabulary.
 source: T3 Code web client (apps/web/src/index.css, components/ui)
+relationships:
+  # GAP-EDGE: no ontology type covers a visual design document; `related-to`
+  # names the technical design that builds the console from it.
+  related-to:
+    - operator-console
 colors:
   light:
     background: "#fcfcfc"
