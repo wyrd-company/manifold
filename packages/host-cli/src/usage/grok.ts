@@ -32,7 +32,6 @@ export async function decodeGrokSource(source: Source, problems: Problems, seen:
         signals["modelsUsed"].some((value) => typeof value !== "string")))
   ) {
     problems.add("malformed-record", 0);
-    return [];
   }
   const updates = jsonLines(await read(join(source.path, "updates.jsonl")), problems, (record) => {
     const params = object(record["params"]);

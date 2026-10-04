@@ -66,19 +66,23 @@ export async function orderCodex(sources: Source[]): Promise<Source[]> {
   return ordered;
 }
 export async function decodeRollout(source: Source, problems: Problems, seen: Set<string>) {
-  const records = jsonLines(await read(source.path), problems, (record) => {
+  const records = jsonLines(await read(source.path), problems, (record, index) => {
     if (!recordTypes.has(String(record["type"]))) return "unknown-record";
     if (!record["payload"] || typeof record["payload"] !== "object") return "malformed-record";
     const payload = object(record["payload"]);
     const info = object(payload["info"]);
+    if (!validCounts(info["last_token_usage"]) || !validCounts(info["total_token_usage"]))
+      return "malformed-record";
     if (
       [payload["model"], info["model"], info["model_name"], payload["session_id"]].some(
         (value) => value !== undefined && typeof value !== "string",
       )
-    )
-      return "malformed-record";
-    if (!validCounts(info["last_token_usage"]) || !validCounts(info["total_token_usage"]))
-      return "malformed-record";
+    ) {
+      if (record["type"] === "turn_context") return "malformed-record";
+      problems.add("malformed-record", index);
+      if (payload["session_id"] !== undefined && typeof payload["session_id"] !== "string")
+        delete payload["session_id"];
+    }
     return "valid";
   });
   const { unit } = codexIdentity(records, basename(source.path, ".jsonl"));

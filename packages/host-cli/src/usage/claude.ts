@@ -40,7 +40,7 @@ export async function decodeClaude(
   seen: Set<string>,
   agentParents: Map<string, string>,
 ) {
-  const records = jsonLines(await read(source.path), problems, (record) => {
+  const records = jsonLines(await read(source.path), problems, (record, index) => {
     if (!recordTypes.has(String(record["type"]))) return "unknown-record";
     if (record["type"] === "assistant") {
       const message = object(record["message"]);
@@ -48,8 +48,6 @@ export async function decodeClaude(
       if (speed !== undefined && speed !== "standard" && speed !== "fast")
         return "malformed-record";
       if (
-        !text(message["model"]) ||
-        !text(message["id"]) ||
         !message["usage"] ||
         !validCounts(object(message["usage"])["cache_creation"]) ||
         !validCounts(object(message["usage"])["server_tool_use"]) ||
@@ -60,6 +58,7 @@ export async function decodeClaude(
         )
       )
         return "malformed-record";
+      if (!text(message["model"])) problems.add("malformed-record", index);
     }
     if (record["sessionId"] !== undefined && !text(record["sessionId"])) return "malformed-record";
     return "valid";

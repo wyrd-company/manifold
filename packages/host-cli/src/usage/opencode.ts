@@ -41,16 +41,16 @@ function messageValid(data: Record<string, unknown>, problems: Problems, index: 
     problems.add("unknown-record", index);
     return false;
   }
-  if (
-    [data["modelID"], data["model"]].some(
-      (value) => value !== undefined && typeof value !== "string",
-    ) ||
-    !validCounts(data["tokens"]) ||
-    !validCounts(data["usage"])
-  ) {
+  if (!validCounts(data["tokens"]) || !validCounts(data["usage"])) {
     problems.add("malformed-record", index);
     return false;
   }
+  if (
+    [data["modelID"], data["model"]].some(
+      (value) => value !== undefined && typeof value !== "string",
+    )
+  )
+    problems.add("malformed-record", index);
   return true;
 }
 function parseBlob(

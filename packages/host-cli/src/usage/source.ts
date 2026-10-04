@@ -50,55 +50,62 @@ export class Problems {
   }
 }
 
-async function walk(path: string): Promise<string[]> {
+async function walk(path: string, unreadable?: (path: string) => void): Promise<string[]> {
   let entries;
   try {
     entries = await readdir(path, { withFileTypes: true });
   } catch (error) {
     if (absent(error)) return [];
-    throw new SourceReadError();
+    if (!unreadable) throw new SourceReadError();
+    unreadable(path);
+    return [];
   }
   const files: string[] = [];
   for (const entry of entries) {
     const child = join(path, entry.name);
-    if (entry.isDirectory()) files.push(...(await walk(child)));
+    if (entry.isDirectory()) files.push(...(await walk(child, unreadable)));
     else if (entry.isFile() || entry.isSymbolicLink()) files.push(child);
   }
   return files;
 }
 
-export async function discover(root: UsageRoot): Promise<Source[]> {
+export async function discover(
+  root: UsageRoot,
+  unreadable: (path: string) => void,
+): Promise<Source[]> {
   const path = resolve(root.path);
   let files: string[];
   switch (root.provider) {
     case "claude":
-      files = (await walk(join(path, "projects"))).filter((file) => file.endsWith(".jsonl"));
+      files = (await walk(join(path, "projects"), unreadable)).filter((file) =>
+        file.endsWith(".jsonl"),
+      );
       break;
     case "codex":
       files = [
-        ...(await walk(join(path, "sessions"))),
-        ...(await walk(join(path, "archived_sessions"))),
+        ...(await walk(join(path, "sessions"), unreadable)),
+        ...(await walk(join(path, "archived_sessions"), unreadable)),
       ].filter((file) => file.endsWith(".jsonl"));
       break;
     case "cursor":
-      files = (await walk(join(path, "projects"))).filter((file) =>
+      files = (await walk(join(path, "projects"), unreadable)).filter((file) =>
         /[/\\]agent-transcripts[/\\][^/\\]+\.(txt|jsonl)$/.test(file),
       );
       break;
     case "grok":
-      files = (await walk(join(path, "sessions")))
+      files = (await walk(join(path, "sessions"), unreadable))
         .filter((file) => basename(file) === "summary.json")
         .map((file) => resolve(file, ".."));
       break;
     case "opencode": {
-      const sessions = (await walk(join(path, "storage", "session"))).filter((file) =>
+      const sessions = (await walk(join(path, "storage", "session"), unreadable)).filter((file) =>
         file.endsWith(".json"),
       );
       let entries: string[];
       try {
         entries = await readdir(path);
       } catch (error) {
-        if (!absent(error)) throw error;
+        if (!absent(error)) unreadable(path);
         entries = [];
       }
       files = [
@@ -150,7 +157,10 @@ export async function json(
 export function jsonLines(
   raw: string,
   problems: Problems,
-  classify: (value: Record<string, unknown>) => "valid" | "unknown-record" | "malformed-record",
+  classify: (
+    value: Record<string, unknown>,
+    index: number,
+  ) => "valid" | "unknown-record" | "malformed-record",
 ): Record<string, unknown>[] {
   const lines = raw.split("\n");
   const records: Record<string, unknown>[] = [];
@@ -171,7 +181,7 @@ export function jsonLines(
       continue;
     }
     const record = object(value);
-    const result = classify(record);
+    const result = classify(record, index);
     if (result !== "valid") problems.add(result, index);
     else records.push(record);
   }

@@ -2,7 +2,7 @@
 // relationships:
 //   verifies: usage-decoder
 // ---
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -12,11 +12,16 @@ import { parse as parseYaml } from "yaml";
 import { decodeUsage } from "./index.ts";
 
 // Inject storage faults at the system boundary; adapters stay private.
-const fault = vi.hoisted(() => ({ path: "", reads: 0 }));
+const fault = vi.hoisted(() => ({ path: "", reads: 0, directory: "" }));
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
   return {
     ...fs,
+    readdir: (...args: Parameters<typeof fs.readdir>) => {
+      if (args[0] === fault.directory)
+        throw Object.assign(new Error("Directory unreadable"), { code: "EACCES" });
+      return fs.readdir(...args);
+    },
     readFile: (...args: Parameters<typeof fs.readFile>) => {
       if (args[0] === fault.path && ++fault.reads > 1)
         throw new Error("Source vanished after its first read");
@@ -90,5 +95,37 @@ test("decodes SQLite sources when storage rejects writable handles", async () =>
     ).toEqual(["child-db", "total-db"]);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an unreadable directory preserves readable sibling sources", async () => {
+  const root = await mkdtemp(join(tmpdir(), "usage-directory-fault-"));
+  try {
+    await cp(join(fixtures, "claude"), root, { recursive: true });
+    fault.directory = join(root, "projects/blocked");
+    await mkdir(fault.directory);
+    const records = [];
+    for await (const record of decodeUsage([
+      { provider: "claude", path: root },
+      { provider: "claude", path: root },
+    ])) {
+      expect(validator(record), JSON.stringify(validator.errors)).toBe(true);
+      records.push(record);
+    }
+    expect(records.filter((record) => record.type === "call")).toHaveLength(3);
+    expect(
+      records.filter((record) => record.type === "source-error" && record.code === "unreadable"),
+    ).toEqual([
+      {
+        type: "source-error",
+        provider: "claude",
+        source: fault.directory,
+        code: "unreadable",
+        records: 1,
+      },
+    ]);
+  } finally {
+    fault.directory = "";
+    await rm(root, { recursive: true, force: true });
   }
 });

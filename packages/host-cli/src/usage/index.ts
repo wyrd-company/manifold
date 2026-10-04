@@ -22,7 +22,7 @@ import {
 import type { Source, UsageCall, UsageProvider, UsageRecord, UsageRoot } from "./types.ts";
 export type { UsageProvider, UsageRoot, UsageRecord } from "./types.ts";
 
-const providers: UsageProvider[] = ["claude", "codex", "cursor", "grok", "opencode"];
+const providers = new Set<UsageProvider>(["claude", "codex", "cursor", "grok", "opencode"]);
 export function defaultUsageRoots(
   env: Readonly<Record<string, string | undefined>>,
   home: string,
@@ -41,13 +41,20 @@ export function defaultUsageRoots(
   ];
 }
 export async function* decodeUsage(roots: readonly UsageRoot[]): AsyncIterable<UsageRecord> {
-  for (const provider of providers) {
+  for (const provider of new Set(roots.map((root) => root.provider))) {
     let sources: Source[] = [];
     const paths = new Set<string>();
+    const unreadablePaths = new Set<string>();
     for (const root of roots.filter((root) => root.provider === provider)) {
       let found;
       try {
-        found = await discover(root);
+        const unreadable: string[] = [];
+        found = await discover(root, (path) => unreadable.push(path));
+        for (const path of unreadable) {
+          if (unreadablePaths.has(path)) continue;
+          unreadablePaths.add(path);
+          yield { type: "source-error", provider, source: path, code: "unreadable", records: 1 };
+        }
       } catch {
         yield {
           type: "source-error",
@@ -148,7 +155,7 @@ export async function runUsageCommand(
     if (
       args[i] !== "--root" ||
       separator < 1 ||
-      !providers.includes(provider as UsageProvider) ||
+      !providers.has(provider as UsageProvider) ||
       !path
     ) {
       io.stderr.write("Invalid usage decode arguments\n");

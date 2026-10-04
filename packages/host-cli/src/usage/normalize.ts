@@ -24,7 +24,7 @@ export function normalize(
     providerSessionId: call.sessionId,
     unit,
     timestamp: (invalidTime ? mtime : timestamp).toISOString(),
-    model: call.model || null,
+    model: typeof call.model === "string" && call.model.length > 0 ? call.model : null,
     tokens: {
       input: call.inputTokens,
       output: call.outputTokens,

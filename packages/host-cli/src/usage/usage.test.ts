@@ -647,8 +647,21 @@ test("malformed model and speed fields do not discard valid calls", async () => 
     ),
   );
   const calls = records.filter((record) => record.type === "call");
-  expect(calls).toHaveLength(11);
-  expect(calls.some((call) => call.key.includes("bad"))).toBe(false);
+  expect(calls).toHaveLength(14);
+  expect(calls.find((call) => call.key.includes("bad-model"))).toMatchObject({
+    model: null,
+    tokens: { input: 1, output: 1 },
+  });
+  expect(calls.find((call) => call.key.includes("bad-speed"))).toBeUndefined();
+  expect(calls.find((call) => call.key === "opencode/opencode:session-o:bad")).toMatchObject({
+    model: null,
+    tokens: { input: 1 },
+  });
+  expect(calls.find((call) => call.provider === "grok")).toMatchObject({
+    model: null,
+    granularity: "session-total",
+    tokens: { input: 15, output: 5 },
+  });
   expect(
     records
       .filter((record) => record.type === "source-error")
@@ -660,4 +673,152 @@ test("malformed model and speed fields do not discard valid calls", async () => 
     ["grok", "malformed-record", 1],
     ["opencode", "malformed-record", 1],
   ]);
+});
+
+test("Claude retains calls without message ids", async () => {
+  const root = join(fixtureCopy, "claude-no-id");
+  await mkdir(join(root, "projects"), { recursive: true });
+  await writeFile(
+    join(root, "projects/sample.jsonl"),
+    JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-01-01T00:00:00Z",
+      message: { model: "sample-model", usage: { input_tokens: 7, output_tokens: 2 } },
+    }) + "\n",
+  );
+  const records = await collect(decodeUsage([{ provider: "claude", path: root }]));
+  expect(records).toHaveLength(1);
+  expect(records[0]).toMatchObject({
+    type: "call",
+    key: "claude/claude:2026-01-01T00:00:00Z",
+    tokens: { input: 7, output: 2 },
+  });
+});
+
+test.each(["model", "model_name"])(
+  "Codex retains metadata and counts with malformed %s",
+  async (field) => {
+    const root = join(fixtureCopy, "codex-malformed-" + field);
+    await mkdir(join(root, "sessions"), { recursive: true });
+    await writeFile(
+      join(root, "sessions/sample.jsonl"),
+      [
+        {
+          type: "session_meta",
+          payload: {
+            id: "child-sample",
+            session_id: 123,
+            model: 123,
+            parent_thread_id: "parent-sample",
+            agent_nickname: "Sample",
+            agent_role: "helper",
+          },
+        },
+        {
+          type: "event_msg",
+          timestamp: "2026-01-01T00:00:00Z",
+          payload: {
+            type: "token_count",
+            info: {
+              [field]: 123,
+              last_token_usage: { input_tokens: 7, output_tokens: 2 },
+              total_token_usage: { input_tokens: 7, output_tokens: 2, total_tokens: 9 },
+            },
+          },
+        },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join("\n") + "\n",
+    );
+    const records = await collect(decodeUsage([{ provider: "codex", path: root }]));
+    expect(records.filter((record) => record.type === "call")).toEqual([
+      expect.objectContaining({
+        model: null,
+        providerSessionId: "child-sample",
+        unit: {
+          id: "child-sample",
+          kind: "child-thread",
+          parentId: "parent-sample",
+          name: "Sample",
+          role: "helper",
+        },
+        tokens: expect.objectContaining({ input: 7, output: 2 }),
+      }),
+    ]);
+    expect(records.find((record) => record.type === "source-error")).toMatchObject({
+      code: "malformed-record",
+      records: 2,
+      firstRecord: 0,
+    });
+  },
+);
+
+test("provider groups follow first root appearance and retain shared deduplication", async () => {
+  const ordered = roots(fixtureCopy).toReversed();
+  ordered.push(ordered[0]!);
+  const records = await collect(decodeUsage(ordered));
+  expect([...new Set(records.map((record) => record.provider))]).toEqual(
+    ordered.slice(0, -1).map((root) => root.provider),
+  );
+  expect(records.filter((record) => record.type === "call")).toHaveLength(14);
+});
+
+test.each(["primaryModelId", "modelsUsed"])(
+  "Grok retains totals with malformed signals %s",
+  async (field) => {
+    const root = join(fixtureCopy, "grok-malformed-" + field);
+    await cp(join(fixtureCopy, "grok"), root, { recursive: true });
+    const directory = join(root, "sessions/example/session-g");
+    await writeFile(join(directory, "summary.json"), JSON.stringify({ info: { id: "session-g" } }));
+    await writeFile(
+      join(directory, "signals.json"),
+      JSON.stringify({ [field]: field === "modelsUsed" ? [123] : 123 }),
+    );
+    const records = await collect(decodeUsage([{ provider: "grok", path: root }]));
+    expect(records.find((record) => record.type === "call")).toMatchObject({
+      model: null,
+      tokens: { input: 15, output: 5 },
+    });
+    expect(records.find((record) => record.type === "source-error")).toMatchObject({
+      code: "malformed-record",
+      records: 1,
+    });
+  },
+);
+
+test("Codex malformed turn context cannot poison a later call model", async () => {
+  const root = join(fixtureCopy, "codex-invalid-context");
+  await cp(join(fixtureCopy, "codex"), root, { recursive: true });
+  const path = join(root, "sessions/root.jsonl");
+  await writeFile(
+    path,
+    (await readFile(path, "utf8")) +
+      [
+        { type: "turn_context", payload: { model: 123 } },
+        {
+          type: "event_msg",
+          timestamp: "2026-01-01T00:00:20Z",
+          payload: {
+            type: "token_count",
+            info: {
+              last_token_usage: { input_tokens: 7, output_tokens: 2 },
+              total_token_usage: { input_tokens: 17, output_tokens: 6, total_tokens: 26 },
+            },
+          },
+        },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join("\n") +
+      "\n",
+  );
+  const records = await collect(decodeUsage([{ provider: "codex", path: root }]));
+  expect(records.filter((record) => record.type === "call" && record.unit.id === "root-a")).toEqual(
+    [
+      expect.objectContaining({ model: "sample-model" }),
+      expect.objectContaining({
+        model: "sample-model",
+        tokens: expect.objectContaining({ input: 7, output: 2 }),
+      }),
+    ],
+  );
 });
