@@ -40,7 +40,9 @@ description: |-
   entity already pending raises it by one. A reconcile deletes the row in
   the transaction that applies its result, only when `generation` still
   equals the value it noted before its read, so a request made during the
-  read survives it.
+  read survives it. `project_node_id` records the Project an item delivery
+  names, so a new or archived item can be read with its owner's credential
+  before the mirror holds that item. It is null for other pending kinds.
 
   Mirror. The remaining tables are the GitHub mirror: the last state the
   source read of each entity, with the revision each published change gave

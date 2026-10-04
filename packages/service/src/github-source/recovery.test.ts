@@ -1,0 +1,613 @@
+// ---
+// relationships:
+//   verifies: github-event-source
+// ---
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { once } from "node:events";
+import { afterEach, expect, test } from "vite-plus/test";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { parse } from "yaml";
+import { openStore } from "../store/index.ts";
+import { startRouter } from "../router/index.ts";
+import type { JsonValue } from "../store/index.ts";
+import { startGitHubSource } from "./index.ts";
+import type { GitHubSourceError } from "./index.ts";
+import { githubFake, FakeClock, signedDelivery } from "./fixtures/api.ts";
+
+const cleanup: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const fn of cleanup.splice(0).toReversed()) await fn();
+});
+async function setup() {
+  const fake = await githubFake();
+  cleanup.push(fake.close);
+  const directory = mkdtempSync(join(tmpdir(), "github-recovery-"));
+  const secretFile = join(directory, "hook-secret");
+  writeFileSync(secretFile, "synthetic-secret");
+  const path = join(directory, "store.sqlite");
+  const store = openStore({ path });
+  const clock = new FakeClock();
+  const taken: { actor: string; payload: JsonValue }[] = [];
+  const errors: GitHubSourceError[] = [];
+  const pulls: (string | undefined)[] = [];
+  for (const actor of ["I_A", "I_B", "I_C", "I_D", "I_X", "project"])
+    store.saveSnapshot({
+      actorId: actor,
+      machine: "record",
+      snapshot: { status: "active", value: "waiting" },
+    });
+  const router = startRouter({
+    store,
+    clock,
+    host: {
+      subscription: (actor) => ({
+        topics: [
+          actor.actorId === "project" ? "github.project.P_one" : `github.issue.${actor.actorId}`,
+        ],
+      }),
+      restore: (stored) => ({
+        status: "restored",
+        target: {
+          actorId: stored.actorId,
+          send: (row) => taken.push({ actor: stored.actorId, payload: row.payload }),
+          persist: () => ({ machine: "record", snapshot: { status: "active", value: "waiting" } }),
+        },
+      }),
+    },
+  });
+  const options = {
+    store,
+    router,
+    clock,
+    configuration: {
+      apiUrl: fake.url,
+      owners: {
+        sample: {
+          credential: "sample-token",
+          hooks: [{ id: 1, repository: undefined, secretFile }],
+        },
+      },
+      sweepIntervalMs: 900000,
+      redeliveryIntervalMs: 60000,
+      requestTimeoutMs: 30000,
+    },
+    credentials: {
+      names: ["sample-token"],
+      resolve: () => ({
+        kind: "github-app" as const,
+        name: "sample-token",
+        installationToken: async () => ({
+          credential: "sample-token",
+          reveal: () => "synthetic-token",
+        }),
+      }),
+    },
+    boundProjects: () => [{ owner: "sample", number: 1 }],
+    processRepository: {
+      url: "https://example.test/sample/process.git",
+      branch: "main",
+      pull: async (request?: { commit?: string }) => {
+        pulls.push(request?.commit);
+        return { kind: "unchanged" as const, commit: "a".repeat(40) };
+      },
+    },
+    onError: (error: GitHubSourceError) => errors.push(error),
+  };
+  const source = startGitHubSource(options);
+  const server = createServer(source.requestListener);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  fake.setTarget(url);
+  cleanup.push(async () => {
+    await source.stop();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    router.stop();
+    store.close();
+    rmSync(directory, { recursive: true });
+  });
+  const idle = async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+    await expect.poll(() => pulls.length).toBeGreaterThan(0);
+    await expect
+      .poll(
+        () =>
+          store.connection.database.prepare("SELECT count(*) AS count FROM github_pending").get()?.[
+            "count"
+          ],
+        { timeout: 3000 },
+      )
+      .toBe(0);
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  const events = () =>
+    store.connection.database
+      .prepare("SELECT event_id,event FROM router_source_event ORDER BY rowid")
+      .all();
+  return { fake, source, store, clock, taken, errors, pulls, url, idle, events, options, path };
+}
+test("sweep recovers a dropped dependency and a later delivery publishes nothing", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  s.fake.dependencies.push(["I_A", "I_X"]);
+  s.source.requestSweep();
+  await s.idle();
+  expect(s.source.trackedIssue("I_A")?.blockedBy.map((i) => i.nodeId)).toEqual(["I_X"]);
+  const count = s.store.connection.database
+    .prepare("SELECT count(*) AS count FROM router_source_event WHERE event_id LIKE 'dependency:%'")
+    .get()?.["count"];
+  expect(count).toBe(1);
+  s.source.receive(signedDelivery("issue_dependencies", { blocking_issue: { node_id: "I_X" } }));
+  await s.idle();
+  expect(
+    s.store.connection.database
+      .prepare(
+        "SELECT count(*) AS count FROM router_source_event WHERE event_id LIKE 'dependency:%'",
+      )
+      .get()?.["count"],
+  ).toBe(1);
+  expect(s.errors).toEqual([]);
+});
+test("a blocker close reaches each directly blocked issue with one event", async () => {
+  const s = await setup();
+  for (const id of ["I_A", "I_B", "I_C", "I_D"]) s.fake.addItem(`IT_${id}`, id);
+  s.fake.dependencies.push(["I_A", "I_X"], ["I_B", "I_X"], ["I_C", "I_X"], ["I_D", "I_A"]);
+  s.source.requestSweep();
+  await s.idle();
+  s.taken.length = 0;
+  s.fake.issues.get("I_X")!.state = "CLOSED";
+  s.fake.issues.get("I_X")!.stateReason = "COMPLETED";
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_X" } }));
+  await s.idle();
+  expect(
+    s.taken
+      .filter((e) => (e.payload as { type: string }).type === "github.issue.closed")
+      .map((e) => e.actor)
+      .sort(),
+  ).toEqual(["I_A", "I_B", "I_C", "I_X"]);
+  s.taken.length = 0;
+  s.fake.issues.get("I_A")!.state = "CLOSED";
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }, "close-a"));
+  await s.idle();
+  expect(
+    s.taken
+      .filter((e) => (e.payload as { type: string }).type === "github.issue.closed")
+      .map((e) => e.actor)
+      .sort(),
+  ).toEqual(["I_A", "I_D"]);
+});
+test("item discovery waits for a complete baseline including pagination", async () => {
+  const s = await setup();
+  await s.idle();
+  s.fake.addItem("IT_A", "I_A");
+  s.fake.dependencies.push(["I_A", "I_X"], ["I_A", "I_B"]);
+  s.fake.paginateIssue("I_A");
+  const held = s.fake.hold("GitHubIssues");
+  s.source.receive(
+    signedDelivery("projects_v2_item", {
+      projects_v2_item: { node_id: "IT_A", project_node_id: "P_one" },
+    }),
+  );
+  await held.reached;
+  expect(s.source.trackedIssue("I_A")).toBeUndefined();
+  expect(s.taken).toEqual([]);
+  held.release();
+  await s.idle();
+  expect(
+    s.source
+      .trackedIssue("I_A")
+      ?.blockedBy.map((i) => i.nodeId)
+      .sort(),
+  ).toEqual(["I_B", "I_X"]);
+  expect(
+    s.taken.filter((e) => (e.payload as { type: string }).type === "github.project-item.added"),
+  ).toHaveLength(2);
+  expect(s.errors).toEqual([]);
+});
+test("redelivery asks once for a failed GUID and sweep produces no duplicate", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  s.fake.dependencies.push(["I_A", "I_X"]);
+  s.fake.deliveries.push({
+    id: 1,
+    guid: "lost",
+    delivered_at: new Date(s.clock.now() + 1).toISOString(),
+    status_code: 502,
+    event: "issue_dependencies",
+    payload: { blocked_issue: { node_id: "I_A" } },
+  });
+  s.clock.advance(60000);
+  await expect.poll(() => s.fake.redeliveries).toEqual([1]);
+  await s.idle();
+  s.clock.advance(60000);
+  await s.idle();
+  s.source.requestSweep();
+  await s.idle();
+  expect(s.fake.redeliveries).toEqual([1]);
+  expect(s.errors).toEqual([]);
+});
+test("push matches the process repository and pulls once per GUID", async () => {
+  const s = await setup();
+  await s.idle();
+  const priorPulls = s.pulls.length;
+  const payload = {
+    ref: "refs/heads/main",
+    after: "b".repeat(40),
+    deleted: false,
+    repository: {
+      clone_url: "https://EXAMPLE.test/Sample/Process.git/",
+      html_url: "https://example.test/sample/process",
+    },
+  };
+  s.source.receive(signedDelivery("push", payload));
+  s.source.receive(signedDelivery("push", payload));
+  s.source.receive(signedDelivery("push", { ...payload, ref: "refs/heads/other" }, "other-branch"));
+  await s.idle();
+  expect(s.pulls.slice(priorPulls)).toEqual(["b".repeat(40)]);
+});
+test("a newly discovered archived item is read directly and gains its baseline", async () => {
+  const s = await setup();
+  await s.idle();
+  s.fake.addItem("IT_A", "I_A");
+  s.fake.items.get("IT_A")!.isArchived = true;
+  s.source.receive(
+    signedDelivery("projects_v2_item", {
+      projects_v2_item: { node_id: "IT_A", project_node_id: "P_one" },
+    }),
+  );
+  await s.idle();
+  expect(s.source.trackedIssue("I_A")?.issue.nodeId).toBe("I_A");
+  expect(
+    s.taken.filter((e) => (e.payload as { type: string }).type === "github.project-item.added"),
+  ).toHaveLength(2);
+});
+test("a request made during a read in the same tick survives that read", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  const reads = () => s.fake.log.filter((row) => row.operation === "GitHubIssues").length;
+  const before = reads();
+  const held = s.fake.hold("GitHubIssues");
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }, "one"));
+  await held.reached;
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }, "two"));
+  held.release();
+  await s.idle();
+  expect(reads() - before).toBe(2);
+});
+test.each([502, 403, 429])(
+  "API status %s keeps work pending until the next wake",
+  async (status) => {
+    const s = await setup();
+    s.fake.addItem("IT_A", "I_A");
+    s.source.requestSweep();
+    await s.idle();
+    s.fake.fail(status);
+    s.fake.issues.get("I_A")!.state = "CLOSED";
+    s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }));
+    await expect.poll(() => s.errors.length).toBe(1);
+    expect(s.errors[0]?.kind).toBe("api");
+    expect(s.errors[0]?.status).toBe(status);
+    expect(
+      s.store.connection.database.prepare("SELECT count(*) AS count FROM github_pending").get()?.[
+        "count"
+      ],
+    ).toBe(1);
+    s.clock.advance(60000);
+    await s.idle();
+    expect(s.source.trackedIssue("I_A")?.issue.state).toBe("closed");
+  },
+);
+test("a request timeout leaves work pending and stop aborts an active request", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  const held = s.fake.hold("GitHubIssues");
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }));
+  await held.reached;
+  s.clock.advance(30000);
+  await expect.poll(() => s.errors.length).toBe(1);
+  expect(s.errors[0]?.kind).toBe("api");
+  expect(
+    s.store.connection.database.prepare("SELECT count(*) AS count FROM github_pending").get()?.[
+      "count"
+    ],
+  ).toBe(1);
+  held.release();
+  s.clock.advance(60000);
+  await s.idle();
+  const stopping = s.fake.hold("GitHubIssues");
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }, "stopping"));
+  await stopping.reached;
+  await s.source.stop();
+  stopping.release();
+  await s.source.stop();
+  expect(() => s.source.receive(signedDelivery("ping", {}))).toThrow(TypeError);
+});
+test.each(["I_A", "I_B"])(
+  "a shared relationship publishes once when %s is read first",
+  async (first) => {
+    const s = await setup();
+    s.fake.addItem("IT_A", "I_A");
+    s.source.requestSweep();
+    await s.idle();
+    s.fake.addItem("IT_B", "I_B");
+    s.fake.dependencies.push(["I_A", "I_B"]);
+    if (first === "I_A") {
+      s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }));
+      await s.idle();
+    }
+    s.source.receive(
+      signedDelivery(
+        "projects_v2_item",
+        { projects_v2_item: { node_id: "IT_B", project_node_id: "P_one" } },
+        "new-item",
+      ),
+    );
+    await s.idle();
+    s.source.requestSweep();
+    await s.idle();
+    expect(
+      s.store.connection.database
+        .prepare(
+          "SELECT count(*) AS count FROM router_source_event WHERE event_id LIKE 'dependency:%'",
+        )
+        .get()?.["count"],
+    ).toBe(1);
+  },
+);
+test("item, field, Project, and sub-issue transitions have stable revisions and schema-valid payloads", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.fake.items.get("IT_A")!.fieldValues.nodes.push({
+    text: "Example",
+    field: { id: "F_text", name: "Label", dataType: "TEXT" },
+  });
+  s.source.requestSweep();
+  await s.idle();
+  const itemDelivery = (id: string) =>
+    s.source.receive(
+      signedDelivery(
+        "projects_v2_item",
+        { projects_v2_item: { node_id: "IT_A", project_node_id: "P_one" } },
+        id,
+      ),
+    );
+  s.fake.items.get("IT_A")!.fieldValues.nodes[0]!["text"] = "Updated";
+  itemDelivery("field");
+  await s.idle();
+  s.fake.items.get("IT_A")!.fieldValues.nodes = [];
+  itemDelivery("clear-field");
+  await s.idle();
+  s.fake.items.get("IT_A")!.isArchived = true;
+  itemDelivery("archive");
+  await s.idle();
+  s.fake.items.get("IT_A")!.isArchived = false;
+  itemDelivery("restore");
+  await s.idle();
+  s.fake.subIssues.push(["I_A", "I_B"]);
+  s.source.requestSweep();
+  await s.idle();
+  s.fake.subIssues.length = 0;
+  s.source.receive(
+    signedDelivery("sub_issues", { parent_issue: { node_id: "I_A" } }, "sub-remove"),
+  );
+  await s.idle();
+  s.fake.project.closed = true;
+  s.source.receive(
+    signedDelivery("projects_v2", { projects_v2: { node_id: "P_one" } }, "project-close"),
+  );
+  await s.idle();
+  s.fake.project.closed = false;
+  s.source.receive(
+    signedDelivery("projects_v2", { projects_v2: { node_id: "P_one" } }, "project-open"),
+  );
+  await s.idle();
+  s.fake.items.delete("IT_A");
+  itemDelivery("remove");
+  await s.idle();
+  expect(s.source.trackedIssue("I_A")).toBeUndefined();
+  const rows = s.store.connection.database
+    .prepare("SELECT payload FROM store_inbox WHERE actor_id=? ORDER BY sequence")
+    .all("project")
+    .map((row) => JSON.parse(row["payload"] as string));
+  expect(rows.map((row: { type: string }) => row.type)).toEqual([
+    "github.project-item.added",
+    "github.project-item.field-changed",
+    "github.project-item.field-changed",
+    "github.project-item.archived",
+    "github.project-item.restored",
+    "github.project.closed",
+    "github.project.reopened",
+    "github.project-item.removed",
+  ]);
+  const ajv = new Ajv2020();
+  const schema = parse(
+    readFileSync(
+      new URL("../../../../docs/specifications/github-events.schema.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+  ajv.addSchema(schema);
+  const valid = ajv.compile({ $ref: `${schema.$id}#/$defs/event` });
+  for (const row of s.store.connection.database.prepare("SELECT payload FROM store_inbox").all())
+    expect(valid(JSON.parse(row["payload"] as string)), JSON.stringify(valid.errors)).toBe(true);
+  expect(s.errors).toEqual([]);
+});
+test("SIGKILL after a read leaves pending work and restart publishes the change once", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  await s.source.stop();
+  s.fake.issues.get("I_A")!.state = "CLOSED";
+  const { spawn } = await import("node:child_process");
+  const child = spawn(
+    process.execPath,
+    [
+      new URL("./fixtures/fault-process.ts", import.meta.url).pathname,
+      s.path,
+      s.fake.url,
+      s.options.configuration.owners.sample.hooks[0]!.secretFile,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const [code, signal] = await once(child, "exit");
+  expect({ code, signal }, stderr).toEqual({ code: null, signal: "SIGKILL" });
+  expect(
+    s.store.connection.database
+      .prepare("SELECT count(*) AS count FROM github_pending WHERE kind='issue'")
+      .get()?.["count"],
+  ).toBe(1);
+  expect(s.source.trackedIssue("I_A")?.issue.state).toBe("open");
+  const resumed = startGitHubSource(s.options);
+  cleanup.push(() => resumed.stop());
+  await s.idle();
+  expect(resumed.trackedIssue("I_A")?.issue.state).toBe("closed");
+  resumed.requestSweep();
+  await s.idle();
+  expect(
+    s.store.connection.database
+      .prepare("SELECT count(*) AS count FROM router_source_event WHERE event_id='issue:I_A:1'")
+      .get()?.["count"],
+  ).toBe(1);
+  expect(
+    s.taken.filter(
+      (e) => e.actor === "I_A" && (e.payload as { type: string }).type === "github.issue.closed",
+    ),
+  ).toHaveLength(1);
+});
+test("a publication failure rolls back the mirror and its pending completion", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  s.store.connection.database.exec(
+    "CREATE TRIGGER fail_github_publish BEFORE INSERT ON router_source_event WHEN NEW.event_id LIKE 'dependency:%' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END",
+  );
+  s.fake.dependencies.push(["I_A", "I_X"]);
+  s.source.receive(signedDelivery("issue_dependencies", { blocked_issue: { node_id: "I_A" } }));
+  await expect.poll(() => s.errors.length).toBe(1);
+  expect(s.source.trackedIssue("I_A")?.blockedBy).toEqual([]);
+  expect(
+    s.store.connection.database.prepare("SELECT count(*) AS count FROM github_pending").get()?.[
+      "count"
+    ],
+  ).toBe(1);
+  s.store.connection.database.exec("DROP TRIGGER fail_github_publish");
+  s.clock.advance(60000);
+  await s.idle();
+  expect(s.source.trackedIssue("I_A")?.blockedBy.map((i) => i.nodeId)).toEqual(["I_X"]);
+});
+test("HTTP acknowledges only committed deliveries and maps typed failures", async () => {
+  const s = await setup();
+  await s.idle();
+  const valid = signedDelivery("ping", {});
+  expect((await fetch(s.url, { method: "GET" })).status).toBe(405);
+  expect(
+    (await fetch(s.url, { method: "POST", headers: valid.headers, body: valid.body })).status,
+  ).toBe(202);
+  expect(
+    s.store.connection.database.prepare("SELECT delivery_id FROM github_delivery").get()?.[
+      "delivery_id"
+    ],
+  ).toBe("delivery-one");
+  expect(
+    (await fetch(s.url, { method: "POST", headers: valid.headers, body: valid.body })).status,
+  ).toBe(200);
+  expect((await fetch(s.url, { method: "POST", headers: valid.headers, body: "{ }" })).status).toBe(
+    401,
+  );
+  const bad = signedDelivery("issues", {});
+  expect(
+    (await fetch(s.url, { method: "POST", headers: bad.headers, body: bad.body })).status,
+  ).toBe(400);
+  const unknown = signedDelivery("ping", {}, "unknown", "9");
+  expect(
+    (await fetch(s.url, { method: "POST", headers: unknown.headers, body: unknown.body })).status,
+  ).toBe(404);
+});
+test("REDACTED item content is skipped without publishing a removal", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  s.fake.items.get("IT_A")!.type = "REDACTED";
+  s.source.receive(
+    signedDelivery("projects_v2_item", {
+      projects_v2_item: { node_id: "IT_A", project_node_id: "P_one" },
+    }),
+  );
+  await s.idle();
+  expect(s.source.trackedIssue("I_A")?.issue.nodeId).toBe("I_A");
+  s.source.requestSweep();
+  await s.idle();
+  expect(s.source.trackedIssue("I_A")?.issue.nodeId).toBe("I_A");
+  expect(
+    s.taken.some((e) => (e.payload as { type: string }).type === "github.project-item.removed"),
+  ).toBe(false);
+});
+test("redelivery ignores accepted GUIDs and GUIDs with a successful attempt, and asks once before an arrival", async () => {
+  const s = await setup();
+  await s.idle();
+  s.fake.setTarget(undefined);
+  s.source.receive(signedDelivery("ping", {}, "accepted"));
+  for (const [id, guid, status] of [
+    [1, "accepted", 502],
+    [2, "succeeded", 502],
+    [3, "succeeded", 202],
+    [4, "missing", 502],
+  ] as const)
+    s.fake.deliveries.push({
+      id,
+      guid,
+      status_code: status,
+      delivered_at: new Date(s.clock.now() + 1).toISOString(),
+      event: "ping",
+      payload: {},
+    });
+  s.clock.advance(59999);
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(s.fake.redeliveries).toEqual([]);
+  s.clock.advance(1);
+  await expect.poll(() => s.fake.redeliveries).toEqual([4]);
+  await expect
+    .poll(
+      () =>
+        s.store.connection.database
+          .prepare("SELECT count(*) AS count FROM github_redelivery")
+          .get()?.["count"],
+    )
+    .toBe(1);
+  s.clock.advance(60000);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(s.fake.redeliveries).toEqual([4]);
+  expect(s.errors).toEqual([]);
+});
+test("invalid API node ids leave the mirror unchanged and work pending", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  s.fake.issues.get("I_X")!.id = "I.bad";
+  s.fake.dependencies.push(["I_A", "I_X"]);
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }));
+  await expect.poll(() => s.errors.length).toBe(1);
+  expect(s.errors[0]?.kind).toBe("api");
+  expect(s.source.trackedIssue("I_A")?.blockedBy).toEqual([]);
+});

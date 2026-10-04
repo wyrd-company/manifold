@@ -1,10 +1,15 @@
--- ---
+// ---
+// relationships:
+//   implements: github-source-database-schema
+// ---
+export const githubSteps = [
+  String.raw`-- ---
 -- relationships:
 --   realizes: github-source-database-schema
 -- ---
 -- SQLite schema of the tables the GitHub event source owns in Manifold's
 -- database file, beside the store's and the router's tables and migrated
--- under the owner `github`.
+-- under the owner github.
 
 CREATE TABLE github_delivery (
   delivery_id TEXT PRIMARY KEY CHECK (length(delivery_id) > 0),
@@ -100,3 +105,5 @@ CREATE TABLE github_sub_issue (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX github_sub_issue_sub ON github_sub_issue (sub_issue_node_id);
+`,
+];

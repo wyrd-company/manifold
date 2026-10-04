@@ -274,7 +274,7 @@ proposed-design:
     When it is not, each tracked issue the mirror shows beside it, through a
     present dependency or sub-issue row in either direction, becomes a
     pending `issue` instead, so a blocker outside every bound Project still
-    reaches the issues it blocks. An item becomes a pending `item` and a
+    reaches the issues it blocks. An item becomes a pending `item`, with its Project node id stored on the pending row, and a
     Project a pending `project` only when the Project is bound. A new
     pending row has generation 1 and `requested_at` now. Recording a pending
     row that exists raises its generation by one and keeps its
