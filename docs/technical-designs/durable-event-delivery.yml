@@ -3,6 +3,7 @@ relationships:
   related-to:
     - gates
     - portfolio
+    - store
 objective: >-
   Deliver events from shared sources to state machine actors so that no
   event is lost across a service interruption, a resumed actor continues
@@ -37,7 +38,8 @@ design-challenges:
     At-least-once delivery means every actor takes some events twice.
 proposed-design:
   high-level-overview: >-
-    One SQLite database holds two tables, snapshots and inbox. A router built
+    One SQLite database holds the snapshots, the inbox, and the deadlines,
+    behind the store's interface. A router built
     on PubSubJS with hierarchical topics fans events out from sources to
     loaded actors. Every event is written to its target actors' inbox rows
     before fan-out, and a row is marked consumed only after the actor's
@@ -76,12 +78,13 @@ proposed-design:
     actor drains its unconsumed rows in insertion order before it subscribes
     live.
   snapshot-then-consume: >-
-    Delivery to an actor is send, save snapshot, mark consumed, in that order.
-    A crash after send and before save replays the event. A crash after save
-    and before mark replays it too, and the actor's idempotency makes that a
-    no-op. The store refuses to overwrite a snapshot whose status is active
-    with one whose status is error; the errored snapshot is kept beside it
-    for inspection.
+    Delivery to an actor is send, then save snapshot and mark consumed in
+    one transaction. A crash after send and before the commit replays the
+    event, and the actor's idempotency makes that a no-op. A crash after the
+    commit replays nothing. The store never overwrites a snapshot with one
+    whose status is error; the errored snapshot is kept beside it for
+    inspection, and the event that produced it stays unconsumed, so it is
+    held and never lost.
   idempotency: >-
     Every event carries an id from its source, the webhook delivery id, the
     thread event sequence, the notification action id, the token id. Source
@@ -92,10 +95,14 @@ proposed-design:
     actor re-sends the same command and the receiver deduplicates.
   deadlines: >-
     A delayed transition in a blueprint becomes a deadline row: actor id,
-    state path, fire time, event name. A deadline loop publishes the event
-    when the time passes and the actor is still in that state. On resume,
-    rows for states the actor has left are deleted; the rest stay armed. The
-    delay is not restarted on history re-entry unless the blueprint says so.
+    state path, fire time, event name. The row is armed in the transaction
+    that saves the snapshot entering its state, and the same save deletes the
+    rows of states the actor has left, so a row exists only while its state
+    is active and survives a restart armed. A deadline loop fires a due row
+    by deleting it and writing its event to the actor's inbox in one
+    transaction, then publishes the event. An armed deadline keeps its fire
+    time across saves, so the delay is not restarted on history re-entry
+    unless the blueprint says so.
   environment-streams: >-
     One connection per environment carries every thread's events. The
     source handler stamps each event with its thread id and publishes under
