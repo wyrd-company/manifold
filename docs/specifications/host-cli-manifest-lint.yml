@@ -18,7 +18,9 @@ description: >-
   The command takes one optional argument, the directory of a process
   repository checkout, default the current directory. It calls the lint
   with a reader that answers the text of the file at a repository-relative
-  path under that directory, and `undefined` when no file is there. A
+  path under that directory, and `undefined` when no file is there or
+  when the file, or any directory on the way to it, is a symbolic link, as
+  `process-manifest` states. A
   directory that cannot be read, or a file that exists but cannot be read,
   is reported on standard error as `<file>: <reason>` and ends the command
   with exit code 2 with nothing on standard output. Otherwise the command
@@ -38,7 +40,11 @@ validation-criteria: >-
   `node_modules`. It observes exit 0 and no output for a clean checkout;
   exit 1 with a `manifest-missing` line for an empty directory; exit 1 with
   a `model-missing` line at `manifold.yml:/intake/decisionModel` for a
-  manifest naming an absent model; exit 1 with a `syntax` line naming the
+  manifest naming an absent model; exit 1 with a `model-key-invalid` line
+  for a `decisionNode` key `../outside.yml`, with a file at that path
+  outside the checkout left unread; exit 1 with a `model-missing` line for
+  a `decisionNode` key naming a symbolic link to a model inside the
+  checkout; exit 1 with a `syntax` line naming the
   model file for a cell that does not parse; exit 0 with a
   `never-boolean` line ending in ` (warning)`; and exit 2 with no standard
   output for a missing directory and for a `manifold.yml` that is a

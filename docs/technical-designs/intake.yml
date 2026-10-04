@@ -80,6 +80,7 @@ proposed-design:
     import type { GitHubProject, TrackedIssue } from "../github-source/index.ts";
     import type { GitHubProjectResolution, PortfolioInForce } from "../portfolio/index.ts";
     import type { JsonValue, Store } from "../store/index.ts";
+    import type { DecisionModels } from "../decision-models.ts";
     import type { BlueprintVersion } from "@wyrd-company/manifold-shared";
 
     /** Migration steps for owner `intake`, applied by the store's migrate. */
@@ -98,12 +99,14 @@ proposed-design:
       /** The current revision and the blueprints loaded from it, or undefined before the first pull. */
       current(): IntakeRevision | undefined;
       readonly actors: TaskActorStarter;
-      /** Called for each record that becomes `failed`. */
+      /** Called for each failed decision and each failed start. */
       readonly onFailed?: (record: IntakeRecord) => void;
       /** Called for each failure the runner recovers from by itself. */
       readonly onError?: (error: IntakeError) => void;
       /** Called after each step commits. */
       readonly probe?: (step: IntakeStep, issueNodeId: string) => void;
+      /** Builds a commit's decision models. Defaults to createDecisionModels. */
+      readonly createModels?: (models: Readonly<Record<string, unknown>>) => DecisionModels;
     }
 
     export interface TrackedIssues {
@@ -161,6 +164,9 @@ proposed-design:
       readonly failure: IntakeFailure | null;
       readonly evaluation: JsonValue | null;
       readonly attempts: number;
+      /** The last failure to start the actor of a `recorded` record. */
+      readonly startFailure: IntakeStartFailure | null;
+      readonly startAttempts: number;
       readonly createdAt: number;
       readonly updatedAt: number;
     }
@@ -183,7 +189,13 @@ proposed-design:
       | "item-outside-binding"
       | "input-invalid";
 
-    export type IntakeStep = "recorded" | "started" | "failed";
+    export interface IntakeStartFailure {
+      readonly kind: "version-unavailable" | "input-invalid";
+      readonly message: string;
+      readonly detail: JsonValue;
+    }
+
+    export type IntakeStep = "recorded" | "started" | "failed" | "start-failed";
 
     export class IntakeError extends Error {
       readonly kind: "read" | "start" | "store";
@@ -198,7 +210,8 @@ proposed-design:
     blueprints to a decision or a failure. `inputs.ts` holds the pure
     functions that build the decision input and the task input from a
     tracked issue and a binding. `models.ts` holds the decision models of
-    the current commit and replaces them when the commit changes.
+    each commit an attempt uses, and disposes a commit's models when no
+    attempt holds them and the commit is no longer current.
     `records.ts` holds every SQL read and write of the intake table.
     `migrations.ts` holds the migration steps; step 1 is the script of
     `intake-records-table`. Tests live beside the module and import only
@@ -234,9 +247,23 @@ proposed-design:
     done. `recorded` goes to the start step. No record, or a `failed`
     record from another commit, goes to the decision step. A `failed`
     record at the current commit is done: the same commit, binding, and
-    portfolio decide the same way.
+    portfolio decide the same way. A `recorded` record never goes back to
+    the decision step.
   decision-step: |-
-    The decision step reads `current()`, then:
+    The decision step first captures its basis, in one synchronous run of
+    the event loop: `current()`, the revision and the `RevisionLoad` of one
+    commit; `portfolio.current()`, the declaration in force and its commit;
+    the tracked issue; the binding; and the `DecisionModels` of the
+    basis's commit, which the attempt holds until it ends. The service
+    applies a revision to the portfolio module and swaps `current` in
+    synchronous steps, so the captured declaration and the binding
+    resolution read one declaration. Every later step reads the basis and
+    never `current()` or `portfolio` again, so a revision loaded while the
+    evaluation awaits changes nothing in this attempt: the record holds
+    the basis's commit, its portfolio commit, a blueprint version at its
+    commit, and the decision input built from it. The reconcile that the
+    load runs finds the record and does nothing more for a decided issue.
+    The steps:
 
     1. `tracked.trackedIssue(nodeId)`. `undefined` means the issue is not
        tracked, not yet baselined, or observed absent; the issue leaves the
@@ -248,19 +275,19 @@ proposed-design:
        archived whose name sorts first by code point. When every resolved
        binding is archived the failure is `binding-archived`; when none
        resolves it is `binding-missing`.
-    3. The models. `models.ts` holds the `DecisionModels` built from the
-       manifest at `current().revision.commit`, as `process-manifest`
-       states, and builds them again when the commit changes, disposing the
-       old. A manifest that is absent, or a lint with an error finding, is
+    3. The models. `models.ts` builds the `DecisionModels` of the basis's
+       commit from its manifest, as `process-manifest` states, once per
+       commit. A manifest that is absent, or a lint with an error finding, is
        the failure `manifest` with the findings as its detail.
     4. The evaluation. `evaluate(<intake model path>, decisionInput)` with
        the decision input of `intake-decision-model`. An `error` record is
        the failure `decision-model`, with the record as its detail.
     5. `decide`: the result validates against `#/$defs/decision-output`,
-       else `output`; the blueprint path is a key of
-       `current().blueprints.blueprints`, else `blueprint-unloaded`, with
+       else `output`; the blueprint path is a key of the basis's
+       `blueprints.blueprints`, else `blueprint-unloaded`, with
        the path's findings from `failures` when it has any; the portfolio
-       item resolves as `intake-decision-model` states, else
+       item resolves against the basis's declaration, as
+       `intake-decision-model` states, else
        `item-unknown`, `item-archived`, or `item-outside-binding`.
     6. The task input of `intake-decision-model`, built from the same
        tracked issue, validates against the blueprint's `schemas.input`,
@@ -274,23 +301,29 @@ proposed-design:
     `read`; the issue stays queued for the next wake, and the runner goes
     on to the next issue.
   start-step: >-
-    The start step loads the recorded version with
+    The start step starts the actor of a `recorded` record, and never
+    decides again. With no `await` before it, it reads the store: when a
+    snapshot exists for the record's actor id, the actor started before a
+    crash, and the step marks the record `started` and ends. Otherwise it
+    loads the recorded version with
     `blueprints.version(parseBlueprintVersionKey(record.blueprintVersion))`,
     so an actor recorded before a restart starts on the version it was
     recorded with, whatever commit is current after the restart. A version
-    that is not `loaded` writes the record `failed` with kind
-    `blueprint-unloaded`. Then, with no `await` between its reads and its
-    writes: when the store holds a snapshot for the record's actor id, the
-    actor started before a crash, and the step only marks the record
-    `started`. Otherwise it reads `tracked.trackedIssue`, builds the task
+    that is not `loaded` is the start failure `version-unavailable`. After
+    the load, with no `await` between its reads and its writes, it checks
+    for a snapshot again, reads `tracked.trackedIssue`, builds the task
     input, validates it against the blueprint's input schema, calls
     `actors.start`, and marks the record `started` in its own transaction,
-    then calls `probe("started")`. An issue no longer tracked leaves the
-    record `recorded`, and the discovery that tracks it again starts it.
-    An input that no longer validates writes the record `failed` with kind
-    `input-invalid`. A throw from `actors.start` is
-    an `IntakeError` of kind `start`; the record stays `recorded` and the
-    next reconcile starts it.
+    then calls `probe("started")`. An input the schema refuses is the
+    start failure `input-invalid`. An issue no longer tracked leaves the
+    record as it is, and the discovery that tracks it again starts it. A
+    start failure writes `startFailure` and raises `startAttempts` on the
+    `recorded` record, keeping every decision column, and calls
+    `probe("start-failed")` and `onFailed`. The record stays `recorded`,
+    and each later discovery and reconcile tries the start again on the
+    same version with the issue's state at that moment. A throw from
+    `actors.start` is an `IntakeError` of kind `start`; the record stays
+    `recorded` and the next reconcile starts it.
   handoff: >-
     The start step reads the mirror and attaches the actor in one
     synchronous run of the event loop. The GitHub event source writes the
@@ -312,26 +345,27 @@ proposed-design:
     `environment`, the binding's environment; `portfolioItem`; and
     `blueprintPath`. The actor host places it at `context.manifold`, from
     which it derives the actor's subscription, as the actor host design
-    states. Until the actor host merges, the tests start actors through a
-    fixture host that implements the router's `ActorHost` and
-    `TaskActorStarter` with XState's `createActor`.
+    states, and the actor's subscription takes its topics from `issue` and
+    `threads`. The intake tests start actors through a fixture host that
+    implements the router's `ActorHost` and `TaskActorStarter` with
+    XState's `createActor`.
   records: >-
     `records.ts` writes the record in four ways, each in one
-    `store.connection.transaction`. A failure of the decision step inserts
-    the row, or updates a `failed` row, setting `status` to `failed`, the
-    commit, the failure, the evaluation when there was one, and the
-    binding, Project, and environment when step 2 found them; it raises
-    `attempts` by one. A decision inserts the row, or updates a `failed`
-    row, setting `status` to `recorded` with every field of the decision;
-    the statement's `WHERE status = 'failed'` leaves a `recorded` or
-    `started` row unchanged. A start sets `status` to `started` where it
-    is `recorded`. A failure of the start step sets `status` to `failed`,
-    the failure, and `attempts` where it is `recorded`, and keeps the
-    commit and every decision column, so the issue is decided again at the
-    next commit. No statement moves a row out of `started`, and no
-    statement deletes a row; the table's triggers refuse both, so a
-    decision once recorded never changes and an issue with an actor is
-    never decided again.
+    `store.connection.transaction`. A failed decision inserts the row, or
+    updates a `failed` row, setting `status` to `failed`, the commit, the
+    failure, the evaluation when there was one, and the binding, Project,
+    and environment when step 2 found them; it raises `attempts` by one. A
+    decision inserts the row, or updates a `failed` row, setting `status`
+    to `recorded` with every field of the decision; the statement's
+    `WHERE status = 'failed'` leaves a `recorded` or `started` row
+    unchanged. A failed start sets `startFailure` and raises
+    `startAttempts` where the row is `recorded`. A start sets `status` to
+    `started` and clears `startFailure` where the row is `recorded`. The
+    table's triggers refuse every other change: a `recorded` row only
+    moves to `started` or records a start failure, a `started` row never
+    changes, no row's decision columns change once it is `recorded`, and
+    no row is deleted. A decision once recorded therefore never changes,
+    and an issue with a recorded decision is never decided again.
   intake-once: >-
     Intake runs once per issue: a `recorded` or `started` record is the
     issue's one decision for the life of the store. An issue removed from
@@ -349,7 +383,9 @@ proposed-design:
     snapshot; the reconcile at the next start starts the actor once, on
     the recorded version. A crash after the actor's first snapshot commits
     and before the `started` commit leaves a snapshot; the start step finds
-    it and marks the record `started` without a second actor. A decision
+    it and marks the record `started` without a second actor. A crash
+    after a start failure's commit leaves a `recorded` record that the next
+    reconcile starts on its version. A decision
     twice at one commit writes the same `failed` record with `attempts`
     raised, or finds a `recorded` record and writes nothing. `stop` twice
     does nothing more.
@@ -426,7 +462,23 @@ proposed-design:
     issue event the fake publishes in the turn after `actors.start` reaches
     the actor, and a change committed before the start step is in its
     input; a `recorded` record from the first commit starts on the first
-    commit's version after the second commit is current; an evaluation
+    commit's version after the second commit is current;
+    with the evaluation held open by a `createModels` that wraps
+    `createDecisionModels` and resolves `evaluate` when the test releases
+    it, a second commit that changes the blueprint, the portfolio,
+    and the binding's item is loaded and `revisionLoaded` called, and the
+    evaluation then resolves: the record holds the first commit, the first
+    commit's version key and portfolio commit, and the decision input
+    built from the first basis; a start whose input the recorded version's
+    schema refuses leaves the record `recorded` with an `input-invalid`
+    start failure and the same decision, and after the fake's fields
+    change a reconcile starts it on that version with that item; a
+    recorded version whose commit `revisionAt` no longer answers leaves the
+    record `recorded` with a `version-unavailable` start failure and no
+    actor, and when a snapshot already exists for the actor the record is
+    marked `started` without loading the version; a direct `UPDATE` of a
+    `recorded` row to `failed`, and to `recorded` with another blueprint,
+    are refused by the table; an evaluation
     that never resolves holds only its issue's turn until `stop`. The
     table matches `intake-records-table`. Fault tests, in a child Node
     process that sends itself `SIGKILL` from `probe` and whose kill signal

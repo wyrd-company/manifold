@@ -121,9 +121,12 @@ description: |-
   hold the chosen binding, Project, environment, blueprint path, blueprint
   version key, portfolio item, the commit of the portfolio declaration in
   force, and the evaluation record of `decision-models`. A `recorded` or
-  `started` record never changes its decision. A `failed` record holds the
-  commit it failed at, the failure, the evaluation when the model ran, and
-  the number of attempts.
+  `started` record never changes its decision, and is never decided
+  again. A `failed` record holds the commit it failed at, the failure, the
+  evaluation when the model ran, and the number of attempts. A `recorded`
+  record whose actor could not start holds the start failure and the
+  number of failed starts, and its start is tried again on the recorded
+  version at each later discovery and reconcile.
 
   Failure kinds. Each failure has a kind, a message, and a detail:
 
@@ -143,6 +146,14 @@ description: |-
   An `<error>` is `{ "instancePath", "message" }` from the validator. A
   failed record is retried once at each later commit of the process
   repository; a failure at the current commit is not retried.
+
+  Start failure kinds. A start failure leaves the record `recorded` with
+  its decision:
+
+  | Kind | When | Detail |
+  |---|---|---|
+  | `version-unavailable` | the recorded blueprint version does not load | `{ "version", "reason" }` |
+  | `input-invalid` | the recorded version's input schema refuses the task input | `{ "errors": [<error>] }` |
 format: json-schema
 validation-criteria: >-
   `docs/specifications/intake-decision-model.schema.yml` is a valid JSON

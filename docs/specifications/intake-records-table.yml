@@ -22,10 +22,13 @@ description: >-
   `#/$defs/intake-record` of `intake-decision-model`: `project_node_id`,
   `project_owner`, and `project_number` hold the Project reference;
   `failure` and `evaluation` hold JSON; times are epoch milliseconds.
-  `status` moves from `failed` to `failed` or `recorded`, and from
-  `recorded` to `started` or `failed`; a trigger aborts every other change
-  of `status`, every change of the decision columns of a row that is not
-  `failed` before the update, and every `DELETE`.
+  `start_failure` and `start_attempts` hold the last failure to start the
+  actor of a `recorded` row and the number of failed starts. `status` moves
+  from `failed` to `failed` or `recorded`, and from `recorded` to
+  `started`; a `recorded` row may record a start failure and stay
+  `recorded`. A trigger aborts every update of a `started` row, every
+  update of a `recorded` row that changes its status to `failed` or any of
+  its decision columns, and every `DELETE`.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/intake-records-table.sql` runs without error on an
@@ -34,6 +37,8 @@ validation-criteria: >-
   `tbl_name`, and `sql` of every `sqlite_schema` row whose name starts with
   `intake_` with the rows this file produces on a second empty database,
   with each run of whitespace in `sql` read as one space; they are equal.
-  An update from `started` to any status, from `recorded` to `recorded`
-  with another blueprint, and a `DELETE` each fail with the table's
-  message.
+  An update of a `started` row, an update of a `recorded` row to `failed`,
+  an update of a `recorded` row to another blueprint or portfolio item,
+  and a `DELETE` each fail with the table's message; an update that
+  records a start failure on a `recorded` row, and one from `recorded` to
+  `started` that clears it, succeed.

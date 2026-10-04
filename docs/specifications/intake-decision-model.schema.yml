@@ -188,6 +188,19 @@ $defs:
         type: string
       detail: true
 
+  intake-start-failure:
+    type: object
+    required: [kind, message, detail]
+    additionalProperties: false
+    properties:
+      kind:
+        enum:
+          - version-unavailable
+          - input-invalid
+      message:
+        type: string
+      detail: true
+
   intake-record:
     description: The one record Manifold keeps per issue.
     type: object
@@ -206,6 +219,8 @@ $defs:
       - failure
       - evaluation
       - attempts
+      - startFailure
+      - startAttempts
       - createdAt
       - updatedAt
     additionalProperties: false
@@ -257,7 +272,16 @@ $defs:
           - $ref: https://manifold.wyrd.company/schemas/decision-models#/$defs/decision-model-evaluation
           - type: "null"
       attempts:
-        description: The number of failed attempts.
+        description: The number of failed decisions.
+        type: integer
+        minimum: 0
+      startFailure:
+        description: The last failure to start the actor of a `recorded` record.
+        oneOf:
+          - $ref: "#/$defs/intake-start-failure"
+          - type: "null"
+      startAttempts:
+        description: The number of failed starts.
         type: integer
         minimum: 0
       createdAt:
@@ -273,6 +297,8 @@ $defs:
           properties:
             failure:
               $ref: "#/$defs/intake-failure"
+            startFailure:
+              type: "null"
         else:
           properties:
             failure:
@@ -291,3 +317,11 @@ $defs:
               type: string
             evaluation:
               type: object
+      - if:
+          properties:
+            status:
+              const: started
+        then:
+          properties:
+            startFailure:
+              type: "null"

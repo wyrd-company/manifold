@@ -75,14 +75,54 @@ description: |-
      `#/$defs/manifest`, one finding per failing location with the
      validator's message. No other rule runs.
   4. Per model of the set, in the order the set is reached, breadth first
-     from the intake decision model: `model-missing`, at `/intake/decisionModel` in
-     `manifold.yml` for the intake decision model, or at the `decisionNode`'s
-     `/nodes/<index>/content/key` in the model that names it, when no file
-     is at the path; `model-syntax`, at the model's root, when its text
-     does not parse as one YAML document; and otherwise every finding of
-     `lintDecisionModel(model, path)`, as kind `decision-model`, with the
-     decision model finding as `finding`, its severity as the finding's
-     severity, and its `location` after `#` as the location.
+     from the intake decision model. Before a key is read, it is checked
+     against `#/$defs/model-path`: a repository path ending in `.yml`. A
+     key that is not a string, or that fails the check, is
+     `model-key-invalid` at the `decisionNode`'s `/nodes/<index>/content/key`
+     in the model that names it, and is never read. A valid key with no
+     file at its path is `model-missing`, at `/intake/decisionModel` in
+     `manifold.yml` for the intake decision model, or at the referring
+     `decisionNode`'s `/nodes/<index>/content/key`. A model whose text does
+     not parse as one YAML document is `model-syntax` at its root.
+     Otherwise every finding of `lintDecisionModel(model, path)` is a
+     finding of kind `decision-model`, with the decision model finding as
+     `finding`, its severity as the finding's severity, and the location
+     described below. `decisionNode` keys are read from a model only when
+     its `lintDecisionModel` gives no `structure` finding.
+
+  Decision model finding locations. A `decision-model` finding's location
+  is the RFC 6901 JSON Pointer, in the model's document, of the value the
+  decision model finding names, so it resolves in the file as written. The
+  first row that matches the decision model finding applies:
+
+  | Decision model finding | Location |
+  |---|---|
+  | `structure` | its `instancePath` |
+  | `syntax` or `never-boolean` on an expression node | `/nodes/<n>/content/config/expression` |
+  | `nodeId` only | `/nodes/<n>` |
+  | `nodeId` and `statementId` | `/nodes/<n>/content/config/statements/<s>`, followed by `/condition` for `syntax` and `never-boolean` |
+  | `nodeId`, `ruleId`, and `columnId` | `/nodes/<n>/content/config/rules/<r>/<columnId>` |
+  | `nodeId` and `ruleId` | `/nodes/<n>/content/config/rules/<r>` |
+  | `nodeId` and `columnId`, for `syntax` and `never-boolean` | `/nodes/<n>/content/config/inputs/<c>/field` |
+  | `nodeId` and `columnId`, otherwise | `/nodes/<n>/content/config/inputs/<c>`, or `/nodes/<n>/content/config/outputs/<c>` when the id names an output column |
+  | no `nodeId` and no `instancePath` | the root, `""` |
+
+  `<n>`, `<s>`, `<r>`, and `<c>` are array indices: the index of the
+  element whose `id`, or a rule's `_id`, is the named id. When an id names
+  more than one element of its array, the index is the last such element,
+  the one a `duplicate-id` finding reports. A column id is a property name
+  of the rule object, escaped as RFC 6901 requires. The decision model
+  finding keeps its own `location`, which names nodes, rules, columns, and
+  statements by id.
+
+  Readers. A key passes the path check before the lint calls `read`, so
+  `read` is only ever given a repository path with no `..`, `.`, or empty
+  segment and no leading `/`. The service's reader is the revision's
+  `read`, which reads the commit's tree and treats a symbolic link as no
+  file. The host CLI's reader answers `undefined` for a path whose file,
+  or any directory on the way to it, is a symbolic link, so that a checkout
+  reads as the same tree the revision reads, and no read leaves the
+  checkout directory.
 
   Every finding but a `decision-model` warning is an error. The lint
   returns `ok: true` with the manifest, every model of the set parsed, and
@@ -94,13 +134,22 @@ validation-criteria: >-
   2020-12 document, and equals the schema `packages/shared` embeds, which a
   test shows. Every finding the lint tests produce validates against
   `#/$defs/finding`. The lint tests in `packages/shared` call
-  `lintProcessManifest` with an in-memory reader and check each finding's
-  file, location, kind, and order for: no `manifold.yml`; text that is not
-  YAML; a manifest with no `intake`, with an unknown key, and with a
-  `decisionModel` path holding `..`; a named model that is absent; a
-  `decisionNode` naming an absent model; a model that is not YAML; a model
-  with a `syntax` cell; and a `never-boolean` warning, which leaves
-  `ok: true`. A clean manifest whose intake model names a second model
+  `lintProcessManifest` with an in-memory reader that records every path
+  it is given, and check each finding's file, location, kind, and order
+  for: no `manifold.yml`; text that is not YAML; a manifest with no
+  `intake`, with an unknown key, and with a `decisionModel` path holding
+  `..`; a named model that is absent; a `decisionNode` naming an absent
+  model; `decisionNode` keys `../outside.yml`, `/abs.yml`, `a//b.yml`,
+  `models/x.json`, and `7`, each `model-key-invalid` at the referring
+  node's key and never given to the reader; a model that is not YAML; a
+  model whose node lacks `content`, a `structure` finding at the
+  `instancePath` it names; a `syntax` cell in the second rule of a table
+  whose rules array holds three rules, at
+  `/nodes/<n>/content/config/rules/1/<columnId>`; a `syntax` switch
+  condition and a `syntax` input column field at their `/condition` and
+  `/field` locations; a duplicate node id at the later node's index; and a
+  `never-boolean` warning, which leaves `ok: true`. Each location resolves
+  to the value in the parsed document. A clean manifest whose intake model names a second model
   through a `decisionNode` returns both models by path, and the same call
   twice returns the same result. Fixtures use a domain unrelated to
   Manifold.

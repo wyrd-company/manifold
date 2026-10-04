@@ -18,6 +18,11 @@ $defs:
       segment and no leading or trailing `/`.
     type: string
     pattern: "^(?!.*(^|/)\\.{1,2}(/|$))[^/\\\\]+(/[^/\\\\]+)*$"
+  model-path:
+    description: The path of a decision model, the key the model is evaluated by.
+    allOf:
+      - $ref: "#/$defs/repository-path"
+      - pattern: "\\.yml$"
   manifest:
     type: object
     required: [intake]
@@ -30,9 +35,7 @@ $defs:
         properties:
           decisionModel:
             description: The path of the intake decision model.
-            allOf:
-              - $ref: "#/$defs/repository-path"
-              - pattern: "\\.yml$"
+            $ref: "#/$defs/model-path"
   finding:
     description: One problem the manifest lint reports.
     type: object
@@ -52,6 +55,7 @@ $defs:
           - manifest-missing
           - syntax
           - schema
+          - model-key-invalid
           - model-missing
           - model-syntax
           - decision-model

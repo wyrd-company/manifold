@@ -26,8 +26,11 @@ CREATE TABLE intake_record (
   failure TEXT CHECK (failure IS NULL OR json_valid(failure)),
   evaluation TEXT CHECK (evaluation IS NULL OR json_valid(evaluation)),
   attempts INTEGER NOT NULL CHECK (attempts >= 0),
+  start_failure TEXT CHECK (start_failure IS NULL OR json_valid(start_failure)),
+  start_attempts INTEGER NOT NULL DEFAULT 0 CHECK (start_attempts >= 0),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  CHECK (status = 'recorded' OR start_failure IS NULL),
   CHECK (
     (status = 'failed' AND failure IS NOT NULL)
     OR (
@@ -46,15 +49,15 @@ CREATE TABLE intake_record (
   )
 ) STRICT, WITHOUT ROWID;
 
--- A decision once recorded never changes. From `recorded` a row moves to
--- `started`, or to `failed` when its actor cannot start, keeping every
--- decision column. A `started` row never changes.
+-- A decision once recorded never changes. A `recorded` row moves only to
+-- `started`, or stays `recorded` while a start failure is recorded on it,
+-- with every decision column kept. A `started` row never changes.
 CREATE TRIGGER intake_record_decided
   BEFORE UPDATE ON intake_record
   WHEN OLD.status <> 'failed'
     AND NOT (
       OLD.status = 'recorded'
-      AND NEW.status IN ('started', 'failed')
+      AND NEW.status IN ('recorded', 'started')
       AND NEW.commit_id IS OLD.commit_id
       AND NEW.binding IS OLD.binding
       AND NEW.project_node_id IS OLD.project_node_id
@@ -66,6 +69,9 @@ CREATE TRIGGER intake_record_decided
       AND NEW.portfolio_item IS OLD.portfolio_item
       AND NEW.portfolio_commit IS OLD.portfolio_commit
       AND NEW.evaluation IS OLD.evaluation
+      AND NEW.failure IS OLD.failure
+      AND NEW.attempts IS OLD.attempts
+      AND NEW.created_at IS OLD.created_at
     )
   BEGIN SELECT RAISE(ABORT, 'intake_record decision is final'); END;
 
