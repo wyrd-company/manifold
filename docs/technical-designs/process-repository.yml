@@ -243,8 +243,12 @@ proposed-design:
     with that signal on every request, so the signal aborts a request that
     is waiting for a response and a response body that is still arriving.
     The same signal goes to `installationToken` as `signal` when `onAuth`
-    mints a token. A request aborted by the signal fails the pull with kind
-    `remote` and a message naming the timeout, the URL, and the branch. The
+    mints a token, so a token request that stalls is aborted with it. A pull
+    classifies a failure by the signal first: when the signal has aborted,
+    the pull fails with kind `remote` and a message naming the timeout, the
+    URL, and the branch, whether the failure came from a git request, from
+    `onAuth`, or from isomorphic-git wrapping either, and never with kind
+    `authentication`. The
     failed pull leaves the current commit and every revision unchanged, as
     any failed pull does, and the next pull runs. The signal bounds only
     requests: a pull whose requests completed in time finishes its local
@@ -313,24 +317,28 @@ proposed-design:
     a file prefix; malformed paths throw; an unknown branch, a refused
     credential, and a server that closes the connection during the pack
     each fail with their kind and leave the current commit readable. A
-    server that sends headers and then stops, and a server that stops partway
-    through the pack, each fail a pull with `pullTimeoutMs` 200 with kind
-    `remote` once the timeout passes, and the next pull against a healthy
-    server advances. Crash tests: a probe that throws at `fetched` and at
+    server that sends headers and then stops, a server that stops partway
+    through the pack, and a private repository whose in-test GitHub API
+    accepts the token request and never responds, each fail a pull with
+    `pullTimeoutMs` 200 with kind `remote` once the timeout passes, with
+    the current commit and its revision still reading their original text,
+    and the next pull against a healthy server and API advances. Crash tests: a probe that throws at `fetched` and at
     `verified`, then a new open and pull, ends at the remote commit with the
     old commit readable throughout; a `.pack` with no `.idx`, leftover
     `.manifold-tmp` and `current.*.tmp` files, and a branch ref naming a
     missing commit, each placed in the git directory before open, recover
     and pull to the remote commit; a child process killed during a pull of a
     large fixture leaves a directory that opens at the previous commit and
-    pulls to the remote commit. A held-pack test pulls commit A and then
-    commit B, so the clone holds A's pack, then has the test server replay
-    its recorded response for the pull of A, so the next pull receives a
-    pack whose name the clone holds. That pull runs once in a child process
-    killed after the server has sent the response, and once to completion.
-    After each run, the held pack's inode, size, and content hash are
-    unchanged, and after reopening, A reads through `revisionAt` and B
-    through `current()` with their original text. A corrupted object placed
+    pulls to the remote commit. Two held-pack tests each start from a
+    fixture that has pulled commit A and then commit B, so the clone holds
+    A's pack and B is current, and have the test server replay its recorded
+    response for the pull of A, so the next pull receives a pack whose name
+    the clone holds and `fetchHead` A. In the first, the pull runs in a
+    child process killed after the server has sent the response and before
+    `published`; after reopening, B is `current()`. In the second, the pull
+    runs to completion and returns `advanced` with A; after reopening, A is
+    `current()`. In both, the held pack's inode, size, and content hash are
+    unchanged, and `revisionAt` reads A and B with their original text. A corrupted object placed
     in the current commit's tree fails open with
     `ProcessRepositoryOpenError`. A credential test serves a repository that
     requires basic authentication, mints from the in-test GitHub API, and
