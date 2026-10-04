@@ -35,12 +35,12 @@ background:
     the loop, the token, the token lint, the stranded token, the population
     across versions, the reservation, and the restore. The `gate-xstate`
     spike proved grants from token rows and inbox rows, holders counted from
-    consumed and pending token rows, rebuild from snapshot rows with no actor
-    loaded, and exactly-once tokens at three crash points under a real
+    consumed and pending token rows, rebuild from snapshot rows with no
+    actor loaded, and exactly-once tokens at three crash points under a real
     `SIGKILL`. The router, the store, the ledger, the portfolio, the
-    comparator sandbox, the blueprint loader, and the GitHub event source are
-    built. The token lint, the actor host, and the escalations module are
-    built beside this module, against seams the orchestrator has named.
+    comparator sandbox, the blueprint loader, and the GitHub event source
+    are built. The token lint, the actor host, and the escalations module
+    are built beside this module, against seams the orchestrator has named.
   problems:
     - >-
       The store's state query finds actors by one machine, and a machine is
@@ -75,23 +75,23 @@ design-challenges:
     the whole population.
 proposed-design:
   high-level-overview: >-
-    The gates module is `packages/service/src/gates/`. It owns three tables
+    The gates module is `packages/service/src/gates/`. It owns four tables
     in the store's file, migrated with `migrate("gates", steps)` and
-    specified in `gates-database-schema`: an entry row per actor in a gated
-    state, a token row per grant, and an evaluation row per comparator
-    call. It learns every blueprint version it needs from the blueprint
-    loader, every comparator from the process repository revision of the
-    newest version that declares the gate, and every trap set from the
-    token lint. It sees every snapshot save through the actor host's save
-    hook, inside the save's transaction, and writes entries, returns, and
-    stranded-token escalations there. It runs passes after the router's
-    resume drain and then after each change of a gate's input. A pass reads
-    the population with the store's state query, the holders from token
-    rows, and the balances from the ledger, evaluates the comparator, and
-    commits each grant as one transaction of a token row, an inbox row, the
-    reservations, and the evaluation row. It then asks the router to drain
-    the holder. The module reads and writes rows and never an actor's
-    memory.
+    specified in `gates-database-schema`: a declaration row per gate, an
+    entry row per actor in a gated state, a token row per grant, and an
+    evaluation row per comparator call. It learns every blueprint version it
+    needs from the blueprint loader, every comparator from the process
+    repository revision of the newest version that declares the gate, and
+    every trap set from the token lint. It sees every snapshot save through
+    the actor host's save hook, inside the save's transaction, and writes
+    entries, returns, and stranded-token escalations there. It runs passes
+    after the router's resume drain and then after each change of a gate's
+    input. A pass reads the population with the store's state query, the
+    holders from token rows, and the balances from the ledger, evaluates the
+    comparator, and commits each grant as one transaction of a token row, an
+    inbox row, the reservations, and the evaluation row. It then asks the
+    router to drain the holder. The module reads and writes rows and never
+    an actor's memory.
   gate-identity: >-
     A gate is named by its key, `<blueprintPath>#<statePath>`: the
     repository-relative path of its blueprint and the state path of its
@@ -104,19 +104,33 @@ proposed-design:
     view: for each gate the version declares, its state path, return point,
     token event type, dependencies region, and the token lint's verdict and
     trap set for it, from `lintTokens` over the version's document. It adds
-    a version when `revision` loads it and when `prepare` finds an active
-    snapshot saved with it. A version is immutable, so its view is computed
-    once. For each gate key the module also keeps the declaring version: the
-    newest loaded revision's version of the blueprint path when it declares
-    the gate, and otherwise the version that declared it in the latest
-    revision that did. The declaring version gives the comparator and
-    whether a reservation accompanies the token. A gate whose key no loaded
-    revision has declared has no comparator and grants nothing.
+    a version when `revision` loads it, and when `prepare` finds it in an
+    active snapshot or a declaration row. A version is immutable, so its
+    view is computed once.
+  declaring-version: >-
+    Each gate key has one declaring version, which gives its comparator and
+    whether a reservation accompanies the token. It is the version of the
+    blueprint path in the newest revision passed to `revision` that declares
+    the gate. The module keeps it durably in a declaration row per gate key:
+    `revision` writes, in one transaction, the row of every gate the
+    revision's version of each blueprint path declares, with that version
+    key and the revision's commit, and leaves the row of every gate the
+    revision does not declare as it was. A row is replaced only by a later
+    revision that declares the gate, so a revision that removes a gate keeps
+    its last declaring version in force. `prepare` reads every declaration
+    row, loads each version through the loader's `version`, and loads its
+    comparator from `revisionAt` at the row's commit, so a restart resumes
+    the same comparator and reservation policy whether or not any active
+    actor runs that version and whether or not the head revision still
+    declares the gate. A gate with no declaration row has no comparator and
+    grants nothing.
   comparators: >-
-    `revision(load, revision)` takes each newly declaring version, reads its
-    comparator file with `revision.read`, and loads it with the sandbox. The
-    loaded comparator replaces the gate's earlier one, which is disposed. A
-    file that is absent, or a load that fails, leaves the gate with no
+    `revision(load, revision)` loads the comparator of each gate whose
+    declaration row it writes or changes: it reads the comparator file with
+    `revision.read` and loads it with the sandbox. `prepare` loads the
+    comparator of every declaration row through `revisionAt`. A loaded
+    comparator replaces the gate's earlier one, which is disposed. A file
+    that is absent, or a load that fails, leaves the gate with no
     comparator, records the failure, and reports it to `onError`; the gate
     grants nothing until a later revision loads one. An evaluation that
     returns kind `engine` marks the comparator spent; the module disposes it
@@ -140,20 +154,20 @@ proposed-design:
     The module builds each evaluation's input from rows and from the
     snapshot JSON the state query returns. For each member given to the
     comparator: `id` is the actor id; `fields` is `context.fields` when it
-    is a JSON object, and `{}` otherwise; `age` is the clock's time less
-    the member's entry time in whole milliseconds, and 0 when that is
-    negative; `dependencies` is the active child of the region its version
-    names in `meta.gate.dependencies`, `blocked` or `clear`, and `clear`
-    when the version names no region; `criticalPath` is described below;
-    `item` is `context.manifold.portfolioItem`, and `other` when the
-    context has none. Each holder is `{ id, item }` from its token row and
-    its snapshot. `balances` holds, for each item of the population and the
-    holders that the portfolio in force holds, and for each account any
-    allocation row of the portfolio in force names, the ledger's
-    `reservable` for that item and account, with `waiting` set to the items
-    of the population. An item the ledger refuses is left out. The input is
-    sorted: population and holders by id, item and account keys by code
-    point, so that one state gives one input text.
+    is a JSON object, and `{}` otherwise; `age` is the clock's time less the
+    member's entry time in whole milliseconds, and 0 when that is negative;
+    `dependencies` is the active child of the region its version names in
+    `meta.gate.dependencies`, `blocked` or `clear`, and `clear` when the
+    version names no region; `criticalPath` is described below; `item` is
+    `context.manifold.portfolioItem`, and `other` when the context has none.
+    Each holder is `{ id, item }` from its token row and its snapshot.
+    `balances` holds, for each item of the population and the holders that
+    the portfolio in force holds, and for each account any allocation row of
+    the portfolio in force names, the ledger's `reservable` for that item
+    and account, with `waiting` set to the items of the population. An item
+    the ledger refuses is left out. The input is sorted: population and
+    holders by id, item and account keys by code point, so that one state
+    gives one input text.
   critical-path: >-
     `criticalPath` is computed from the GitHub event source's
     `trackedIssue`. A member whose context names no `manifold.issue`, or
@@ -163,25 +177,35 @@ proposed-design:
     already on the walk's path, so a dependency cycle ends the walk. Results
     are memoized for one pass.
   entries: >-
-    The entry row of a gate and an actor records when the actor entered the
-    gated state. The save hook writes it, in the save's transaction, when
-    the saved configuration holds the gated state path and either the actor
-    has no entry row for the gate or the hook's `entered` list holds the
-    gated state path, which marks a new entry; a new entry replaces the row
-    with a new `entry_id` and entry time. The save hook deletes it when the
-    saved configuration no longer holds the gated state path or the actor
-    has ended. `entry_id` is an `AUTOINCREMENT` key, so no two entries share
-    one. `afterDrain` writes the entry row of a population member that has
-    none, with the snapshot's saved time as its entry time.
+    The entry row of a gate and an actor records one entry of the actor into
+    the gated state: an `entry_id`, the host's entry id of that state entry,
+    and the entry time. The host's entry id is the one the save hook gives
+    in `entries` for the gated state path, the same id the host lists with
+    deadlines and invokes: a repeated or replayed save of one entry gives
+    the same id, and every exit and re-entry, in one delivery or across
+    several, gives a new one. The save hook, in the save's transaction,
+    writes the row when the saved configuration holds the gated state path
+    and the actor has no entry row for the gate, and replaces it with a new
+    `entry_id` and entry time when its host entry id differs from the row's.
+    It deletes the row when the saved configuration no longer holds the
+    gated state path or the actor has ended. So a save repeated for one
+    entry keeps the entry id, the age, and the one token the entry may be
+    granted, and a real re-entry gets a new entry id. `entry_id` is an
+    `AUTOINCREMENT` key, so no two entries share one. `afterDrain` writes
+    the entry row of a population member that has none, such as an actor
+    already in a state that a new revision gates, with the snapshot's saved
+    time as its entry time and no host entry id; the next save of that actor
+    in the gated state sets the host entry id on the row and keeps its
+    `entry_id`.
   pass: >-
     A pass of one gate is synchronous. It starts when the gate has a
     comparator. Each step reads the members that can take a token, the
-    holders, and the balances; when there is no such member it ends with
-    no evaluation. Otherwise it draws a seed from a uniform 32-bit random
+    holders, and the balances; when there is no such member it ends with no
+    evaluation. Otherwise it draws a seed from a uniform 32-bit random
     source, evaluates the comparator over the input and the seed, and acts
-    on the result. A failure is recorded as an evaluation and ends the
-    pass. `null` is recorded and ends the pass. A selection is granted, as
-    `grant` states, and the pass takes its next step, so it runs until the
+    on the result. A failure is recorded as an evaluation and ends the pass.
+    `null` is recorded and ends the pass. A selection is granted, as `grant`
+    states, and the pass takes its next step, so it runs until the
     comparator returns `null`. A grant makes one member a holder, so a pass
     ends. Since the pass runs on the service's one thread and nothing it
     calls yields, no event is handled during it, and each step's input is
@@ -189,94 +213,116 @@ proposed-design:
   triggers: >-
     The module keeps a set of dirty gates and runs their passes in one
     `setImmediate` callback, so many changes in one turn of the event loop
-    give one pass per gate. A gate becomes dirty on a save of an actor that
-    has an entry row of the gate before or after the save, so an entry, an
-    exit, and a change of a member's dependencies or pending rows each run
-    the gate; when a save returns one of its tokens; when a `return` answer
-    returns one; when `revision` or a reload gives it a comparator; and
-    when `balanceChanged` is called, which marks every gate dirty. The service calls `balanceChanged` after it posts an actual,
-    credits a window, or applies a new portfolio. A save that ends an actor
-    returns its tokens and so marks their gates dirty. The module never runs
-    a pass before `afterDrain`, and marks every gate dirty there.
+    give one pass per gate. The callback takes the set and clears it before
+    its first pass; a gate marked dirty while the callback runs is added to
+    a new set and runs in the next callback, so each pass keeps one input
+    and every change after it is seen by a later pass. A gate becomes dirty
+    on a save of an actor that has an entry row of the gate before or after
+    the save, so an entry, an exit, and a change of a member's dependencies
+    region or pending rows each run the gate; when a save returns one of its
+    tokens; when a `return` answer returns one; when `revision`, `prepare`,
+    or a reload gives it a comparator; after a grant of another gate commits
+    reservations, since the ledger's balances changed; and when
+    `inputChanged` is called. A grant does not mark its own gate dirty,
+    since its pass continues until the comparator returns `null` over the
+    balances that grant left. The module never runs a pass before
+    `afterDrain`, and marks every gate dirty there.
+  input-changes: >-
+    Two inputs change outside the module: the ledger, when the service posts
+    an actual, credits a window, or applies a new portfolio, and the GitHub
+    mirror, whose dependency graph and issue states give `criticalPath`. A
+    change to the mirror can change a member's `criticalPath` through a
+    transitive dependent that no member's actor hears, so the module does
+    not rely on member saves for it. `inputChanged()` marks every gate
+    dirty. The service calls it after each ledger write it makes outside a
+    gate, and after each `publish` by the GitHub event source that is
+    accepted and not a replay and whose event type is one `github-events`
+    lists for an issue's state, dependencies, or sub-issues. The service
+    gives the GitHub source a router whose `publish` calls the router's
+    `publish` and then, on such an outcome, `inputChanged`. The pass runs in
+    a later `setImmediate` callback, after the source's transaction around
+    `publish` has committed or rolled back; a pass after a rollback reads
+    unchanged rows and grants what the gate would grant anyway.
   grant: >-
     A grant for selection `s` runs in one `store.connection.transaction`.
     Its token id is `token:<entry_id>` of the selected member's entry row,
     so one entry into the gated state can be granted one token. In the
     transaction it inserts the evaluation row; inserts the token row with
-    the gate, the actor, the entry id, the evaluation id, and the grant
-    time; when the declaring version sets `reservation`, calls the ledger's
-    `reserve` once per account of `s.reservations`, the amounts of one
-    account summed, for the member's item, with the key
+    the gate, the actor, the entry id and its host entry id, the evaluation
+    id, and the grant time; when the declaring version sets `reservation`,
+    calls the ledger's `reserve` once per account of `s.reservations`, the
+    amounts of one account summed, for the member's item, with the key
     `<tokenId>/<account>`; and writes the token's inbox row with
     `store.writeInbox`, with event id `gate:<tokenId>`, topic `gate`, and
     payload `{ type, gate, tokenId, reservations }`, where `type` is the
     token event type of the member's own version. When the declaring version
-    does not set `reservation`, the selection's reservations are recorded
-    in the evaluation row and none is written. After the commit it calls
-    the probe with `granted` and the router's `schedule` with the actor id.
-    A `LedgerError` from `reserve` rolls the grant back; the module records
+    does not set `reservation`, the selection's reservations are recorded in
+    the evaluation row and none is written. After the commit it calls the
+    probe with `granted` and the router's `schedule` with the actor id. A
+    `LedgerError` from `reserve` rolls the grant back; the module records
     the evaluation with kind `reservation` and the error's message in a new
     transaction, and ends the pass.
   token-event: >-
     The token event's type is `meta.gate.token` of the actor's version,
     default `token`. Its payload names the gate key, the token id, and the
     reservations written, each `{ account, amount }`. A blueprint takes it
-    in an orthogonal region, as `gates` describes, so the guarded
-    transition out of the gated state reads that region's state.
+    in an orthogonal region, as `gates` describes, so the guarded transition
+    out of the gated state reads that region's state.
   returns: >-
     The save hook checks every unreturned token of the saved actor, in the
-    save's transaction. An actor has ended when the saved snapshot's
-    status is `done` or `stopped`; a save whose status is `error` is a held
-    actor, not an end, and the hook writes nothing for it. When the actor
-    has ended, the hook returns every token with reason `ended` and the
-    snapshot status as its state. Else, for each token, it reads the return
-    point of the gate in the actor's own version. A return point of `exit` is reached when the saved
-    configuration no longer holds the gated state path, or the hook's
-    `entered` list holds it again after an exit. A return point of
-    `{ state: <path> }` is reached when the saved configuration holds the
-    path or the hook's `entered` list holds it, so a return state that an
-    eventless transition leaves in the same step still returns the token.
-    A reached return point returns the token with reason `return-point` and
-    the return point's path as its state. A return writes `returned_at`,
-    `return_reason`, and `return_state` on the token row where
-    `returned_at` is null, so a second return of the same token changes
-    nothing. A token is never returned on any other condition, except an
-    escalation answer of `return`. A return of a token marked `trapped`
-    also calls the escalations module's `withdraw` with kind
-    `stranded-token` and the token's subject, in the same transaction, so
-    an escalation whose token came back by another path is closed.
+    save's transaction. An actor has ended when the saved snapshot's status
+    is `done` or `stopped`; a save whose status is `error` is a held actor,
+    not an end, and the hook writes nothing for it. When the actor has
+    ended, the hook returns every token with reason `ended` and the snapshot
+    status as its state. Else, for each token, it reads the return point of
+    the gate in the actor's own version. A return point of `exit` is reached
+    when the saved configuration no longer holds the gated state path, or
+    when the gated state's host entry id in `entries` differs from the one
+    the token row records, which marks an exit and a re-entry. A return
+    point of `{ state: <path> }` is reached when the saved configuration
+    holds the path or the hook's `entered` list holds it, so a return state
+    that an eventless transition leaves in the same step still returns the
+    token. A reached return point returns the token with reason
+    `return-point` and the return point's path as its state. A return writes
+    `returned_at`, `return_reason`, and `return_state` on the token row
+    where `returned_at` is null, so a second return of the same token
+    changes nothing. A token is never returned on any other condition,
+    except an escalation answer of `return`. A return of a token marked
+    `trapped` also calls the escalations module's `withdraw` with kind
+    `stranded-token` and the token's subject, in the same transaction, so an
+    escalation whose token came back by another path is closed.
   stranded-tokens: >-
     After the return check, for each token still unreturned whose gate has a
     trap set in the actor's own version, the hook computes the token lint's
     `configurationKey(snapshot)`. A key in the trap set marks the token row
     `trapped` and, when it was not marked before, raises a `stranded-token`
-    escalation through the escalations module's `raise`, with subject
-    `{ gate, tokenId }`, choices `return` and `dismiss`, and a question
-    naming the actor, the gate, the token, and the configuration. A key
-    outside the set clears `trapped`. The flag is written in the save's
-    transaction with the raise, so an escalation is raised once per move
-    into a trap, and a restart does not raise it again. A gate whose verdict
-    in that version is `unknown` has no trap set and raises nothing.
+    escalation through the escalations module's `raise`, with subject `{
+    gate, tokenId }`, choices `return` and `dismiss`, and a question naming
+    the actor, the gate, the token, and the configuration. A key outside the
+    set clears `trapped`. The flag is written in the save's transaction with
+    the raise, so an escalation is raised once per move into a trap, and a
+    restart does not raise it again. A gate whose verdict in that version is
+    `unknown` has no trap set and raises nothing.
   stranded-token-handler: >-
-    The module gives the escalations module the `stranded-token` handler.
-    An answer of `return` writes the token's return with reason
-    `escalation` and the actor's state paths at the time as its state,
-    where the token is unreturned, inside the transaction the escalations
-    module records the handling in, and returns a function that marks the
-    gate dirty, which the escalations module runs after that transaction
-    commits. An answer of `dismiss` writes nothing. A `return` for a token
-    already returned, by its return point or by the actor's end, writes
-    nothing.
+    The module gives the escalations module the `stranded-token` handler. An
+    answer of `return` writes the token's return with reason `escalation`
+    and the actor's state paths at the time as its state, where the token is
+    unreturned, inside the transaction the escalations module records the
+    handling in, and returns a function that marks the gate dirty, which the
+    escalations module runs after that transaction commits. An answer of
+    `dismiss` writes nothing. A `return` for a token already returned, by
+    its return point or by the actor's end, writes nothing.
   save-hook: >-
     The actor host calls the module's `saved` hook for every snapshot save,
     inside its transaction, with the actor id, the version key the snapshot
-    is saved with, the persisted snapshot, the active invokes, and the
-    state paths entered by any microstep since the previous save, in order.
-    The hook writes entries, returns, and trap flags, raises and withdraws
-    escalations as above, and marks gates dirty. It reads only its own
-    tables and the version views it holds. A save of a version the module has no view of
-    returns tokens only at the actor's end, and reports the version to
-    `onError`.
+    is saved with (`machine`), the persisted snapshot, the active invokes,
+    the state paths entered by any microstep since the previous save in
+    order (`entered`), and the host's entry id of every active state path
+    (`entries`). The hook writes entries, returns, and trap flags, raises
+    and withdraws escalations as above, and marks gates dirty. It reads only
+    its own tables and the version views it holds. A save of a version the
+    module has no view of returns tokens only at the actor's end, and
+    reports the version to `onError`.
   restore: >-
     The router's `afterDrain` calls the module's `afterDrain` with the
     router after every restored actor's inbox is drained. The module keeps
@@ -284,10 +330,12 @@ proposed-design:
     dirty, and runs every pass before it returns, so the router delivers the
     tokens of those passes when resume ends. Before the router starts, the
     service awaits `revision` with the head revision and then `prepare`,
-    which adds the view of every version an active snapshot is saved with,
-    loading each through the blueprint loader's `version`. Holders are
-    counted from unreturned token rows, consumed or pending in the inbox,
-    so a token in flight at a crash is held and never granted twice.
+    which adds the view of every version an active snapshot is saved with
+    and of every declaring version, loading each through the blueprint
+    loader's `version`, and loads every declaring version's comparator.
+    Holders are counted from unreturned token rows, consumed or pending in
+    the inbox, so a token in flight at a crash is held and never granted
+    twice.
   replay: >-
     `replay(evaluationId)` reads an evaluation row, loads the comparator of
     the version it names through the loader's revision of that commit, and
@@ -340,8 +388,8 @@ proposed-design:
       saved(save: GateSave): void;
       /** The `stranded-token` handler; the function it returns runs after the handling commits. */
       strandedToken(escalation: GateStrandedEscalation): (() => void) | undefined;
-      /** Marks every gate dirty. */
-      balanceChanged(): void;
+      /** Marks every gate dirty: a ledger or GitHub mirror change outside the module. */
+      inputChanged(): void;
       replay(evaluationId: number): Promise<GateReplay>;
       stop(): void;
     }
@@ -352,6 +400,8 @@ proposed-design:
       readonly snapshot: PersistedSnapshot;
       readonly activeInvokes: readonly { readonly invokeId: string; readonly entryId: string }[];
       readonly entered: readonly string[];
+      /** The host's entry id of every active state path. */
+      readonly entries: Readonly<Record<string, string>>;
     }
 
     export interface GateError {
@@ -388,9 +438,9 @@ proposed-design:
     stranded-token handler. `input.ts` holds the pure functions from rows
     and snapshots to a comparator input, `critical-path.ts` the pure
     critical-path walk, and `declaration.ts` the pure function from a
-    blueprint document to its gate declarations. `tables.ts` holds every
-    SQL statement of the module's tables. `migrations.ts` holds the steps,
-    whose step 1 is the script of `docs/specifications/gates-database-schema.sql`.
+    blueprint document to its gate declarations. `tables.ts` holds every SQL
+    statement of the module's tables. `migrations.ts` holds the steps, whose
+    step 1 is the script of `docs/specifications/gates-database-schema.sql`.
     Tests live beside the module and import only `index.ts` and the
     `index.ts` of the store, the router, the ledger, the portfolio, and the
     comparator sandbox.
@@ -402,44 +452,50 @@ proposed-design:
     `StateQuery` takes `machine` as optional, so that one query returns the
     actors in a state path on every machine, through a new index on state
     path; `store` and `store-database-schema` state both. The actor host's
-    save hook adds `machine` and `entered` to the shape the orchestrator
-    ruled; the actor host owns that seam and builds both.
+    save hook carries `machine`, `entered`, and `entries` beside the members
+    of the shape the orchestrator ruled; the actor host owns that seam and
+    builds them.
   service-wiring: >-
     The service applies `gatesMigrationSteps`, creates the gates with its
-    store, loader, process repository, comparator sandbox, portfolio,
-    GitHub source, and escalations, registers `saved` with the actor host
-    and `strandedToken` with the escalations module, awaits `revision` with
-    the head revision and then `prepare`, and starts the router with
-    `afterDrain`. It calls `revision` with every later revision it loads,
-    and `balanceChanged` after each ledger write it makes outside a gate.
+    store, loader, process repository, comparator sandbox, portfolio, GitHub
+    source, and escalations, registers `saved` with the actor host and
+    `strandedToken` with the escalations module, awaits `revision` with the
+    head revision and then `prepare`, and starts the router with
+    `afterDrain`. It calls `revision` with every later revision it loads, in
+    the order it pulls them. It calls `inputChanged` after each ledger write
+    it makes outside a gate, and gives the GitHub source the router wrapper
+    that `input-changes` describes.
   convergence: >-
     One entry into the gated state is granted at most one token: the token
     id is derived from the entry id and is the token row's primary key, and
     a member whose entry already names a token is not given to the
-    comparator. A
-    second insert of one token id fails and rolls back its inbox row, its
-    reservations, and its evaluation row with it. A crash inside a grant rolls back
-    the token row, the inbox row, the reservations, and the evaluation row,
-    and the pass that resume runs evaluates again. A crash after the grant
-    commits leaves the token held and its inbox row pending, which resume
-    delivers once. A crash after the token is sent and before the holder's
-    save replays the token into the snapshot saved before it. A reservation
-    replayed by key writes nothing. A save hook twice for one save writes
-    the same entry, returns, and trap flag, since each write is
-    conditional on the row's present state, and raises no second
-    escalation. A crash inside a save rolls back the hook's writes with the
-    snapshot. The stranded-token handler twice returns once. `afterDrain`
-    twice writes the missing entries once and runs passes that grant only
-    to actors without a token. `revision` and `prepare` twice compute the
-    same views. Migration convergence belongs to the store's `migrate`.
+    comparator. A second insert of one token id fails and rolls back its
+    inbox row, its reservations, and its evaluation row with it. A crash
+    inside a grant rolls back the token row, the inbox row, the
+    reservations, and the evaluation row, and the pass that resume runs
+    evaluates again. A crash after the grant commits leaves the token held
+    and its inbox row pending, which resume delivers once. A crash after the
+    token is sent and before the holder's save replays the token into the
+    snapshot saved before it. A reservation replayed by key writes nothing.
+    A save hook twice for one save writes the same entry, with the same
+    entry id, since an entry row is replaced only for a new host entry id,
+    and the same returns and trap flag, since each write is conditional on
+    the row's present state, and raises no second escalation. A crash inside
+    a save rolls back the hook's writes with the snapshot. The
+    stranded-token handler twice returns once. `afterDrain` twice writes the
+    missing entries once and runs passes that grant only to actors without a
+    token. `revision` twice writes the same declaration rows, and a crash
+    inside it rolls them back, so the next `revision` writes them; `prepare`
+    twice computes the same views and loads the same comparators. Migration
+    convergence belongs to the store's `migrate`.
   errors: >-
     A comparator failure, a refused reservation, a missing comparator file,
     and a save of an unknown version are recorded or reported to `onError`,
     never thrown, so one gate's fault stops only that gate. Misuse by
     service code throws a `TypeError`: a pass requested after `stop`, and
     `replay` of an evaluation id that does not exist. SQLite errors and
-    errors the ledger throws for any reason other than a refused
-    reservation propagate unchanged.
+    errors the ledger throws for any reason other than a refused reservation
+    propagate unchanged.
   growth: >-
     The evaluation table grows by one row per evaluation, with the input
     JSON in it. A pass runs only on a change to its gate's input, so the
@@ -456,42 +512,53 @@ proposed-design:
     `open.lifecycle.waiting`, guarded on `in` `slot.held` and
     `dependencies.clear`. Their entry times are permuted against their ids.
     A fixture host behind the router's `ActorHost` runs each actor with
-    XState and calls `saved` with each save, and its `entered` list from
-    XState's microstep inspection. The ledger and portfolio run on the same
-    file with account `acct`, items `left` and `right`, and one window. The
-    comparators are inline: oldest-first with a fixed reservation, and
-    one-at-a-time. Behaviours proved, each red before green: the schema
-    matches `gates-database-schema`; grants follow the comparator's order,
-    one per evaluation, until it returns `null`; a grant writes the token
-    row, the inbox row, and the reservation in one transaction, and the
-    test reads the reservation from the ledger's tables on the file; a
-    reservation for a declaration without `reservation` writes nothing to
-    the ledger; a refused reservation records kind `reservation` and grants
-    nothing; with actors on two versions of the blueprint, after a push of
-    the second version while actors on the first wait, the population holds
-    both and the holders are unchanged, and the comparator is the second
-    version's; each actor returns its token at its own version's return
-    point, one at `exit` and one at a later `packed` state; a return state
-    left by an eventless transition in the same step returns the token;
-    an actor saved `done` or `stopped` returns every token with reason
-    `ended`, and a save with status `error` returns none; a holder
-    whose save enters a trap configuration raises one `stranded-token`
-    escalation, a second save in a trap raises none, and an answer of
-    `return` records the return and grants the next member, and a trapped
-    token returned by the actor's end withdraws its escalation; an actor with a
-    pending inbox row is not given to the comparator; every evaluation is
-    recorded with its input, output, and seed, and `replay` of a grant
-    returns the same selection; a comparator that throws, then a comparator
-    that times out, each record a failure and the next input change runs
-    the gate again; an actor in the gated state whose issue blocks two open
-    tracked issues in a chain has `criticalPath` 3, and a dependency cycle
-    ends the walk. Fault tests run the grant loop in a child Node process
-    that sends itself `SIGKILL` at each crash point the `gate-xstate` spike
-    names, after the token's inbox row is written (`granted`), after the
-    token is sent (the store's `sent`), and after the holder's save (the
-    store's `saved`), and at `granting`, inside the grant's transaction. The
-    parent asserts the kill signal, starts a router, gates, and ledger on
-    the same file, and shows each token granted once, one reservation per
-    token, holders counted once, and the grants that follow in the
-    comparator's order. Values are generic and never drawn from Manifold's
-    own domain.
+    XState and calls `saved` with each save, its `entered` list from
+    XState's microstep inspection, and an `entries` map that gives each
+    state entry a new id as the actor host does. The ledger and portfolio
+    run on the same file with account `acct`, items `left` and `right`, and
+    one window. The comparators are inline: oldest-first with a fixed
+    reservation, and one-at-a-time. Behaviours proved, each red before
+    green: the schema matches `gates-database-schema`; grants follow the
+    comparator's order, one per evaluation, until it returns `null`; a grant
+    writes the token row, the inbox row, and the reservation in one
+    transaction, and the test reads the reservation from the ledger's tables
+    on the file; a reservation for a declaration without `reservation`
+    writes nothing to the ledger; a refused reservation records kind
+    `reservation` and grants nothing; with actors on two versions of the
+    blueprint, after a push of the second version while actors on the first
+    wait, the population holds both and the holders are unchanged, and the
+    comparator is the second version's; after a revision that changes a
+    gate's comparator with no actor started on it, then a revision that
+    removes the gate, and a restart on the same file whose head is the last
+    revision, the gate grants with the second revision's comparator and
+    reservation policy; a save repeated for one entry keeps its entry id and
+    age and is granted one token, and an exit and re-entry gets a new entry
+    id; each actor returns its token at its own version's return point, one
+    at `exit` and one at a later `packed` state; a return state left by an
+    eventless transition in the same step returns the token; an actor saved
+    `done` or `stopped` returns every token with reason `ended`, and a save
+    with status `error` returns none; a holder whose save enters a trap
+    configuration raises one `stranded-token` escalation, a second save in a
+    trap raises none, and an answer of `return` records the return and
+    grants the next member, and a trapped token returned by the actor's end
+    withdraws its escalation; an actor with a pending inbox row is not given
+    to the comparator; every evaluation is recorded with its input, output,
+    and seed, and `replay` of a grant returns the same selection; a
+    comparator that throws, then a comparator that times out, each record a
+    failure and the next input change runs the gate again; an actor in the
+    gated state whose issue blocks two open tracked issues in a chain has
+    `criticalPath` 3, and a dependency cycle ends the walk; when only a
+    transitive dependent's issue closes, through the GitHub source's wrapped
+    `publish`, and the waiting actor takes no event, its gate evaluates
+    again with the smaller `criticalPath`; with two gates over one item and
+    account, a reservation granted by one gate runs the other gate again
+    with the smaller balance, with no actor save. Fault tests run the grant
+    loop in a child Node process that sends itself `SIGKILL` at each crash
+    point the `gate-xstate` spike names, after the token's inbox row is
+    written (`granted`), after the token is sent (the store's `sent`), and
+    after the holder's save (the store's `saved`), and at `granting`, inside
+    the grant's transaction. The parent asserts the kill signal, starts a
+    router, gates, and ledger on the same file, and shows each token granted
+    once, one reservation per token, holders counted once, and the grants
+    that follow in the comparator's order. Values are generic and never
+    drawn from Manifold's own domain.

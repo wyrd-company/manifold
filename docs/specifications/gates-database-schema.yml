@@ -23,12 +23,24 @@ description: |-
   milliseconds since the Unix epoch. A gate is named by its key,
   `<blueprintPath>#<statePath>`.
 
+  Declarations. `gates_declaration` holds one row per gate key: the
+  blueprint version key of the declaring version, the version of the
+  blueprint path in the newest revision that declares the gate, with that
+  revision's commit and the time the row was written. A revision that
+  declares the gate replaces the row; a revision that does not leaves it,
+  so the declaring version survives a revision that removes the gate and a
+  restart.
+
   Entries. `gates_entry` holds one row per gate and actor while the actor's
   saved configuration holds the gated state: the entry id, an
-  `AUTOINCREMENT` key that SQLite never reuses, and the entry time. A new
-  entry into the gated state replaces the row with a new entry id. The row
-  is deleted when a save leaves the gated state or ends the actor. The
-  entry time gives each member of the population its age.
+  `AUTOINCREMENT` key that SQLite never reuses, the actor host's id of the
+  state entry, and the entry time. A save that gives a different host
+  entry id for the gated state is a new entry and replaces the row with a
+  new entry id; a save that repeats the host entry id changes nothing. A
+  row written at resume has no host entry id until the actor's next save
+  in the gated state sets it. The row is deleted when a save leaves the
+  gated state or ends the actor. The entry time gives each member of the
+  population its age.
 
   Evaluations. `gates_evaluation` holds one row per comparator evaluation:
   the gate, the blueprint version key of the version whose comparator ran,
@@ -43,9 +55,10 @@ description: |-
 
   Tokens. `gates_token` holds one row per granted token: the token id, which
   is `token:` followed by the decimal entry id the token was granted to, the
-  gate, the actor, the entry id, the evaluation that selected it, and the
-  grant time. A token is held while `returned_at` is null, whether its inbox
-  row is consumed or pending, so holders are counted from this table alone.
+  gate, the actor, the entry id and its host entry id, the evaluation that
+  selected it, and the grant time. A token is held while `returned_at` is
+  null, whether its inbox row is consumed or pending, so holders are
+  counted from this table alone.
   A return sets `returned_at`, `return_reason`, and `return_state` once:
   `return-point` with the return point's state path, `ended` with the
   snapshot status of the save that ended the actor, or `escalation` with the

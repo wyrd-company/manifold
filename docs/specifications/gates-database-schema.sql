@@ -7,13 +7,25 @@
 
 -- One row per actor in a gated state: the entry the actor is in now.
 -- `gate` is the gate key, `<blueprintPath>#<statePath>`.
+-- `state_entry_id` is the actor host's id of the state entry; null until
+-- the first save that gives it, for a row written at resume.
 CREATE TABLE gates_entry (
   entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
   gate TEXT NOT NULL CHECK (length(gate) > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+  state_entry_id TEXT CHECK (state_entry_id IS NULL OR length(state_entry_id) > 0),
   entered_at INTEGER NOT NULL,
   UNIQUE (gate, actor_id)
 ) STRICT;
+
+-- One row per gate key: the version that declares it in the newest
+-- revision that does, and that revision's commit.
+CREATE TABLE gates_declaration (
+  gate TEXT PRIMARY KEY CHECK (length(gate) > 0),
+  version TEXT NOT NULL CHECK (length(version) > 0),
+  revision_commit TEXT NOT NULL CHECK (length(revision_commit) > 0),
+  declared_at INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
 
 -- One row per comparator evaluation. `input` is the evaluation's input as
 -- canonical JSON, without `random`; `version` is the blueprint version key
@@ -44,6 +56,7 @@ CREATE TABLE gates_token (
   gate TEXT NOT NULL CHECK (length(gate) > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
   entry_id INTEGER NOT NULL,
+  state_entry_id TEXT CHECK (state_entry_id IS NULL OR length(state_entry_id) > 0),
   evaluation_id INTEGER NOT NULL REFERENCES gates_evaluation (evaluation_id),
   granted_at INTEGER NOT NULL,
   trapped INTEGER NOT NULL DEFAULT 0 CHECK (trapped IN (0, 1)),
