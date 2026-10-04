@@ -62,6 +62,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **binding** a declaration in the process repository that ties a GitHub Project or a T3code project to a portfolio item.
 - **blueprint** a declarative, static schema (YAML) specifying states, transitions, and structure of a state machine.
 - **board** a KANBAN board
+- **call** one model request recorded in a provider session file, with its timestamp, model, and token counts.
 - **callback** an imperative actor that runs until its state exits, receiving and sending events.
 - **capacity** what an account can spend in a window.
 - **ceiling** the most of its parent's limit a portfolio item may use, its allocation and borrowed unallocated remainder together.
@@ -104,6 +105,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **token** what a gate grants a task actor so it may leave the gated state.
 - **turn** a single, complete cycle of work executed by an agent in response to a user prompt
 - **unallocated remainder** the part of a parent's limit that no child's allocation guarantees, which its children borrow up to their ceiling.
+- **usage unit** a session, subagent, or child thread whose calls one provider session file records.
 - **variance** actual less estimate for one task.
 - **weight** a portfolio item's share of the unallocated remainder among its siblings with waiting work.
 - **window** the period from one reset of an account's capacity to the next.

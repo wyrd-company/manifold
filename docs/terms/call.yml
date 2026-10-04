@@ -1,0 +1,5 @@
+$schema: https://refinery.systems/ontology/term
+title: Call
+description: >-
+  One model request recorded in a provider session file, with its
+  timestamp, model, and token counts.

@@ -1,0 +1,244 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - portfolio
+  mitigates:
+    - task-usage-unattributable
+  # GAP-EDGE: the technical-design schema declares no edge to a spike or a
+  # specification; `references` is the best fit.
+  references:
+    - cost-history
+    - usage-record
+    - host-cli-usage
+objective: >-
+  Turn the provider session files on one environment into calls that the
+  service can price and post as actuals, each with its timestamp, model,
+  every token class, provider session id, and the usage unit that made it,
+  without spawning a process and without losing a call.
+background:
+  current-design: >-
+    The portfolio design states that the host CLI reads provider session
+    files in process, decodes them with a pinned decoding library, and that
+    the service prices each call and posts it to an actor. The decoding
+    library is `@codeburn/core`. It decodes records the host hands it. It
+    does no file I/O and no pricing.
+  problems:
+    - >-
+      Each provider keeps its sessions in its own layout: JSON Lines
+      transcripts, rollout files, session directories, and SQLite databases.
+    - >-
+      A provider session file holds one usage unit, but the library folds a
+      Codex child thread into its root session and drops the unit's own id,
+      its parent, and its name.
+    - >-
+      The same call can appear in two files, a subagent replaying its parent
+      or a fork replaying its origin, and the library removes the copy only
+      when one dedup set spans every file of the provider.
+    - >-
+      Harnesses change their log shapes without notice, and a session file
+      is read while its harness still writes it.
+design-challenges:
+  one-seam: >-
+    Five providers, five layouts, and two storage kinds must sit behind one
+    call that a test can drive with a directory of fixtures.
+  unit-identity: >-
+    Attribution needs the unit's own id and its parent, and the library does
+    not carry them for every provider.
+  no-silent-loss: >-
+    A malformed line, a truncated file, an unknown record, and a call on a
+    model with no price must each be visible, and none may stop the other
+    files or hide the calls that did decode.
+  drift: >-
+    A new library release or a new harness shape must change a test result
+    before it changes an actual.
+proposed-design:
+  high-level-overview: >-
+    The usage decoder is one module in `packages/host-cli/src/usage/`. Its
+    public seam is `decodeUsage(roots)`, an async iterable of usage records:
+    a call record for each call, and a source error record for each problem
+    with one source. A root names a provider and the directory where that
+    provider keeps its sessions. For each root the decoder finds the
+    provider's sources, reads each one in process with `node:fs` or
+    `node:sqlite`, hands the records to the provider's `@codeburn/core`
+    decoder, reads the unit identity the library does not carry from the
+    source itself, and yields normalized records. `defaultUsageRoots(env,
+    home)` resolves the roots a provider uses when no root is given. The
+    `manifold-host usage decode` command writes the records as JSON Lines.
+    The record format is the `usage-record` specification, and the command
+    is the `host-cli-usage` specification. The decoder reads files and
+    writes nothing. Pricing, mapping a provider session to a thread, and
+    posting actuals are the service's work.
+  public-interface: >-
+    `packages/host-cli/src/usage/index.ts` exports exactly these.
+    `type UsageProvider = "claude" | "codex" | "cursor" | "grok" |
+    "opencode"`. `type UsageRoot = { provider: UsageProvider; path: string
+    }`. `type UsageRecord = UsageCall | UsageSourceError`, the two shapes of
+    the `usage-record` specification as TypeScript types.
+    `decodeUsage(roots: readonly UsageRoot[]): AsyncIterable<UsageRecord>`.
+    `defaultUsageRoots(env: Readonly<Record<string, string | undefined>>,
+    home: string): UsageRoot[]`. `runUsageCommand(args: readonly string[],
+    io: { stdout: Writable; stderr: Writable; env; home }):
+    Promise<number>`, which parses the command line, runs the decode, writes
+    the records, and returns the exit code. `src/cli.ts` dispatches `usage`
+    to `runUsageCommand` and holds no other usage logic. Everything else in
+    the folder is internal: one adapter per provider, the source reader, and
+    the record normalizer.
+  providers: >-
+    The decoder covers every T3 Code provider that `@codeburn/core` decodes.
+    `claude` uses `@codeburn/core/providers/claude` over
+    `<root>/projects/**/*.jsonl`, where a subagent transcript is
+    `<session-id>/subagents/agent-<agent-id>.jsonl` beside its
+    `agent-<agent-id>.meta.json`. `codex` uses
+    `@codeburn/core/providers/codex` over `<root>/sessions/**/*.jsonl` and
+    `<root>/archived_sessions/**/*.jsonl`. `cursor` uses
+    `@codeburn/core/providers/cursor-agent` over
+    `<root>/projects/*/agent-transcripts/*.{txt,jsonl}` and
+    `<root>/projects/agent-transcripts/*.{txt,jsonl}`, with the row for the
+    conversation from the `conversation_summaries` table of
+    `<root>/ai-tracking/ai-code-tracking.db`, or a null summary when the
+    database or row is absent. `grok` uses `@codeburn/core/providers/grok`
+    over each session directory `<root>/sessions/<cwd>/<session>/` holding
+    `summary.json`, an optional `signals.json`, and `updates.jsonl`.
+    `opencode` uses `@codeburn/core/providers/opencode-session` over the
+    file layout `<root>/storage/session/**/*.json` with its
+    `storage/message/<session-id>/` and `storage/part/<message-id>/` files,
+    and over every `<root>/opencode*.db` database, read through its
+    `session`, `message`, and `part` tables. A root directory that does not
+    exist yields nothing. A source the library cannot address in this list
+    is outside the decoder.
+  default-roots: >-
+    `defaultUsageRoots` is pure over its arguments. `claude` is
+    `CLAUDE_CONFIG_DIR`, else `<home>/.claude`. `codex` is `CODEX_HOME`,
+    else `<home>/.codex`. `cursor` is `<home>/.cursor`. `grok` is
+    `GROK_HOME`, else `<home>/.grok`. `opencode` is `OPENCODE_DATA_DIR`,
+    else `XDG_DATA_HOME/opencode`, else `<home>/.local/share/opencode`. A T3
+    Code provider instance with its own home path is decoded by passing that
+    path as a root.
+  decode-order-and-dedup: >-
+    Roots decode in the order given. Within a root, sources decode in
+    ascending order of their path compared as UTF-16 code units, and one
+    dedup set spans every source of that root. For `claude` the set is the
+    message-id set `groupIntoTurns` takes, so a session transcript decodes
+    before its `subagents/` directory and a replayed message stays with the
+    session. For `codex` the set is the `seenKeys` of `decodeCodex`, and
+    each rollout file starts a fresh decode state, so a fork's replay of its
+    origin collides with the origin's keys and is dropped. The other
+    providers pass one `seenKeys` set per root. Two roots of the same
+    provider share no dedup set. The order fixes which unit owns a
+    duplicated call, so the same files always give the same records.
+  unit-identity: >-
+    Every call carries `providerSessionId`, the session id the library
+    assigns the call, which is the id the harness and T3 Code know, and a
+    `unit` naming the usage unit whose file holds the call. `claude`: a
+    session transcript is a `session` unit whose id is the file stem. A
+    subagent transcript is a `subagent` unit whose id is the transcript's
+    `agentId`, else the file stem without `agent-`. Its parent is the unit
+    whose transcript records the spawn of that agent id, from the library's
+    `collectSessionMeta` spawn links, else the library's `parentSessionId`.
+    Its `name` is `description` and its `role` is `agentType` from the
+    `.meta.json` file, when present. `codex`: the decoder reads the first
+    `session_meta` record of each rollout file itself. The unit id is
+    `payload.id`. The parent is `payload.parent_thread_id`, else
+    `payload.source.subagent.thread_spawn.parent_thread_id`. A rollout with
+    a parent is a `child-thread` unit, and one without is a `session` unit.
+    `name` is `agent_nickname` and `role` is `agent_role`, read from the
+    payload, else from `thread_spawn`. `cursor`: each transcript is a
+    `session` unit whose id is the conversation id. `grok`: each session
+    directory is a `session` unit whose id is the library's session id.
+    `opencode`: each session row or session file is a unit whose id is the
+    session id. A session with a `parent_id` is a `subagent` unit with that
+    parent. `name` is the session title. The decoder builds one library
+    envelope per unit, holding only that unit's messages and parts, with the
+    root session id as the envelope's session id.
+  normalization: >-
+    The normalizer maps each library call to one call record. Token classes
+    map as `input` from `inputTokens`, `output` from `outputTokens`,
+    `cacheRead` from `cacheReadInputTokens`, `cacheWrite` from
+    `cacheCreationInputTokens`, `cacheWriteOneHour` from the Claude
+    `cacheCreationOneHourTokens`, else 0, `reasoning` from
+    `reasoningTokens`, and `webSearchRequests` from `webSearchRequests`.
+    `speed` passes through. `model` is the library's model string, or null
+    when it is empty. The timestamp is the library's timestamp written by
+    `Date.prototype.toISOString`. A call whose timestamp does not parse
+    takes the source's modification time and is `estimated`. A call is
+    `estimated` when the library marks its cost estimated, when its provider
+    is `cursor`, whose token counts the library derives from text length, or
+    when its timestamp came from the source. Grok and the OpenCode
+    session-level arm report one running total for a session, so their call
+    has granularity `session-total`. Every other call has granularity
+    `call`. The key of a `call` record is `<provider>/<library dedup key>`.
+    The key of a `session-total` record is
+    `<provider>/<unit id>/session-total`, so a later decode of a grown
+    session yields the same key with larger counts.
+  unpriced-models: >-
+    The decoder emits every call the library decodes, whatever its model,
+    including a call with no model. It holds no price table. The service
+    flags a call as unpriced when its price table has no entry for the
+    model.
+  source-errors: >-
+    A problem with one source yields one source error record for each error
+    code it has, naming the provider, the source path, the code, the count
+    of affected records, and the zero-based index of the first. `unreadable`:
+    the source or a file or database it needs cannot be opened or read; the
+    source yields no calls. `truncated`: the last line of a JSON Lines
+    source has no line terminator and does not parse; it is the record a
+    harness is still writing. `malformed-record`: a line that does not
+    parse, a record the library reports as `malformed-json`,
+    `missing-required`, or `invalid-value`, or a JSON file of the layout
+    that does not parse. `unknown-record`: a parsed record whose type is not
+    one the provider's adapter recognizes, or one the library reports as
+    `unknown-shape`. Each adapter holds the set of record types its
+    provider's current shapes use. `decoder-failed`: the library threw on
+    the source; the source yields no calls. A source with `truncated`,
+    `malformed-record`, or `unknown-record` errors still yields every call
+    the library decodes from it. No source error stops the decode of any
+    other source.
+  sqlite: >-
+    SQLite sources open through `node:sqlite` `DatabaseSync` with
+    `readOnly: true`, which both Node and the compiled Bun binary provide. A
+    database that cannot be opened, is locked, or lacks a table or column
+    the adapter reads yields `unreadable` for that database. The decoder
+    sets no busy timeout of its own.
+  convergence: >-
+    The decoder holds no state between runs and changes no file. Running it
+    twice over unchanged files yields the same records in the same order. A
+    run that stops halfway leaves nothing to repair; the next run decodes
+    every source again. A source that grows between runs yields its earlier
+    calls under the same keys, and a session total yields its new counts
+    under its old key. A deleted parent file lets a replay reappear on its
+    child unit under the key the parent's call had, so the service treats
+    the key as the idempotency key of a call and the last `session-total`
+    record for a key as that key's value.
+  dependency-pin: >-
+    `packages/host-cli/package.json` depends on `@codeburn/core` at the
+    exact version `0.9.20`, with no range operator. Raising the pin is a
+    change to that line and the lockfile, which the golden fixture suite
+    gates. No code checks the installed version.
+  fixtures-and-drift-guard: >-
+    Fixtures live in `packages/host-cli/src/usage/fixtures/`, one root
+    directory per provider in that provider's layout. They are small,
+    synthetic files with generic values in the record shapes of the current
+    harness releases, and no content from a real session. They cover a
+    session with calls on two models, every token class, a Claude subagent
+    with its meta file, a Codex child thread whose library call carries the
+    root session id, a Codex fork that replays its origin, an OpenCode child
+    session in a database, a Cursor conversation with and without a summary
+    row, a Grok session, a call on a model no price table holds, a call with
+    no model, a truncated file, a line that does not parse, and a record of
+    an unknown type. `fixtures/expected.jsonl` holds the exact records
+    `decodeUsage` yields over every fixture root. The golden test decodes
+    the fixture roots and compares the records with that file, so a library
+    release or an adapter change that alters any record fails it. Each
+    fixture provider directory holds `shape.yml`, naming the harness
+    version whose record shapes it follows.
+  tests: >-
+    Tests drive `decodeUsage`, `defaultUsageRoots`, and `runUsageCommand`
+    only, and never an adapter. The SQLite fixtures are built by the test
+    from SQL in the fixture directory into a temporary directory. Every
+    record a test sees validates against `usage-record.schema.yml`, parsed
+    with `yaml` and compiled with Ajv's draft 2020-12 validator in strict
+    mode, both development dependencies of the host CLI. The
+    binary test compiles `src/cli.ts` with the package's Bun into a
+    temporary directory, runs `manifold-host usage decode` with a `--root`
+    for each fixture provider, and compares its standard output with
+    `fixtures/expected.jsonl` line for line.

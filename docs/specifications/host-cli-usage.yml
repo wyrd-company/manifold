@@ -1,0 +1,36 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - usage-decoder
+    - usage-record
+description: >-
+  Defines the `usage` commands of the host CLI, `manifold-host`, the Bun
+  binary installed on each environment.
+  `docs/specifications/host-cli-usage.spec.yml` is the machine-readable
+  command definition.
+
+  `manifold-host usage decode` reads the provider session files on the
+  environment and writes the usage records, one JSON object on each line of
+  standard output, in the format of the `usage-record` specification. Each
+  `--root <provider>=<path>` names a directory where a provider keeps its
+  sessions, and the roots decode in the order given. With no `--root`, the
+  command decodes the default root of every provider, in the order
+  `claude`, `codex`, `cursor`, `grok`, `opencode`, resolved from the
+  environment variables and home directory as the `usage-decoder` design
+  states. A root whose directory does not exist yields no records.
+
+  A problem with one source is a source error record on standard output, and
+  the decode continues. Standard error carries only messages about the
+  command line and about a failure that ends the decode. The command reads
+  files and changes none.
+format: cli
+validation-criteria: >-
+  The command surface conforms to
+  `docs/specifications/host-cli-usage.spec.yml`. The binary test in
+  `packages/host-cli` compiles the binary, runs `manifold-host usage decode`
+  with a `--root` for each fixture provider, and checks that every line of
+  standard output validates against
+  `docs/specifications/usage-record.schema.yml` and equals the golden
+  fixture output, and that the exit code is 0.

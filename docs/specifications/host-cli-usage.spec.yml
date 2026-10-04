@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=https://commonclischema.org/draft/2026-04/schema
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+commands:
+  - name: usage
+    summary: Read provider usage on this environment.
+    mode: non-interactive
+    subcommands:
+      - name: decode
+        summary: Decode provider session files into usage records on standard output.
+        mode: non-interactive
+        options:
+          - name: root
+            flags: [--root]
+            kind: option
+            description: >-
+              A provider and the directory where it keeps its sessions,
+              written `<provider>=<path>`. The provider is one of `claude`,
+              `codex`, `cursor`, `grok`, and `opencode`. Repeatable; roots
+              decode in the order given. When absent, every provider's
+              default root decodes.
+            required: false
+            repeatable: true
+            value:
+              type: string
+            examples:
+              - claude=/home/example/.claude
+              - codex=/srv/agents/codex-home
+        output:
+          modes:
+            - name: jsonl
+              description: >-
+                One usage record per line on standard output, as defined by
+                `docs/specifications/usage-record.schema.yml`.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: >-
+                Every root decoded. Source errors, if any, are records on
+                standard output.
+            - code: 1
+              meaning: >-
+                The decode ended before every root decoded. Standard output
+                holds the records written before the failure, and standard
+                error names the failure.
+            - code: 2
+              meaning: >-
+                The command line is invalid: an unknown option, a `--root`
+                without `=`, an unknown provider, or an empty path. Nothing
+                is decoded.
+        examples:
+          - manifold-host usage decode
+          - manifold-host usage decode --root codex=/srv/agents/codex-home --root claude=/home/example/.claude
