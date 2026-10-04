@@ -1,3 +1,7 @@
+# ---
+# relationships:
+#   implements: operator-console
+# ---
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
 
 version: "3"
@@ -10,7 +14,9 @@ tasks:
 
   install:
     desc: Install dependencies
-    cmds: [pnpm install --frozen-lockfile]
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm --filter @wyrd-company/manifold-service exec playwright install chromium
 
   build:
     desc: Build every package; the host CLI compiles for the current platform

@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "pnpm --filter @wyrd-company/manifold-shared build && tsc --noEmit",
-    "test": "pnpm --filter @wyrd-company/manifold-shared build && vp test run",
+    "test": "pnpm --filter @wyrd-company/manifold-console build && vp test run",
     "start": "node dist/main.js"
   },
   "dependencies": {
@@ -23,11 +23,13 @@
     "@octokit/auth-app": "^8.3.1",
     "@octokit/graphql": "^9.0.5",
     "@octokit/request": "^10.0.16",
+    "@wyrd-company/manifold-console": "workspace:*",
     "@wyrd-company/manifold-shared": "workspace:*",
     "@wyrd-company/t3code-client": "0.5.0",
     "ajv": "^8.20.0",
     "isomorphic-git": "^1.42.6",
     "quickjs-emscripten-core": "0.32.0",
+    "sirv": "^3.0.2",
     "toad-cache": "^3.7.4",
     "typescript": "catalog:",
     "xstate": "^5.33.2",
@@ -36,7 +38,14 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@types/ws": "^8.18.2",
+    "playwright": "^1.63.0",
     "vite-plus": "catalog:",
     "ws": "^8.22.0"
+  },
+  "relationships": {
+    "implements": [
+      "actors-api",
+      "operator-console"
+    ]
   }
 }

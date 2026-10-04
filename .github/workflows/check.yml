@@ -1,3 +1,7 @@
+# ---
+# relationships:
+#   implements: operator-console
+# ---
 name: Check
 
 on:
@@ -39,6 +43,9 @@ jobs:
 
       - name: Install
         run: task install
+
+      - name: Install Chromium system dependencies
+        run: pnpm --filter @wyrd-company/manifold-service exec playwright install --with-deps chromium
 
       - name: Check
         run: task check

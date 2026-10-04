@@ -73,7 +73,9 @@ proposed-design:
     `packages/console` holds `index.html`, `vite.config.ts`, `src/`, and
     `public/`. Its scripts are `build` (`vp build`, after building
     `@wyrd-company/manifold-shared`), `typecheck` (`tsc --noEmit`), and
-    `test` (`vp test run`). Its TypeScript configuration extends the base
+    `test` (`vp test run`), each after building the shared package so that
+    its exported types and runtime modules exist on a fresh checkout. Its
+    TypeScript configuration extends the base
     with the DOM library, `jsx: react-jsx`, and bundler module resolution.
     `vite.config.ts` sets `base: "/console/"` and adds the React and
     Tailwind CSS plugins. The build writes hashed files under
@@ -226,6 +228,8 @@ proposed-design:
       readonly store: Pick<Store, "activeSnapshots">;
       /** Directory of the built console. Defaults to the console package's `dist`. */
       readonly root?: string;
+      /** Receives read failures; service assembly supplies ServiceParts.log. */
+      readonly log?: (entry: { level: "error"; path: string; error: string }) => void;
     }
 
     /** Mounts the console's files at `/console` and the actors endpoint at `/api/actors`. */

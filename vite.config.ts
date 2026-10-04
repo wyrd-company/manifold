@@ -1,3 +1,7 @@
+// ---
+// relationships:
+//   implements: operator-console
+// ---
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
@@ -17,13 +21,14 @@ export default defineConfig({
   },
   lint: {
     ignorePatterns: ["coverage", "dist", "node_modules", "pnpm-lock.yaml", "*.tsbuildinfo"],
-    plugins: ["eslint", "oxc", "unicorn", "typescript"],
+    plugins: ["eslint", "oxc", "unicorn", "typescript", "react"],
     categories: {
       correctness: "warn",
       suspicious: "warn",
       perf: "warn",
     },
     rules: {
+      "react/react-in-jsx-scope": "off",
       "unicorn/no-array-sort": "off",
       "unicorn/consistent-function-scoping": "off",
       "oxc/no-map-spread": "off",

@@ -18,6 +18,10 @@
     "./expressions": {
       "types": "./dist/expressions.d.ts",
       "import": "./dist/expressions.js"
+    },
+    "./actors-api": {
+      "types": "./dist/actors-api.d.ts",
+      "import": "./dist/actors-api.js"
     }
   },
   "scripts": {
@@ -38,5 +42,11 @@
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "relationships": {
+    "implements": [
+      "actors-api",
+      "operator-console"
+    ]
   }
 }
