@@ -23,7 +23,7 @@ export interface ActorRecord {
   queued: boolean;
   stopped: boolean;
 }
-export const records = new WeakMap<AnyActorRef["system"], ActorRecord>();
+export const records: WeakMap<AnyActorRef["system"], ActorRecord> = new WeakMap();
 export const encode = (value: string) =>
   encodeURIComponent(value).replaceAll(".", "%2E").replaceAll("#", "%23");
 export function prefixOf(actor: AnyActorRef): string {
