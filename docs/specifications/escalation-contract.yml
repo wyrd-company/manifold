@@ -94,7 +94,9 @@ description: |-
     `body`, `key={key}&choice={choiceId}`; `clear: true`.
   - a close: `topic`; `sequence_id`, the escalation id; `title`;
     `message`, the outcome, `Answered: {label or text} ({channel})` or
-    `Withdrawn`; `markdown: true`; `priority: 1`; `tags`,
+    `Withdrawn`, at most 4,096 bytes in UTF-8: a text answer that would
+    pass the limit is cut on a character boundary and ends with `…`, and
+    the escalation keeps the whole answer; `markdown: true`; `priority: 1`; `tags`,
     `["white_check_mark"]` when answered and `["heavy_multiplication_x"]`
     when withdrawn. A close has no `click` and no `actions`.
 

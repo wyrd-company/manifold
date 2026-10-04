@@ -249,12 +249,16 @@ proposed-design:
     notification when the answer succeeds, and, when free text is allowed
     and there are fewer than three choices, a `view` button that opens the
     answer page. Free text is always reachable through the `click` URL.
-    The sender publishes each due row with `POST {server}/` and a JSON body
-    that adds the topic and the escalation id as `sequence_id`, with
-    `Authorization: Bearer` and the token read from the credential's file
-    when the destination names one. Each request is bounded by
-    `requestTimeoutMs`. A `2xx` answer marks the row sent and clears its
-    message. A network failure, a timeout, a `429`, or a `5xx` leaves it
+    The sender sends one request at a time, taking due rows in the order
+    they were written, so a destination's `close` row is never sent before
+    the request for its `ask` row has ended. Before each request it commits
+    the row's `attempts` raised by one, so a row with attempts above zero
+    may have reached ntfy, whatever happened to the response. It publishes
+    the row with `POST {server}/` and a JSON body that adds the topic and
+    the escalation id as `sequence_id`, with `Authorization: Bearer` and the
+    token read from the credential's file when the destination names one.
+    Each request is bounded by `requestTimeoutMs`. A `2xx` answer marks the
+    row sent and clears its message. A network failure, a timeout, a `429`, or a `5xx` leaves it
     pending, and the sender tries it again after `retryIntervalMs`. Any
     other status marks it failed with the status, clears its message, logs
     the destination name and the status, and does not try again. The row
@@ -266,15 +270,23 @@ proposed-design:
   closing: >-
     When an escalation leaves `open`, in the same transaction, each of its
     `ask` rows still pending is marked `cancelled` and its message cleared,
-    and each `ask` row already sent gets a `close` row. A `close` row's
+    so it is never sent again. Each `ask` row that may have reached ntfy
+    gets a `close` row: one sent, one pending with attempts above zero, and
+    one failed after more than one attempt, since an earlier attempt that
+    ended without a status may have been accepted. An `ask` never
+    attempted, or refused on its first and only attempt, gets none. So an ask
+    whose response was lost to a timeout, a dropped connection, or a crash
+    is closed, and an ask still in flight when the escalation ends is
+    closed after its request ends. A close for an ask that never reached
+    ntfy shows the outcome alone, which is harmless. A `close` row's
     message carries the title, the outcome, answered with the choice's
     label or as text and through which channel, or withdrawn, priority 1,
     and no click URL or button; published under the same sequence ID, it
     replaces the question and its buttons on every client that supports
-    sequence IDs. When the sender's `2xx` for an `ask` row finds the row
-    already `cancelled`, because the escalation ended during the request,
-    it writes the `close` row then. A `close` row is sent, retried, and
-    failed as an `ask` row is.
+    sequence IDs. A text answer is cut on a character boundary, with `…`
+    added, so the message is at most 4,096 bytes in UTF-8; the escalation
+    keeps the whole answer. A `close` row is sent, retried, and failed as
+    an `ask` row is.
   answer-page: >-
     The service's HTTP host mounts the module's `requestListener` at
     `/escalations` with `mount`, unauthenticated, since the key in each
@@ -460,7 +472,9 @@ proposed-design:
     crash after the answer of a service escalation and before its handling
     is recorded runs the handler at `start`, and the handler converges. A
     withdrawal twice withdraws once. The sender publishes a row until it is
-    marked sent or failed, and a publish repeated under the same sequence
+    marked sent or failed; a row with attempts above zero is treated as
+    published when its escalation ends, so it gets one `close` row whether
+    the end comes before or after a restart. A publish repeated under the same sequence
     ID replaces the one before it on the client.
   errors: >-
     A raise whose input fails the escalate input schema, such as more than
@@ -490,7 +504,16 @@ proposed-design:
     `500` is published again after the retry interval and one that gets
     `400` is not; an escalation that ends publishes a close under the same
     sequence ID with no buttons, and one that ends before its first publish
-    publishes nothing; an `open` destination logs its warning at start, and
+    attempt publishes nothing; an ask that ntfy accepts while the fake
+    server drops the response, or holds it past `requestTimeoutMs`, gets a
+    close when its escalation is then answered, and the close is sent
+    after the ask's request ends; an ask the fake server refuses with `400`
+    on its first attempt gets no close, and one whose first attempt times
+    out and whose second gets `400` gets a close; a close for a 4,096-character ASCII answer and for a
+    4,096-character answer of four-byte characters is at most 4,096 bytes
+    in UTF-8, ends with `…`, and the API returns the whole answer; a
+    question of 8,000 four-byte characters gives an ask message of at most
+    4,096 bytes; an `open` destination logs its warning at start, and
     a `reserved` destination whose topic the fake server reads anonymously
     logs that it is readable; no topic, server, or token appears in the
     store or a log line. Fault tests in a child process that sends itself
@@ -498,6 +521,9 @@ proposed-design:
     delivers the answer once after restart; a kill after ntfy accepts and
     before the row is marked sent publishes at most one more message, under
     the same sequence ID and with the same buttons, which still answer; a
+    kill after ntfy accepts an ask and before the row is marked sent,
+    followed by an answer and by a withdrawal before the sender runs again,
+    each publishes one close and no ask after restart; a
     kill after a `retry` answer and before its handling is recorded
     releases the held actor once after restart; a kill after an invoked
     event exits the asking state and before the save restores the state

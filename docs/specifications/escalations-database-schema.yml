@@ -43,7 +43,8 @@ description: |-
   message holds the escalation's key in its `click` URL and buttons. It is
   present exactly while the row is `pending`, so the key leaves the store
   when the row is `sent`, `failed`, or `cancelled`. `attempts` counts
-  publishes tried, `next_attempt_at` is when the sender may try the row
+  publishes tried, and is raised and committed before each request, so a
+  row with attempts above zero may have reached ntfy; `next_attempt_at` is when the sender may try the row
   next, `last_error` is the status or error of the last failed attempt,
   and `settled_at` is when the row left `pending`. No column holds a
   topic, a server, or a token.
