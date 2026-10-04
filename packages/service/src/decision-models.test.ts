@@ -465,3 +465,206 @@ it("first policy never evaluates a later matching rule", async () => {
   });
   expect(await run(graph([t]))).toMatchObject({ outcome: "result", result: { value: 7 } });
 });
+
+const nestedModel = (key: string) =>
+  graph([{ id: "child", name: "child", type: "decisionNode", content: { key } }]);
+it.each([1, 2])(
+  "restores child top-level nulls in result and nested trace at depth %s",
+  async (depth) => {
+    const leaf = graph([
+      node("calc", "jsonataExpression", { expression: "null", outputPath: "value" }),
+    ]);
+    const models = createDecisionModels({
+      sample: nestedModel(depth === 1 ? "leaf" : "middle"),
+      middle: nestedModel("leaf"),
+      leaf,
+    });
+    try {
+      const result = await models.evaluate("sample", {});
+      expect(result).toMatchObject({
+        outcome: "result",
+        result: { value: null },
+        trace: { child: { output: { value: null } }, output: { input: { value: null } } },
+      });
+      if (depth === 2)
+        expect(result.trace["child"]!.traceData).toMatchObject({
+          child: { output: { value: null } },
+          output: { input: { value: null } },
+        });
+    } finally {
+      models.dispose();
+    }
+  },
+);
+it.each([1, 2])("keeps the inner failing cell and partial trace at depth %s", async (depth) => {
+  const leaf = graph([table("$notAFunction()")]);
+  const models = createDecisionModels({
+    sample: nestedModel(depth === 1 ? "leaf" : "middle"),
+    middle: nestedModel("leaf"),
+    leaf,
+  });
+  try {
+    const result = await models.evaluate("sample", { item: { value: 4 } });
+    expect(result).toMatchObject({
+      outcome: "error",
+      error: {
+        model: "leaf",
+        nodeId: "table",
+        ruleId: "candidate",
+        columnId: "condition",
+        code: "T1006",
+      },
+    });
+    const childTrace = result.trace["child"]!.traceData as Record<string, unknown>;
+    const leafTrace =
+      depth === 1
+        ? childTrace
+        : (childTrace["child"] as { traceData: Record<string, unknown> }).traceData;
+    expect(leafTrace).toMatchObject({
+      input: { output: { item: { value: 4 } } },
+      table: {
+        traceData: {
+          error: { model: "leaf", nodeId: "table", ruleId: "candidate", columnId: "condition" },
+        },
+      },
+    });
+    expect(leafTrace["output"]).toBeUndefined();
+    expect(result.trace["output"]).toBeUndefined();
+  } finally {
+    models.dispose();
+  }
+});
+it("keeps authored ids ending in ~route in node bindings and traces", async () => {
+  const model = {
+    nodes: [
+      { id: "input", type: "inputNode" },
+      node("choice~route", "jsonataSwitch", {
+        hitPolicy: "first",
+        statements: [{ id: "yes", condition: "true" }],
+      }),
+      node("read", "jsonataExpression", {
+        expression: '{"previous": $lookup($nodes, "choice~route"), "ids": $keys($nodes)}',
+      }),
+      { id: "output", type: "outputNode" },
+    ],
+    edges: [
+      { id: "a", sourceId: "input", targetId: "choice~route" },
+      { id: "b", sourceId: "choice~route", sourceHandle: "yes", targetId: "read" },
+      { id: "c", sourceId: "read", targetId: "output" },
+    ],
+  };
+  const result = await run(model, { value: 4 });
+  expect(result).toMatchObject({
+    outcome: "result",
+    result: { previous: { value: 4 }, ids: ["choice~route", "input"] },
+    trace: { "choice~route": { output: { value: 4 } } },
+  });
+  expect(result.trace["choice~route~route"]).toBeUndefined();
+});
+it("rejects array switch input with a result error before routing", async () => {
+  const model = switched(["true"]);
+  model.nodes.splice(1, 0, node("array", "jsonataExpression", { expression: "[1,2]" }));
+  model.edges.find((e) => e.id === "start")!.sourceId = "array";
+  model.edges.push({ id: "toArray", sourceId: "input", targetId: "array" });
+  const result = await run(model);
+  expect(result).toMatchObject({
+    outcome: "error",
+    error: { kind: "result", nodeId: "route", message: "Switch input must be an object" },
+  });
+  expect(result.trace["branch0"]).toBeUndefined();
+});
+it("keeps an authored id equal to a generated id in another model", async () => {
+  const local = graph([
+    node("choice~route", "jsonataExpression", { expression: '{"value": 4}' }),
+    node("read", "jsonataExpression", {
+      expression: '{"ids": $keys($nodes), "value": $lookup($nodes, "choice~route").value}',
+    }),
+  ]);
+  const other = {
+    nodes: [
+      { id: "input", type: "inputNode" },
+      node("choice", "jsonataSwitch", {
+        hitPolicy: "first",
+        statements: [{ id: "yes", condition: "true" }],
+      }),
+      { id: "output", type: "outputNode" },
+    ],
+    edges: [
+      { id: "a", sourceId: "input", targetId: "choice" },
+      { id: "b", sourceId: "choice", sourceHandle: "yes", targetId: "output" },
+    ],
+  };
+  const models = createDecisionModels({ sample: local, other });
+  try {
+    expect(await models.evaluate("sample", {})).toMatchObject({
+      result: { value: 4, ids: ["choice~route", "input"] },
+      trace: { "choice~route": { output: { value: 4 } } },
+    });
+  } finally {
+    models.dispose();
+  }
+});
+it("enriches the failing invocation when another invocation of the same model succeeded", async () => {
+  const expression = 'fail ? $notAFunction() : {"fail": true}';
+  const leaf = graph([node("check", "jsonataExpression", { expression })]);
+  const parent = graph([
+    { id: "first", type: "decisionNode", content: { key: "leaf" } },
+    { id: "second", type: "decisionNode", content: { key: "leaf" } },
+  ]);
+  const models = createDecisionModels({ sample: parent, leaf });
+  try {
+    const result = await models.evaluate("sample", { fail: false });
+    expect(result).toMatchObject({ outcome: "error", error: { model: "leaf", nodeId: "check" } });
+    expect(result.trace["first"]!.traceData).toMatchObject({
+      check: { traceData: { expression } },
+    });
+    expect(result.trace["second"]!.traceData).toMatchObject({
+      check: { traceData: { error: { model: "leaf", nodeId: "check" } } },
+    });
+    expect(result.trace["output"]).toBeUndefined();
+  } finally {
+    models.dispose();
+  }
+});
+it("retains restored nulls from a completed child in a later failure record", async () => {
+  const leaf = graph([
+    node("calc", "jsonataExpression", { expression: "null", outputPath: "value" }),
+  ]);
+  const parent = graph([
+    { id: "child", type: "decisionNode", content: { key: "leaf" } },
+    table("$notAFunction()"),
+  ]);
+  const models = createDecisionModels({ sample: parent, leaf });
+  try {
+    expect(await models.evaluate("sample", {})).toMatchObject({
+      outcome: "error",
+      trace: {
+        child: { output: { value: null } },
+        table: { traceData: { error: { nodeId: "table" } } },
+      },
+    });
+  } finally {
+    models.dispose();
+  }
+});
+it("preserves present values when output joins a child null and a non-null value", async () => {
+  const leaf = graph([
+    node("calc", "jsonataExpression", { expression: "null", outputPath: "value" }),
+  ]);
+  const parent = graph([
+    { id: "child", type: "decisionNode", content: { key: "leaf" } },
+    node("replace", "jsonataExpression", { expression: '{"value": 7}' }),
+  ]);
+  parent.edges[1]!.sourceId = "input";
+  parent.edges.push({ id: "childToOutput", sourceId: "child", targetId: "output" });
+  const models = createDecisionModels({ sample: parent, leaf });
+  try {
+    expect(await models.evaluate("sample", {})).toMatchObject({
+      outcome: "result",
+      result: { value: 7 },
+      trace: { child: { output: { value: null } }, output: { input: { value: 7 } } },
+    });
+  } finally {
+    models.dispose();
+  }
+});

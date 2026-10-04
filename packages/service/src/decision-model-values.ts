@@ -51,21 +51,27 @@ export function mergeDecisionObjects(
   return result;
 }
 // Project the containers the engine exposes, without rewriting user properties inside values.
-export function authoredDecisionValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(authoredDecisionValue);
+export function authoredDecisionValue(value: unknown, generatedIds: ReadonlySet<string>): unknown {
+  if (Array.isArray(value)) return value.map((child) => authoredDecisionValue(child, generatedIds));
   if (!decisionObject(value)) return value;
   return Object.fromEntries(
     Object.entries(value)
       .filter(([key]) => key !== "__manifoldSwitch")
-      .map(([key, child]) => [key, key === "$nodes" ? authoredDecisionNodes(child) : child]),
+      .map(([key, child]) => [
+        key,
+        key === "$nodes" ? authoredDecisionNodes(child, generatedIds) : child,
+      ]),
   );
 }
-export function authoredDecisionNodes(value: unknown): Record<string, unknown> {
+export function authoredDecisionNodes(
+  value: unknown,
+  generatedIds: ReadonlySet<string>,
+): Record<string, unknown> {
   if (!decisionObject(value)) return {};
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => !key.endsWith("~route"))
-      .map(([key, child]) => [key, authoredDecisionValue(child)]),
+      .filter(([key]) => !generatedIds.has(key))
+      .map(([key, child]) => [key, authoredDecisionValue(child, generatedIds)]),
   );
 }
 export function authoredDecisionTrace(
@@ -73,9 +79,10 @@ export function authoredDecisionTrace(
   model: DecisionModel,
   models: Readonly<Record<string, DecisionModel>>,
 ): DecisionModelTrace {
+  const generatedIds = decisionRoutingIds(model);
   return Object.fromEntries(
     Object.entries(trace)
-      .filter(([id]) => !id.endsWith("~route"))
+      .filter(([id]) => !generatedIds.has(id))
       .map(([id, entry]) => {
         const node = model.nodes.find((node) => node.id === id);
         return [
@@ -91,12 +98,22 @@ export function authoredDecisionTrace(
                   ),
                 }
               : {}),
-            ...(Object.hasOwn(entry, "input") ? { input: authoredDecisionValue(entry.input) } : {}),
+            ...(Object.hasOwn(entry, "input")
+              ? { input: authoredDecisionValue(entry.input, generatedIds) }
+              : {}),
             ...(Object.hasOwn(entry, "output")
-              ? { output: authoredDecisionValue(entry.output) }
+              ? { output: authoredDecisionValue(entry.output, generatedIds) }
               : {}),
           },
         ];
       }),
+  );
+}
+
+export function decisionRoutingIds(model: DecisionModel): ReadonlySet<string> {
+  return new Set(
+    model.nodes
+      .filter((node) => node.type === "customNode" && node.content.kind === "jsonataSwitch")
+      .map((node) => `${node.id}~route`),
   );
 }

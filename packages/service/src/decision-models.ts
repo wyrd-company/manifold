@@ -22,8 +22,13 @@ import { createDecisionNodeHandler } from "./decision-model-nodes.ts";
 import {
   authoredDecisionValue,
   authoredDecisionTrace,
-  decisionObject,
+  decisionRoutingIds,
 } from "./decision-model-values.ts";
+import {
+  repairDecisionModelTrace,
+  restoreDecisionModelResult,
+  enrichDecisionModelError,
+} from "./decision-model-trace.ts";
 export class DecisionModelLoadError extends Error {
   readonly findings: readonly DecisionModelFinding[];
   constructor(findings: readonly DecisionModelFinding[]) {
@@ -103,7 +108,7 @@ export function createDecisionModels(models: Readonly<Record<string, unknown>>):
       ),
     ),
   );
-  const handler = createDecisionNodeHandler(compiled);
+  const handler = createDecisionNodeHandler(compiled, snapshots);
   const engine = new ZenEngine({
     loader: {
       type: "static",
@@ -126,27 +131,25 @@ export function createDecisionModels(models: Readonly<Record<string, unknown>>):
     dispose: () => engine.dispose(),
     async evaluate(key, input) {
       if (!Object.hasOwn(snapshots, key)) throw new Error(`Unknown decision model: ${key}`);
-      const record = { model: key, input: authoredDecisionValue(input) as Record<string, unknown> };
+      const record = {
+        model: key,
+        input: authoredDecisionValue(input, decisionRoutingIds(snapshots[key]!)) as Record<
+          string,
+          unknown
+        >,
+      };
       try {
         const result = await engine.evaluate(key, input, { trace: true });
-        const trace = (result.trace ?? {}) as DecisionModelTrace;
-        let output: unknown = result.result;
-        // Zen omits top-level nulls when assembling its final result; output-node input retains them.
-        if (decisionObject(output)) {
-          output = { ...output };
-          for (const node of snapshots[key]!.nodes)
-            if (node.type === "outputNode") {
-              const value = trace[node.id]?.input;
-              if (decisionObject(value))
-                for (const [name, child] of Object.entries(value))
-                  if (child === null && !Object.hasOwn(output as object, name))
-                    Object.defineProperty(output, name, { value: null, enumerable: true });
-            }
-        }
+        const trace = repairDecisionModelTrace(
+          (result.trace ?? {}) as DecisionModelTrace,
+          key,
+          snapshots,
+        );
+        const output = restoreDecisionModelResult(result.result as unknown, trace, snapshots[key]!);
         return {
           ...record,
           outcome: "result",
-          result: authoredDecisionValue(output),
+          result: authoredDecisionValue(output, decisionRoutingIds(snapshots[key]!)),
           trace: authoredDecisionTrace(trace, snapshots[key]!, snapshots),
         };
       } catch (error) {
@@ -167,8 +170,7 @@ export function createDecisionModels(models: Readonly<Record<string, unknown>>):
             ) as DecisionModelErrorDetail;
             if (parsed.kind === "evaluation" || parsed.kind === "result") {
               detail = parsed;
-              if (envelope.nodeId && trace[envelope.nodeId])
-                trace[envelope.nodeId]!.traceData = { error: detail };
+              enrichDecisionModelError(trace, key, snapshots, detail);
             }
           }
         } catch {
@@ -178,7 +180,11 @@ export function createDecisionModels(models: Readonly<Record<string, unknown>>):
           ...record,
           outcome: "error",
           error: detail,
-          trace: authoredDecisionTrace(trace, snapshots[key]!, snapshots),
+          trace: authoredDecisionTrace(
+            repairDecisionModelTrace(trace, key, snapshots),
+            snapshots[key]!,
+            snapshots,
+          ),
         };
       }
     },

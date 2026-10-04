@@ -239,24 +239,29 @@ description: |-
 
   `__manifoldSwitch` exists only at the top level of a node's input or
   output. The authored projection of a value removes it: a node map, such as
-  `$nodes`, loses every `~route` entry, and every remaining node output and
+  `$nodes`, loses each generated routing entry for its model, and every
+  remaining node output and
   every node input or output loses its top-level `__manifoldSwitch`, so a
   switch's projected output is its node input. Every custom node takes the
   authored projection of its whole input and of `$nodes` before it
   evaluates anything, and the service takes the authored projection of the
   result and of every trace entry. No expression, result, or record sees a
-  generated node or `__manifoldSwitch`, at any depth. Creating fails
-  with a `duplicate-id` error when a model already holds a node id equal to
+  generated node or `__manifoldSwitch`, at any depth. An authored id ending
+  in `~route` remains visible unless it collides with a generated routing id
+  in the same model. Creating fails with a `duplicate-id` error when a model already holds a node id equal to
   a generated `S~route`.
 
   `evaluate` runs the model with the engine's trace on. It resolves to a
   `result` record with the model's result and the full trace, or to an
   `error` record with the error detail and the partial trace; it rejects only
   for a key that is not in the set. The record shows the model as written:
-  on success and on failure, the trace holds no `S~route` entry, and each
+  on success and on failure, the trace holds no generated routing entry, and each
   entry's input and output, including any `$nodes` within them, is its
   authored projection. `dispose`
-  releases the engine.
+  releases the engine. The service restores top-level null properties omitted
+  by Zen from each subgraph result, using the subgraph's output-node trace
+  inputs. The decision-node outputs, their direct output-node inputs, and the
+  final result record retain those null properties.
 
   Errors. `DecisionModelErrorDetail` is
   `#/$defs/decision-model-error-detail`. A cell, field, or expression that
@@ -271,7 +276,10 @@ description: |-
   the handler's message and `trace` is the partial trace. The service parses
   the envelope, parses the detail from `source`, writes the detail into the
   failing node's `traceData.error` in the partial trace, and resolves the
-  `error` record. A rejection that is not a `NodeError` envelope from a
+  `error` record. For a nested model, the detail is written into the inner
+  trace held by each ancestor decision node's `traceData`; the ancestor entries
+  and the rest of the partial trace are retained. A rejection that is not a
+  `NodeError` envelope from a
   Manifold node is an `engine` error with the engine's message and the
   partial trace when the envelope carries one, or `{}`.
 
@@ -293,8 +301,8 @@ validation-criteria: >-
   nodes run. Downstream of the switch, an expression node returning
   `{ "previous": $nodes.<switchId>, "ids": $keys($nodes) }` gives the
   switch's node input with no `__manifoldSwitch` at any depth, and node ids
-  with no `~route` id; the result, and the trace of that run and of a run
-  failing in a later cell, hold no `~route` entry and no
+  with no generated routing id; the result, and the trace of that run and of a run
+  failing in a later cell, hold no generated routing entry and no
   `__manifoldSwitch` property at any depth. Table-driven tests run, under both `first` and
   `collect`, an input cell for each result in `true`, `false`, `null`, `0`,
   `""`, no result, `[1,2]`, `[]`, `{"x":1}`, `7`, and `"sample"`, with the
@@ -314,7 +322,9 @@ validation-criteria: >-
   resolve an `error` record naming node, rule, and column, with that detail
   in the failing node's `traceData.error`, under both policies; a failing
   switch condition resolves an `error` record naming node and statement.
-  A contract
+  Tests cover authored ids ending in `~route`, including an id that equals
+  a routing id generated only in another model, and nested result and failure
+  records at two nesting depths. A contract
   test asserts the `NodeError` envelope shape and the null native
   `traceData` of a failing custom node at the pinned engine version. The
   lint tests in `packages/shared` cover each finding kind; a stock

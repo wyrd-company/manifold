@@ -14,6 +14,7 @@ import type {
   DecisionCustomContent,
   DecisionModelErrorDetail,
   DecisionModelLocation,
+  DecisionModel,
 } from "@wyrd-company/manifold-shared";
 import {
   authoredDecisionValue,
@@ -22,8 +23,15 @@ import {
   readDecisionPath,
   writeDecisionPath,
   mergeDecisionObjects,
+  decisionRoutingIds,
 } from "./decision-model-values.ts";
-export function createDecisionNodeHandler(compiled: ReadonlyMap<string, CompiledExpression>) {
+export function createDecisionNodeHandler(
+  compiled: ReadonlyMap<string, CompiledExpression>,
+  models: Readonly<Record<string, DecisionModel>>,
+) {
+  const routes = Object.fromEntries(
+    Object.entries(models).map(([key, model]) => [key, decisionRoutingIds(model)]),
+  );
   return async (
     model: string,
     nodeId: string,
@@ -31,8 +39,11 @@ export function createDecisionNodeHandler(compiled: ReadonlyMap<string, Compiled
     rawInput: unknown,
   ) => {
     const { $nodes, ...input } = decisionObject(rawInput) ? rawInput : {};
-    const whole = authoredDecisionValue(decisionObject(rawInput) ? input : rawInput);
-    const nodes = authoredDecisionNodes($nodes);
+    const whole = authoredDecisionValue(
+      decisionObject(rawInput) ? input : rawInput,
+      routes[model]!,
+    );
+    const nodes = authoredDecisionNodes($nodes, routes[model]!);
     const fail = (message: string, extra: Partial<DecisionModelLocation> = {}) => {
       throw new Error(
         JSON.stringify({
