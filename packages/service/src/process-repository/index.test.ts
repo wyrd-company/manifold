@@ -204,6 +204,7 @@ test("verification rejects an unreadable newly fetched object before publication
     },
   });
   await expect(repository.pull()).rejects.toMatchObject({ kind: "incomplete" });
+  expect(await fs.readFile(join(configuration.directory, "current"), "utf8")).toBe(a + "\n");
   expect(repository.current()!.commit).toBe(a);
   expect(await repository.current()!.read("recipes/a.txt")).toBe("first");
 });

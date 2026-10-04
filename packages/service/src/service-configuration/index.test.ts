@@ -2,7 +2,7 @@
 // relationships:
 //   verifies: service-configuration
 // ---
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspect } from "node:util";
@@ -187,4 +187,23 @@ test("WHATWG URL validation rejects a malformed port at its path", async () => {
   await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
     issues: [{ path: "/processRepository/url", message: "Invalid URL" }],
   });
+});
+
+test("an existing unreadable key fails configuration loading", async () => {
+  const { file, directory } = await config({
+    ...minimal,
+    credentials: {
+      "example-app": { kind: "github-app", appId: 1, installationId: 2, privateKeyFile: "key.pem" },
+    },
+  });
+  const key = join(directory, "key.pem");
+  await writeFile(key, "generic-test-key");
+  await chmod(key, 0);
+  try {
+    await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+      issues: [{ path: "/credentials/example-app/privateKeyFile", message: "EACCES" }],
+    });
+  } finally {
+    await chmod(key, 0o600);
+  }
 });
