@@ -57,10 +57,12 @@ properties:
     resume. Command ids are fixed before sending. The store never saves an
     errored snapshot over a good one.
   migration: >-
-    A blueprint version is the git SHA of its file. State names are identity.
-    Migration is from a parent SHA to its child SHA, only in states that are
-    waiting on events, with version-specific migration paths where schemas
-    changed.
+    A blueprint version is a blueprint at one process repository commit,
+    named by the commit and the blueprint's path, so one commit pins the
+    blueprint and every file it names. State names are identity. Migration
+    is from a version at a parent commit to the same path at a child
+    commit, only in states that are waiting on events, with
+    version-specific migration paths where schemas changed.
   task: >-
     A GitHub issue on a bound Project. Its metadata lives on GitHub in six
     kinds of storage: Project fields, org issue fields, org issue types,

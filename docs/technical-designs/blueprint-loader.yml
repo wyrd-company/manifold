@@ -66,7 +66,9 @@ proposed-design:
     `packages/service/src/blueprint-loader/index.ts` exports exactly these
     names. `ProcessRepositoryRevision` is the process repository module's
     read-only view of one commit; the loader uses its `commit`, `read`,
-    and `list` and nothing else.
+    and `list` and nothing else. The service passes the process repository
+    module's `revisionAt(commit)` as the option of the same name, which
+    gives the revision at any commit the repository holds.
 
     ```ts
     import type { AnyActorLogic, AnyStateMachine, Snapshot } from "xstate";
@@ -77,7 +79,7 @@ proposed-design:
     export interface BlueprintLoaderOptions {
       /** The code behind every implementation name a blueprint may reference. */
       readonly implementations: ImplementationRegistry;
-      /** The revision at a commit, or undefined when the repository does not hold it. */
+      /** The process repository module's revisionAt: the revision at a commit, or undefined when the repository does not hold it. */
       revisionAt(commit: string): Promise<ProcessRepositoryRevision | undefined>;
       /** Every expression failure at run time, with the version it ran in. */
       onExpressionError(error: ExpressionError, version: BlueprintVersion): void;
