@@ -78,7 +78,7 @@ proposed-design:
     import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
     import type { LoadedBlueprint, RevisionLoad, VersionLoad } from "../blueprint-loader/index.ts";
     import type { GitHubProject, TrackedIssue } from "../github-source/index.ts";
-    import type { GitHubProjectResolution, PortfolioInForce } from "../portfolio/index.ts";
+    import type { PortfolioInForce } from "../portfolio/index.ts";
     import type { JsonValue, Store } from "../store/index.ts";
     import type { DecisionModels } from "../decision-models.ts";
     import type { BlueprintVersion } from "@wyrd-company/manifold-shared";
@@ -92,11 +92,9 @@ proposed-design:
       readonly store: Store;
       /** The GitHub event source satisfies it. */
       readonly tracked: TrackedIssues;
-      /** The portfolio module satisfies it. */
-      readonly portfolio: IntakePortfolio;
       /** The blueprint loader satisfies it. */
       readonly blueprints: { version(version: BlueprintVersion): Promise<VersionLoad> };
-      /** The current revision and the blueprints loaded from it, or undefined before the first pull. */
+      /** The basis the service last published, or undefined before the first. */
       current(): IntakeRevision | undefined;
       readonly actors: TaskActorStarter;
       /** Called for each failed decision and each failed start. */
@@ -114,15 +112,12 @@ proposed-design:
       trackedIssueIds(): readonly string[];
     }
 
-    export interface IntakePortfolio {
-      current(): PortfolioInForce;
-      githubProject(project: { owner: string; number: number }): GitHubProjectResolution | undefined;
-    }
-
     export interface IntakeRevision {
       readonly revision: ProcessRepositoryRevision;
       /** Loaded from `revision`; its commit equals the revision's. */
       readonly blueprints: RevisionLoad;
+      /** The portfolio module's declaration in force after `revision` was applied to it. */
+      readonly portfolio: PortfolioInForce;
     }
 
     /** The start member of the actor host. */
@@ -216,7 +211,7 @@ proposed-design:
     `migrations.ts` holds the migration steps; step 1 is the script of
     `intake-records-table`. Tests live beside the module and import only
     `index.ts` and the `index.ts` of the store, the router, the blueprint
-    loader, and the portfolio module. The manifest lint and the schemas
+    loader, and the portfolio module's types. The manifest lint and the schemas
     live in `packages/shared`, in `process-manifest.ts` and the generated
     schema constants, as `process-manifest` states. The host CLI command
     lives in `packages/host-cli/src/manifest-lint/command.ts`.
@@ -251,15 +246,18 @@ proposed-design:
     the decision step.
   decision-step: |-
     The decision step first captures its basis, in one synchronous run of
-    the event loop: `current()`, the revision and the `RevisionLoad` of one
-    commit; `portfolio.current()`, the declaration in force and its commit;
-    the tracked issue; the binding; and the `DecisionModels` of the
-    basis's commit, which the attempt holds until it ends. The service
-    applies a revision to the portfolio module and swaps `current` in
-    synchronous steps, so the captured declaration and the binding
-    resolution read one declaration. Every later step reads the basis and
-    never `current()` or `portfolio` again, so a revision loaded while the
-    evaluation awaits changes nothing in this attempt: the record holds
+    the event loop: the `IntakeRevision` that `current()` answers, which
+    holds the revision, the `RevisionLoad` of the same commit, and the
+    portfolio declaration in force after that commit was applied; the
+    tracked issue; the binding, resolved from the basis's declaration; and
+    the `DecisionModels` of the basis's commit, which the attempt holds
+    until it ends. The service publishes an `IntakeRevision` only once
+    both the blueprint load and the portfolio application of its commit
+    have finished, as one value, as described under wiring, so a basis
+    never pairs one commit's blueprints with another commit's portfolio,
+    however long either step awaits. Every later step reads the basis and
+    never `current()` again, so a revision loaded while the evaluation
+    awaits changes nothing in this attempt: the record holds
     the basis's commit, its portfolio commit, a blueprint version at its
     commit, and the decision input built from it. The reconcile that the
     load runs finds the record and does nothing more for a decided issue.
@@ -270,8 +268,9 @@ proposed-design:
        queue with no record, and the discovery or reconcile that follows
        its baseline takes it again.
     2. The binding. Each entry of the tracked issue's `items` names a
-       Project, which `portfolio.githubProject` resolves to a binding or
-       to nothing. The binding is the resolved binding that is not
+       Project, which resolves to the GitHub Project binding of the
+       basis's declaration with the same owner, compared without regard to
+       case, and number, or to nothing, as `bindings-declaration` states. The binding is the resolved binding that is not
        archived whose name sorts first by code point. When every resolved
        binding is archived the failure is `binding-archived`; when none
        resolves it is `binding-missing`.
@@ -406,11 +405,16 @@ proposed-design:
     The service migrates `intake` with `intakeMigrationSteps`, starts the
     router, starts the GitHub event source with `onTracked` calling the
     intake's `discovered`, and then calls `startIntake` with the store,
-    the source as `tracked`, the portfolio module, the blueprint loader,
-    and `current` answering the revision and `RevisionLoad` the service
-    keeps. After each pull that advances, the service applies the revision
-    to the portfolio module, loads it with `loadRevision`, keeps both, and
-    calls `revisionLoaded`. Intake starts after `startRouter` returns, so
+    the source as `tracked`, the blueprint loader, and `current` answering
+    the `IntakeRevision` the service last published. The service's revision
+    follower takes each commit as one job, one commit at a time: it loads
+    the revision with `loadRevision`, then applies it to the portfolio
+    module, then publishes `{ revision, blueprints, portfolio:
+    portfolio.current() }` in one assignment, and then calls
+    `revisionLoaded`. Until that assignment, `current()` answers the
+    previous basis whole. A declaration the portfolio module rejects
+    leaves the last valid declaration in force, and the published basis
+    carries that declaration with the new commit's blueprints and models. Intake starts after `startRouter` returns, so
     every resumed actor is indexed before an actor starts.
   permissions: >-
     Intake reads only the store, the mirror through `trackedIssue`, and
@@ -469,7 +473,11 @@ proposed-design:
     and the binding's item is loaded and `revisionLoaded` called, and the
     evaluation then resolves: the record holds the first commit, the first
     commit's version key and portfolio commit, and the decision input
-    built from the first basis; a start whose input the recorded version's
+    built from the first basis; with the second commit's `loadRevision`
+    and portfolio application each held open in turn, an issue discovered
+    during each pause is recorded with the first basis whole, its commit,
+    blueprint version, portfolio commit, and item, and an issue discovered
+    after the second basis is published is recorded with the second whole; a start whose input the recorded version's
     schema refuses leaves the record `recorded` with an `input-invalid`
     start failure and the same decision, and after the fake's fields
     change a reconcile starts it on that version with that item; a

@@ -107,10 +107,24 @@ description: |-
   | `nodeId` and `columnId`, otherwise | `/nodes/<n>/content/config/inputs/<c>`, or `/nodes/<n>/content/config/outputs/<c>` when the id names an output column |
   | no `nodeId` and no `instancePath` | the root, `""` |
 
-  `<n>`, `<s>`, `<r>`, and `<c>` are array indices: the index of the
-  element whose `id`, or a rule's `_id`, is the named id. When an id names
-  more than one element of its array, the index is the last such element,
-  the one a `duplicate-id` finding reports. A column id is a property name
+  `<n>`, `<s>`, `<r>`, and `<c>` are array indices: the index of the one
+  element of its array whose `id`, or a rule's `_id`, is the named id.
+  A column id is looked up across the inputs followed by the outputs, and
+  `<c>` is its index in the array that holds it. An id names exactly one element unless the model duplicates
+  it, and then:
+
+  - A `duplicate-id` finding resolves the id it names to the last element
+    holding it. The lint reports a
+    duplicate at each repeat, so the location is an element that holds
+    the id.
+  - Any other finding whose id names more than one element takes the
+    location of the array that holds those elements, `/nodes`,
+    `/nodes/<n>/content/config/statements`,
+    `/nodes/<n>/content/config/rules`, or `/nodes/<n>/content/config` for
+    a column, and no deeper segment. An ambiguous node id gives `/nodes`
+    whatever the finding names inside the node.
+
+  Every location therefore resolves in the model's document. A column id is a property name
   of the rule object, escaped as RFC 6901 requires. The decision model
   finding keeps its own `location`, which names nodes, rules, columns, and
   statements by id.
@@ -147,7 +161,15 @@ validation-criteria: >-
   whose rules array holds three rules, at
   `/nodes/<n>/content/config/rules/1/<columnId>`; a `syntax` switch
   condition and a `syntax` input column field at their `/condition` and
-  `/field` locations; a duplicate node id at the later node's index; and a
+  `/field` locations; a duplicate node id at the later node's index; a
+  model whose node 0 is an expression node with id `shared` and a
+  `syntax` expression and whose node 1 is an `inputNode` with id
+  `shared`, giving `duplicate-id` at `/nodes/1` and `syntax` at
+  `/nodes`; a table whose two rules share an `_id` and whose first rule
+  holds a `syntax` cell, giving `duplicate-id` at the second rule and
+  `syntax` at `/nodes/<n>/content/config/rules`; a switch whose two
+  statements share an id and whose first condition is `syntax`, giving
+  `syntax` at `/nodes/<n>/content/config/statements`; and a
   `never-boolean` warning, which leaves `ok: true`. Each location resolves
   to the value in the parsed document. A clean manifest whose intake model names a second model
   through a `decisionNode` returns both models by path, and the same call
