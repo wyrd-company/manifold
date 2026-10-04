@@ -18,6 +18,9 @@ async function main() {
   } else if (process.argv[2] === "portfolio" && process.argv[3] === "lint") {
     const { portfolioLintCommand } = await import("./portfolio-lint/command.ts");
     process.exitCode = await portfolioLintCommand(process.argv.slice(4));
+  } else if (process.argv[2] === "manifest" && process.argv[3] === "lint") {
+    const { manifestLintCommand } = await import("./manifest-lint/command.ts");
+    process.exitCode = await manifestLintCommand(process.argv.slice(4));
   } else if (process.argv[2] === "usage") {
     const { runUsageCommand } = await import("./usage/index.ts");
     process.exitCode = await runUsageCommand(process.argv.slice(3), {

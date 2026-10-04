@@ -99,3 +99,11 @@ export { compileStateGuards } from "./state-guards.ts";
 export { blueprintLintConfigurationSchema } from "./blueprint-lint-configuration-schema.ts";
 export { escalationsConfigurationSchema } from "./escalations-configuration-schema.ts";
 export { escalationContractSchema } from "./escalation-contract-schema.ts";
+export { lintProcessManifest } from "./process-manifest.ts";
+export type {
+  ProcessManifest,
+  ProcessManifestFinding,
+  ProcessManifestLint,
+} from "./process-manifest.ts";
+export { processManifestSchema } from "./process-manifest-schema.ts";
+export { intakeDecisionModelSchema } from "./intake-decision-model-schema.ts";
