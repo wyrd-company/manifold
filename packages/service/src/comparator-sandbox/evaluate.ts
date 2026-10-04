@@ -80,6 +80,7 @@ export function evaluateScope(
   input?: ComparatorInputData,
   seed = 0,
   onEngineFailure: (failure: ComparatorFailure) => void = () => {},
+  memoryGrowthFailed: () => boolean = () => false,
 ): ComparatorEvaluation {
   const start = performance.now();
   let outcome:
@@ -101,11 +102,13 @@ export function evaluateScope(
           const name = object(error) ? String(error["name"]) : "Error";
           const message = object(error) ? String(error["message"]) : String(error);
           const kind =
-            name === "InternalError" && message === "interrupted"
-              ? "timeout"
-              : name === "InternalError" && message === "out of memory"
-                ? "memory"
-                : "thrown";
+            error === null && memoryGrowthFailed()
+              ? "memory"
+              : name === "InternalError" && message === "interrupted"
+                ? "timeout"
+                : name === "InternalError" && message === "out of memory"
+                  ? "memory"
+                  : "thrown";
           throw new EvaluationFailure({ kind, message: `${source.name}: ${name}: ${message}` });
         }
         return handles.manage(result.value);

@@ -73,17 +73,41 @@ export async function createComparatorSandbox(
       try {
         const compiled = transpileComparator(source);
         if (!compiled.ok) return compiled;
+        let growthFailed = false;
+        const memory = new WebAssembly.Memory({
+          initial: 256,
+          maximum: limits.memoryLimitMiB * 16,
+        });
+        // A failed linear-memory allocation can leave QuickJS unable to create its
+        // out-of-memory Error. Keep the allocation evidence for that null exception.
+        const grow = memory.grow.bind(memory);
+        memory.grow = (pages) => {
+          try {
+            const previous = grow(pages);
+            growthFailed = false;
+            return previous;
+          } catch (error) {
+            growthFailed = true;
+            throw error;
+          }
+        };
         let module: QuickJSWASMModule | undefined = await newQuickJSWASMModuleFromVariant(
           // The variant ships CJS-shaped declarations for its ESM default.
           newVariant(variant as unknown as typeof variant.default, {
             wasmModule: wasm,
-            wasmMemory: new WebAssembly.Memory({
-              initial: 256,
-              maximum: limits.memoryLimitMiB * 16,
-            }),
+            wasmMemory: memory,
           }),
         );
-        const probe = evaluateScope(module, source, compiled.code, limits);
+        const probe = evaluateScope(
+          module,
+          source,
+          compiled.code,
+          limits,
+          undefined,
+          0,
+          undefined,
+          () => growthFailed,
+        );
         if (!probe.ok)
           return {
             ok: false,
@@ -101,6 +125,7 @@ export async function createComparatorSandbox(
             evaluate(input, seed) {
               if (!instance) throw new Error("Comparator is disposed");
               if (spent) return { ok: false, failure: spent, durationMs: 0 };
+              growthFailed = false;
               const result = evaluateScope(
                 instance,
                 source,
@@ -111,6 +136,7 @@ export async function createComparatorSandbox(
                 (failure) => {
                   spent = failure;
                 },
+                () => growthFailed,
               );
               return result;
             },

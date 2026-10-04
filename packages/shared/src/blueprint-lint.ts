@@ -3,6 +3,7 @@
 //   implements: [blueprint, blueprint-loader]
 // ---
 import { Ajv2020 } from "ajv/dist/2020.js";
+import type { ValidateFunction } from "ajv";
 import { LineCounter, parseDocument } from "yaml";
 import { createMachine, fromPromise } from "xstate";
 import type { AnyStateMachine, MachineConfig } from "xstate";
@@ -33,12 +34,18 @@ export type BlueprintFinding = {
 export type BlueprintLint =
   | { readonly ok: true; readonly blueprint: BlueprintDocument }
   | { readonly ok: false; readonly findings: readonly BlueprintFinding[] };
-const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: false });
-ajv.addSchema(blueprintExpressionsSchema);
-ajv.addSchema(blueprintSchema);
-const validate = ajv.compile<BlueprintDocument>({
-  $ref: `${blueprintSchema.$id}#/$defs/blueprint`,
-});
+let blueprintValidator: ValidateFunction<BlueprintDocument> | undefined;
+function validator() {
+  if (!blueprintValidator) {
+    const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: false });
+    ajv.addSchema(blueprintExpressionsSchema);
+    ajv.addSchema(blueprintSchema);
+    blueprintValidator = ajv.compile<BlueprintDocument>({
+      $ref: `${blueprintSchema.$id}#/$defs/blueprint`,
+    });
+  }
+  return blueprintValidator;
+}
 const pointer = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
 const list = (value: unknown): unknown[] =>
   value === undefined ? [] : Array.isArray(value) ? value : [value];
@@ -89,6 +96,7 @@ export async function lintBlueprint(
     finding("yaml", "", message(error), { line: 1, column: 1 });
     return { ok: false, findings };
   }
+  const validate = validator();
   if (!validate(document)) {
     const byLocation = new Map<string, string>();
     for (const error of validate.errors ?? []) {

@@ -232,6 +232,27 @@ describe("comparator sandbox", () => {
     ).toMatchObject({ ok: true, selection: { task: "a" } });
     comparator.dispose();
   });
+  it("keeps explicit null throws distinct from memory exhaustion after recovery", async () => {
+    const { comparator } = await loaded(
+      `export default input => {
+        if (!input.holders.length) {
+          const h = [];
+          for (let i = 0; i < 45_000; i++) h.push(new Array(100).fill(1));
+          return { task: 'a', reservations: [{ account: 'credit', amount: h.length }] };
+        }
+        throw null;
+      };`,
+      { timeoutMs: 500, memoryLimitMiB: 32 },
+    );
+    expect(comparator.evaluate(input, 1)).toMatchObject({ ok: false, failure: { kind: "memory" } });
+    expect(
+      comparator.evaluate({ ...input, holders: [{ id: "b", item: "right" }] }, 1),
+    ).toMatchObject({
+      ok: false,
+      failure: { kind: "thrown", message: "sample.ts: Error: null" },
+    });
+    comparator.dispose();
+  });
   it("records tight recursion as engine, spends the instance, and permits reloading", async () => {
     const { sandbox, comparator } = await loaded("export default function f() { return f(); }", {
       timeoutMs: 500,

@@ -3,6 +3,7 @@
 //   implements: blueprint-expressions
 // ---
 import jsonata from "jsonata";
+import { record } from "./expression-sites.ts";
 
 export type ExpressionErrorDetail = {
   kind: "syntax" | "evaluation" | "result" | "schema";
@@ -64,4 +65,29 @@ export async function evaluateExpression(
   } catch (error) {
     throw jsonataError("evaluation", compiled.source, compiled.location, error);
   }
+}
+
+export function assertExpressionData(
+  value: unknown,
+  site: { location: string; expression: string },
+): void {
+  const seen = new Set<object>();
+  function visit(item: unknown) {
+    if (
+      typeof item === "function" ||
+      record(item)["_jsonata_lambda"] ||
+      record(item)["_jsonata_function"]
+    ) {
+      throw new ExpressionError({
+        kind: "result",
+        location: site.location,
+        expression: site.expression,
+        message: "Expression returned a function",
+      });
+    }
+    if (item === null || typeof item !== "object" || seen.has(item)) return;
+    seen.add(item);
+    for (const child of Object.values(item)) visit(child);
+  }
+  visit(value);
 }

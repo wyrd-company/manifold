@@ -3,34 +3,11 @@
 //   implements: blueprint-expressions
 // ---
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { ExpressionError } from "./expressions.ts";
+import { ExpressionError, assertExpressionData } from "./expressions.ts";
 import type { ExpressionSite } from "./expression-sites.ts";
 import { record } from "./expression-sites.ts";
 
-export function assertExpressionData(
-  value: unknown,
-  site: { location: string; expression: string },
-): void {
-  const seen = new Set<object>();
-  function visit(item: unknown) {
-    if (
-      typeof item === "function" ||
-      record(item)["_jsonata_lambda"] ||
-      record(item)["_jsonata_function"]
-    ) {
-      throw new ExpressionError({
-        kind: "result",
-        location: site.location,
-        expression: site.expression,
-        message: "Expression returned a function",
-      });
-    }
-    if (item === null || typeof item !== "object" || seen.has(item)) return;
-    seen.add(item);
-    for (const child of Object.values(item)) visit(child);
-  }
-  visit(value);
-}
+export { assertExpressionData } from "./expressions.ts";
 
 export function compileExpressionResult(site: ExpressionSite) {
   const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: false });

@@ -8,8 +8,11 @@ import {
   evaluateExpression,
   ExpressionError,
   assertExpressionData,
-} from "@wyrd-company/manifold-shared";
-import type { CompiledExpression, ExpressionErrorDetail } from "@wyrd-company/manifold-shared";
+} from "@wyrd-company/manifold-shared/expressions";
+import type {
+  CompiledExpression,
+  ExpressionErrorDetail,
+} from "@wyrd-company/manifold-shared/expressions";
 
 const compiled = new Map<string, CompiledExpression>();
 export type WorkerResult = { value: unknown } | { error: ExpressionErrorDetail };
