@@ -13,7 +13,14 @@ import { ledgerMigrationSteps } from "../ledger/index.ts";
 import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
 import { openProcessRepository } from "../process-repository/index.ts";
 import { createBlueprintLoader } from "../blueprint-loader/index.ts";
-import { serviceImplementations } from "../implementations.ts";
+import { composeServiceImplementations } from "../implementations.ts";
+import {
+  openEscalations,
+  heldActorHandler,
+  escalationImplementations,
+  mountEscalations,
+} from "../escalations/index.ts";
+import type { Escalations } from "../escalations/index.ts";
 import { startRouter } from "../router/index.ts";
 import type { Router } from "../router/index.ts";
 import { createServiceActorHost } from "../actor-host/service.ts";
@@ -33,6 +40,8 @@ export async function startService(options: StartServiceOptions): Promise<Servic
   const log = options.log ?? stderrLog;
   let store: Store | undefined;
   let router: Router | undefined;
+  let escalations: Escalations | undefined;
+  let actorHost: ServiceActorHost | undefined;
   let github: GitHubSource | undefined;
   let t3code: T3CodeSource | undefined;
   let http: HttpHost | undefined;
@@ -62,6 +71,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           const failed = outcomes.find((outcome) => outcome.status === "rejected");
           if (failed?.status === "rejected") throw failed.reason;
         });
+      if (escalations) await finish("escalations-stopped", () => escalations!.stop());
       if (revisions) await finish("revisions-idle", () => revisions!.close());
       if (router) await finish("router-stopped", () => router!.stop());
       if (store) await finish("store-closed", () => store!.close());
@@ -84,6 +94,44 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     store.connection.migrate("portfolio", portfolioMigrationSteps);
     store.connection.migrate("usage", usageMigrationSteps);
     step("store-opened", "start");
+    escalations = openEscalations({
+      store,
+      configuration: configuration.escalations,
+      tokenFile: (name) => {
+        const credential = configuration.credentials.resolve(name);
+        if (credential.kind !== "ntfy-token")
+          throw new TypeError("Requires an ntfy-token credential");
+        return credential.tokenFile;
+      },
+      ...(options.invocationOf ? { invocationOf: options.invocationOf } : {}),
+      handlers: {
+        "held-actor": heldActorHandler((actorId) => {
+          const release = actorHost?.release
+            ? actorHost.release(actorId)
+            : router!.release(actorId);
+          void Promise.resolve(release).catch(() =>
+            log({
+              level: "error",
+              event: "actor-release-failed",
+              message: "Held actor release failed",
+              detail: { actorId },
+            }),
+          );
+        }),
+        "stranded-token":
+          options.strandedTokenHandler ??
+          (() => {
+            throw new Error("Stranded-token handler is not installed");
+          }),
+      },
+      logger: {
+        warn: (message) =>
+          log({ level: "warn", event: "escalation-notification-warning", message }),
+        error: (message) =>
+          log({ level: "error", event: "escalation-notification-failed", message }),
+      },
+    });
+    step("escalations-opened", "start");
     const portfolio = openPortfolio({ connection: store.connection });
     step("portfolio-opened", "start");
     const usageConnection = store.connection;
@@ -107,7 +155,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       ...(options.probes?.pull ? { probe: options.probes.pull } : {}),
     });
     const blueprints = createBlueprintLoader({
-      implementations: serviceImplementations(),
+      implementations: serviceImplementations({ escalations: escalationImplementations(escalations) }),
       onStateEntry: recordStateEntry,
       configurationBound: configuration.blueprintLint.configurationBound,
       revisionAt: processRepository.revisionAt,
@@ -137,6 +185,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     }
     step("pulled", "start");
     const beforeHost = {
+      escalations,
       configuration,
       store,
       portfolio,
@@ -146,21 +195,33 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       revisions,
       log,
     };
-    const actorHost = await (options.actorHost ?? createServiceActorHost)(beforeHost);
+    actorHost = await (options.actorHost ?? createServiceActorHost)(beforeHost);
     step("actor-host-opened", "start");
     const parts: ServiceParts = { ...beforeHost, actorHost };
     router = startRouter({
       store,
       host: actorHost,
-      onHeld: (held) =>
+      onHeld: (held) => {
         log({
           level: "warn",
           event: "actor-held",
           message: held.reason,
           detail: { actorId: held.actorId },
-        }),
+        });
+        escalations!.raise({
+          kind: "held-actor",
+          subject: { actorId: held.actorId },
+          question: `Actor ${held.actorId} is held: ${held.reason}${held.row ? ` (event ${held.row.eventId})` : ""}`,
+          choices: [
+            { id: "retry", label: "Retry" },
+            { id: "dismiss", label: "Dismiss" },
+          ],
+        });
+      },
     });
     step("router-started", "start");
+    escalations.start();
+    step("escalations-started", "start");
     github = startGitHubSource({
       configuration: configuration.github,
       credentials: configuration.credentials,
@@ -226,6 +287,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         }),
     });
     http.mount("/api/usage", parts.usage.listener);
+    mountEscalations(http, parts.escalations);
     const address = await http.listen();
     step("listening", "start");
     log({ level: "info", event: "started", message: "Service started", detail: address });

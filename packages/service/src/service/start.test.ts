@@ -19,12 +19,14 @@ async function fixture() {
 const startSteps: ServiceStep[] = [
   "configuration-loaded",
   "store-opened",
+  "escalations-opened",
   "portfolio-opened",
   "process-repository-opened",
   "revision-followed",
   "pulled",
   "actor-host-opened",
   "router-started",
+  "escalations-started",
   "github-started",
   "t3code-started",
   "listening",
@@ -32,6 +34,7 @@ const startSteps: ServiceStep[] = [
 const stopSteps: ServiceStep[] = [
   "http-closed",
   "sources-stopped",
+  "escalations-stopped",
   "revisions-idle",
   "router-stopped",
   "store-closed",
@@ -140,7 +143,7 @@ test("abort at a startup boundary unwinds resources without starting sources", a
       },
     }),
   ).rejects.toMatchObject({ name: "AbortError" });
-  expect(steps).toEqual([...startSteps.slice(0, 4), "store-closed"]);
+  expect(steps).toEqual([...startSteps.slice(0, 5), "escalations-stopped", "store-closed"]);
 });
 
 test("restores and drains a populated inbox before sources start", async () => {
@@ -360,7 +363,7 @@ test("stop continues through a failed step and rejects after closing the store",
     },
   });
   await expect(service.stop()).rejects.toBe(failure);
-  expect(steps.slice(-5)).toEqual(stopSteps);
+  expect(steps.slice(-6)).toEqual(stopSteps);
 });
 
 test("the default actor host holds restored actors with their inbox intact", async () => {
@@ -469,4 +472,228 @@ test("passes the service lint bound to revision loading and reports warnings", a
       }),
     }),
   );
+});
+
+test("service exposes escalations to the actor host, mounts operator answers, and retries held actors", async () => {
+  const f = await fixture();
+  const { writeFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { stringify } = await import("yaml");
+  await writeFile(join(f.directory, "operator.token"), "synthetic-token");
+  await writeFile(
+    f.file,
+    stringify({
+      ...f.configuration,
+      http: { port: 0, operatorCredential: "operator" },
+      credentials: {
+        ...f.configuration.credentials,
+        operator: { kind: "operator-token", tokenFile: "operator.token" },
+      },
+    }),
+  );
+  const seed = await startService({ configurationFile: f.file, log: () => {} });
+  seed.store.saveSnapshot({
+    actorId: "parcel",
+    machine: "delivery",
+    snapshot: { status: "active", value: "waiting" },
+  });
+  seed.store.writeInbox(
+    { eventId: "reading-one", topic: "weather.station", payload: { type: "reading" } },
+    ["parcel"],
+  );
+  await seed.stop();
+  let failed = true;
+  let released = 0;
+  let service!: Service;
+  service = await startService({
+    configurationFile: f.file,
+    log: () => {},
+    actorHost: (parts) => {
+      expect(parts.escalations).toBeDefined();
+      return {
+        subscription: () => ({ topics: ["weather.station"] }),
+        restore: (stored) =>
+          failed
+            ? { status: "held", reason: "Delivery failed" }
+            : {
+                status: "restored",
+                target: {
+                  actorId: stored.actorId,
+                  send: () => {},
+                  persist: () => ({
+                    machine: "delivery",
+                    snapshot: { status: "active", value: "received" },
+                  }),
+                },
+              },
+        release: (actorId) => {
+          released++;
+          failed = false;
+          service.router.release(actorId);
+        },
+      };
+    },
+  });
+  cleanup.push(service.stop);
+  const escalation = service.escalations.list({ status: "open" })[0]!;
+  expect(escalation.raiser).toMatchObject({
+    type: "service",
+    kind: "held-actor",
+    subject: { actorId: "parcel" },
+  });
+  const path = url(service) + "/api/escalations/" + escalation.id + "/answer";
+  const headers = { Authorization: "Bearer synthetic-token", "Content-Type": "application/json" };
+  expect(
+    (await fetch(path, { method: "POST", headers, body: JSON.stringify({ choice: "retry" }) }))
+      .status,
+  ).toBe(200);
+  await expect.poll(() => service.store.pendingInbox("parcel").length).toBe(0);
+  expect(released).toBe(1);
+  expect(
+    (await fetch(path, { method: "POST", headers, body: JSON.stringify({ choice: "dismiss" }) }))
+      .status,
+  ).toBe(200);
+  expect(released).toBe(1);
+});
+
+test("the service registry loads escalate blueprints and their callbacks answer through the HTTP host", async () => {
+  const f = await fixture();
+  const { writeFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { stringify } = await import("yaml");
+  const { createActor } = await import("xstate");
+  const { escalationContractSchema } = await import("@wyrd-company/manifold-shared");
+  await f.commit(60, {}, {
+    machine: {
+      id: "parcel",
+      initial: "asking",
+      states: {
+        asking: {
+          invoke: {
+            id: "ask",
+            src: "escalate",
+            input: { question: "Send the parcel?", freeText: true },
+          },
+          on: { "escalation.answered": "delivered" },
+        },
+        delivered: { type: "final" },
+      },
+    },
+    schemas: {
+      input: true,
+      context: true,
+      output: true,
+      actors: {
+        escalate: {
+          input: { $ref: escalationContractSchema.$id + "#/$defs/escalate-input" },
+          output: true,
+        },
+      },
+      events: {
+        "escalation.answered": {
+          $ref: escalationContractSchema.$id + "#/$defs/escalation-answered-event",
+        },
+      },
+    },
+  });
+  await writeFile(join(f.directory, "operator.token"), "synthetic-token");
+  await writeFile(
+    f.file,
+    stringify({
+      ...f.configuration,
+      http: { port: 0, operatorCredential: "operator" },
+      credentials: {
+        ...f.configuration.credentials,
+        operator: { kind: "operator-token", tokenFile: "operator.token" },
+      },
+    }),
+  );
+  let actor: ReturnType<typeof createActor> | undefined;
+  const service = await startService({
+    configurationFile: f.file,
+    log: () => {},
+    invocationOf: () => ({ actorId: "parcel", invokeId: "ask", entryId: "1" }),
+    actorHost: (parts) => {
+      const revision = parts.revisions.latest()!;
+      expect([...revision.failures]).toEqual([]);
+      const loaded = revision.blueprints.values().next().value!;
+      actor = createActor(loaded.machine).start();
+      return {
+        subscription: () => ({ topics: [] }),
+        restore: () => ({ status: "held", reason: "No saved actor" }),
+      };
+    },
+  });
+  cleanup.push(service.stop);
+  try {
+    const escalation = service.escalations.list({ status: "open" })[0]!;
+    expect(escalation.question).toBe("Send the parcel?");
+    const response = await fetch(url(service) + "/api/escalations/" + escalation.id + "/answer", {
+      method: "POST",
+      headers: { Authorization: "Bearer synthetic-token", "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Proceed" }),
+    });
+    expect(response.status).toBe(200);
+    expect(actor?.getSnapshot().status).toBe("done");
+    expect(service.escalations.get(escalation.id)?.answer?.value).toEqual({ text: "Proceed" });
+  } finally {
+    actor?.stop();
+  }
+});
+
+test("service startup starts ntfy delivery and shutdown aborts it before closing the store", async () => {
+  const f = await fixture();
+  const { serve, readRequest } = await import("../escalations/test-support.ts");
+  const { writeFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { stringify } = await import("yaml");
+  let published = 0;
+  let bearer: string | undefined;
+  let requestClosed = false;
+  const ntfy = await serve((req, res) => {
+    void readRequest(req).then((body) => {
+      expect(JSON.parse(body)).toMatchObject({ topic: "opaque-topic" });
+      bearer = req.headers.authorization;
+      published++;
+      res.on("close", () => {
+        requestClosed = true;
+      });
+    });
+  });
+  cleanup.push(ntfy.close);
+  await writeFile(join(f.directory, "publisher.token"), "synthetic-publisher-token");
+  await writeFile(
+    f.file,
+    stringify({
+      ...f.configuration,
+      credentials: {
+        ...f.configuration.credentials,
+        publisher: { kind: "ntfy-token", tokenFile: "publisher.token" },
+      },
+      escalations: {
+        publicUrl: "https://example.test",
+        destinations: {
+          default: {
+            server: ntfy.url,
+            topic: "opaque-topic",
+            posture: "open",
+            credential: "publisher",
+          },
+        },
+      },
+    }),
+  );
+  const service = await startService({ configurationFile: f.file, log: () => {} });
+  cleanup.push(service.stop);
+  service.escalations.raise({
+    kind: "held-actor",
+    subject: { actorId: "parcel" },
+    question: "Try delivery again?",
+    choices: [{ id: "retry", label: "Retry" }],
+  });
+  await expect.poll(() => published).toBe(1);
+  expect(bearer).toBe("Bearer synthetic-publisher-token");
+  await service.stop();
+  await expect.poll(() => requestClosed).toBe(true);
+  expect(() => service.store.connection.database.prepare("SELECT 1")).toThrow();
 });

@@ -2,6 +2,7 @@
 // relationships:
 //   implements: service-assembly
 // ---
+import type { Escalations, Invocation, ServiceEscalationHandler } from "../escalations/index.ts";
 import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
 import type { Router } from "../router/index.ts";
 import type { ActorHost } from "../actor-host/index.ts";
@@ -25,10 +26,16 @@ export interface StartServiceOptions {
   /** Aborting it stops the start at the next step boundary. */
   readonly signal?: AbortSignal;
   /** Builds the router's actor host from the parts started before the router. */
-  readonly actorHost?: (parts: Omit<ServiceParts, "actorHost">) => ActorHost | Promise<ActorHost>;
+  readonly actorHost?: (
+    parts: Omit<ServiceParts, "actorHost">,
+  ) => ServiceActorHost | Promise<ServiceActorHost>;
   /** Receives every log entry. Defaults to one JSON line per entry on stderr. */
   readonly log?: (entry: ServiceLogEntry) => void;
   readonly probes?: ServiceProbes;
+  /** Structural invocation seam until the actor host supplies invocationOf. */
+  readonly invocationOf?: (args: unknown) => Invocation;
+  /** The gate runtime supplies the handler for returning stranded tokens. */
+  readonly strandedTokenHandler?: ServiceEscalationHandler;
 }
 
 export interface ServiceProbes {
@@ -50,6 +57,9 @@ export type ServiceStep =
   | "revision-followed"
   | "pulled"
   | "actor-host-opened"
+  | "escalations-opened"
+  | "escalations-started"
+  | "escalations-stopped"
   | "router-started"
   | "github-started"
   | "t3code-started"
@@ -60,8 +70,13 @@ export type ServiceStep =
   | "router-stopped"
   | "store-closed";
 
+/** Structural release seam until the actor host lands. */
+export interface ServiceActorHost extends ActorHost {
+  release?(actorId: string): void | Promise<void>;
+}
 export interface ServiceParts {
-  readonly actorHost: ActorHost;
+  readonly actorHost: ServiceActorHost;
+  readonly escalations: Escalations;
   readonly configuration: ServiceConfiguration;
   readonly store: Store;
   readonly portfolio: Portfolio;

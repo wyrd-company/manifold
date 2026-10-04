@@ -185,9 +185,7 @@ describe("blueprint loader", () => {
     }
     const fixture = escalationFixture();
     try {
-      const implementations = serviceImplementations(
-        escalationImplementations(fixture.module),
-      );
+      const implementations = serviceImplementations({ escalations: escalationImplementations(fixture.module) });
       for (const kind of ["actors", "actions", "guards", "delays"] as const)
         expect(new Set(Object.keys(implementations[kind]))).toEqual(
           manifoldImplementationNames[kind],

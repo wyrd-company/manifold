@@ -22,4 +22,3 @@ export type {
   Invocation,
 } from "./types.ts";
 export { mountEscalations, escalationImplementations } from "./assembly.ts";
-export type { EscalationsAssembly } from "./assembly.ts";
