@@ -4,8 +4,9 @@ $schema: https://refinery.systems/ontology/term
 relationships:
   references:
     - escalations
+    - escalations-configuration
 title: Notification Destination
 description: >-
   A name the process repository uses for where an escalation is sent,
-  mapped in service configuration to an apprise-api configuration key and
-  its tags.
+  mapped in service configuration to an ntfy server, topic, security
+  posture, and credential.

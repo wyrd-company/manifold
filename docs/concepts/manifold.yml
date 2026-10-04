@@ -171,9 +171,10 @@ features:
     templates, waits for handoff or escalation, and re-attaches to the same
     thread after a restart.
   escalate-on-any-channel: >-
-    Sends an escalation through apprise-api, with links to answer it, and to
-    the Task page and Manifold's API, takes the first answer, and closes the
-    others where the channel allows. The answer goes back to the T3 Code thread that raised the
+    Sends an escalation through ntfy, with a button for each choice and a
+    page to answer it, and to the Task page and Manifold's API, takes the
+    first answer, and replaces the question on every ntfy client with how
+    it ended. The answer goes back to the T3 Code thread that raised the
     escalation. An escalation raised by automation, with no thread, is
     answered through Manifold's API, which takes a reply or an action from
     any channel.

@@ -1,0 +1,61 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - escalations
+  references:
+    - store-database-schema
+    - escalation-contract
+terms:
+  - escalation
+  - notification-destination
+description: |-
+  Defines the tables the escalations module owns in Manifold's SQLite
+  database file. `docs/specifications/escalations-database-schema.sql` is
+  the machine-readable definition: the schema that the module's migrations
+  produce. The module receives the connection from the store and migrates
+  its tables with `migrate("escalation", steps)`; its owner is
+  `escalation`, so every table it creates is named `escalation` or
+  `escalation_<name>`. Times are milliseconds since the Unix epoch.
+
+  Escalations. `escalation` holds one row per escalation, keyed by its id.
+  A row raised by a blueprint has `actor_id`, `invoke_id`, and `entry_id`,
+  unique together, and no `kind`, `subject`, or `occurrence`. A row raised
+  by the service has `kind`, `subject`, the JSON of the subject record
+  with its keys sorted, and `occurrence`, unique together, and no actor,
+  invoke, or entry id. `choices` is the JSON array of `{ id, label }`;
+  `destinations` is the JSON array of destination names. `key_digest` is
+  the SHA-256 digest of the escalation's key; the key itself is never
+  stored here. `status` is `open`, `answered`, or `withdrawn`, and moves
+  only from `open`; `closed_at` is set exactly when it leaves `open`.
+  `answer` is the JSON of `{ choice }` or `{ text }` and `channel` is
+  `link` or `api`, both set exactly when the row is answered. `taken_at`
+  is the time of the first save of the asking actor after its callback
+  sent the answer back; only a blueprint row has it. `handled_at` is when
+  a service escalation's handling was recorded; only a service row has it.
+  Rows are never deleted.
+
+  Notifications. `escalation_notification` holds one row per escalation,
+  destination name, and purpose: `ask`, the question, or `close`, the
+  outcome that replaces it. `message` is the JSON ntfy publish without
+  `topic` and `sequence_id`, as `escalation-contract` defines; an `ask`
+  message holds the escalation's key in its `click` URL and buttons. It is
+  present exactly while the row is `pending`, so the key leaves the store
+  when the row is `sent`, `failed`, or `cancelled`. `attempts` counts
+  publishes tried, `next_attempt_at` is when the sender may try the row
+  next, `last_error` is the status or error of the last failed attempt,
+  and `settled_at` is when the row left `pending`. No column holds a
+  topic, a server, or a token.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/escalations-database-schema.sql` runs without error
+  on an empty SQLite database. A test opens the escalations module on a
+  store over an empty file and compares the `type`, `name`, `tbl_name`,
+  and `sql` of every `sqlite_schema` row whose name starts with
+  `escalation` with the rows the same file's statements produce on a
+  second empty database, with each run of whitespace in `sql` read as one
+  space; they are equal. After the module opens, `schema_migration` holds
+  the row `('escalation', n)`, where n is the number of the module's
+  migration steps. An insert that sets both raiser forms, an answered row
+  without a channel, or a pending notification without a message fails.

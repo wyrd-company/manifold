@@ -1,21 +1,24 @@
 # GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
 # no slug is authored and the property is spelled `response-strategy`.
 $schema: https://refinery.systems/ontology/risk
-title: An escalation's answer link can be used by anyone who sees the message
+title: An escalation's answer key can be used by anyone who reads its notification
 
 # GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
 # names the design that bounds the exposure.
 relationships:
   mitigated-by:
     - escalations
+    - escalations-configuration
 
 description: >-
-  apprise-api has no answer path, so a notification carries links that
-  answer the escalation, each holding the escalation's key. The message is
-  kept in the history of every service it is sent to, and anyone who reads
-  that history, or a service that forwards it, can open the link and
-  answer while the escalation is open. An answer from the wrong person
-  moves an actor, releases a held actor, or returns a stranded token.
+  An ntfy notification carries the escalation's key in its buttons and its
+  link, since the key is what lets a tap answer without signing in.
+  Everyone who can read the topic receives the key: on an `open` topic,
+  anyone who knows or guesses its name; on any topic, the server's
+  operator and anything that reads the server's message cache while it
+  keeps the message. Whoever holds the key can answer while the
+  escalation is open. An answer from the wrong person moves an actor,
+  releases a held actor, or returns a stranded token.
 
 categories:
   - security
@@ -27,11 +30,12 @@ response-strategy: mitigate
 
 status: open
 
-# Mitigation: a link opens a page and never answers on GET; only a POST with
-# the key answers, once, while the escalation is open; the key is 32 random
-# bytes, kept in the store only in a notification's body until that
-# notification is sent or failed, and as a digest after; a wrong key cannot
-# be told from a missing escalation. Whether answer links that carry a
-# bearer key are acceptable is an access decision reserved to the user and
-# not yet made. The recommendation is to accept them for single-operator use
-# until the console has sign-in.
+# Mitigation: each destination declares its posture. `reserved` and
+# `self-hosted` require a publishing token, and the service warns at start
+# when the topic reads without one; `open` warns at start, and again when
+# the topic is short enough to guess. A key answers one escalation, only
+# while it is open, and only by POST; a GET never answers, and a wrong key
+# cannot be told from a missing escalation. The key is 32 random bytes, kept
+# in the store only in a pending notification and as a digest after. When
+# the escalation ends, a message under the same sequence ID replaces the
+# question and its buttons on every client that supports sequence IDs.

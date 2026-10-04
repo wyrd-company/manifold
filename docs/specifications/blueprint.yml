@@ -9,6 +9,7 @@ relationships:
     - gates
     - gate-runtime
     - token-lint
+    - escalation-contract
 description: |-
   Defines the blueprint file: the YAML document in a process repository
   from which Manifold builds an XState v5 state machine, the version
@@ -213,6 +214,17 @@ description: |-
   object with `type: expression.map` is a mapping and has the expression
   reference shape; any other value is static, as `blueprint-expressions`
   defines.
+
+  Manifold implementations. Manifold's code registers these, each with a
+  contract its specification defines:
+
+  - `escalate`, an actor: puts a question to a person and sends its actor
+    `escalation.answered` with the answer, as `escalation-contract`
+    defines. A blueprint that invokes it declares its input under
+    `schemas.actors.escalate.input` and the event under
+    `schemas.events`, with schemas that the contract's
+    `#/$defs/escalate-input` and `#/$defs/escalation-answered-event`
+    satisfy.
 
   Version identity. The loader gives each blueprint it loads a version:
   the full id of the process repository commit it was read at, and its

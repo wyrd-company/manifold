@@ -32,7 +32,11 @@ description: |-
   - `github`, optional, default `{}`, specified by
     `github-source-configuration`.
   - `environments`, optional, default `{}`, specified by
-    `t3code-environments-configuration`.
+    `t3code-environments-configuration`, which also specifies the
+    `t3code-token` credential kind.
+  - `escalations`, optional, default `{}`, specified by
+    `escalations-configuration`, which also specifies the `ntfy-token`
+    credential kind.
   - `http`, optional, default `{}`, specified by `http-host-configuration`.
   - `blueprintLint`, optional, default `{}`, specified by
     `blueprint-lint-configuration`.

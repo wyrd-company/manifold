@@ -49,6 +49,9 @@ properties:
   blueprintLint:
     $ref: https://manifold.wyrd.company/schemas/blueprint-lint-configuration
     default: {}
+  escalations:
+    $ref: https://manifold.wyrd.company/schemas/escalations-configuration
+    default: {}
 $defs:
   declared-name:
     description: >-
@@ -71,6 +74,7 @@ $defs:
         enum:
           - github-app
           - t3code-token
+          - ntfy-token
     allOf:
       - if:
           properties:
@@ -84,6 +88,12 @@ $defs:
               const: t3code-token
         then:
           $ref: https://manifold.wyrd.company/schemas/t3code-environments-configuration#/$defs/t3code-token-credential
+      - if:
+          properties:
+            kind:
+              const: ntfy-token
+        then:
+          $ref: https://manifold.wyrd.company/schemas/escalations-configuration#/$defs/ntfy-token-credential
   github-app-credential:
     description: >-
       A GitHub App installation. The service mints a short-lived installation
