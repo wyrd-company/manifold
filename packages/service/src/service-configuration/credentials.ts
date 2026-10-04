@@ -89,7 +89,7 @@ export function createCredentials(
       name,
       value.kind === "github-app"
         ? githubApp(name, value)
-        : Object.freeze({ kind: "t3code-token" as const, name, tokenFile: value.tokenFile }),
+        : Object.freeze({ kind: value.kind, name, tokenFile: value.tokenFile }),
     ]),
   );
   return Object.freeze({

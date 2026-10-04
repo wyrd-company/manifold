@@ -29,6 +29,7 @@ export function startRouter({
   );
   const index = subscriptionIndex();
   const targets = new Map<string, DeliveryTarget>();
+  const held = new Set<string>();
   const scheduled = new Set<string>();
   const delivering = new Set<string>();
   let immediate: ReturnType<typeof setImmediate> | undefined;
@@ -49,6 +50,7 @@ export function startRouter({
   }
   function hold(actorId: string, reason: string, row?: InboxRow) {
     targets.delete(actorId);
+    held.add(actorId);
     onHeld?.({ actorId, reason, row });
   }
   function schedule(actorId: string) {
@@ -128,6 +130,7 @@ export function startRouter({
         hold(target.actorId, "Actor returned an errored snapshot");
         return;
       }
+      held.delete(target.actorId);
       targets.set(target.actorId, target);
       update(write);
       schedule(target.actorId);
@@ -142,6 +145,21 @@ export function startRouter({
       if (save(write) === "errored") hold(actorId, "Actor returned an errored snapshot");
       else update(write);
       if (!resuming) deadlines.arm();
+    },
+    release(actorId) {
+      requireRunning();
+      if (!held.has(actorId)) return;
+      const stored = store.loadSnapshot(actorId);
+      if (!stored || stored.snapshot.status !== "active") return;
+      const outcome = host.restore(stored, router);
+      if (outcome.status === "held") hold(actorId, outcome.reason);
+      else {
+        held.delete(actorId);
+        targets.set(actorId, outcome.target);
+        update(stored);
+        schedule(actorId);
+        if (!resuming) deadlines.arm();
+      }
     },
     stop() {
       if (stopped) return;

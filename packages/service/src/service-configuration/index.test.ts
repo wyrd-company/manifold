@@ -405,3 +405,90 @@ test("blueprint lint bound defaults and rejects invalid bounds", async () => {
     });
   }
 });
+
+test("loads API-only escalation defaults and relative ntfy token paths", async () => {
+  const { file, directory } = await config({
+    ...minimal,
+    escalations: {
+      publicUrl: "https://example.test",
+      destinations: {
+        default: { topic: "opaque-topic", posture: "reserved", credential: "publisher" },
+      },
+    },
+    credentials: { publisher: { kind: "ntfy-token", tokenFile: "token" } },
+  });
+  await writeFile(join(directory, "token"), "example-token");
+  const loaded = await loadServiceConfiguration(file);
+  expect(loaded.escalations).toEqual({
+    publicUrl: "https://example.test",
+    requestTimeoutMs: 30000,
+    retryIntervalMs: 60000,
+    destinations: {
+      default: {
+        server: "https://ntfy.sh",
+        topic: "opaque-topic",
+        posture: "reserved",
+        credential: "publisher",
+        priority: 4,
+      },
+    },
+  });
+  expect(loaded.credentials.resolve("publisher")).toEqual({
+    kind: "ntfy-token",
+    name: "publisher",
+    tokenFile: join(directory, "token"),
+  });
+  const defaults = await config(minimal);
+  expect((await loadServiceConfiguration(defaults.file)).escalations).toEqual({
+    destinations: {},
+    requestTimeoutMs: 30000,
+    retryIntervalMs: 60000,
+  });
+});
+test.each(["reserved", "self-hosted"])("posture %s requires a credential", async (posture) => {
+  const { file } = await config({
+    ...minimal,
+    escalations: {
+      publicUrl: "https://example.test",
+      destinations: { default: { topic: "opaque-topic", posture } },
+    },
+  });
+  await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+    issues: [
+      {
+        path: "/escalations/destinations/default/credential",
+        message: "Requires an ntfy-token credential",
+      },
+    ],
+  });
+});
+test("destinations require a public URL and the correct credential kind", async () => {
+  const missing = await config({
+    ...minimal,
+    escalations: { destinations: { default: { topic: "opaque-topic", posture: "open" } } },
+  });
+  await expect(loadServiceConfiguration(missing.file)).rejects.toMatchObject({
+    issues: [
+      { path: "/escalations/publicUrl", message: "Required with notification destinations" },
+    ],
+  });
+  const wrong = await config({
+    ...minimal,
+    escalations: {
+      publicUrl: "https://example.test",
+      destinations: {
+        default: { topic: "opaque-topic", posture: "open", credential: "publisher" },
+      },
+    },
+    credentials: { publisher: { kind: "t3code-token", tokenFile: "token" } },
+  });
+  await writeFile(join(wrong.directory, "token"), "example-token");
+  await expect(loadServiceConfiguration(wrong.file)).rejects.toMatchObject({
+    issues: [
+      {
+        path: "/escalations/destinations/default/credential",
+        message: "Requires an ntfy-token credential",
+      },
+    ],
+  });
+});

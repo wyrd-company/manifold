@@ -11,6 +11,7 @@ export interface ServiceConfiguration {
   readonly http: HttpHostConfiguration;
   readonly store: StoreConfiguration;
   readonly blueprintLint: { readonly configurationBound: number };
+  readonly escalations: EscalationsConfiguration;
   readonly environments: EnvironmentsConfiguration;
   readonly github: GitHubConfiguration;
   readonly file: string;
@@ -30,13 +31,15 @@ export interface Credentials {
   readonly names: readonly string[];
   resolve(name: string): Credential;
 }
-export type Credential = GitHubAppCredential | T3CodeTokenCredential;
+export type Credential = GitHubAppCredential | T3CodeTokenCredential | NtfyTokenCredential;
 export interface T3CodeTokenCredential {
   readonly kind: "t3code-token";
   readonly name: string;
   readonly tokenFile: string;
 }
-export type CredentialSettings = GitHubAppSettings | { kind: "t3code-token"; tokenFile: string };
+export type CredentialSettings =
+  | GitHubAppSettings
+  | { kind: "t3code-token" | "ntfy-token"; tokenFile: string };
 export interface GitHubAppCredential {
   readonly kind: "github-app";
   readonly name: string;
@@ -83,4 +86,26 @@ export interface HttpHostConfiguration {
 }
 export interface StoreConfiguration {
   readonly file: string;
+}
+export interface NtfyTokenCredential {
+  readonly kind: "ntfy-token";
+  readonly name: string;
+  readonly tokenFile: string;
+}
+export interface EscalationsConfiguration {
+  readonly publicUrl?: string;
+  readonly destinations: Readonly<
+    Record<
+      string,
+      {
+        readonly server: string;
+        readonly topic: string;
+        readonly posture: "open" | "reserved" | "self-hosted";
+        readonly credential?: string;
+        readonly priority: number;
+      }
+    >
+  >;
+  readonly requestTimeoutMs: number;
+  readonly retryIntervalMs: number;
 }

@@ -27,6 +27,7 @@ export interface Router {
   publish(event: SourceEvent): PublishOutcome;
   attach(target: DeliveryTarget): void;
   persist(actorId: string): void;
+  release(actorId: string): void;
   stop(): void;
 }
 

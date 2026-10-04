@@ -1,0 +1,446 @@
+// ---
+// relationships:
+//   implements: escalation-contract
+// ---
+export const escalationContractSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://manifold.wyrd.company/schemas/escalation-contract",
+  title: "Escalation contract",
+  description:
+    "The shapes of an escalation: the input of the `escalate` implementation, the event it sends its actor, the escalation as the API returns it, the answer bodies, and the messages published to ntfy.",
+  $defs: {
+    "escalation-id": {
+      description: "Base64url of the first 16 bytes of a SHA-256 digest.",
+      type: "string",
+      pattern: "^[A-Za-z0-9_-]{22}$",
+    },
+    choice: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "label"],
+      properties: {
+        id: {
+          type: "string",
+          maxLength: 32,
+          pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+        },
+        label: {
+          type: "string",
+          minLength: 1,
+          maxLength: 40,
+        },
+      },
+    },
+    choices: {
+      type: "array",
+      maxItems: 3,
+      items: {
+        $ref: "#/$defs/choice",
+      },
+    },
+    answer: {
+      description: "A choice id or a text answer.",
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["choice"],
+          properties: {
+            choice: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["text"],
+          properties: {
+            text: {
+              type: "string",
+              minLength: 1,
+              maxLength: 4096,
+            },
+          },
+        },
+      ],
+    },
+    channel: {
+      enum: ["link", "api"],
+    },
+    "escalate-input": {
+      description:
+        "The input of the `escalate` actor implementation. Choice ids are unique within one input, a rule the implementation checks.",
+      type: "object",
+      additionalProperties: false,
+      required: ["question"],
+      properties: {
+        question: {
+          type: "string",
+          minLength: 1,
+          maxLength: 8000,
+        },
+        title: {
+          type: "string",
+          minLength: 1,
+          maxLength: 120,
+          default: "Question",
+        },
+        choices: {
+          $ref: "#/$defs/choices",
+          default: [],
+        },
+        freeText: {
+          type: "boolean",
+          default: false,
+        },
+        destinations: {
+          type: "array",
+          uniqueItems: true,
+          items: {
+            $ref: "https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name",
+          },
+          default: ["default"],
+        },
+      },
+      anyOf: [
+        {
+          required: ["choices"],
+          properties: {
+            choices: {
+              type: "array",
+              minItems: 1,
+            },
+          },
+        },
+        {
+          required: ["freeText"],
+          properties: {
+            freeText: {
+              type: "boolean",
+              const: true,
+            },
+          },
+        },
+      ],
+    },
+    "escalation-answered-event": {
+      type: "object",
+      additionalProperties: false,
+      required: ["type", "escalationId", "answer", "channel"],
+      properties: {
+        type: {
+          const: "escalation.answered",
+        },
+        escalationId: {
+          $ref: "#/$defs/escalation-id",
+        },
+        answer: {
+          $ref: "#/$defs/answer",
+        },
+        channel: {
+          $ref: "#/$defs/channel",
+        },
+      },
+    },
+    escalation: {
+      description: "An escalation as the API returns it.",
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "id",
+        "raiser",
+        "title",
+        "question",
+        "choices",
+        "freeText",
+        "destinations",
+        "status",
+        "raisedAt",
+      ],
+      properties: {
+        id: {
+          $ref: "#/$defs/escalation-id",
+        },
+        raiser: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["type", "actorId", "invokeId", "entryId"],
+              properties: {
+                type: {
+                  const: "blueprint",
+                },
+                actorId: {
+                  type: "string",
+                },
+                invokeId: {
+                  type: "string",
+                },
+                entryId: {
+                  type: "string",
+                },
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["type", "kind", "subject", "occurrence"],
+              properties: {
+                type: {
+                  const: "service",
+                },
+                kind: {
+                  enum: ["held-actor", "stranded-token"],
+                },
+                subject: {
+                  type: "object",
+                  additionalProperties: {
+                    type: "string",
+                  },
+                },
+                occurrence: {
+                  type: "integer",
+                  minimum: 1,
+                },
+              },
+            },
+          ],
+        },
+        title: {
+          type: "string",
+        },
+        question: {
+          type: "string",
+        },
+        choices: {
+          $ref: "#/$defs/choices",
+        },
+        freeText: {
+          type: "boolean",
+        },
+        destinations: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
+        status: {
+          enum: ["open", "answered", "withdrawn"],
+        },
+        answer: {
+          type: "object",
+          additionalProperties: false,
+          required: ["value", "channel", "at"],
+          properties: {
+            value: {
+              $ref: "#/$defs/answer",
+            },
+            channel: {
+              $ref: "#/$defs/channel",
+            },
+            at: {
+              type: "integer",
+            },
+          },
+        },
+        raisedAt: {
+          type: "integer",
+        },
+        closedAt: {
+          type: "integer",
+        },
+      },
+    },
+    "escalation-list": {
+      type: "object",
+      additionalProperties: false,
+      required: ["escalations"],
+      properties: {
+        escalations: {
+          type: "array",
+          items: {
+            $ref: "#/$defs/escalation",
+          },
+        },
+      },
+    },
+    "api-answer-request": {
+      $ref: "#/$defs/answer",
+    },
+    "api-answer-response": {
+      type: "object",
+      additionalProperties: false,
+      required: ["outcome", "escalation"],
+      properties: {
+        outcome: {
+          enum: ["answered", "closed"],
+        },
+        escalation: {
+          $ref: "#/$defs/escalation",
+        },
+      },
+    },
+    "api-error": {
+      type: "object",
+      additionalProperties: false,
+      required: ["error"],
+      properties: {
+        error: {
+          type: "string",
+        },
+      },
+    },
+    "ntfy-http-action": {
+      type: "object",
+      additionalProperties: false,
+      required: ["action", "label", "url", "method", "headers", "body", "clear"],
+      properties: {
+        action: {
+          const: "http",
+        },
+        label: {
+          type: "string",
+        },
+        url: {
+          type: "string",
+          pattern: "^https?://[^\\s]+$",
+        },
+        method: {
+          const: "POST",
+        },
+        headers: {
+          type: "object",
+          additionalProperties: false,
+          required: ["Content-Type"],
+          properties: {
+            "Content-Type": {
+              const: "application/x-www-form-urlencoded",
+            },
+          },
+        },
+        body: {
+          type: "string",
+          pattern: "^key=[A-Za-z0-9_-]{43}&choice=[a-z][a-z0-9-]*$",
+        },
+        clear: {
+          const: true,
+        },
+      },
+    },
+    "ntfy-view-action": {
+      type: "object",
+      additionalProperties: false,
+      required: ["action", "label", "url"],
+      properties: {
+        action: {
+          const: "view",
+        },
+        label: {
+          const: "Answer…",
+        },
+        url: {
+          type: "string",
+          pattern: "^https?://[^\\s]+$",
+        },
+      },
+    },
+    "ntfy-ask": {
+      description: "The JSON publish of an escalation's question.",
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "topic",
+        "sequence_id",
+        "title",
+        "message",
+        "markdown",
+        "priority",
+        "tags",
+        "click",
+        "actions",
+      ],
+      properties: {
+        topic: {
+          type: "string",
+        },
+        sequence_id: {
+          $ref: "#/$defs/escalation-id",
+        },
+        title: {
+          type: "string",
+        },
+        message: {
+          type: "string",
+        },
+        markdown: {
+          const: true,
+        },
+        priority: {
+          type: "integer",
+          minimum: 1,
+          maximum: 5,
+        },
+        tags: {
+          const: ["question"],
+        },
+        click: {
+          type: "string",
+          pattern: "^https?://[^\\s]+$",
+        },
+        actions: {
+          type: "array",
+          maxItems: 3,
+          items: {
+            oneOf: [
+              {
+                $ref: "#/$defs/ntfy-http-action",
+              },
+              {
+                $ref: "#/$defs/ntfy-view-action",
+              },
+            ],
+          },
+        },
+      },
+    },
+    "ntfy-close": {
+      description: "The JSON publish that replaces a question when its escalation ends.",
+      type: "object",
+      additionalProperties: false,
+      required: ["topic", "sequence_id", "title", "message", "markdown", "priority", "tags"],
+      properties: {
+        topic: {
+          type: "string",
+        },
+        sequence_id: {
+          $ref: "#/$defs/escalation-id",
+        },
+        title: {
+          type: "string",
+        },
+        message: {
+          type: "string",
+        },
+        markdown: {
+          const: true,
+        },
+        priority: {
+          const: 1,
+        },
+        tags: {
+          oneOf: [
+            {
+              const: ["white_check_mark"],
+            },
+            {
+              const: ["heavy_multiplication_x"],
+            },
+          ],
+        },
+      },
+    },
+  },
+} as const;

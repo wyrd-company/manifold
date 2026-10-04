@@ -9,6 +9,8 @@ export type {
   ServiceConfiguration,
   HttpHostConfiguration,
   StoreConfiguration,
+  EscalationsConfiguration,
+  NtfyTokenCredential,
   ProcessRepositoryConfiguration,
   Credentials,
   Credential,

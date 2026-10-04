@@ -18,6 +18,7 @@ import type { ConfigurationIssue, CredentialSettings, ServiceConfiguration } fro
 const credentialFileFields = {
   "github-app": ["privateKeyFile"],
   "t3code-token": ["tokenFile"],
+  "ntfy-token": ["tokenFile"],
 } as const;
 
 type ConfigurationDocument = Omit<ServiceConfiguration, "file" | "credentials"> & {

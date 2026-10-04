@@ -75,6 +75,43 @@ export async function loadServiceConfiguration(file: string) {
       });
     }
   }
+  const escalations = configuration.escalations;
+  if (Object.keys(escalations.destinations).length && !escalations.publicUrl)
+    issues.push({
+      path: "/escalations/publicUrl",
+      message: "Required with notification destinations",
+    });
+  const urls = [
+    ["/escalations/publicUrl", escalations.publicUrl],
+    ...Object.entries(escalations.destinations).map(([name, destination]) => [
+      `/escalations/destinations/${name}/server`,
+      destination.server,
+    ]),
+  ] as const;
+  for (const [path, value] of urls) {
+    if (!value) continue;
+    try {
+      const url = new URL(value);
+      if (url.username || url.password || url.search || url.hash)
+        issues.push({ path, message: "URL must have no user information, query, or fragment" });
+    } catch {
+      issues.push({ path, message: "Invalid URL" });
+    }
+  }
+  for (const [name, destination] of Object.entries(escalations.destinations)) {
+    const path = `/escalations/destinations/${name}/credential`;
+    if (!destination.credential) {
+      if (destination.posture !== "open")
+        issues.push({ path, message: "Requires an ntfy-token credential" });
+      continue;
+    }
+    try {
+      if (configuration.credentials.resolve(destination.credential).kind !== "ntfy-token")
+        issues.push({ path, message: "Requires an ntfy-token credential" });
+    } catch {
+      issues.push({ path, message: "Unknown credential" });
+    }
+  }
   if (issues.length) throw new ServiceConfigurationError(configuration.file, issues);
   return Object.freeze({
     ...configuration,

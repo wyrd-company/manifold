@@ -657,3 +657,26 @@ test("delivery re-arms the deadline loop from newly saved arms", async () => {
   await idle();
   expect(seen("counter-01").filter((id) => id.startsWith("deadline:"))).toHaveLength(1);
 });
+
+test("release restores a held actor and drains its pending inbox without restarting", async () => {
+  let restores = 0;
+  const restore = host.restore;
+  host.restore = (...args) => {
+    if (args[0].actorId === "counter-00") restores++;
+    return restore(...args);
+  };
+  store.saveSnapshot(write("counter-00", context()));
+  held.add("counter-00");
+  const router = start();
+  router.publish(event());
+  expect(store.pendingInbox("counter-00")).toHaveLength(1);
+  held.delete("counter-00");
+  router.release("counter-00");
+  await idle();
+  expect(seen()).toEqual(["weather:reading"]);
+  expect(store.pendingInbox("counter-00")).toHaveLength(0);
+  router.release("counter-00");
+  await idle();
+  expect(seen()).toEqual(["weather:reading"]);
+  expect(restores).toBe(2);
+});

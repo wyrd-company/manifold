@@ -11,6 +11,8 @@ import type { ProcessRepository } from "../process-repository/index.ts";
 import { createBlueprintLoader } from "./index.ts";
 import type { ImplementationRegistry, LoadedBlueprint } from "./index.ts";
 import { serviceImplementations } from "../implementations.ts";
+import { escalationImplementations } from "../escalations/index.ts";
+import { fixture as escalationFixture } from "../escalations/test-support.ts";
 
 const first = "a".repeat(40),
   second = "b".repeat(40);
@@ -166,7 +168,7 @@ describe("blueprint loader", () => {
     expect(a).toBe(b);
     expect(good.read).toHaveBeenCalledTimes(2);
   });
-  it("rejects the reserved registry prefix in all kinds and ships matching names", () => {
+  it("rejects the reserved registry prefix in all kinds and ships matching names", async () => {
     for (const kind of ["actors", "actions", "guards", "delays"] as const) {
       const implementations = registry();
       const bad = {
@@ -181,10 +183,18 @@ describe("blueprint loader", () => {
         }),
       ).toThrow(/expression.custom/);
     }
-    for (const kind of ["actors", "actions", "guards", "delays"] as const)
-      expect(new Set(Object.keys(serviceImplementations()[kind]))).toEqual(
-        manifoldImplementationNames[kind],
+    const fixture = escalationFixture();
+    try {
+      const implementations = serviceImplementations(
+        escalationImplementations(fixture.module),
       );
+      for (const kind of ["actors", "actions", "guards", "delays"] as const)
+        expect(new Set(Object.keys(implementations[kind]))).toEqual(
+          manifoldImplementationNames[kind],
+        );
+    } finally {
+      await fixture.close();
+    }
   });
   it("checks incomplete compound and parallel values, history, child identity, and child implementation", async () => {
     const doc = document();

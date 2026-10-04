@@ -97,3 +97,5 @@ export type {
 } from "./token-lint/index.ts";
 export { compileStateGuards } from "./state-guards.ts";
 export { blueprintLintConfigurationSchema } from "./blueprint-lint-configuration-schema.ts";
+export { escalationsConfigurationSchema } from "./escalations-configuration-schema.ts";
+export { escalationContractSchema } from "./escalation-contract-schema.ts";
