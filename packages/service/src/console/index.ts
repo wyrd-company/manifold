@@ -23,5 +23,5 @@ export function mountConsole(host: HttpHost, options: ConsoleOptions): void {
   if (!existsSync(join(root, "index.html")))
     throw new Error(`Console build missing: ${join(root, "index.html")}`);
   host.mount("/console", staticListener(root));
-  host.mountOperator(actorsApiPath, actorsListener(options));
+  host.mount(actorsApiPath, actorsListener(options));
 }

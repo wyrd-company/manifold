@@ -23,7 +23,7 @@ beforeEach(async () => {
   mkdirSync(join(root, "assets"));
   writeFileSync(join(root, "assets/sample-abc123.js"), "sample");
   store = openStore({ path: join(root, "store.db"), now: () => clock });
-  server = await consoleHost("sample-token");
+  server = await consoleHost();
   mountConsole(server.host, { root, store });
 });
 afterEach(async () => {
@@ -31,8 +31,7 @@ afterEach(async () => {
   store.close();
   rmSync(root, { recursive: true, force: true });
 });
-const read = (path = "/api/actors", method = "GET", token = "sample-token") =>
-  fetch(server.url + path, { method, headers: { Authorization: `Bearer ${token}` } });
+const read = (path = "/api/actors", method = "GET") => fetch(server.url + path, { method });
 
 test("lists active snapshots, projects identity, leaves, versions and deterministic order against OpenAPI", async () => {
   clock = 1000;
@@ -134,24 +133,16 @@ test("lists active snapshots, projects identity, leaves, versions and determinis
   });
   expect((await (await read()).json()).actors[0].states).toEqual(["changed"]);
 });
-test("empty results, authentication, methods, and paths", async () => {
+test("empty results without authentication, methods, and paths", async () => {
   expect(await (await read()).json()).toEqual({ actors: [] });
-  expect((await read("/api/actors", "GET", "wrong")).status).toBe(401);
   const response = await read("/api/actors", "POST");
   expect(response.status).toBe(405);
   expect(response.headers.get("allow")).toBe("GET");
   expect((await read("/api/actors/other")).status).toBe(404);
-  const disabled = await consoleHost(undefined);
-  try {
-    mountConsole(disabled.host, { root, store });
-    expect((await fetch(disabled.url + "/api/actors")).status).toBe(404);
-  } finally {
-    await disabled.close();
-  }
 });
 test("failed reads return no error detail and log the path", async () => {
   const errors: unknown[] = [];
-  const failing = await consoleHost("sample-token");
+  const failing = await consoleHost();
   try {
     mountConsole(failing.host, {
       root,
@@ -162,9 +153,7 @@ test("failed reads return no error detail and log the path", async () => {
       },
       log: (entry) => errors.push(entry),
     });
-    const response = await fetch(failing.url + "/api/actors", {
-      headers: { Authorization: "Bearer sample-token" },
-    });
+    const response = await fetch(failing.url + "/api/actors");
     expect(response.status).toBe(500);
     expect(await response.text()).toBe("");
     expect(errors).toHaveLength(1);

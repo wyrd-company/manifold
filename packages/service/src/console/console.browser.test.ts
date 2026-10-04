@@ -11,10 +11,10 @@ import { openStore } from "../store/index.ts";
 import { mountConsole } from "./index.ts";
 import { consoleHost } from "./test-fixtures/host.ts";
 
-test("built console serves the shell and live actors through the authenticated API", async () => {
+test("built console serves the shell and live actors without authentication", async () => {
   const directory = mkdtempSync(join(tmpdir(), "console-browser-"));
   const store = openStore({ path: join(directory, "store.db") });
-  const server = await consoleHost("sample-token");
+  const server = await consoleHost();
   const browser = await chromium.launch({ headless: true });
   try {
     store.saveSnapshot({
@@ -69,15 +69,6 @@ test("built console serves the shell and live actors through the authenticated A
       .getByRole("navigation", { name: "Main" })
       .getByRole("link", { name: "Actors", exact: true })
       .click();
-    await page.getByText("Operator token required").waitFor();
-    await page.getByRole("link", { name: "Settings, General" }).click();
-    await page.getByLabel("Operator token", { exact: true }).fill("sample-token");
-    await page.getByRole("button", { name: "Save", exact: true }).click();
-    expect(await page.getByLabel("Operator token", { exact: true }).inputValue()).toBe("");
-    await page
-      .getByRole("navigation", { name: "Main" })
-      .getByRole("link", { name: "Actors", exact: true })
-      .click();
     await page.getByRole("cell", { name: "sample-host", exact: true }).waitFor();
     expect(
       await page.getByRole("cell", { name: "working.first.ready working.second.waiting" }).count(),
@@ -101,9 +92,9 @@ test("built console serves the shell and live actors through the authenticated A
     await page.goto(server.url + "/console/settings");
     await page.getByRole("heading", { name: "Task fields", exact: true }).waitFor();
     await page.getByRole("link", { name: "General", exact: true }).click();
-    await page.getByRole("button", { name: "Forget" }).click();
-    await page.goto(server.url + "/console/actors");
-    await page.getByText("Operator token required").waitFor();
+    await page.getByRole("heading", { name: "General", exact: true }).waitFor();
+    expect(await page.getByLabel("Operator token", { exact: true }).count()).toBe(0);
+    expect(await page.getByText("Nothing here yet").count()).toBe(1);
     await page.goto(server.url + "/console/unknown");
     await page.getByRole("main").getByText("Page not found").waitFor();
     expect(errors).toEqual([]);

@@ -20,9 +20,8 @@ background:
   current-design: >-
     `packages/console` holds a `package.json` and a README, and no framework.
     `DESIGN.md` is the console's visual design. The service has one HTTP host
-    on which a module mounts a request listener under a path prefix with
-    `mount(pathPrefix, listener)`, and mounts a listener behind Manifold's
-    operator authentication with `mountOperator(pathPrefix, listener)`. The
+    on which a module mounts request listeners under a path prefix with
+    `mount(pathPrefix, listener)`. Access control belongs to the deployment. The
     store lists the active snapshots with `activeSnapshots()`, and the
     engine keeps an actor's identity at `context.manifold` in its snapshot.
   problems:
@@ -32,9 +31,6 @@ background:
     - >-
       The service has no listener that serves the console's files, and no
       endpoint that answers which actors are running.
-    - >-
-      Manifold's API takes a bearer token, and a page served without
-      authentication must send it.
 design-challenges:
   client-routes: >-
     The console's routes exist only in the browser. A reload or a pasted
@@ -44,10 +40,6 @@ design-challenges:
     The service serves files that the console package builds, and the
     service's tests drive the built console. The build and test order must
     follow from the package graph, with no step a person remembers.
-  token-in-the-browser: >-
-    The console's files are served without authentication, and the API
-    answers only with the operator token. The token must reach the API from
-    the browser without the service adding an authentication path.
   shell-before-screens: >-
     Every screen but one is built in a later task. The shell must give
     each its route, its navigation entry, and its title now, so that a later
@@ -63,12 +55,12 @@ proposed-design:
     `packages/service/src/console/`, exports `mountConsole(host, options)`.
     It mounts two listeners on the HTTP host: the console's files under
     `/console` with `mount`, and the actors read endpoint, specified in
-    `actors-api`, under `/api/actors` with `mountOperator`. The shell is
+    `actors-api`, under `/api/actors` with `mount`. The shell is
     `AppShell` with the header, the sidebar, and the content region from
     `DESIGN.md`. Every sidebar screen has a route; the Actors screen reads
     `GET /api/actors`, and every other screen shows its title row and an
-    empty state. The browser keeps the operator token the operator enters
-    in Settings and sends it as a bearer token on every API request.
+    empty state. The console and API are served without authentication;
+    access control belongs to the deployment.
   console-package: >-
     `packages/console` holds `index.html`, `vite.config.ts`, `src/`, and
     `public/`. Its scripts are `build` (`vp build`, after building
@@ -132,28 +124,23 @@ proposed-design:
     so that a reload in dark theme does not flash light.
   empty-screens: >-
     Overview, Board, Epics, Portfolio, Blueprints, GitHub Projects,
-    Environments, and the Task fields and Accounts tabs of Settings show
+    Environments, and every Settings tab show
     their title row and the empty state from `DESIGN.md`: a dashed border,
     the screen's icon, the title "Nothing here yet", and the line "This
     screen is not built in this version of Manifold." A later task
     replaces the screen's `<Name>Content` component and changes nothing in
     the shell.
   settings-general: >-
-    The General tab of Settings holds one field, "Operator token", a
-    password input with "Save" (primary). With a token kept, the field
-    shows that one is set, and "Forget" (destructive outline) removes it.
-    Saving replaces the kept token. The token is kept in `localStorage`
-    under `manifold.operatorToken` and is never written to a URL, a log, or
-    the page.
+    The General tab of Settings shows its heading and the shared empty
+    state: "Nothing here yet", "This screen is not built in this version
+    of Manifold."
   api-client: >-
-    `src/api/client.ts` exports `fetchActors()`. It sends `GET
-    /api/actors` with `Authorization: Bearer <token>` when a token is kept,
-    and without the header otherwise. It turns the answer into one of four
-    results: `ok` with the actors for `200`, `unauthorized` for `401`,
-    `disabled` for `404`, and `failed` with a message for anything else,
-    including a network error or a body that is not an actors response.
-    The mapping from a status and a body to a result is a pure function.
-    The body is checked at this boundary against the shape exported by
+    `src/api/client.ts` exports `fetchActors()`. It sends `GET /api/actors`
+    without authentication headers. It turns the answer into `ok` with the
+    actors for `200`, or `failed` with a message for any other status, a
+    network error, or a body that is not an actors response. The mapping
+    from a status and a body to a result is a pure function. The body is
+    checked at this boundary against the shape exported by
     `@wyrd-company/manifold-shared/actors-api`, and the rest of the console
     trusts it. Reads go through TanStack Query, which reads again when the
     window regains focus and when the screen opens. No timer reads on a
@@ -177,11 +164,8 @@ proposed-design:
     and filters join with the screens that give them data.
     Rows follow the API's order and do not open a page. With no
     actor, the table is replaced by the empty state "No active actors",
-    "Actors appear here while a blueprint runs." For `unauthorized`, the
-    empty state reads "Operator token required" with a link to Settings,
-    General. For `disabled`, it reads "Manifold's API is not enabled" and
-    "Configure an operator token for the service to list actors." For
-    `failed`, an error alert shows the message with "Try again".
+    "Actors appear here while a blueprint runs." For `failed`, an error
+    alert shows the message with "Try again".
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It
     takes the request's path, which the HTTP host passes unchanged,
@@ -196,8 +180,8 @@ proposed-design:
     `Content-Security-Policy: default-src 'self'; style-src 'self'
     'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'`,
     `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`,
-    so that no script but the console's own runs on the page that holds the
-    operator token. Other methods answer `405`. A path that leaves the
+    so that the page runs only the console's own scripts. Other methods
+    answer `405`. A path that leaves the
     directory answers `404`. `/console` without the slash redirects to
     `/console/`.
   actors-endpoint: >-
@@ -213,16 +197,10 @@ proposed-design:
     `packages/service/src/console/index.ts` exports exactly these names.
 
     ```ts
-    import type { IncomingMessage, ServerResponse } from "node:http";
+    import type { HttpHost } from "../http-host/index.ts";
     import type { Store } from "../store/index.ts";
 
-    export type RequestListener = (request: IncomingMessage, response: ServerResponse) => void;
-
-    /** The members of the service's HTTP host the console uses. */
-    export interface ConsoleHttpHost {
-      mount(pathPrefix: string, listener: RequestListener): void;
-      mountOperator(pathPrefix: string, listener: RequestListener): void;
-    }
+    export type { HttpListener as RequestListener } from "../http-host/index.ts";
 
     export interface ConsoleOptions {
       readonly store: Pick<Store, "activeSnapshots">;
@@ -233,7 +211,7 @@ proposed-design:
     }
 
     /** Mounts the console's files at `/console` and the actors endpoint at `/api/actors`. */
-    export function mountConsole(host: ConsoleHttpHost, options: ConsoleOptions): void;
+    export function mountConsole(host: HttpHost, options: ConsoleOptions): void;
     ```
 
     `@wyrd-company/manifold-shared` adds the subpath export
@@ -263,11 +241,8 @@ proposed-design:
   module-layout: >-
     `packages/service/src/console/` holds `index.ts`, `static-files.ts`
     (the console listener), `actors-api.ts` (the actors listener and
-    `actorSummaries`), and the tests. `ConsoleHttpHost` is a structural
-    stand-in for the HTTP host's type until the service assembly exports
-    it; its members are the ruled `mount` and `mountOperator`, so the host
-    satisfies it unchanged and the stand-in is then replaced by the host's
-    own type. The service's entry point calls `mountConsole(host, { store
+    `actorSummaries`), and the tests. `HttpHost` is the service's
+    production HTTP host type. The service's entry point calls `mountConsole(host, { store, log
     })` after the store opens and before the host listens. The service
     package depends on `@wyrd-company/manifold-console` and on `sirv`.
     `root` defaults to the directory of
@@ -290,8 +265,8 @@ proposed-design:
     build that stopped halfway leaves a `dist/` that the next build
     replaces whole, and a service started on a `dist/` with no
     `index.html` refuses to start. The browser's writes are `localStorage`
-    keys, each set to the operator's latest choice, so a repeated save
-    leaves one value.
+    keys for theme and sidebar mode, each set to the operator's latest
+    choice, so a repeated save leaves one value.
   errors: >-
     `store.activeSnapshots()` throwing answers `500` with no body detail,
     and the error goes to the service's log with the request path. A
@@ -301,26 +276,26 @@ proposed-design:
     keeps working.
   tests: >-
     Each behavior is red before green, and tests go through public
-    interfaces. In `packages/service/src/console/`, through `mountConsole`
-    and a stand-in host that serves the mounted listeners on a loopback
-    port and checks the bearer as `mountOperator` states: the actors
+    interfaces. In `packages/service/src/console/`, `mountConsole` uses the
+    production HTTP host on a loopback port with no credentials: the actors
     endpoint behaviors in `actors-api`'s validation criteria; a client
     route under `/console/` answers `index.html`; a hashed asset answers
     with the immutable header; a missing asset answers `404`; a path
     with `..` segments answers `404`; and `mountConsole` throws for a root
-    with no `index.html`. In `packages/console`, unit tests of the API
-    result mapping and of `navigation.ts` (every route unique, every
-    `DESIGN.md` sidebar screen present). The browser test,
+    with no `index.html`. In `packages/console`, unit tests cover the API
+    result mapping, requests without browser storage or authorization,
+    and `navigation.ts` (every route unique, every `DESIGN.md` sidebar
+    screen present). The browser test,
     `packages/service/src/console/console.browser.test.ts`, starts the
-    stand-in host with the built console and a store holding fixture
+    production HTTP host with the built console and a store holding fixture
     actors, launches headless Chromium with Playwright, and checks that
     Overview shows the shell with every navigation entry; the theme toggle
-    sets the dark class and a reload keeps it; the Actors screen asks for
-    the token; after the token is saved in Settings, General, it lists
-    every fixture actor with its blueprint, current state, and environment;
-    a reload of `/console/actors` shows the same; and an unbuilt screen
-    shows its empty state. Fixture values are generic and never drawn
-    from Manifold's own domain.
+    sets the dark class and a reload keeps it; the Actors screen lists
+    every fixture actor with its blueprint, current state, and environment
+    without credential entry; a reload of `/console/actors` shows the same;
+    and unbuilt screens, including Settings, General, show their empty
+    states. Fixture values are generic and never drawn from Manifold's
+    own domain.
   dependencies: >-
     The console adds `react` and `react-dom` 19, `@tanstack/react-router`,
     `@tanstack/react-query`, `@base-ui/react`, `class-variance-authority`,

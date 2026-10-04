@@ -9,8 +9,7 @@ info:
   title: Manifold actors API
   version: 0.1.0
   description: The actors read endpoint of Manifold's API.
-security:
-  - operatorToken: []
+security: []
 paths:
   /api/actors:
     get:
@@ -27,10 +26,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ActorsResponse"
-        "401":
-          description: The request carries no bearer token, or not the configured one.
-        "404":
-          description: No operator token is configured, so the API is not served.
         "405":
           description: A method other than GET.
           headers:
@@ -38,11 +33,6 @@ paths:
               schema:
                 const: GET
 components:
-  securitySchemes:
-    operatorToken:
-      type: http
-      scheme: bearer
-      description: The `operator-token` credential configured for the service.
   schemas:
     ActorsResponse:
       type: object

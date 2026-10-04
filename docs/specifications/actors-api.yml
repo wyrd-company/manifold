@@ -12,12 +12,9 @@ description: >-
   machine-readable definition. The Actors screen of the operator console
   reads it, and any automation may.
 
-  The endpoint is mounted with the HTTP host's `mountOperator` at the
-  prefix `/api/actors`, so it carries Manifold's operator authentication:
-  with no `operator-token` credential configured the prefix is not served
-  and answers `404`, and a request without `Authorization: Bearer` and the
-  configured token answers `401`. Both answers come from the HTTP host
-  before the endpoint runs.
+  The endpoint is mounted with the HTTP host's `mount` at the prefix
+  `/api/actors` and is always served without authentication. Access control
+  belongs to the deployment.
 
   The endpoint reads the store's active snapshots, the rows of
   `store_snapshot` whose status is `active`, and changes nothing. An actor
@@ -54,8 +51,8 @@ validation-criteria: >-
   document. A test in `packages/service` saves snapshots in a store,
   including one in a parallel state, one whose machine is not a blueprint
   version key, one with no `context.manifold`, and one that is `done`;
-  requests `GET /api/actors` with the bearer token through a stand-in HTTP
-  host; and checks that the body validates against the response schema in
+  requests `GET /api/actors` without authentication through the service's
+  HTTP host; and checks that the body validates against the response schema in
   the OpenAPI document, lists exactly the active snapshots in the order
   stated, and gives each summary the fields stated. The same test checks
   the `405` and the `404` for a sub-path.

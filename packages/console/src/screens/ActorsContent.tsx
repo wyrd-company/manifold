@@ -3,7 +3,6 @@
 //   implements: [operator-console, actors-api]
 // ---
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { Activity, RefreshCw } from "lucide-react";
 import { fetchActors } from "../api/client.ts";
 import { Button } from "../ui/button.tsx";
@@ -37,20 +36,6 @@ export function ActorsContent() {
       </div>
       {!result ? (
         <p role="status">Loading actors…</p>
-      ) : result.kind === "unauthorized" ? (
-        <EmptyState
-          icon={Activity}
-          title="Operator token required"
-          description="Enter the service's operator token to list actors."
-        >
-          <Link to="/settings/general">Settings, General</Link>
-        </EmptyState>
-      ) : result.kind === "disabled" ? (
-        <EmptyState
-          icon={Activity}
-          title="Manifold's API is not enabled"
-          description="Configure an operator token for the service to list actors."
-        />
       ) : result.kind === "failed" ? (
         <div role="alert" className="error-alert">
           <p>{result.message}</p>
