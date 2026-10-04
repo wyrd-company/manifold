@@ -93,6 +93,8 @@ proposed-design:
     export interface StartServiceOptions {
       /** Path of the service configuration file. */
       readonly configurationFile: string;
+      /** Aborting it stops the start at the next step boundary. */
+      readonly signal?: AbortSignal;
       /** Builds the router's actor host from the parts started before the router. */
       readonly actorHost?: (parts: ServiceParts) => ActorHost;
       /** Receives every log entry. Defaults to one JSON line per entry on stderr. */
@@ -150,9 +152,9 @@ proposed-design:
     export interface Revisions {
       /** The blueprint load of the latest revision the follower applied. */
       latest(): RevisionLoad | undefined;
-      /** Pulls, then follows the current commit; resolves after both. */
+      /** Queues a pull and the apply of its commit as one job; resolves after both. */
       pull(request?: PullRequest): Promise<PullOutcome>;
-      /** Follows the current commit; resolves when it is applied. */
+      /** Queues the apply of the current commit; resolves when it is applied. */
       follow(): Promise<void>;
     }
 
@@ -259,7 +261,11 @@ proposed-design:
     with `mount`, awaits `listen`, and logs `started` with the address.
     Sources start after the router returns, and the host listens after the
     sources start, so no source and no request holds the router before
-    resume ends.
+    resume ends. After each step completes, `startService` checks
+    `signal`: when it has aborted, start stops every step already started,
+    in the stop order, and rejects with the signal's `reason`. A step in
+    progress runs to its end first, since each step is bounded only by the
+    work it does, such as a pull by `pullTimeoutMs`.
   start-failure: >-
     A step that throws or rejects stops every step already started, in the
     stop order, and `startService` rejects with the step's error. A
@@ -286,37 +292,45 @@ proposed-design:
     closes the HTTP host, which stops accepting connections and waits for
     the requests in progress. (2) `sources-stopped`: awaits the GitHub
     source's and the T3 Code source's `stop` together. (3)
-    `revisions-idle`: awaits the revision follower's queue, so no apply is
-    running when the store closes. (4) `router-stopped`: `router.stop()`.
+    `revisions-idle`: closes the revision follower and awaits its queue. A
+    pull and its apply are one job, queued when `pull` is called, so the
+    queue holds every pull a source started, including one the GitHub
+    source called and did not await, and no pull or apply is running when
+    the router stops and the store closes. (4) `router-stopped`: `router.stop()`.
     (5) `store-closed`: `store.close()`, and logs `stopped`. The first call
     starts the steps, and every later call returns the same promise, so a
     second stop does nothing more. A step that rejects is logged and the
     remaining steps still run, and the promise rejects with the first
     error once the store is closed.
   revision-follower: >-
-    The follower keeps one serial queue and one in-memory `followed`
-    commit, unset at start. `follow()` enqueues one job and returns its
-    promise. A job reads `processRepository.current()`; when there is no
-    revision, or its commit equals `followed`, it does nothing. Otherwise
-    it awaits `blueprints.loadRevision(revision)`, keeps the result as
-    `latest`, logs `blueprint-invalid` for each path in its `failures`,
-    awaits `portfolio.apply(revision)`, logs `portfolio-rejected` with the
+    The follower is the only caller of the process repository's `pull`. It
+    keeps one serial queue and one in-memory `followed` commit, unset at
+    start. `pull(request)` and `follow()` each add one job to the queue
+    when they are called and return the job's promise, so jobs run one at a
+    time in call order. A pull job awaits `processRepository.pull(request)`
+    and then runs the apply step; a pull that rejects still runs the apply
+    step, then rejects with the pull's error, so the GitHub source reports
+    it as kind `pull`, and otherwise the job resolves with the pull's
+    outcome. A follow job runs the apply step alone. The apply step reads
+    `processRepository.current()`; when there is no revision, or its
+    commit equals `followed`, it does nothing. Otherwise it awaits
+    `blueprints.loadRevision(revision)`, keeps the result as `latest`,
+    logs `blueprint-invalid` for each path in its `failures`, awaits
+    `portfolio.apply(revision)`, logs `portfolio-rejected` with the
     findings of a rejected result, sets `followed` to the commit, logs
-    `revision-applied`, and calls the `applied` probe. `pull(request)`
-    awaits `processRepository.pull(request)`, then awaits `follow()`, and
-    resolves with the pull's outcome; a pull that rejects still calls
-    `follow()` and then rejects with the pull's error, so the GitHub source
-    reports it as kind `pull`. Each job reads the current commit when it
-    runs, and the process repository only moves it forward through
-    serialized pulls, so revisions are applied in pull order and never an
-    older one after a newer one.
+    `revision-applied`, and calls the `applied` probe. No other pull runs
+    between a pull and its apply step, so the apply step reads the commit
+    that pull published, and every commit a pull publishes is applied, in
+    pull order, before the next pull starts. `close()`, which stop calls,
+    makes every later `pull` and `follow` reject with a `TypeError` and
+    returns a promise that resolves when the queue is empty.
   convergence: >-
-    A job that finds its commit already followed does nothing, and
+    An apply step that finds its commit already followed does nothing, and
     `portfolio.apply` of a declaration equal to the one in force writes
-    nothing, so `follow` twice applies once. A job whose read rejects
-    leaves `followed` unchanged and rejects its caller, and the next
-    `follow` retries the same commit, taking the blueprint load from the
-    loader's cache. A crash after a pull publishes and before the
+    nothing, so a follow twice applies once. An apply step whose read
+    rejects leaves `followed` unchanged and rejects its job, and the next
+    job of either kind retries the same commit, taking the blueprint load
+    from the loader's cache. A crash after a pull publishes and before the
     portfolio applies leaves that commit current in the repository and the
     previous declaration in force in the store; the next start's step 5
     applies it once. A crash after the portfolio's row commits leaves the
@@ -334,15 +348,15 @@ proposed-design:
     server's `close` event fires. `mount` and `mountOperator` may be called
     before or after `listen`.
   mounts: >-
-    A path prefix is `/`, or `/` followed by one or more segments joined by
-    `/`, each non-empty and holding no `?`, `#`, or `%`, with no trailing
-    `/`. `mount` and `mountOperator` throw a `TypeError` naming the prefix
-    for any other string, and for a prefix already mounted by either. A
-    request's path is the path of its request target, before the query,
-    compared as sent with no decoding. A prefix matches a path that equals
-    it or continues it with `/`, and `/` matches every path, so
-    `/webhooks/github` matches `/webhooks/github` and
-    `/webhooks/github/1` and never `/webhooks/githubx`. The longest
+    A path prefix is `/` followed by one or more segments joined by `/`,
+    each non-empty and holding no `?`, `#`, or `%`, with no trailing `/`.
+    `mount` and `mountOperator` throw a `TypeError` naming the prefix for
+    any other string, `/` included, and for a prefix already mounted by
+    either. A request's path is the path of its request target, before the
+    query, compared as sent with no decoding. A prefix matches a path that
+    equals it or continues it with `/`, so `/webhooks/github` matches
+    `/webhooks/github` and `/webhooks/github/1` and never
+    `/webhooks/githubx`. The path `/` is under no prefix. The longest
     matching prefix takes the request. The listener receives the request
     and response unchanged, with `request.url` as sent. A request whose
     path no prefix matches answers `404` with an empty body. A listener
@@ -369,18 +383,22 @@ proposed-design:
   entry-point: >-
     `node dist/main.js <configuration-file>` starts the service. With no
     argument or more than one, it writes a usage line to stderr and exits
-    with code 2. It awaits `startService` with the file; a start that
-    rejects writes the error, and for a `ServiceConfigurationError` every
-    issue, to stderr and exits with code 1. After start resolves it
-    installs one handler for `SIGTERM` and `SIGINT`: the first signal calls
-    `service.stop()`, and the process exits with code 0 when stop
-    resolves and code 1 when it rejects. Every later signal calls the
-    same `stop` and so does nothing more. A signal that arrives during
-    start takes Node's default action and ends the process, which every
-    module recovers from as a crash. Neither start nor stop is bounded by
-    a time; `SIGKILL` ends a process whose stop does not finish.
+    with code 2. Before it starts the service, it installs one handler for
+    `SIGTERM` and `SIGINT` and creates an `AbortController` whose signal it
+    passes to `startService`. The first signal during start aborts that
+    signal, so start stops what it has started at the next step boundary
+    and rejects with the abort's reason, and the process exits with code
+    0. The first signal after start calls `service.stop()`, and the
+    process exits with code 0 when stop resolves and code 1 when it
+    rejects. Every later signal does nothing more. A start that rejects for
+    any other reason writes the error, and for a
+    `ServiceConfigurationError` every issue, to stderr and exits with code
+    1. Neither start nor stop is bounded by a time; `SIGKILL` ends a
+    process whose stop does not finish.
   log: >-
-    Modules log through `ServiceParts.log`. The default sink writes each
+    Modules log through `ServiceParts.log`. The assembly logs `start-step`
+    and `stop-step` at `info`, naming the step, after each step. The
+    default sink writes each
     entry to stderr as one JSON line holding `time`, an ISO 8601 string,
     and the entry's fields. A credential value reaches no entry: errors
     carry a `SecretValue` only as its credential name, as
@@ -421,9 +439,9 @@ proposed-design:
     fixture repository, owner `example-org`, items `alpha` and `beta`,
     account `acct`, blueprint `blueprints/counter.yml`. HTTP host tests
     run a host on port 0 with listeners that echo their prefix: the
-    longest prefix takes a request; `/a` does not take `/ab`; `/` takes
-    every unmatched path; a path under no prefix answers 404; a malformed
-    or repeated prefix throws; a listener that throws answers 500 and
+    longest prefix takes a request; `/a` does not take `/ab`; `/` answers
+    404 while other prefixes are mounted; a path under no prefix answers
+    404; `mount("/")`, a malformed prefix, and a repeated prefix throw; a listener that throws answers 500 and
     reaches `onError`; an operator prefix answers 404 with no operator
     credential, 401 with `WWW-Authenticate` for no header, another scheme,
     and a wrong token, and reaches its listener with the token; a replaced
@@ -444,8 +462,15 @@ proposed-design:
     `githubWebhookPath` on the bound address, receives 202, and on the
     `applied` probe for the new commit finds the new blueprint version's
     key in `latest()` and the new allocation in force in
-    `portfolio.ledger`. Stop: the `step` probe sees the stop steps in
-    order; a second `stop` returns the same promise; the port refuses
+    `portfolio.ledger`. Pull order: with the apply of commit A held by a
+    blueprint read the test delays, pulls requested after the test pushes
+    commit B and then commit C are queued, and the `applied` probe sees A,
+    B, and C once each, in that order. Stop during a pull: with the
+    fixture server holding the response of a pull a signed push started,
+    `stop` stays pending after `sources-stopped`; when the server releases
+    the response, the pulled commit's declaration is in force and then
+    `stop` resolves with `store-closed`. Stop: the `step` probe sees the
+    stop steps in order; a second `stop` returns the same promise; the port refuses
     connections; `github.receive` throws a `TypeError`. Start failure: a
     second service configured with the first's port rejects with
     `EADDRINUSE`, and its child process exits on its own. Crash: a child
@@ -458,6 +483,13 @@ proposed-design:
     prints each issue; with a valid file it logs `started`, and on
     `SIGTERM`, and in a second run on `SIGINT`, logs `stopped` once and
     exits 0; a second `SIGTERM` sent after the first logs nothing more.
+    With the fixture server holding the response of the first pull, so
+    start waits in step 6, `SIGTERM`, and in a second run `SIGINT`, sent
+    after the `process-repository-opened` step entry ends the process with
+    code 0 once the server releases the response, with the stop steps of the
+    started steps logged, `revisions-idle` and `store-closed`, and no
+    `started` entry; a second signal
+    sent during that start logs nothing more.
     `foundation.integration.test.ts` keeps every behaviour it proves. Its
     SIGKILL worker starts through `startService` with a configuration file,
     a test actor host built from `ServiceParts`, and the `delivery` probe,
