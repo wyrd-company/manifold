@@ -235,6 +235,12 @@ export function createMirror(store: Store, now: () => number) {
       for (const neighbor of new Set(neighbors))
         if (isTracked(state, bound, neighbor)) this.enqueue("issue", neighbor);
     },
+    trackedIssueIds(bound: ReadonlyMap<string, GitHubProject>) {
+      const state = read();
+      return [...state.issues.values()]
+        .filter((row) => row.baselined && row.present && isTracked(state, bound, row.issue.nodeId))
+        .map((row) => row.issue.nodeId);
+    },
     trackedIssue(id: string, bound: ReadonlyMap<string, GitHubProject>): TrackedIssue | undefined {
       const state = read();
       const row = state.issues.get(id);
@@ -242,6 +248,23 @@ export function createMirror(store: Store, now: () => number) {
       const lookup = (node: string) => state.issues.get(node)!.issue;
       return {
         issue: row.issue,
+        items: [...state.items.values()]
+          .filter(
+            (r) =>
+              r.present &&
+              r.item.contentType === "issue" &&
+              r.item.contentNodeId === id &&
+              bound.has(r.projectId),
+          )
+          .map((r) => ({
+            project: bound.get(r.projectId)!,
+            item: { nodeId: r.item.nodeId, archived: r.archived },
+            fields: Object.fromEntries(
+              [...state.fields.values()]
+                .filter((f) => f.itemId === r.item.nodeId)
+                .map((f) => [f.field.name, f.value]),
+            ),
+          })),
         blockedBy: [...state.dependencies.values()]
           .filter((r) => r.present && r.from === id)
           .map((r) => lookup(r.to)),

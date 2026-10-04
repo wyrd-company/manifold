@@ -17,4 +17,5 @@ export type {
   GitHubIssue,
   GitHubProject,
   TrackedIssue,
+  GitHubFieldValue,
 } from "./types.ts";

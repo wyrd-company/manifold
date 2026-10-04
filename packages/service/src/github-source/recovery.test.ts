@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: github-event-source
 // ---
+import { DatabaseSync } from "node:sqlite";
 import { generateKeyPairSync } from "node:crypto";
 import { apiFixture } from "../process-repository/test-fixtures/remote.ts";
 import { SecretValue, loadServiceConfiguration } from "../service-configuration/index.ts";
@@ -37,6 +38,7 @@ async function setup(intervals: { sweepIntervalMs?: number; redeliveryIntervalMs
   const taken: { actor: string; payload: JsonValue }[] = [];
   const errors: GitHubSourceError[] = [];
   const pulls: (string | undefined)[] = [];
+  const discoveries: { ids: readonly string[]; baselined: unknown; events: unknown }[] = [];
   for (const actor of ["I_A", "I_B", "I_C", "I_D", "I_X", "project"])
     store.saveSnapshot({
       actorId: actor,
@@ -97,6 +99,24 @@ async function setup(intervals: { sweepIntervalMs?: number; redeliveryIntervalMs
       },
     },
     onError: (error: GitHubSourceError) => errors.push(error),
+    onTracked: (ids: readonly string[]) => {
+      const committed = new DatabaseSync(path);
+      try {
+        discoveries.push({
+          ids,
+          baselined: committed
+            .prepare("SELECT baselined FROM github_issue WHERE issue_node_id=?")
+            .get(ids[0]!),
+          events: committed
+            .prepare(
+              "SELECT count(*) AS count FROM router_source_event WHERE event_id LIKE 'item:%'",
+            )
+            .get(),
+        });
+      } finally {
+        committed.close();
+      }
+    },
   };
   const source = startGitHubSource(options);
   const server = createServer(source.requestListener);
@@ -130,7 +150,21 @@ async function setup(intervals: { sweepIntervalMs?: number; redeliveryIntervalMs
     store.connection.database
       .prepare("SELECT event_id,event FROM router_source_event ORDER BY rowid")
       .all();
-  return { fake, source, store, clock, taken, errors, pulls, url, idle, events, options, path };
+  return {
+    fake,
+    source,
+    store,
+    clock,
+    taken,
+    errors,
+    pulls,
+    url,
+    idle,
+    events,
+    options,
+    path,
+    discoveries,
+  };
 }
 test("sweep recovers a dropped dependency and a later delivery publishes nothing", async () => {
   const s = await setup();
@@ -838,4 +872,21 @@ test("uses the loaded GitHub section and named installation credential for fetch
   expect(s.fake.authorizations.length).toBeGreaterThan(0);
   expect(s.fake.authorizations.every((value) => value === `token ${api.state.token}`)).toBe(true);
   expect(s.errors).toEqual([]);
+});
+
+test("discovery follows the committed baseline and enumerates item facts only for tracked issues", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  expect(s.discoveries).toMatchObject([
+    { ids: ["I_A"], baselined: { baselined: 1 }, events: { count: 1 } },
+  ]);
+  expect(s.source.trackedIssueIds()).toEqual(["I_A"]);
+  expect(s.source.trackedIssue("I_A")?.items).toMatchObject([
+    { project: { nodeId: "P_one" }, item: { nodeId: "IT_A", archived: false }, fields: {} },
+  ]);
+  s.source.requestSweep();
+  await s.idle();
+  expect(s.discoveries).toHaveLength(1);
 });

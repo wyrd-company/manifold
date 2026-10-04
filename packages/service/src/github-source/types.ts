@@ -42,12 +42,14 @@ export interface GitHubSourceOptions {
   readonly clock?: RouterClock;
   readonly onError?: (error: GitHubSourceError) => void;
   readonly probe?: () => void;
+  readonly onTracked?: (issueNodeIds: readonly string[]) => void;
 }
 export interface GitHubSource {
   receive(delivery: WebhookDelivery): DeliveryOutcome;
   readonly requestListener: (request: IncomingMessage, response: ServerResponse) => void;
   requestSweep(): void;
   trackedIssue(nodeId: string): TrackedIssue | undefined;
+  trackedIssueIds(): readonly string[];
   stop(): Promise<void>;
 }
 export interface WebhookDelivery {
@@ -94,8 +96,13 @@ export interface TrackedIssue {
   readonly subIssues: readonly GitHubIssue[];
   readonly parent: GitHubIssue | undefined;
   readonly projects: readonly GitHubProject[];
+  readonly items: readonly {
+    readonly project: GitHubProject;
+    readonly item: { readonly nodeId: string; readonly archived: boolean };
+    readonly fields: Readonly<Record<string, GitHubFieldValue>>;
+  }[];
 }
-export interface ObservedIssue extends Omit<TrackedIssue, "projects"> {}
+export interface ObservedIssue extends Omit<TrackedIssue, "projects" | "items"> {}
 export interface ItemReference {
   readonly nodeId: string;
   readonly contentType: "issue" | "pull-request" | "draft-issue";
@@ -114,6 +121,7 @@ export type FieldValue =
       readonly startDate: string;
       readonly duration: number;
     };
+export type GitHubFieldValue = FieldValue;
 export interface ObservedField {
   readonly field: { readonly nodeId: string; readonly name: string };
   readonly value: FieldValue;

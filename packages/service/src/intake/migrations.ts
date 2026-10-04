@@ -1,13 +1,18 @@
--- ---
+// ---
+// relationships:
+//   implements: intake-records-table
+// ---
+export const intakeMigrationSteps: readonly string[] = [
+  `-- ---
 -- relationships:
 --   asset-of: intake-records-table
 -- ---
 -- The intake module's table: the schema that its migration steps produce.
--- The store applies the steps with `migrate("intake", steps)` and records
--- the version in `schema_migration`; the module runs no DDL.
+-- The store applies the steps with \`migrate("intake", steps)\` and records
+-- the version in \`schema_migration\`; the module runs no DDL.
 
--- One row per issue intake has decided or failed to decide. A `recorded` or
--- `started` row holds the issue's one decision; a `failed` row holds the
+-- One row per issue intake has decided or failed to decide. A \`recorded\` or
+-- \`started\` row holds the issue's one decision; a \`failed\` row holds the
 -- commit it failed at and is decided again at a later commit.
 CREATE TABLE intake_record (
   issue_node_id TEXT PRIMARY KEY CHECK (length(issue_node_id) > 0),
@@ -49,9 +54,9 @@ CREATE TABLE intake_record (
   )
 ) STRICT, WITHOUT ROWID;
 
--- A decision once recorded never changes. A `recorded` row moves only to
--- `started`, or stays `recorded` while a start failure is recorded on it,
--- with every decision column kept. A `started` row never changes.
+-- A decision once recorded never changes. A \`recorded\` row moves only to
+-- \`started\`, or stays \`recorded\` while a start failure is recorded on it,
+-- with every decision column kept. A \`started\` row never changes.
 CREATE TRIGGER intake_record_decided
   BEFORE UPDATE ON intake_record
   WHEN OLD.status <> 'failed'
@@ -80,3 +85,5 @@ CREATE TRIGGER intake_record_decided
 CREATE TRIGGER intake_record_no_delete
   BEFORE DELETE ON intake_record
   BEGIN SELECT RAISE(ABORT, 'intake_record rows are never deleted'); END;
+`,
+];

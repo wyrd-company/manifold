@@ -144,6 +144,7 @@ export function createRunner(
   function commit(work: (state: MirrorState) => SourceEvent[], completed: readonly Pending[] = []) {
     if (stopped) return;
     options.probe?.();
+    const discovered: string[] = [];
     options.store.connection.transaction(() => {
       const before = mirror.read();
       const after = structuredClone(before);
@@ -154,8 +155,16 @@ export function createRunner(
         if (options.router.publish(event).status === "rejected")
           throw new TypeError("Router rejected a GitHub event");
       }
+      for (const event of events) {
+        if (event.event.type === "github.project-item.added") {
+          const item = event.event["item"] as { contentType: string; contentNodeId: string };
+          if (item.contentType === "issue" && mirror.trackedIssue(item.contentNodeId, bound))
+            discovered.push(item.contentNodeId);
+        }
+      }
       for (const row of completed) mirror.complete(row);
     });
+    if (discovered.length) options.onTracked?.([...new Set(discovered)]);
   }
   function compareItems(
     state: MirrorState,
