@@ -27,9 +27,10 @@ considered-options:
 decision-outcome:
   chosen-option: 1
   justification: >-
-    Option 1 ties the answer to the state entry that asked: the callback
-    stops when the state exits, the escalation is withdrawn, and a later
-    answer is refused, so no later state can take it. The store row already
+    Option 1 ties the answer to the state entry that asked: the save that
+    records the state's exit withdraws the escalation in the same
+    transaction, and a later answer is refused, so no later state can take
+    it. The store row already
     holds the answer durably, and the actor host already persists an actor
     after an event from an invoked actor. Option 2 puts the answer in the
     inbox behind any pending row; a pending row that exits the asking state

@@ -29,6 +29,9 @@ status: open
 
 # Mitigation: a link opens a page and never answers on GET; only a POST with
 # the key answers, once, while the escalation is open; the key is 32 random
-# bytes stored only as a digest; a wrong key cannot be told from a missing
-# escalation. The residual is accepted for single-operator use until the
-# console has sign-in.
+# bytes, kept in the store only in a notification's body until that
+# notification is sent or failed, and as a digest after; a wrong key cannot
+# be told from a missing escalation. Whether answer links that carry a
+# bearer key are acceptable is an access decision reserved to the user and
+# not yet made. The recommendation is to accept them for single-operator use
+# until the console has sign-in.

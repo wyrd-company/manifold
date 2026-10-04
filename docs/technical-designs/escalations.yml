@@ -84,16 +84,33 @@ proposed-design:
     module to report the answer and then sends it back. The event it sends
     is `escalation.answered`, with the escalation id, the choice id or the
     text, and the channel. The actor host persists the actor after the
-    event, as it does for every event an invoked actor sends. When the
-    state exits, the callback stops and withdraws its escalation if it is
-    still open.
+    event, as it does for every event an invoked actor sends. The callback
+    never withdraws its escalation; withdrawal follows the saved exit.
+  withdrawal: >-
+    An escalation raised by a blueprint is withdrawn in the transaction
+    that saves a snapshot in which its state entry is no longer active.
+    Every save lists the actor's active invokes, each with its invoke id
+    and the entry id of the state entry that invoked it, as it lists
+    deadlines, and the actor host passes that list to the escalations
+    module inside the save's `store.connection.transaction`. In that
+    transaction the module withdraws every open escalation of the actor
+    whose invoke id and entry id are not in the list. A callback that stops
+    without a saved exit withdraws nothing: one stopped by service
+    shutdown, by a delivery that is rolled back, or by a crash leaves its
+    escalation open, and the callback that the restored state starts again
+    finds the row as it was. An exit taken in memory and lost to a crash
+    before its save restores the asking state with its escalation still
+    open.
   answer-to-the-asking-state: >-
     The answer reaches the actor only through the callback of the state
     that asked, so a state that has exited cannot take it and no later
-    state can. An answer committed after the actor's save that exits the
-    state finds the escalation `withdrawn` and is refused. An answer
-    committed before that save and not yet sent back is sent again by the
-    callback that the restart starts, which reads the answered row. The
+    state can. An answer committed after the save that records the exit
+    finds the escalation `withdrawn` and is refused. An answer committed
+    before that save leaves the row `answered`, so the save does not
+    withdraw it; if the save commits, the actor has left the state and the
+    answer is recorded but not taken, and if a crash comes first, the
+    restored asking state's callback reads the answered row and sends the
+    answer back. The
     decision record `hand-escalation-answers-to-the-asking-state` records
     the choice.
   raising-from-an-agent: >-
@@ -108,20 +125,36 @@ proposed-design:
     the escalation.
   raising-from-the-service: >-
     The service raises an escalation with `raise({ kind, subject, question,
-    choices })`, whose id is derived from the kind and the subject, so a
-    cause raised twice raises one escalation. Two kinds exist. `held-actor`
-    is raised from the router's `onHeld`, with the actor id and the inbox
-    row that errored, or the restore mismatch, as its subject; its choices
-    are `retry` and `dismiss`. `stranded-token` is raised by a gate when a
-    holder's saved configuration is a trap, with the gate and the token as
-    its subject; its choices are `return` and `dismiss`. Each kind has a
-    handler: `retry` calls the router's `release` for the actor, `return`
-    records the token returned so the gate runs its comparator again, and
-    `dismiss` does nothing. The handler runs after the answer commits and
-    records that it ran in the escalation's row. At start the module runs
-    the handler of every answered service escalation whose handling is not
-    recorded. Each handler converges: `release` of an actor that is not
-    held does nothing, and `return` of a token already returned does
+    choices })`. Two kinds exist. `held-actor` is raised from the router's
+    `onHeld`, with the actor id as its subject and the reason, the inbox
+    row that errored or the restore mismatch, in its question; its choices
+    are `retry` and `dismiss`. `stranded-token` is raised by a gate on the
+    save that moves a holder from a configuration outside its gate's trap
+    set into one inside it, with the gate and the token as its subject;
+    its choices are `return` and `dismiss`.
+  occurrences: >-
+    One kind and subject can need the operator more than once: a `retry`
+    that meets the same failure holds the actor again, and a dismissed
+    cause can recur after a restart. Each service escalation therefore has
+    an occurrence number, and its id is derived from the kind, the subject,
+    and that number. `raise` reads the latest escalation for the kind and
+    subject in its transaction. When that escalation is open, or answered
+    with its handling not yet recorded, `raise` returns it, so one pending
+    cause raised twice, by a repeated `onHeld` or by a restart, stays one
+    escalation. Otherwise, with none, or the latest withdrawn or answered
+    and handled, it raises the next occurrence, open and with new links.
+  handlers: >-
+    Each kind has a handler: `retry` calls the router's `release` for the
+    actor, `return` records the token returned so the gate runs its
+    comparator again, and `dismiss` does nothing. The handler runs after
+    the answer commits. `return` writes the token's return in the
+    transaction that records the handling. `retry` records the handling and
+    then calls `release`, so a hold that `release` meets raises the next
+    occurrence; a crash between the two is covered by resume, which
+    restores every held actor again. At start, after the router has
+    started, the module runs the handler of every answered service
+    escalation whose handling is not recorded. `release` of an actor that
+    is not held does nothing, and `return` of a token already returned does
     nothing.
   router-release: >-
     The router gains `release(actorId)`. For a held actor it asks the host
@@ -148,7 +181,10 @@ proposed-design:
     tags, `format: markdown`, `type: warning`, a title naming the raiser,
     and a body holding the question, one link per choice, and a link to
     answer with text when free text is allowed. Each link opens the answer
-    page for that escalation. A `2xx` answer marks the row sent. A network
+    page for that escalation. The notification row holds the body it sends,
+    links included, from the raise until the row is sent or failed, so a
+    send after a restart sends the same links. A `2xx` answer marks the row
+    sent. A network
     failure, a `424`, or a `5xx` leaves it unsent and the sender tries it
     again after `retryIntervalMs`. Any other `4xx` marks it failed with the
     status, logs it, and does not try again. Each request is bounded by
@@ -160,9 +196,13 @@ proposed-design:
   answer-page: >-
     The service's HTTP host serves `GET /escalations/{id}` and
     `POST /escalations/{id}/answer`. Each escalation has a key of 32 random
-    bytes, written in base64url into its links and stored only as its
-    SHA-256 digest. `GET` with the key shows the question, the choices as
-    buttons, and the text field, and never answers, so a link preview
+    bytes, written in base64url into its links. The escalation row stores
+    the key's SHA-256 digest, which every answer is checked against. The
+    key itself is in the store only inside the notification rows' bodies,
+    and each body is cleared when its row is marked sent or failed, so
+    after every destination is settled only the digest remains. `GET`
+    with the key shows the question, the choices as buttons, and the text
+    field, and never answers, so a link preview
     changes nothing. `POST` with the key and a choice id or text answers
     the escalation through the channel `link`. A wrong or missing key
     answers `404`, so a key cannot be told apart from an escalation id that
@@ -196,8 +236,11 @@ proposed-design:
   store-tables: >-
     The module owns its tables in the store's file, migrated with
     `migrate("escalations", steps)`: `escalation`, one row per escalation,
-    and `escalation_notification`, one row per escalation and destination
-    with its status, attempts, last error, and sent time. Rows are kept
+    with its raiser's actor id, invoke id, and entry id, or its kind,
+    subject, and occurrence, its key digest, and when its handling ran; and
+    `escalation_notification`, one row per escalation and destination with
+    its body until it is settled, its status, attempts, last error, and
+    sent time. Rows are kept
     after an escalation ends, so the console can show what was asked and
     how it was answered. The tables are specified in
     `escalations-database-schema`.
@@ -223,6 +266,8 @@ proposed-design:
       answer(id: string, answer: EscalationAnswer, channel: "link" | "api"): AnswerOutcome;
       get(id: string): Escalation | undefined;
       list(filter: { readonly status?: EscalationStatus }): readonly Escalation[];
+      /** Called by the actor host inside each snapshot save's transaction. */
+      reconcile(actorId: string, activeInvokes: readonly { readonly invokeId: string; readonly entryId: string }[]): void;
       /** Mounted by the service's HTTP host at `/escalations` and `/api/escalations`. */
       readonly requestListener: RequestListener;
       stop(): Promise<void>;
@@ -238,13 +283,14 @@ proposed-design:
       | { readonly status: "closed"; readonly escalation: Escalation };
     ```
   convergence: >-
-    `raise` twice with the same id writes one escalation and one set of
-    notification rows. A crash inside it writes nothing, and the callback
-    or the `onHeld` that a restart repeats raises it then. `answer` twice
+    `raise` twice for one blueprint state entry, or for one pending service
+    cause, writes one escalation and one set of notification rows. A crash
+    inside it writes nothing, and the callback or the `onHeld` that a restart repeats raises it then. `answer` twice
     gives one answer. A crash after the answer commits and before the
     callback's event is saved sends the event again from the restarted
     callback; a crash after that save leaves the actor in its next state,
-    and the answered row is not withdrawn. A
+    and the answered row is not withdrawn. A crash after an exit is taken in
+    memory and before its save withdraws nothing. A
     crash after the answer of a service escalation and before its handler
     records that it ran runs the handler at start, and the handler
     converges. A withdrawal twice withdraws once. The sender sends a row
@@ -274,5 +320,13 @@ proposed-design:
     delivers the answer once after restart; a kill after apprise-api
     accepts and before the row is marked sent sends at most one more
     notification; a kill after a `retry` answer and before its handler
-    records the run releases the held actor once after restart. Values are
+    records the run releases the held actor once after restart; a kill
+    after an invoked event exits the asking state and before the save
+    restores the state with its escalation open, and the answer is then
+    taken once; a clean stop and start while a state is asking leaves its
+    escalation open and answerable; a kill before the first send and a kill
+    after apprise-api accepts and before the row is marked sent each send
+    the original links, which still answer; a `retry` that meets the same
+    failure raises a new open occurrence, and a `retry` of that occurrence
+    after the cause is fixed, across a restart, releases the actor. Values are
     generic and never drawn from Manifold's own domain.

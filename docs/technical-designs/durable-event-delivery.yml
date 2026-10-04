@@ -184,8 +184,12 @@ proposed-design:
     An actor changes without a delivery when an invoked promise or callback
     sends it an internal event. The host calls `persist(actorId)`, and the
     router saves the target's persisted write with `store.saveSnapshot`,
-    updates its subscription, and re-arms the deadline loop. An actor the
-    engine starts is given to `attach`, which persists its first snapshot,
+    updates its subscription, and re-arms the deadline loop. Every snapshot
+    save the router makes, by delivery, `persist`, or `attach`, calls the
+    host's `saving` inside the save's transaction, so a write that must
+    commit with the snapshot, such as withdrawing an escalation whose
+    asking state the snapshot has left, commits with it or not at all. An
+    actor the engine starts is given to `attach`, which persists its first snapshot,
     indexes it, and drains it.
   resume: >-
     `startRouter` is the restart path and the start path, and it runs
@@ -289,6 +293,8 @@ proposed-design:
       subscription(actor: ActorRecord): Subscription;
       /** `router` is the one the restored actor publishes through. */
       restore(stored: StoredSnapshot, router: Router): RestoreOutcome;
+      /** Runs inside the transaction of every snapshot save the router makes. */
+      saving?(actor: ActorRecord): void;
     }
 
     export interface ActorRecord {

@@ -21,7 +21,7 @@ description: >-
   traps it tested, once a node holds remembered histories as well as
   active states and the return is observed per microstep. The spike's
   probe left invocations, delays, named actions, and wildcard events
-  undecided; the gates design now gives each a meaning. Expression and
+  undecided; the gates design gives each a meaning. Expression and
   named guards cannot be evaluated by the lint, so a trap behind one is a
   potential path, not a proved one, and a graph past the configuration
   bound is unexplored. If the lint built from the design accepts a
