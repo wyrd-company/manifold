@@ -26,7 +26,6 @@
     "ajv": "^8.20.0",
     "isomorphic-git": "^1.42.6",
     "quickjs-emscripten-core": "0.32.0",
-    "synckit": "^0.11.13",
     "toad-cache": "^3.7.4",
     "typescript": "catalog:",
     "xstate": "^5.33.2",
