@@ -532,9 +532,18 @@ test("active snapshots are ordered and terminal actors are excluded; earliest de
     machine: "counter",
     snapshot: { status: "stopped", value: "closed" },
   });
-  expect(store.activeSnapshots().map((row) => row.actorId)).toEqual(
-    Array.from({ length: 18 }, (_, i) => `counter-${String(i + 2).padStart(2, "0")}`),
-  );
+  store.saveSnapshot({
+    actorId: "ahead",
+    machine: "counter",
+    snapshot: snapshot(),
+    deadlines: [arm("idle", "entry-a", 40)],
+  });
+  expect(store.activeSnapshots().map((row) => row.actorId)).toEqual([
+    "ahead",
+    ...Array.from({ length: 18 }, (_, i) => `counter-${String(i + 2).padStart(2, "0")}`),
+  ]);
+  expect(store.nextDeadlineAt()).toBe(40);
+  store.fireDeadline(store.dueDeadlines(40)[0]!, "deadline.tick");
   expect(store.nextDeadlineAt()).toBe(100);
   for (const row of store.dueDeadlines(100)) store.fireDeadline(row, "deadline.tick");
   expect(store.nextDeadlineAt()).toBeUndefined();

@@ -618,3 +618,23 @@ test("persist during send is deferred to the delivery save", async () => {
   expect(writes).toBe(1);
   expect(seen()).toEqual(["weather:reading"]);
 });
+
+test("attach saves and indexes new actors before live publish; repeated saves retain deadline identity", async () => {
+  const r = start();
+  const data = context(["weather.new"]);
+  data.fireAt = 50;
+  const actor = target("new-counter", data);
+  r.attach(actor);
+  const arm = store.dueDeadlines(50).find((row) => row.actorId === actor.actorId)!;
+  time = 20;
+  data.fireAt = 60;
+  r.attach(actor);
+  r.persist(actor.actorId);
+  expect(store.dueDeadlines(50).find((row) => row.actorId === actor.actorId)).toEqual(arm);
+  expect(r.publish(event("new-actor", ["weather.new"]))).toMatchObject({
+    rows: [{ actorId: actor.actorId }],
+  });
+  expect(seen(actor.actorId)).toEqual([]);
+  await idle();
+  expect(seen(actor.actorId)).toEqual(["weather:new-actor"]);
+});
