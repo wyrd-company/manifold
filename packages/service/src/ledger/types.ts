@@ -15,17 +15,8 @@ export interface LedgerConnection {
   readonly database: LedgerDatabase;
   transaction<T>(work: () => T): T;
 }
-export type LedgerPortfolioInput = {
-  items: { id: string; parent: string | null; archived?: boolean }[];
-  allocations: {
-    item: string;
-    account: string;
-    guarantee: number;
-    ceiling?: number;
-    weight?: number;
-    pacing?: { burst: number };
-  }[];
-};
+export type { LedgerPortfolioInput, LedgerErrorCode } from "@wyrd-company/manifold-shared";
+export { LedgerError } from "@wyrd-company/manifold-shared";
 export type LedgerWriteResult = { replayed: boolean };
 export type LedgerMoveResult =
   | { moved: true; amount: number; replayed: boolean }
@@ -85,26 +76,4 @@ export interface Ledger {
   settle(request: { actor: string }): LedgerSettleResult;
   balance(query: { item: string; account: string; waiting: readonly string[] }): LedgerBalance;
   actorUsage(actor: string): LedgerActorUsage;
-}
-export type LedgerErrorCode =
-  | "invalid-portfolio"
-  | "guarantee-limit"
-  | "invalid-input"
-  | "idempotency-conflict"
-  | "actor-settled"
-  | "no-window"
-  | "window-conflict";
-export class LedgerError extends Error {
-  readonly code: LedgerErrorCode;
-  readonly details: Readonly<Record<string, unknown>>;
-  constructor(
-    code: LedgerErrorCode,
-    message: string,
-    details: Readonly<Record<string, unknown>> = {},
-  ) {
-    super(message);
-    this.name = "LedgerError";
-    this.code = code;
-    this.details = details;
-  }
 }

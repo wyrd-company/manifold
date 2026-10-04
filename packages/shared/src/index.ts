@@ -42,3 +42,16 @@ export { blueprintVersionKey, parseBlueprintVersionKey } from "./blueprint-versi
 export type { BlueprintVersion } from "./blueprint-version.ts";
 export { manifoldImplementationNames } from "./implementation-names.ts";
 export type { ImplementationNames } from "./implementation-names.ts";
+export {
+  parseLedgerPortfolio,
+  LedgerError,
+  portfolioData,
+  allocationFor,
+  itemPath,
+} from "./ledger-portfolio.ts";
+export type {
+  LedgerPortfolio,
+  LedgerPortfolioInput,
+  LedgerErrorCode,
+  PortfolioItem,
+} from "./ledger-portfolio.ts";
