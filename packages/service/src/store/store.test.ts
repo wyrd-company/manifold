@@ -520,3 +520,22 @@ test("deadline arms have distinct event identities across actors", () => {
   expect(new Set(rows.map((row) => row.eventId)).size).toBe(2);
   expect(rows.map((row) => row.actorId)).toEqual(["timer", "timer-other"]);
 });
+
+test("active snapshots are ordered and terminal actors are excluded; earliest deadline excludes fired rows", () => {
+  store.saveSnapshot({
+    actorId: "counter-00",
+    machine: "counter",
+    snapshot: { status: "done", value: "closed" },
+  });
+  store.saveSnapshot({
+    actorId: "counter-01",
+    machine: "counter",
+    snapshot: { status: "stopped", value: "closed" },
+  });
+  expect(store.activeSnapshots().map((row) => row.actorId)).toEqual(
+    Array.from({ length: 18 }, (_, i) => `counter-${String(i + 2).padStart(2, "0")}`),
+  );
+  expect(store.nextDeadlineAt()).toBe(100);
+  for (const row of store.dueDeadlines(100)) store.fireDeadline(row, "deadline.tick");
+  expect(store.nextDeadlineAt()).toBeUndefined();
+});

@@ -17,6 +17,7 @@ export interface Store {
   readonly connection: StoreConnection;
 
   saveSnapshot(write: SnapshotWrite): SaveOutcome;
+  activeSnapshots(): StoredSnapshot[];
   loadSnapshot(actorId: string): StoredSnapshot | undefined;
   loadErroredSnapshot(actorId: string): StoredErroredSnapshot | undefined;
   findActorsInState(query: StateQuery): StoredSnapshot[];
@@ -27,6 +28,7 @@ export interface Store {
   deliver(target: DeliveryTarget, row: InboxRow): DeliveryOutcome;
   drain(target: DeliveryTarget): DrainResult;
 
+  nextDeadlineAt(): number | undefined;
   dueDeadlines(at: number): DeadlineRow[];
   fireDeadline(deadline: DeadlineRow, topic: string): InboxRow | undefined;
 

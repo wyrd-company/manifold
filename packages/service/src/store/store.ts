@@ -107,6 +107,12 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         return "saved";
       });
     },
+    activeSnapshots() {
+      return database
+        .prepare("SELECT * FROM store_snapshot WHERE status = 'active' ORDER BY actor_id")
+        .all()
+        .map(readSnapshot);
+    },
     loadSnapshot(actorId) {
       const row = database.prepare("SELECT * FROM store_snapshot WHERE actor_id = ?").get(actorId);
       return row ? readSnapshot(row) : undefined;
@@ -202,6 +208,13 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         if (outcome === "errored") return { delivered, erroredAt: inbox };
         if (outcome === "delivered") delivered++;
       }
+    },
+    nextDeadlineAt() {
+      return database
+        .prepare(
+          "SELECT fire_at FROM store_deadline WHERE fired_at IS NULL ORDER BY fire_at LIMIT 1",
+        )
+        .get()?.["fire_at"] as number | undefined;
     },
     dueDeadlines(at) {
       return database
