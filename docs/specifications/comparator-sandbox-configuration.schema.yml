@@ -1,0 +1,20 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Comparator sandbox configuration
+description: The value of the `comparatorSandbox` key of the service configuration.
+type: object
+additionalProperties: false
+properties:
+  timeoutMs:
+    description: Per-evaluation timeout in milliseconds.
+    type: integer
+    minimum: 1
+    default: 100
+  memoryLimitMiB:
+    description: >-
+      QuickJS runtime memory limit in mebibytes. Linear memory per loaded
+      comparator is capped at twice this value, within the 4 GiB a 32-bit
+      wasm memory can address.
+    type: integer
+    minimum: 1
+    maximum: 2047
+    default: 32

@@ -1,0 +1,90 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Comparator contract
+description: >-
+  The data that crosses the comparator sandbox boundary as JSON: the input a
+  gate passes in, without the `random` function the sandbox builds from the
+  seed, and the selection the comparator returns.
+$defs:
+  input:
+    type: object
+    additionalProperties: false
+    required: [population, holders, balances]
+    properties:
+      population:
+        type: array
+        items:
+          $ref: "#/$defs/task"
+      holders:
+        type: array
+        items:
+          $ref: "#/$defs/holder"
+      balances:
+        description: Portfolio item name to account name to available balance.
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties:
+            type: number
+  task:
+    type: object
+    additionalProperties: false
+    required: [id, fields, age, dependencies, criticalPath, item]
+    properties:
+      id:
+        type: string
+        minLength: 1
+      fields:
+        type: object
+      age:
+        description: Whole milliseconds since the task entered the gated state.
+        type: integer
+        minimum: 0
+      dependencies:
+        enum: [blocked, clear]
+      criticalPath:
+        type: integer
+        minimum: 1
+      item:
+        type: string
+        minLength: 1
+  holder:
+    type: object
+    additionalProperties: false
+    required: [id, item]
+    properties:
+      id:
+        type: string
+        minLength: 1
+      item:
+        type: string
+        minLength: 1
+  seed:
+    description: The evaluation's seed for the mulberry32 generator.
+    type: integer
+    minimum: 0
+    maximum: 4294967295
+  selection:
+    oneOf:
+      - type: "null"
+      - type: object
+        additionalProperties: false
+        required: [task]
+        properties:
+          task:
+            type: string
+            minLength: 1
+          reservations:
+            type: array
+            items:
+              $ref: "#/$defs/reservation"
+  reservation:
+    type: object
+    additionalProperties: false
+    required: [account, amount]
+    properties:
+      account:
+        type: string
+        minLength: 1
+      amount:
+        type: number
+        exclusiveMinimum: 0

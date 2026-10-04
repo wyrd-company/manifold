@@ -1,0 +1,30 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose limits this is.
+  realizes:
+    - comparator-sandbox
+description: >-
+  Defines the `comparatorSandbox` key of the service configuration: the
+  limits every comparator evaluation runs under.
+  `docs/specifications/comparator-sandbox-configuration.schema.yml` is the
+  machine-readable definition of the key's value.
+
+  `timeoutMs` is the per-evaluation timeout in milliseconds. An evaluation
+  whose duration exceeds it fails with kind `timeout`. Default 100.
+
+  `memoryLimitMiB` is the QuickJS runtime memory limit in mebibytes. An
+  evaluation that exceeds it fails with kind `memory`. Each loaded
+  comparator's linear memory has a maximum of twice this value, which is the
+  most host memory one loaded comparator holds. Default 32.
+
+  The key and each property are optional; an absent value takes its
+  default. The service reads the key when it starts, and the limits apply to
+  every comparator it loads.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/comparator-sandbox-configuration.schema.yml` is a
+  valid JSON Schema 2020-12 document, and its defaults equal
+  `comparatorSandboxDefaults` exported by the comparator sandbox. The
+  service rejects a configuration whose `comparatorSandbox` value the schema
+  rejects, naming the property.

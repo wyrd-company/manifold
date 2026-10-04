@@ -1,0 +1,44 @@
+$schema: https://commonclischema.org/draft/2026-04/schema
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+commands:
+  - name: comparator
+    summary: Work with gate comparators in a process repository.
+    mode: non-interactive
+    subcommands:
+      - name: lint
+        summary: Typecheck comparators against the comparator contract without running them.
+        mode: non-interactive
+        positional-arguments:
+          - name: files
+            description: Paths to comparator TypeScript source files.
+            position: 0
+            greedy: true
+            required: true
+            value:
+              type: path-list
+              arity:
+                min: 1
+                max: unbounded
+        output:
+          modes:
+            - name: text
+              description: >-
+                One line per diagnostic on standard output,
+                `<file>:<line>:<column> <code> <message>`; nothing when every
+                file is clean.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: Every file is clean.
+            - code: 1
+              meaning: At least one file has a diagnostic.
+            - code: 2
+              meaning: No file was given, or a file could not be read.
+        examples:
+          - manifold-host comparator lint comparators/ordered.ts
+          - manifold-host comparator lint comparators/ordered.ts comparators/drawn.ts
+        notes:
+          - The command never evaluates a comparator.
