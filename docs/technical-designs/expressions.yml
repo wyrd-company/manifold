@@ -87,62 +87,145 @@ proposed-design:
     needs: a restarted worker or service starts empty, and a replayed event
     evaluates again from the same snapshot.
   worker-wait: |-
-    The expression worker runs under a supervisor thread. On the first
-    evaluation the calling thread starts the supervisor, unreferenced so that
-    it does not keep the process alive, and the supervisor starts the
-    expression worker and watches it. The calling thread and the expression
-    worker share one `SharedArrayBuffer` and one `MessagePort`: the calling
-    thread posts the request on the port and waits on the buffer, and the
-    worker posts the result and wakes it, which the calling thread then reads
-    with `receiveMessageOnPort`. The supervisor's event loop never blocks, so
-    it receives the worker's `exit` event; it then writes the exit code to
-    the buffer and wakes the calling thread at once. The service implements
-    this channel on `node:worker_threads` in one module,
-    `packages/service/src/expression-worker-channel.ts`, which exports the
-    calling side and the worker side, so a test can run the channel against
-    a fixture worker through the same interface.
+    The expression worker runs under a supervisor thread, and the two are a
+    pair. The calling thread starts the supervisor, unreferenced so that it
+    does not keep the process alive, and the supervisor starts the
+    expression worker and watches it. A pair has one `SharedArrayBuffer` and
+    one `MessagePort` between the calling thread and the worker. The calling
+    thread posts a request on the port and waits on the buffer. The worker
+    posts the result on the port and wakes the calling thread, which reads
+    it with `receiveMessageOnPort`. The supervisor's event loop never blocks,
+    so it receives the worker's `exit` event and records the exit in the
+    buffer.
 
-    The wait is bounded by `timeoutMs` of the `expressions` section of
+    The channel is one module, `packages/service/src/expression-worker-channel.ts`,
+    built on `node:worker_threads`. It exports the calling side and the
+    worker side, so the expression worker and a test's fixture worker serve
+    requests through the same code:
+
+    ```ts
+    export function createExpressionWorkerChannel(options: {
+      worker: URL; // a module that calls serveExpressionWorker
+      onPair?(event: { pair: number; phase: "started" | "ended" }): void;
+    }): ExpressionWorkerChannel;
+
+    export interface ExpressionWorkerChannel {
+      evaluate(request: unknown, timeoutMs: number): ChannelResult;
+      close(): Promise<void>;
+    }
+
+    export type ChannelResult =
+      | { readonly ok: true; readonly value: unknown }
+      | { readonly ok: false; readonly cause: "timeout" }
+      | { readonly ok: false; readonly cause: "exit"; readonly exitCode: number };
+
+    export function serveExpressionWorker(
+      handler: (request: unknown) => Promise<unknown>,
+    ): void;
+    ```
+
+    `evaluate` blocks until its outcome is decided. `onPair` runs on the
+    calling thread's event loop. A pair is `started` when the channel
+    creates its supervisor. It is `ended` when the supervisor's `exit` event
+    fires, which follows the end of the worker. Pairs are numbered from 1 in
+    the order the channel starts them. `close` discards the current pair, if
+    there is one, and resolves when every pair the channel started has
+    ended. A second call does the same, so it resolves at once. The service
+    never closes its channel.
+
+    Arbitration. The buffer holds the pair's evaluation state, a sequence
+    number, an `exited` flag, and the worker's exit code. Each request and
+    each result carries the sequence number of its evaluation, and the
+    calling thread drops a message whose number is not the current one. The
+    state moves only by `Atomics.compareExchange`, so each step has one
+    winner:
+
+    | From | To | By | When |
+    |---|---|---|---|
+    | `idle` | `pending` | caller | it posts a request |
+    | `pending` | `running` | worker | it takes the request |
+    | `running` | `done` | worker | it has posted the result |
+    | `running` | `failed` | supervisor | the worker exits |
+    | `pending` | `untaken` | supervisor | the worker exits |
+    | `pending`, `running` | `abandoned` | caller | the wait reaches its deadline |
+    | `done` | `idle` | caller | it has read the result |
+
+    The supervisor sets `exited` and the exit code before its exchange, on
+    every exit, so a pair whose worker has gone is known to be dead even
+    when no evaluation is in flight. It wakes the calling thread after the
+    exchange. The worker posts the result before it moves the state to
+    `done`, so the calling thread finds the result on the port whenever it
+    sees `done`. Only `done`, `failed`, `untaken`, and `abandoned` end a
+    wait, and none of them is ever overwritten. A result that the worker
+    publishes before it exits therefore stands. An exit while the worker
+    holds an evaluation fails that evaluation. An exit before the worker
+    takes the request is never charged to that request.
+
+    One evaluation has one deadline, `timeoutMs` after `evaluate` is called,
+    and it runs as follows:
+
+    1. If the current pair has `exited` set, the channel discards it.
+    2. If there is no current pair, the channel starts one.
+    3. The caller posts the request and waits on the buffer until the
+       deadline.
+    4. On `done`, the result is the outcome.
+    5. On `failed`, the outcome is `exit` with the worker's exit code, and
+       the pair is discarded.
+    6. On `untaken`, the pair is discarded and the request is sent once
+       more on a new pair, within the same deadline. A second `untaken`
+       fails the evaluation with `exit`, so a worker that cannot start
+       fails at once and does not restart in a loop.
+    7. When the wait reaches the deadline, the caller exchanges `pending` or
+       `running` for `abandoned`. If the exchange wins, the outcome is
+       `timeout` and the pair is discarded. If the exchange loses, the
+       state the other thread reached decides. On `done`, the result is the
+       outcome. On `failed`, the outcome is `exit`. On `untaken`, the
+       outcome is `timeout`, because no time is left to send the request
+       again. After `failed` or `untaken`, the pair is discarded.
+
+    An evaluation worker that exits between evaluations therefore never
+    fails the next evaluation. Step 1 catches it when the supervisor has
+    already recorded the exit. Step 6 catches it when the exit lands after
+    the request is posted.
+
+    Discarding a pair calls `terminate` on its supervisor, which ends the
+    worker with it. `Worker.terminate` interrupts the isolate, so it stops a
+    worker that is inside a JSONata loop. The channel drops the pair's
+    buffer and port, so a message from a discarded pair is never read.
+    Termination is asynchronous: the channel stops using a pair as soon as
+    it discards it, and the pair reports `ended` once its threads have gone.
+    At any moment the channel has at most one current pair. Every other pair
+    it started has been terminated and is either still ending or has
+    reported `ended`. Discarding is idempotent: terminating a pair that is
+    already terminated or has already ended does nothing, and a pair reports
+    `ended` once. A service that stops during a wait loses only threads, and
+    the event replays from the last saved snapshot.
+
+    Bound. The wait is bounded by `timeoutMs` of the `expressions` section of
     service configuration, per `expressions-configuration`, default 1000.
-    The bound covers the whole round trip: a worker start when one is due,
-    compilation, evaluation, and the result. A worker start, which loads
-    JSONata and `packages/shared`, takes about a hundred milliseconds and a
-    typical evaluation well under one, so the default holds several starts
-    and the minimum of 250 holds one, and the first evaluation after a
+    The bound covers the whole round trip: a pair start when one is due,
+    compilation, evaluation, and the result. A pair start, which loads
+    JSONata and `packages/shared`, takes about a hundred milliseconds, and a
+    typical evaluation takes well under one. So the default holds several
+    starts, and the minimum of 250 holds one: the first evaluation after a
     restart is not failed by the start alone. The maximum of 60000 caps how
     long one runaway expression holds the calling thread.
 
-    A wait that reaches the bound, or that ends because the expression
-    worker exited, fails that evaluation with an `ExpressionError` of kind
-    `evaluation` naming the expression, its location, and the cause. The
-    calling thread then terminates the supervisor, which ends the expression
-    worker with it; `Worker.terminate` interrupts the isolate, so it stops a
-    worker that is inside a JSONata loop. The next evaluation starts a new
-    supervisor and worker with a new buffer and port, so a result a
-    terminated worker posts late is never read. A worker that exits between
-    evaluations is replaced the same way before the next evaluation, which
-    runs on the new worker and does not fail. Evaluations on one pair are
-    strictly sequential, because the calling thread blocks for each.
-
-    Restarting converges. Discarding a pair that is already discarded does
-    nothing, and the next evaluation finds either a live pair or none and
-    starts one; however many failures come first, the process holds at most
-    one live pair after the next evaluation. A service that stops during a
-    wait loses only the two threads, and the event replays from the last
-    saved snapshot.
-
-    The failure takes the existing expression error path, so an actor sees
-    it as it sees any other evaluation error: a guard or match does not
-    pass, an assignment raises `expression.error`, and a mapping stops the
-    actor in error, each reported to `onError`. An expression that never
-    finishes holds the calling thread, and every actor it runs, for the
-    bound each time it is evaluated.
+    Errors. `createBlueprintExpressions` turns a `timeout` or `exit` outcome
+    into an `ExpressionError` of kind `evaluation` that names the expression
+    and its location, with the message the specification
+    `blueprint-expressions` gives. The failure takes the existing expression
+    error path, so an actor sees it as it sees any other evaluation error. A
+    guard or match does not pass. An assignment raises `expression.error`. A
+    mapping stops the actor in error. Each is reported to `onError`. An
+    expression that never finishes holds the calling thread, and every actor
+    it runs, for the bound each time it is evaluated.
 
     `configureBlueprintExpressions` sets the bound for the process. The
     service calls it once at start with the `expressions` section, before it
-    loads a blueprint; a later call applies from the next evaluation. The
-    expression lint and the host CLI await JSONata in their own thread and
-    do not use the worker or the bound.
+    loads a blueprint. A later call applies from the next evaluation. The
+    expression lint and the host CLI await JSONata in their own thread, and
+    they use neither the worker nor the bound.
   expression-errors: >-
     A failed expression yields an `ExpressionError` naming its kind (syntax,
     evaluation, result, or schema), the expression, its location in the

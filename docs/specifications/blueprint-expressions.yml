@@ -221,12 +221,15 @@ description: |-
   - An evaluation whose wait reaches `timeoutMs` has the message
     `Expression did not finish within <timeoutMs> ms; the expression worker
     was restarted`.
-  - An evaluation during which the worker exits has the message
+  - An evaluation whose worker exits after taking it has the message
     `The expression worker exited with code <code> during evaluation; the
     expression worker was restarted`, and fails as soon as the worker
-    exits.
+    exits. A worker that exits before taking the request does not fail
+    it: the request is sent once more to a new worker within the same
+    wait, and only a second such exit fails it with this message.
 
-  After either, the next evaluation runs on a new worker.
+  A result the worker publishes before it exits stands. After either
+  error, the next evaluation runs on a new worker.
 
   At run time, running an expression twice over the same input gives the
   same result, except through JSONata's clock and random functions. Evaluation writes
@@ -265,10 +268,21 @@ validation-criteria: >-
   JSONata function that never ends does not pass, reports an `evaluation`
   error naming its expression and location once the wait reaches
   `timeoutMs`, and that the next evaluation succeeds. The channel tests run
-  `packages/service/src/expression-worker-channel.ts` against a fixture
-  worker that exits during an evaluation, and show that the evaluation
-  fails with the exit message well before `timeoutMs`, and that the next
-  evaluation succeeds. The lint tests in `packages/shared` use fixtures for a
+  `packages/service/src/expression-worker-channel.ts`, through its exported
+  interface, against fixture workers that serve with
+  `serveExpressionWorker`, and use `onPair` to observe pairs start and end:
+  a worker that exits while it holds an evaluation fails it with `exit`
+  well before `timeoutMs`, and the next evaluation succeeds on a new pair;
+  a worker that publishes its result and then exits returns that result;
+  a worker that exits after one evaluation, awaited until its pair reports
+  `ended`, leaves the next evaluation to succeed on a new pair; a worker
+  that exits on start fails the evaluation with `exit` after two pairs; an
+  evaluation that times out on a fixture that would answer later is
+  followed by one that receives its own answer and never the late one;
+  three consecutive timeouts followed by a success start four pairs, of
+  which three report `ended` and one stays current; and `close`, called
+  twice, resolves both times with every started pair reported `ended`.
+  The lint tests in `packages/shared` use fixtures for a
   valid mapping, a mapping whose result breaks its output schema, a guard
   whose result is not a boolean, an expression that does not parse, and a
   mapping with no output schema, and check each finding's kind, location,
