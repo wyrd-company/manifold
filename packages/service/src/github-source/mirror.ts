@@ -34,6 +34,7 @@ export function createMirror(store: Store, now: () => number) {
             {
               issue: issue(row),
               baselined: Boolean(row["baselined"]),
+              present: Boolean(row["present"]),
               revision: row["revision"] as number,
             },
           ]),
@@ -125,7 +126,7 @@ export function createMirror(store: Store, now: () => number) {
     for (const [id, row] of after.issues)
       if (JSON.stringify(before.issues.get(id)) !== JSON.stringify(row))
         db.prepare(
-          "INSERT INTO github_issue VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(issue_node_id) DO UPDATE SET repository=excluded.repository, number=excluded.number, state=excluded.state, state_reason=excluded.state_reason, baselined=excluded.baselined, revision=excluded.revision",
+          "INSERT INTO github_issue VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(issue_node_id) DO UPDATE SET repository=excluded.repository, number=excluded.number, state=excluded.state, state_reason=excluded.state_reason, baselined=excluded.baselined, revision=excluded.revision, present=excluded.present",
         ).run(
           id,
           row.issue.repository,
@@ -134,6 +135,7 @@ export function createMirror(store: Store, now: () => number) {
           row.issue.stateReason,
           Number(row.baselined),
           row.revision,
+          Number(row.present),
         );
     for (const [id, row] of after.projects)
       if (JSON.stringify(before.projects.get(id)) !== JSON.stringify(row))
@@ -236,7 +238,7 @@ export function createMirror(store: Store, now: () => number) {
     trackedIssue(id: string, bound: ReadonlyMap<string, GitHubProject>): TrackedIssue | undefined {
       const state = read();
       const row = state.issues.get(id);
-      if (!row?.baselined || !isTracked(state, bound, id)) return undefined;
+      if (!row?.baselined || !row.present || !isTracked(state, bound, id)) return undefined;
       const lookup = (node: string) => state.issues.get(node)!.issue;
       return {
         issue: row.issue,

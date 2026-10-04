@@ -196,3 +196,12 @@ test("signature checks use the named hook secret and reject signed non-JSON", ()
     ],
   ).toBe(0);
 });
+
+test.each(["\n", "\r\n"])(
+  "a secret file ending in %j verifies with the one line ending removed",
+  (ending) => {
+    const { source, secretFile } = setup();
+    writeFileSync(secretFile, `synthetic-secret${ending}`);
+    expect(source.receive(delivery("ping", {})).status).toBe("accepted");
+  },
+);

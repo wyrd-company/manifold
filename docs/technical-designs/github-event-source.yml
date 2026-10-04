@@ -318,7 +318,9 @@ proposed-design:
     stops the runner's pending work for this wake, leaves every unread row
     pending, and sends a `GitHubSourceError` of kind `api` with the status
     to `onError`; the next timer wakes it to try again. The source adds no
-    retry or backoff of its own. A `publish` that returns `rejected` is a
+    retry or backoff of its own. A failed reconcile preserves a due scan or
+    sweep wake, so a timer that fired during the read still runs and re-arms;
+    pending work alone is not retried immediately. A `publish` that returns `rejected` is a
     defect in the source and throws, which rolls the transaction back.
   credentials-per-entity: >-
     A Project and its items are read with the credential of the Project's
@@ -399,7 +401,11 @@ proposed-design:
     type `REDACTED` is skipped. Field values whose field `dataType` is not
     `TEXT`, `NUMBER`, `DATE`, `SINGLE_SELECT`, or `ITERATION` are skipped.
     Enum values are lower-cased into the shapes `github-events` defines, and
-    a node id outside the node id pattern fails the request.
+    a node id outside the node id pattern fails the request. An absent issue
+    is recorded with `present` 0, retains its pending row, and is skipped
+    for the remainder of that wake; other issues in its batch still
+    reconcile. A later wake reads it again. A complete read restores
+    `present` 1.
   compare-issues: >-
     The comparison of a tracked issue `T` takes its observed state and
     lists, the mirror rows of `T`, of every issue in its lists, and of every
@@ -468,9 +474,11 @@ proposed-design:
     scanned from the next scan on. Otherwise the scan lists the hook's
     deliveries, `GET /orgs/{owner}/hooks/{id}/deliveries` for an
     organization hook and `GET /repos/{owner}/{repository}/hooks/{id}/deliveries`
-    for a repository hook, 100 per page, newest first, and stops at the
+    for a repository hook, 100 per page, newest first. It follows the Link
+    header's `next` cursor and stops when there is no next cursor or at the
     first page that reaches a `delivered_at` earlier than
-    `scanned_through`. A GUID is failed when none of its listed attempts
+    `scanned_through`. A cursor that repeats fails the scan as an API error.
+    A GUID is failed when none of its listed attempts
     has a status code from 200 to 299, it has no `github_delivery` row, and
     it has no `github_redelivery` row. For each failed GUID the scan calls
     `POST .../deliveries/{attempt_id}/attempts` with its newest attempt and
@@ -499,7 +507,7 @@ proposed-design:
     `trackedIssue(nodeId)` reads the mirror: the issue, the present
     dependencies in each direction, the present sub-issues and parent, and
     the bound Projects with a present item for it. It returns `undefined`
-    for an issue that is not tracked or not yet baselined, so every answer
+    for an issue that is not tracked, not yet baselined, or observed absent, so every answer
     it gives holds the issue's complete relationship lists. Intake and gates read the dependency
     graph through it.
   stop: >-

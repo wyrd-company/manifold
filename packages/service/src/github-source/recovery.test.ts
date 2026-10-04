@@ -22,7 +22,7 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const fn of cleanup.splice(0).toReversed()) await fn();
 });
-async function setup() {
+async function setup(intervals: { sweepIntervalMs?: number; redeliveryIntervalMs?: number } = {}) {
   const fake = await githubFake();
   cleanup.push(fake.close);
   const directory = mkdtempSync(join(tmpdir(), "github-recovery-"));
@@ -74,6 +74,7 @@ async function setup() {
       sweepIntervalMs: 900000,
       redeliveryIntervalMs: 60000,
       requestTimeoutMs: 30000,
+      ...intervals,
     },
     credentials: {
       names: ["sample-token"],
@@ -645,4 +646,140 @@ test("HTTP rejects bodies beyond the GitHub payload limit without recording a de
       "count"
     ],
   ).toBe(0);
+});
+
+test.each([undefined, "records"])(
+  "delivery scans advance by Link cursor for hook repository %s",
+  async (repository) => {
+    const s = await setup();
+    await s.idle();
+    (
+      s.options.configuration.owners.sample.hooks[0]! as { repository: string | undefined }
+    ).repository = repository;
+    s.fake.setTarget(undefined);
+    for (let index = 0; index < 101; index++)
+      s.fake.deliveries.push({
+        id: index + 1,
+        guid: `guid-${index}`,
+        delivered_at: new Date(s.clock.now() + 101 - index).toISOString(),
+        status_code: index === 100 ? 502 : 200,
+        event: "ping",
+        payload: {},
+      });
+    s.clock.advance(60000);
+    await expect.poll(() => s.fake.redeliveries).toEqual([101]);
+    expect(s.fake.deliveryRequests.map((url) => url.searchParams.get("cursor"))).toEqual([
+      null,
+      "second",
+    ]);
+    expect(s.fake.deliveryRequests.every((url) => !url.searchParams.has("page"))).toBe(true);
+    expect(s.errors).toEqual([]);
+  },
+);
+test("a repeated delivery Link cursor fails the scan instead of looping", async () => {
+  const s = await setup();
+  await s.idle();
+  s.fake.repeatDeliveryCursor();
+  for (let index = 0; index < 101; index++)
+    s.fake.deliveries.push({
+      id: index + 1,
+      guid: `guid-${index}`,
+      delivered_at: new Date(s.clock.now() + 1).toISOString(),
+      status_code: 200,
+      event: "ping",
+      payload: {},
+    });
+  s.clock.advance(60000);
+  await expect.poll(() => s.errors.length).toBe(1);
+  expect(s.errors[0]?.kind).toBe("api");
+  expect(s.fake.deliveryRequests).toHaveLength(2);
+});
+test("an absent issue stays pending and unavailable while other batch issues publish", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.fake.addItem("IT_B", "I_B");
+  s.source.requestSweep();
+  await s.idle();
+  const prior = s.fake.issues.get("I_A")!;
+  s.fake.issues.delete("I_A");
+  s.fake.issues.get("I_B")!.state = "CLOSED";
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }, "absent"));
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_B" } }, "present"));
+  await expect.poll(() => s.source.trackedIssue("I_B")?.issue.state).toBe("closed");
+  expect(s.source.trackedIssue("I_A")).toBeUndefined();
+  expect(
+    s.store.connection.database
+      .prepare("SELECT node_id FROM github_pending WHERE kind='issue'")
+      .all(),
+  ).toEqual([{ node_id: "I_A" }]);
+  const reads = s.fake.log.filter((row) => row.operation === "GitHubIssues").length;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(s.fake.log.filter((row) => row.operation === "GitHubIssues")).toHaveLength(reads);
+  s.fake.issues.set("I_A", prior);
+  s.clock.advance(60000);
+  await s.idle();
+  expect(s.source.trackedIssue("I_A")?.issue.state).toBe("open");
+  expect(s.errors).toEqual([]);
+});
+test("timer wakes during a failed reconcile recover work and re-arm both timers", async () => {
+  const s = await setup({ sweepIntervalMs: 50, redeliveryIntervalMs: 40 });
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  const held = s.fake.hold("GitHubIssues");
+  s.fake.issues.get("I_A")!.state = "CLOSED";
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }));
+  await held.reached;
+  s.fake.fail(502);
+  s.clock.advance(60);
+  held.release();
+  await expect.poll(() => s.source.trackedIssue("I_A")?.issue.state).toBe("closed");
+  await s.idle();
+  expect(s.errors.map((error) => error.status)).toEqual([502]);
+  expect(s.clock.timers.size).toBe(2);
+});
+test("issue absence is durable across restart and becomes available only after a complete read", async () => {
+  const s = await setup();
+  s.fake.addItem("IT_A", "I_A");
+  s.source.requestSweep();
+  await s.idle();
+  const issue = s.fake.issues.get("I_A")!;
+  s.fake.issues.delete("I_A");
+  s.source.receive(signedDelivery("issues", { issue: { node_id: "I_A" } }));
+  await expect.poll(() => s.source.trackedIssue("I_A")).toBeUndefined();
+  await s.source.stop();
+  const resumed = startGitHubSource(s.options);
+  cleanup.push(() => resumed.stop());
+  expect(resumed.trackedIssue("I_A")).toBeUndefined();
+  s.fake.issues.set("I_A", issue);
+  await s.idle();
+  expect(resumed.trackedIssue("I_A")?.issue.state).toBe("open");
+});
+test("the issue-presence migration preserves populated mirrors from version one", async () => {
+  const s = await setup();
+  await s.idle();
+  const prior = openStore({ path: `${s.path}.prior` });
+  const schema = readFileSync(
+    new URL("../../../../docs/specifications/github-source-database-schema.sql", import.meta.url),
+    "utf8",
+  ).split("ALTER TABLE github_issue")[0]!;
+  prior.connection.migrate("github", [schema]);
+  prior.connection.database
+    .prepare("INSERT INTO github_issue VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run("I_A", "sample/records", 1, "closed", "completed", 1, 4);
+  const source = startGitHubSource({ ...s.options, store: prior, boundProjects: () => [] });
+  cleanup.push(async () => {
+    await source.stop();
+    prior.close();
+  });
+  expect(
+    prior.connection.database
+      .prepare("SELECT present,baselined,revision,state FROM github_issue")
+      .get(),
+  ).toEqual({ present: 1, baselined: 1, revision: 4, state: "closed" });
+  expect(
+    prior.connection.database
+      .prepare("SELECT version FROM schema_migration WHERE owner='github'")
+      .get()?.["version"],
+  ).toBe(2);
 });

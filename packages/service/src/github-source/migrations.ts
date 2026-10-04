@@ -106,4 +106,5 @@ CREATE TABLE github_sub_issue (
 
 CREATE INDEX github_sub_issue_sub ON github_sub_issue (sub_issue_node_id);
 `,
+  `ALTER TABLE github_issue ADD COLUMN present INTEGER NOT NULL DEFAULT 1 CHECK (present IN (0, 1));`,
 ];

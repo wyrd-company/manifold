@@ -65,6 +65,8 @@ export function verify(
   let secret: Buffer;
   try {
     secret = readFileSync(configured.secretFile);
+    if (secret.at(-1) === 10)
+      secret = secret.subarray(0, secret.length - (secret.at(-2) === 13 ? 2 : 1));
   } catch (error) {
     throw new GitHubSourceError("secret-file", "Cannot read GitHub hook secret", undefined, error);
   }

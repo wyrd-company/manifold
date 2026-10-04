@@ -356,9 +356,9 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
       }
       return values;
     },
-    async deliveries(owner: string, hook: GitHubHookConfiguration, page: number) {
+    async deliveries(owner: string, hook: GitHubHookConfiguration, cursor?: string) {
       return call(owner, async (token, signal) => {
-        const { data } = await request(
+        const { data, headers } = await request(
           `GET ${hook.repository ? "/repos/{owner}/{repo}" : "/orgs/{org}"}/hooks/{hook_id}/deliveries`,
           {
             baseUrl: options.configuration.apiUrl,
@@ -367,12 +367,17 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
             repo: hook.repository,
             hook_id: hook.id,
             per_page: 100,
-            page,
+            ...(cursor ? { cursor } : {}),
             headers: { authorization: `token ${token}` },
             request: { signal },
           },
         );
-        return hookAttempts(data);
+        const next = headers.link?.split(",").find((link) => /;\s*rel="next"/.test(link));
+        const nextUrl = next?.match(/<([^>]+)>/)?.[1];
+        const nextCursor = nextUrl ? new URL(nextUrl).searchParams.get("cursor") : undefined;
+        if (next && !nextCursor)
+          throw new GitHubSourceError("api", "GitHub delivery pagination has no cursor");
+        return { attempts: hookAttempts(data), nextCursor: nextCursor ?? undefined };
       });
     },
     async redeliver(owner: string, hook: GitHubHookConfiguration, attempt: number) {

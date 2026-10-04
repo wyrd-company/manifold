@@ -87,6 +87,8 @@ export async function githubFake() {
     payload: unknown;
   }[] = [];
   const redeliveries: number[] = [];
+  const deliveryRequests: URL[] = [];
+  let deliveryPagination: "normal" | "repeated" = "normal";
   let target: string | undefined;
   let failure = 0;
   let held: { operation: string; entered: () => void; released: Promise<void> } | undefined;
@@ -191,9 +193,32 @@ export async function githubFake() {
           res.writeHead(400).end();
           return;
       }
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data }));
+      const errors =
+        operation === "GitHubIssues"
+          ? (input.variables["ids"] as string[]).flatMap((id, index) =>
+              issues.has(id)
+                ? []
+                : [
+                    {
+                      type: "NOT_FOUND",
+                      path: ["nodes", index],
+                      message: "synthetic missing issue",
+                    },
+                  ],
+            )
+          : [];
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ data, ...(errors.length ? { errors } : {}) }));
     } else if (url.pathname.endsWith("/deliveries") && req.method === "GET") {
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(deliveries));
+      deliveryRequests.push(url);
+      const cursor = url.searchParams.get("cursor");
+      const offset = cursor === "second" ? 100 : 0;
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (deliveries.length > offset + 100 || (deliveryPagination === "repeated" && cursor))
+        headers["link"] =
+          `<http://127.0.0.1:${(server.address() as AddressInfo).port}${url.pathname}?per_page=100&cursor=second>; rel="next"`;
+      res.writeHead(200, headers).end(JSON.stringify(deliveries.slice(offset, offset + 100)));
     } else if (url.pathname.endsWith("/attempts") && req.method === "POST") {
       const id = Number(url.pathname.split("/").at(-2));
       redeliveries.push(id);
@@ -216,6 +241,10 @@ export async function githubFake() {
     log,
     deliveries,
     redeliveries,
+    deliveryRequests,
+    repeatDeliveryCursor() {
+      deliveryPagination = "repeated";
+    },
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     addItem(id: string, issueId: string) {
       items.set(id, {

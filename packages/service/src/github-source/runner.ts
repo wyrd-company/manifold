@@ -114,7 +114,11 @@ export function createRunner(
     const state = mirror.read();
     const grouped = new Map<string, Set<string>>();
     for (const value of items)
-      if (value.issue && !state.issues.get(value.issue.nodeId)?.baselined) {
+      if (
+        value.issue &&
+        (!state.issues.get(value.issue.nodeId)?.baselined ||
+          !state.issues.get(value.issue.nodeId)?.present)
+      ) {
         const repositoryOwner = value.issue.repository.split("/")[0]!;
         const owner =
           Object.keys(options.configuration.owners).find(
@@ -161,7 +165,11 @@ export function createRunner(
     const events: SourceEvent[] = [];
     for (const value of items) {
       events.push(...reconcileItem(state, value.item.nodeId, value));
-      if (value.issue && !state.issues.get(value.issue.nodeId)?.baselined) {
+      if (
+        value.issue &&
+        (!state.issues.get(value.issue.nodeId)?.baselined ||
+          !state.issues.get(value.issue.nodeId)?.present)
+      ) {
         const baseline = issues.find((row) => row.issue.nodeId === value.issue!.nodeId)!;
         events.push(...reconcileIssue(state, bound, baseline));
       }
@@ -203,9 +211,12 @@ export function createRunner(
     });
   }
   async function pending() {
+    const absent = new Set<string>();
     while (true) {
       if (stopped) return;
-      const rows = mirror.pending();
+      const rows = mirror
+        .pending()
+        .filter((row) => row.kind !== "issue" || !absent.has(row.nodeId));
       const first = rows[0];
       if (!first) return;
       const state = mirror.read();
@@ -231,7 +242,18 @@ export function createRunner(
           owner,
           batch.map((row) => row.nodeId),
         );
-        commit((view) => issues.flatMap((value) => reconcileIssue(view, bound, value)), batch);
+        const observed = new Set(issues.map((value) => value.issue.nodeId));
+        const missing = batch.filter((row) => !observed.has(row.nodeId));
+        commit(
+          (view) => {
+            const events = issues.flatMap((value) => reconcileIssue(view, bound, value));
+            for (const row of missing)
+              view.issues.set(row.nodeId, { ...view.issues.get(row.nodeId)!, present: false });
+            return events;
+          },
+          batch.filter((row) => observed.has(row.nodeId)),
+        );
+        for (const row of missing) absent.add(row.nodeId);
       } else {
         const projectId = first.projectId ?? state.items.get(first.nodeId)?.projectId;
         if (!projectId || !bound.has(projectId)) {
@@ -278,11 +300,14 @@ export function createRunner(
           mirror.saveCursor(hook.id, clock.now());
           continue;
         }
-        const attempts: Awaited<ReturnType<typeof api.deliveries>> = [];
+        const attempts: Awaited<ReturnType<typeof api.deliveries>>["attempts"] = [];
+        let nextCursor: string | undefined;
+        const seenCursors = new Set<string>();
         let newest = cursor;
-        for (let page = 1; ; page++) {
+        while (true) {
           if (stopped) return;
-          const deliveries = await api.deliveries(owner, hook, page);
+          const page = await api.deliveries(owner, hook, nextCursor);
+          const deliveries = page.attempts;
           let older = false;
           for (const delivery of deliveries) {
             const time = Date.parse(delivery.delivered_at);
@@ -294,7 +319,11 @@ export function createRunner(
               newest = Math.max(newest, time);
             }
           }
-          if (older || deliveries.length < 100) break;
+          if (older || !page.nextCursor) break;
+          if (seenCursors.has(page.nextCursor))
+            throw new GitHubSourceError("api", "GitHub delivery cursor did not advance");
+          seenCursors.add(page.nextCursor);
+          nextCursor = page.nextCursor;
         }
         const grouped = new Map<string, typeof attempts>();
         for (const attempt of attempts) {
@@ -359,7 +388,7 @@ export function createRunner(
           await pending();
         } catch (error) {
           report(error);
-          wakeRequested = false;
+          wakeRequested = scanDue || sweepDue;
         }
       if (swept && !stopped) {
         cancelSweep?.();

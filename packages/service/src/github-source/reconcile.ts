@@ -16,6 +16,7 @@ import type { SourceEvent, RoutedEvent } from "../router/index.ts";
 export interface IssueRow {
   issue: GitHubIssue;
   baselined: boolean;
+  present: boolean;
   revision: number;
 }
 export interface EdgeRow {
@@ -108,6 +109,7 @@ export function reconcileIssue(
     state.issues.set(value.nodeId, {
       issue: value,
       baselined: row?.baselined ?? false,
+      present: value.nodeId === id ? true : (row?.present ?? true),
       revision: (row?.revision ?? 0) + (change ? 1 : 0),
     });
     if (change) changed.push(value);
