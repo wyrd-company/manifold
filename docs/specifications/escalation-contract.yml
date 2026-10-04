@@ -100,8 +100,7 @@ description: |-
     `["white_check_mark"]` when answered and `["heavy_multiplication_x"]`
     when withdrawn. A close has no `click` and no `actions`.
 
-  Answer page. Served without operator authentication; the key is what
-  authorizes each request.
+  Answer page. The answer key authorizes each request.
 
   - `GET /escalations/{id}?key={key}` answers `200` with an HTML page
     showing the title, the question as text, one button per choice, and a
@@ -121,8 +120,9 @@ description: |-
     decoding, so the longest valid answer, which takes about 49 KB
     form-encoded, is accepted. Any other method answers `405`.
 
-  API. Served under `/api/escalations` behind the operator bearer token.
-  Bodies are JSON.
+  API. Always served under `/api/escalations` without authentication,
+  mounted with `mount`. Access control belongs to the deployment:
+  loopback by default, or a proxy in front. Bodies are JSON.
 
   - `GET /api/escalations` answers `200` with `{ escalations }`, every
     escalation newest first; `?status=open`, `answered`, or `withdrawn`

@@ -194,7 +194,7 @@ export function escalationRows(
     },
     list: (status?: EscalationStatus) =>
       rows(
-        `SELECT * FROM escalation ${status ? "WHERE status=?" : ""} ORDER BY raised_at, escalation_id`,
+        `SELECT * FROM escalation ${status ? "WHERE status=?" : ""} ORDER BY raised_at DESC, escalation_id DESC`,
         ...(status ? [status] : []),
       ).map(decode),
     keyMatches: (id: string, key: string) => {

@@ -44,6 +44,7 @@ async function notified(
       messages.push(JSON.parse(body) as Publish);
       headers.push(req.headers.authorization);
       res.statusCode = options.statuses?.[messages.length - 1] ?? 200;
+      if (res.statusCode >= 300 && res.statusCode < 400) res.setHeader("Location", "/unexpected");
       if (options.hold && messages.length === 1) {
         finish = () => res.end("{}");
         return;
@@ -282,3 +283,54 @@ test.each(["x", "😀"])(
     expect(f.module.get(f.escalation.id)?.answer?.value).toEqual({ text });
   },
 );
+
+test("302 fails the notification, clears its message, and sends no retry or close", async () => {
+  const f = await notified({ statuses: [302] });
+  await eventually(() =>
+    expect(
+      f.store.connection.database
+        .prepare("SELECT status,message,last_error FROM escalation_notification")
+        .get(),
+    ).toMatchObject({ status: "failed", message: null, last_error: "302" }),
+  );
+  f.advance();
+  f.module.answer(f.escalation.id, { choice: "retry" }, "api");
+  await new Promise((resolve) => setTimeout(resolve, 90));
+  expect(f.messages).toHaveLength(1);
+  expect(f.anonymous()).toBe(0);
+});
+test("open posture warns about exposure and a short topic without polling", async () => {
+  const f = await notified();
+  expect(f.warnings).toContain(
+    "Notification destination default: anyone who knows its topic can read and answer questions",
+  );
+  expect(f.warnings).toContain(
+    "Notification destination default: topic name is shorter than 32 characters",
+  );
+  expect(f.anonymous()).toBe(0);
+});
+test("self-hosted posture on ntfy.sh warns about the hosted service", async () => {
+  const f = fixture({
+    configuration: {
+      destinations: {
+        default: {
+          server: "https://ntfy.sh",
+          topic: "opaque-topic",
+          posture: "self-hosted",
+          priority: 4,
+          credential: "publisher",
+        },
+      },
+      requestTimeoutMs: 1000,
+      retryIntervalMs: 60,
+    },
+    fetch: async () => new Response(null, { status: 403 }),
+  });
+  cleanup.push(f.close);
+  f.module.start();
+  await eventually(() =>
+    expect(f.warnings).toContain(
+      "Notification destination default: self-hosted posture uses the hosted service",
+    ),
+  );
+});

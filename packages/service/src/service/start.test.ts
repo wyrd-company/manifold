@@ -474,23 +474,8 @@ test("passes the service lint bound to revision loading and reports warnings", a
   );
 });
 
-test("service exposes escalations to the actor host, mounts operator answers, and retries held actors", async () => {
+test("service exposes escalations to the actor host, mounts API answers, and retries held actors", async () => {
   const f = await fixture();
-  const { writeFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const { stringify } = await import("yaml");
-  await writeFile(join(f.directory, "operator.token"), "synthetic-token");
-  await writeFile(
-    f.file,
-    stringify({
-      ...f.configuration,
-      http: { port: 0, operatorCredential: "operator" },
-      credentials: {
-        ...f.configuration.credentials,
-        operator: { kind: "operator-token", tokenFile: "operator.token" },
-      },
-    }),
-  );
   const seed = await startService({ configurationFile: f.file, log: () => {} });
   seed.store.saveSnapshot({
     actorId: "parcel",
@@ -542,7 +527,7 @@ test("service exposes escalations to the actor host, mounts operator answers, an
     subject: { actorId: "parcel" },
   });
   const path = url(service) + "/api/escalations/" + escalation.id + "/answer";
-  const headers = { Authorization: "Bearer synthetic-token", "Content-Type": "application/json" };
+  const headers = { "Content-Type": "application/json" };
   expect(
     (await fetch(path, { method: "POST", headers, body: JSON.stringify({ choice: "retry" }) }))
       .status,
@@ -558,9 +543,6 @@ test("service exposes escalations to the actor host, mounts operator answers, an
 
 test("the service registry loads escalate blueprints and their callbacks answer through the HTTP host", async () => {
   const f = await fixture();
-  const { writeFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const { stringify } = await import("yaml");
   const { createActor } = await import("xstate");
   const { escalationContractSchema } = await import("@wyrd-company/manifold-shared");
   await f.commit(60, {}, {
@@ -596,18 +578,6 @@ test("the service registry loads escalate blueprints and their callbacks answer 
       },
     },
   });
-  await writeFile(join(f.directory, "operator.token"), "synthetic-token");
-  await writeFile(
-    f.file,
-    stringify({
-      ...f.configuration,
-      http: { port: 0, operatorCredential: "operator" },
-      credentials: {
-        ...f.configuration.credentials,
-        operator: { kind: "operator-token", tokenFile: "operator.token" },
-      },
-    }),
-  );
   let actor: ReturnType<typeof createActor> | undefined;
   const service = await startService({
     configurationFile: f.file,
@@ -630,7 +600,7 @@ test("the service registry loads escalate blueprints and their callbacks answer 
     expect(escalation.question).toBe("Send the parcel?");
     const response = await fetch(url(service) + "/api/escalations/" + escalation.id + "/answer", {
       method: "POST",
-      headers: { Authorization: "Bearer synthetic-token", "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: "Proceed" }),
     });
     expect(response.status).toBe(200);

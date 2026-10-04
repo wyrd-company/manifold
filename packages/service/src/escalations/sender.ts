@@ -21,7 +21,7 @@ export function notificationSender(
       controller.signal,
       AbortSignal.timeout(configuration.requestTimeoutMs),
     ]);
-    const response = await fetch(url, { ...init, signal, redirect: "error" });
+    const response = await fetch(url, { ...init, signal, redirect: "manual" });
     // No response payload is retained or logged; ntfy may echo addresses and tokens.
     await response.body?.cancel();
     return response.status;
@@ -109,7 +109,7 @@ export function notificationSender(
               "UPDATE escalation_notification SET status='sent',message=NULL,settled_at=?,last_error=NULL WHERE notification_id=? AND status='pending'",
             )
             .run(now(), row.notification_id);
-        else if (status === undefined || status === 429 || status >= 500)
+        else if (status === undefined || status === 429 || (status >= 500 && status < 600))
           store.connection.database
             .prepare(
               "UPDATE escalation_notification SET next_attempt_at=?,last_error=? WHERE notification_id=? AND status='pending'",

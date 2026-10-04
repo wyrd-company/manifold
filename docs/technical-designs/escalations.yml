@@ -314,9 +314,10 @@ proposed-design:
     `GET /api/escalations/{id}`, and answers one with
     `POST /api/escalations/{id}/answer` through the channel `api`. The
     service's HTTP host mounts the module's `apiListener` at
-    `/api/escalations` with `mountOperator`, which checks the bearer
-    `operator-token` and serves nothing when none is configured. The
-    console's Task page and any automation answer through it.
+    `/api/escalations` with `mount`. The API is always served without
+    authentication. Access control belongs to the deployment: loopback by
+    default, or a proxy in front. The console's Task page and any automation
+    answer through it.
   first-answer-wins: >-
     `answer(id, answer, channel)` runs in one `store.connection.transaction`:
     it updates the row from `open` to `answered` with the answer, closes
@@ -385,7 +386,7 @@ proposed-design:
       list(filter: { readonly status?: EscalationStatus }): readonly Escalation[];
       /** Mounted with `mount("/escalations", ...)`. */
       readonly requestListener: RequestListener;
-      /** Mounted with `mountOperator("/api/escalations", ...)`. */
+      /** Mounted with `mount("/api/escalations", ...)`. */
       readonly apiListener: RequestListener;
       /** After the router starts: runs pending handlers, checks postures, starts the sender. */
       start(): void;

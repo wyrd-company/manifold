@@ -4,7 +4,7 @@
 // ---
 import { createActor, createMachine, assign } from "xstate";
 import { afterEach, expect, test } from "vite-plus/test";
-import { fixture, serve, readRequest, eventually } from "./test-support.ts";
+import { fixture, serve, readRequest, eventually, request } from "./test-support.ts";
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const clean of cleanup.splice(0).toReversed()) await clean();
@@ -177,4 +177,24 @@ test("malformed requests never change the escalation", async () => {
     ).status,
   ).toBe(200);
   expect(f.actor.getSnapshot().context.answers).toBe(0);
+});
+
+test("list returns newest first, including status filters and timestamp ties", async () => {
+  let time = 100;
+  const f = fixture({ clock: { now: () => time } });
+  cleanup.push(f.close);
+  const older = f.module.raise(request);
+  time = 200;
+  const newer = f.module.raise({ ...request, subject: { actorId: "box" } });
+  const tied = f.module.raise({ ...request, subject: { actorId: "envelope" } });
+  const expected = [newer.id, tied.id].sort().toReversed().concat(older.id);
+  const api = await serve(f.module.apiListener);
+  cleanup.push(api.close);
+  for (const query of ["", "?status=open"]) {
+    const body = (await (await fetch(api.url + "/api/escalations" + query)).json()) as {
+      escalations: { id: string }[];
+    };
+    expect(body.escalations.map(({ id }) => id)).toEqual(expected);
+  }
+  expect(f.module.list({}).map(({ id }) => id)).toEqual(expected);
 });
