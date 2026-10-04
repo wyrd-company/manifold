@@ -61,7 +61,10 @@ proposed-design:
     against the output schema. Guards and matches are checked for a boolean
     result. The samples are each of the schema's `examples`, one generated
     value with every optional property, and one with required properties
-    only, generated from a fixed seed so that a lint result is repeatable.
+    only, generated from a fixed seed. The lint binds JSONata's clock to a
+    fixed instant and its random function to a seeded generator, so that a
+    lint result is repeatable. The events a site sees are read from the
+    transitions that reach it in the machine configuration.
     The lint is a pure function in `packages/shared` over a blueprint's
     machine and schemas, and the host CLI runs the same function.
   synchronous-evaluation: >-
