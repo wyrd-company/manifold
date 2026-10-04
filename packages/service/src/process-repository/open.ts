@@ -53,7 +53,7 @@ export async function openProcessRepository(
       }
     },
     pull(request?: PullRequest) {
-      if (!running) return launch(request);
+      if (!running) return queued ?? launch(request);
       queued ??= running
         .catch(() => undefined)
         .then(() => {

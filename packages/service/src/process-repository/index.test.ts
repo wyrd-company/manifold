@@ -208,3 +208,36 @@ test("verification rejects an unreadable newly fetched object before publication
   expect(repository.current()!.commit).toBe(a);
   expect(await repository.current()!.read("recipes/a.txt")).toBe("first");
 });
+
+test("a request from a settled-pull callback joins the already queued successor", async () => {
+  const { remote, configuration } = await setup(200);
+  const repository = await openProcessRepository({ configuration, credentials });
+  await repository.pull();
+  const b = await remote.commit("second");
+  remote.state.mode = "pack";
+  const started = new Promise<void>((resolve) => {
+    remote.state.packStarted = resolve;
+  });
+  let late: ReturnType<typeof repository.pull> | undefined;
+  const first = repository.pull().catch((error) => {
+    late = repository.pull();
+    void late.catch(() => undefined);
+    return error;
+  });
+  await started;
+  const next = repository.pull();
+  void next.catch(() => undefined);
+  remote.state.mode = "healthy";
+  await first;
+  try {
+    expect(late).toBe(next);
+    expect(await next).toMatchObject({ kind: "advanced", commit: b });
+    expect(remote.requests.filter((request) => request.path.includes("/info/refs"))).toHaveLength(
+      3,
+    );
+    const c = await remote.commit("third");
+    expect(await repository.pull()).toEqual({ kind: "advanced", commit: c, previous: b });
+  } finally {
+    await Promise.allSettled([next, late]);
+  }
+});
