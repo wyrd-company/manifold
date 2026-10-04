@@ -2,6 +2,7 @@
 // relationships:
 //   implements: actor-host
 // ---
+export { validateInput as validateActorInput } from "./identity.ts";
 export { openActorHost } from "./host.ts";
 export { recordStateEntry, invocationOf } from "./records.ts";
 export { ActorStartError } from "./types.ts";

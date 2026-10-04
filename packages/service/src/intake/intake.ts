@@ -2,6 +2,7 @@
 // relationships:
 //   implements: intake
 // ---
+import { ActorStartError } from "../actor-host/index.ts";
 import { parseBlueprintVersionKey } from "@wyrd-company/manifold-shared";
 import { IntakeError } from "./types.ts";
 import type {
@@ -13,7 +14,7 @@ import type {
 } from "./types.ts";
 import { records } from "./records.ts";
 import { modelCache } from "./models.ts";
-import { decide, failure, inputErrors } from "./decide.ts";
+import { decide, failure, inputErrors, inputIssues } from "./decide.ts";
 import { decisionInput, taskInput, json } from "./inputs.ts";
 export function startIntake(options: IntakeOptions): Intake {
   const rows = records(options.store),
@@ -65,7 +66,7 @@ export function startIntake(options: IntakeOptions): Intake {
     if (!issue || !issue.items.some((i) => i.project.nodeId === record.project!.nodeId)) return;
     const evaluation = record.evaluation as { result?: { data?: unknown } };
     const input = taskInput(issue, record, evaluation.result?.data);
-    const errors = inputErrors(loaded.blueprint, input);
+    const errors = inputErrors(loaded.blueprint, input, record.actorId);
     if (errors) {
       startFailure(id, {
         kind: "input-invalid",
@@ -77,6 +78,14 @@ export function startIntake(options: IntakeOptions): Intake {
     try {
       options.actors.start({ actorId: record.actorId, blueprint: loaded.blueprint, input });
     } catch (error) {
+      if (error instanceof ActorStartError) {
+        startFailure(id, {
+          kind: "input-invalid",
+          message: "Recorded blueprint refuses task input.",
+          detail: json({ errors: inputIssues(error) }),
+        });
+        return;
+      }
       throw new IntakeError("start", id, error);
     }
     rows.started(id);
@@ -177,7 +186,11 @@ export function startIntake(options: IntakeOptions): Intake {
       portfolioItem: decision.item,
       portfolioCommit: basis.portfolio.commit,
     };
-    const errors = inputErrors(decision.blueprint, taskInput(issue, record, decision.data));
+    const errors = inputErrors(
+      decision.blueprint,
+      taskInput(issue, record, decision.data),
+      record.actorId,
+    );
     if (errors) {
       fail(failure("input-invalid", { errors }));
       return;

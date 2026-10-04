@@ -2,6 +2,7 @@
 // relationships:
 //   implements: intake-decision-model
 // ---
+import { ActorStartError, validateActorInput } from "../actor-host/index.ts";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { githubEventsSchema, intakeDecisionModelSchema } from "@wyrd-company/manifold-shared";
 import type { PortfolioDeclaration } from "@wyrd-company/manifold-shared";
@@ -60,20 +61,18 @@ export function decide(
     data: result.data ?? {},
   };
 }
-const inputValidators = new WeakMap<LoadedBlueprint, ReturnType<typeof ajv.compile>>();
-export function inputErrors(blueprint: LoadedBlueprint, input: unknown) {
-  let validator = inputValidators.get(blueprint);
-  if (!validator) {
-    const schema = blueprint.document.schemas.input ?? true;
-    validator = new Ajv2020({ strict: false, allErrors: true, validateFormats: false }).compile(
-      schema,
-    );
-    inputValidators.set(blueprint, validator);
+export const inputIssues = (error: ActorStartError) =>
+  error.issues.map(({ path, message }) => ({ instancePath: path, message }));
+export function inputErrors(
+  blueprint: LoadedBlueprint,
+  input: Record<string, unknown>,
+  actorId: string,
+) {
+  try {
+    validateActorInput(actorId, blueprint, input);
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof ActorStartError)) throw error;
+    return inputIssues(error);
   }
-  return validator(input)
-    ? undefined
-    : (validator.errors ?? []).map((e) => ({
-        instancePath: e.instancePath,
-        message: e.message ?? "Invalid input",
-      }));
 }

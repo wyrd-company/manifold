@@ -111,10 +111,11 @@ description: |-
   - `task`: the task facts, read from the mirror when the actor starts.
   - `intake`: the output's `data`, or `{}`.
 
-  The task input validates against the blueprint's `schemas.input`; an
-  input it refuses is `input-invalid`. A blueprint for tasks therefore
-  declares an input schema that accepts these three properties, and reads
-  the issue's state at start from `task`.
+  The host validates `manifold` against actor identity and places it at
+  `context.manifold`. The blueprint's `schemas.input` describes the machine
+  input: `task` and `intake`. Intake and the host validate these partitions
+  with the same validator. A refused identity or machine input is
+  `input-invalid`. A blueprint reads the issue's state at start from `task`.
 
   Intake record. Manifold keeps one record per issue with `status`
   `failed`, `recorded`, or `started`. `recorded` and `started` records
@@ -141,7 +142,7 @@ description: |-
   | `item-unknown` | the item names no item | `{ "item" }` |
   | `item-archived` | the item is archived | `{ "item" }` |
   | `item-outside-binding` | the item is outside the binding's subtree | `{ "item", "binding", "bindingItem" }` |
-  | `input-invalid` | the blueprint's input schema refuses the task input | `{ "errors": [<error>] }` |
+  | `input-invalid` | actor identity or the blueprint's machine input schema refuses the input | `{ "errors": [<error>] }` |
 
   An `<error>` is `{ "instancePath", "message" }` from the validator. A
   failed record is retried once at each later commit of the process
@@ -153,7 +154,7 @@ description: |-
   | Kind | When | Detail |
   |---|---|---|
   | `version-unavailable` | the recorded blueprint version does not load | `{ "version", "reason" }` |
-  | `input-invalid` | the recorded version's input schema refuses the task input | `{ "errors": [<error>] }` |
+  | `input-invalid` | actor identity or the recorded version's machine input schema refuses the input | `{ "errors": [<error>] }` |
 format: json-schema
 validation-criteria: >-
   `docs/specifications/intake-decision-model.schema.yml` is a valid JSON

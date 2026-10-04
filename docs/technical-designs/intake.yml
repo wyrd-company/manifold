@@ -289,8 +289,10 @@ proposed-design:
        `intake-decision-model` states, else
        `item-unknown`, `item-archived`, or `item-outside-binding`.
     6. The task input of `intake-decision-model`, built from the same
-       tracked issue, validates against the blueprint's `schemas.input`,
-       else `input-invalid` with the validator's errors.
+       tracked issue, validates with the actor host's validator: `manifold`
+       against actor identity, and the machine input (`task` and `intake`)
+       against the blueprint's `schemas.input`, else `input-invalid` with
+       the validator's errors.
 
     Every failure writes the `failed` record, as described under records,
     calls `probe("failed")` and `onFailed`, and ends the issue's turn. A
@@ -311,17 +313,20 @@ proposed-design:
     that is not `loaded` is the start failure `version-unavailable`. After
     the load, with no `await` between its reads and its writes, it checks
     for a snapshot again, reads `tracked.trackedIssue`, builds the task
-    input, validates it against the blueprint's input schema, calls
+    input, validates its identity and machine input with the actor host's
+    validator, calls
     `actors.start`, and marks the record `started` in its own transaction,
-    then calls `probe("started")`. An input the schema refuses is the
-    start failure `input-invalid`. An issue no longer tracked leaves the
+    then calls `probe("started")`. A refused identity or machine input is
+    the start failure `input-invalid`. An issue no longer tracked leaves the
     record as it is, and the discovery that tracks it again starts it. A
     start failure writes `startFailure` and raises `startAttempts` on the
     `recorded` record, keeping every decision column, and calls
     `probe("start-failed")` and `onFailed`. The record stays `recorded`,
     and each later discovery and reconcile tries the start again on the
     same version with the issue's state at that moment. A throw from
-    `actors.start` is an `IntakeError` of kind `start`; the record stays
+    `actors.start` that is an `ActorStartError` records the start failure
+    `input-invalid`, with its issues as validator errors. Another throw
+    is an `IntakeError` of kind `start`; the record stays
     `recorded` and the next reconcile starts it.
   handoff: >-
     The start step reads the mirror and attaches the actor in one

@@ -13,6 +13,8 @@ import {
   githubEventsSchema,
   serviceConfigurationSchemas,
 } from "@wyrd-company/manifold-shared";
+import { ActorStartError } from "../actor-host/index.ts";
+import { openUsage, usageMigrationSteps } from "../usage/index.ts";
 import { stringify } from "yaml";
 import { createRevisions } from "../service/revisions.ts";
 import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
@@ -532,6 +534,16 @@ it("captures the previous whole publication while the follower awaits load and a
         return result;
       },
     },
+    usage: (() => {
+      s.store.connection.migrate("usage", usageMigrationSteps);
+      return openUsage({
+        connection: s.store.connection,
+        ledger: realPortfolio.ledger,
+        portfolio: realPortfolio,
+        threadProject: () => undefined,
+        environments: new Set(["env-one"]),
+      });
+    })(),
     log: () => {},
     applied: () => {
       published.push(follower!.current()!);
@@ -769,4 +781,106 @@ it("uses an existing snapshot without reading an unavailable recorded version", 
   expect(intake.record("I1")?.status).toBe("started");
   expect(s.host.starts).toEqual([]);
   await intake.stop();
+});
+
+it("starts exactly one actor when a strict schema accepts only task and intake", async () => {
+  const s = await fixture(
+    files(undefined, {
+      type: "object",
+      properties: { task: { type: "object" }, intake: { type: "object" } },
+      required: ["task", "intake"],
+      additionalProperties: false,
+    }),
+  );
+  s.intake.discovered(["I1"]);
+  await s.intake.idle();
+  s.intake.revisionLoaded();
+  await s.intake.idle();
+  expect(s.intake.record("I1")).toMatchObject({ status: "started", attempts: 1 });
+  expect(s.host.starts).toEqual(["task:I1"]);
+  expect(s.host.host.actorOf("task:I1")).toMatchObject({ manifold: { issue: "I1" } });
+});
+it("records input-invalid when a strict machine schema requires manifold", async () => {
+  const s = await fixture(
+    files(undefined, {
+      type: "object",
+      properties: {
+        manifold: { type: "object" },
+        task: { type: "object" },
+        intake: { type: "object" },
+      },
+      required: ["manifold", "task", "intake"],
+      additionalProperties: false,
+    }),
+  );
+  s.intake.discovered(["I1"]);
+  await s.intake.idle();
+  s.intake.revisionLoaded();
+  await s.intake.idle();
+  expect(s.intake.record("I1")).toMatchObject({
+    status: "failed",
+    attempts: 1,
+    failure: {
+      kind: "input-invalid",
+      detail: { errors: [{ instancePath: "", message: "must have required property 'manifold'" }] },
+    },
+  });
+  expect(s.errors).toEqual([]);
+  expect(s.host.starts).toEqual([]);
+});
+it("records identity errors and host ActorStartError as input-invalid", async () => {
+  const failed: unknown[] = [];
+  const s = await fixture(files(), {
+    onFailed: (record) => failed.push(record),
+    actors: {
+      start(request) {
+        throw new ActorStartError(request.actorId, [
+          { path: "/task/issue", message: "Invalid issue" },
+        ]);
+      },
+    },
+  });
+  s.intake.discovered(["I1"]);
+  await s.intake.idle();
+  expect(s.intake.record("I1")).toMatchObject({
+    status: "recorded",
+    startAttempts: 1,
+    startFailure: {
+      kind: "input-invalid",
+      detail: { errors: [{ instancePath: "/task/issue", message: "Invalid issue" }] },
+    },
+  });
+  expect(s.errors).toEqual([]);
+  expect(failed).toHaveLength(1);
+  const current = s.current()!;
+  s.setCurrent({
+    ...current,
+    portfolio: {
+      ...current.portfolio,
+      declaration: {
+        ...current.portfolio.declaration,
+        githubProjects: current.portfolio.declaration.githubProjects.map((b) => ({
+          ...b,
+          environment: "",
+        })),
+      },
+    },
+  });
+  s.tracked.set("I2", issue("I2"));
+  s.intake.discovered(["I2"]);
+  await s.intake.idle();
+  expect(s.intake.record("I2")).toMatchObject({
+    status: "failed",
+    failure: {
+      kind: "input-invalid",
+      detail: {
+        errors: [
+          {
+            instancePath: "/manifold/environment",
+            message: "must NOT have fewer than 1 characters",
+          },
+        ],
+      },
+    },
+  });
 });
