@@ -638,3 +638,22 @@ test("attach saves and indexes new actors before live publish; repeated saves re
   await idle();
   expect(seen(actor.actorId)).toEqual(["weather:new-actor"]);
 });
+
+test("delivery re-arms the deadline loop from newly saved arms", async () => {
+  const r = start();
+  duringSend = (id) => {
+    if (id === "counter-01") {
+      const data = states.get(id)!;
+      data.value = "idle";
+      data.fireAt = 20;
+    }
+  };
+  r.publish(event());
+  await idle();
+  expect(timers.size).toBe(1);
+  expect([...timers.values()][0]!.delay).toBe(10);
+  time = 20;
+  wake();
+  await idle();
+  expect(seen("counter-01").filter((id) => id.startsWith("deadline:"))).toHaveLength(1);
+});
