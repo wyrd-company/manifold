@@ -30,10 +30,10 @@ export async function blueprintLintCommand(args: readonly string[]) {
         configurationBound !== undefined ||
         value === undefined ||
         !/^[0-9]+$/.test(value) ||
-        !Number.isSafeInteger(Number(value)) ||
+        !Number.isInteger(Number(value)) ||
         Number(value) < 1
       ) {
-        console.error("--configuration-bound requires a positive safe integer");
+        console.error("--configuration-bound requires a positive integer");
         return 2;
       }
       configurationBound = Number(value);

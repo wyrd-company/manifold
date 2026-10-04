@@ -23,8 +23,8 @@ export function lintTokens(
   options: TokenLintOptions,
 ): TokenLintResult {
   const bound = options.configurationBound ?? defaultConfigurationBound;
-  if (!Number.isSafeInteger(bound) || bound < 1)
-    throw new TypeError("configurationBound must be a positive safe integer");
+  if (!Number.isInteger(bound) || bound < 1)
+    throw new TypeError("configurationBound must be a positive integer");
   const lint = lintMachine(document, options, bound);
   const graph: Graph = { nodes: new Map(), initial: [] };
   let incomplete = false;

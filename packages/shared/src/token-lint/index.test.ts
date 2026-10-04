@@ -312,3 +312,12 @@ it("explores overlapping wildcard prefixes without trying to avoid their ancesto
   (doc.machine["states"] as Record<string, unknown>)["broken"] = {};
   expect(verdict(doc)).toBe("violation");
 });
+
+it("accepts finite integer configuration bounds described by the schema", () => {
+  expect(result(flat(), 2 ** 53).gates[0]!.verdict).toBe("violation");
+});
+
+it("rejects invalid configuration bounds at the public boundary", () => {
+  for (const bound of [0, -1, 0.5, Infinity, NaN])
+    expect(() => result(flat(), bound)).toThrow("configurationBound must be a positive integer");
+});
