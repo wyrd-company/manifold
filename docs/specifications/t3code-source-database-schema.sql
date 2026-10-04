@@ -22,3 +22,6 @@ CREATE TABLE t3_thread (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX t3_thread_followed ON t3_thread (environment, status);
+
+ALTER TABLE t3_thread ADD COLUMN project_id TEXT;
+UPDATE t3_thread SET project_id = json_extract(thread, '$.projectId');

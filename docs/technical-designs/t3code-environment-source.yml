@@ -140,7 +140,11 @@ proposed-design:
     subscription up to `synchronized`, publishes thread archived with the
     thread's `archivedAt`, and marks the row archived. A thread that is not
     found is deleted: the source publishes thread deleted and marks the row
-    deleted. A shell item that brings an archived thread back marks it
+    deleted. The source stores the shell summary's project identity before
+    subscribing to detail, so removal before the first snapshot still
+    publishes the change. A failed detail subscription whose HTTP read
+    reports a missing thread marks that thread deleted without failing the
+    environment. A shell item that brings an archived thread back marks it
     followed and opens it from its cursor. A thread the shell lists that
     has no row was created after the environment's origin; it is subscribed
     with no cursor, and its first snapshot is compared with the empty

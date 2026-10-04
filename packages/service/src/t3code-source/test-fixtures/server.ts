@@ -31,7 +31,11 @@ export async function fakeServer() {
   let environmentId = "server-one";
   let bound = 1000;
   let token = "fixture-token";
-  const hooks: { readModel?: () => void; threadSubscribe?: () => void } = {};
+  const hooks: {
+    readModel?: () => void;
+    threadSubscribe?: () => void;
+    beforeThreadSnapshot?: () => boolean | void;
+  } = {};
   const threads = new Map<string, ReturnType<typeof fixtureThread>>();
   const log: unknown[] = [];
   const subscriptions = new Map<
@@ -170,8 +174,34 @@ export async function fakeServer() {
           { kind: "synchronized" },
         ]);
       } else {
+        bufferThreadItems = true;
+        const held = hooks.beforeThreadSnapshot?.() === false;
+        bufferThreadItems = false;
+        // Changes before this subscription's snapshot belong in the snapshot.
+        buffered.splice(0);
+        if (held) return;
         const thread = threads.get(String(frame.payload["threadId"]));
-        if (!thread) return;
+        if (!thread || thread.deletedAt) {
+          socket.send(
+            JSON.stringify({
+              _tag: "Exit",
+              requestId: frame.id,
+              exit: {
+                _tag: "Failure",
+                cause: [
+                  {
+                    _tag: "Fail",
+                    error: {
+                      _tag: "OrchestrationGetSnapshotError",
+                      message: "Thread was not found",
+                    },
+                  },
+                ],
+              },
+            }),
+          );
+          return;
+        }
         const events = log.filter(
           (e) =>
             (e as { sequence: number }).sequence > (cursor ?? -1) &&

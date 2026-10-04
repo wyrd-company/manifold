@@ -10,6 +10,7 @@ export interface ThreadRow {
   status: "followed" | "archived" | "deleted";
   cursor: number;
   thread: OrchestrationThread | null;
+  project_id: string | null;
 }
 export interface EnvironmentRow {
   environment_id: string;
@@ -85,10 +86,11 @@ export function persistence(store: Store, environment: string) {
       status: ThreadRow["status"],
       cursor: number,
       thread: OrchestrationThread | null,
+      projectId = thread?.projectId ?? null,
     ) {
       db.prepare(
-        "INSERT INTO t3_thread VALUES (?, ?, ?, ?, ?) ON CONFLICT (environment, thread_id) DO UPDATE SET status=excluded.status, cursor=excluded.cursor, thread=excluded.thread",
-      ).run(environment, id, status, cursor, JSON.stringify(thread));
+        "INSERT INTO t3_thread (environment, thread_id, status, cursor, thread, project_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (environment, thread_id) DO UPDATE SET status=excluded.status, cursor=excluded.cursor, thread=excluded.thread, project_id=coalesce(excluded.project_id, t3_thread.project_id)",
+      ).run(environment, id, status, cursor, JSON.stringify(thread), projectId);
     },
   };
 }

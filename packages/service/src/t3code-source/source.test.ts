@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: t3code-environment-source
 // ---
+import { schemas } from "@wyrd-company/t3code-client";
 import { DatabaseSync } from "node:sqlite";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parse } from "yaml";
@@ -704,8 +705,168 @@ test("the public source migrates tables that agree with the specification", asyn
       store.connection.database
         .prepare("SELECT version FROM schema_migration WHERE owner = 'tthree'")
         .get(),
-    ).toEqual({ version: 1 });
+    ).toEqual({ version: 2 });
   } finally {
     reference.close();
   }
+});
+
+test.each(["detail", "shell", "restart"])(
+  "publishes deletion before the first snapshot via %s",
+  async (mode) => {
+    const { server, store, start } = await setup();
+    const source = start();
+    await expect.poll(() => source.status()[0]?.state).toBe("following");
+    await expect
+      .poll(() => server.requests.some((r) => r.tag === "orchestration.subscribeShell"))
+      .toBe(true);
+    const thread = fixtureThread("fleeting");
+    server.hooks.beforeThreadSnapshot = () => {
+      if (mode === "restart") return false;
+      thread.deletedAt = thread.createdAt;
+      if (mode === "shell")
+        server.change(thread, "thread.deleted", {
+          threadId: thread.id,
+          deletedAt: thread.deletedAt,
+        });
+      else server.baseline(thread);
+    };
+    server.change(thread);
+    await expect
+      .poll(() => server.requests.some((r) => r.payload["threadId"] === thread.id))
+      .toBe(true);
+    let current = source;
+    if (mode === "restart") {
+      await source.stop();
+      thread.deletedAt = thread.createdAt;
+      server.change(thread, "thread.deleted", { threadId: thread.id, deletedAt: thread.deletedAt });
+      delete server.hooks.beforeThreadSnapshot;
+      current = start();
+    }
+    await expect
+      .poll(() => store.pendingInbox("reader").map((r) => (r.payload as { type: string }).type))
+      .toEqual(["t3.thread.deleted"]);
+    expect(store.pendingInbox("reader")[0]?.payload).toMatchObject({
+      projectId: "project",
+      threadId: "fleeting",
+    });
+    expect(server.requests.filter((r) => r.tag === "orchestration.subscribeShell")).toHaveLength(
+      mode === "restart" ? 2 : 1,
+    );
+    await expect.poll(() => current.status()[0]?.state).toBe("following");
+    await expect.poll(() => current.status()[0]?.openSubscriptions).toBe(0);
+    delete server.hooks.beforeThreadSnapshot;
+    const survivor = fixtureThread("survivor");
+    survivor.latestTurn = {
+      turnId: "turn" as NonNullable<typeof survivor.latestTurn>["turnId"],
+      state: "completed",
+      requestedAt: survivor.createdAt,
+      startedAt: survivor.createdAt,
+      completedAt: survivor.createdAt,
+      assistantMessageId: null,
+    };
+    server.change(survivor);
+    await expect.poll(() => store.pendingInbox("reader").length).toBe(3);
+    await current.stop();
+    const resumed = start();
+    await expect.poll(() => resumed.status()[0]?.state).toBe("following");
+    await expect.poll(() => resumed.status()[0]?.openSubscriptions).toBe(0);
+    expect(store.pendingInbox("reader")).toHaveLength(3);
+  },
+);
+test("publishes archive before the first snapshot", async () => {
+  const { server, store, start } = await setup();
+  const source = start();
+  await expect
+    .poll(() => server.requests.some((r) => r.tag === "orchestration.subscribeShell"))
+    .toBe(true);
+  const thread = fixtureThread("fleeting");
+  server.hooks.beforeThreadSnapshot = () => {
+    delete server.hooks.beforeThreadSnapshot;
+    thread.archivedAt = thread.createdAt;
+    server.change(thread, "thread.archived", {
+      threadId: thread.id,
+      archivedAt: thread.archivedAt,
+      updatedAt: thread.updatedAt,
+    });
+  };
+  server.change(thread);
+  await expect
+    .poll(() => store.pendingInbox("reader").map((r) => (r.payload as { type: string }).type))
+    .toEqual(["t3.thread.archived"]);
+  expect(store.pendingInbox("reader")[0]?.payload).toMatchObject({
+    projectId: "project",
+    threadId: "fleeting",
+    archivedAt: thread.createdAt,
+  });
+  await expect.poll(() => source.status()[0]?.openSubscriptions).toBe(0);
+});
+test("unknown turn states and session statuses count as none", async () => {
+  const { server, store, start } = await setup();
+  const source = start();
+  await expect
+    .poll(() => server.requests.some((r) => r.tag === "orchestration.subscribeShell"))
+    .toBe(true);
+  const base = fixtureThread();
+  const thread = schemas.orchestrationReadModel.OrchestrationThread.parse({
+    ...base,
+    latestTurn: {
+      turnId: "future-turn",
+      state: "future-state",
+      requestedAt: base.createdAt,
+      startedAt: base.createdAt,
+      completedAt: null,
+      assistantMessageId: null,
+    },
+    session: {
+      threadId: base.id,
+      status: "future-status",
+      providerName: "provider",
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: base.createdAt,
+    },
+  });
+  server.change(thread);
+  await expect
+    .poll(() => server.requests.some((r) => r.payload["threadId"] === thread.id))
+    .toBe(true);
+  await expect.poll(() => source.status()[0]?.openSubscriptions).toBe(0);
+  expect(source.status()[0]?.state).toBe("following");
+  expect(store.pendingInbox("reader")).toHaveLength(0);
+  server.setBound(0);
+  thread.latestTurn = { ...thread.latestTurn!, state: "completed" };
+  thread.session = { ...thread.session!, status: "error", lastError: "Failure" };
+  server.change(thread);
+  await expect
+    .poll(() => store.pendingInbox("reader").map((r) => (r.payload as { type: string }).type))
+    .toEqual(["t3.turn.started", "t3.turn.settled", "t3.session.failed"]);
+});
+
+test("upgrades populated source tables and preserves project identity", async () => {
+  const { server, store, start } = await setup();
+  const ddl = await readFile(
+    new URL("../../../../docs/specifications/t3code-source-database-schema.sql", import.meta.url),
+    "utf8",
+  );
+  store.connection.migrate("tthree", [ddl.split("ALTER TABLE")[0]!]);
+  const thread = fixtureThread("existing");
+  store.connection.database
+    .prepare("INSERT INTO t3_environment VALUES (?, ?, ?, ?)")
+    .run("station", "server-one", 0, 0);
+  store.connection.database
+    .prepare("INSERT INTO t3_thread VALUES (?, ?, ?, ?, ?)")
+    .run("station", thread.id, "followed", 0, JSON.stringify(thread));
+  thread.deletedAt = thread.createdAt;
+  server.baseline(thread);
+  const source = start();
+  await expect.poll(() => store.pendingInbox("reader").length).toBe(1);
+  expect(store.pendingInbox("reader")[0]?.payload).toMatchObject({
+    type: "t3.thread.deleted",
+    projectId: "project",
+    threadId: "existing",
+  });
+  await expect.poll(() => source.status()[0]?.openSubscriptions).toBe(0);
+  expect(source.status()[0]?.state).toBe("following");
 });

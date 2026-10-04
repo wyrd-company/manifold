@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   T3Client,
   T3NotFoundError,
+  T3RpcError,
   T3DecodeError,
   watchThread,
   applyThreadEvent,
@@ -15,6 +16,7 @@ import {
 import type { OrchestrationThread } from "@wyrd-company/t3code-client";
 import type { RoutedEvent } from "../router/index.ts";
 import { compactThread, threadState, threadChanges } from "./state.ts";
+import { retryDelay } from "./retry.ts";
 import { needsSubscription, canClose } from "./follow.ts";
 import { sourceEvent, threadTopic } from "./events.ts";
 import { persistence, SourceDefect } from "./persistence.ts";
@@ -84,7 +86,7 @@ export function environmentLoop(
       // Mark the promise handled while setup awaits HTTP.
       void failure.catch(() => {});
       let server = "";
-      const publish = (id: string, thread: OrchestrationThread, change: RoutedEvent) => {
+      const publish = (id: string, thread: { projectId: string }, change: RoutedEvent) => {
         const result = options.router.publish(
           sourceEvent(environment, server, id, thread.projectId, change),
         );
@@ -94,6 +96,15 @@ export function environmentLoop(
         status.openSubscriptions = open.size;
         status.followedThreads = stored.rows().filter((r) => r.status === "followed").length;
       };
+      const deleted = (id: string) =>
+        stored.atomic(() => {
+          const row = stored.row(id);
+          if (!row || row.status === "deleted") return;
+          if (row.project_id)
+            publish(id, { projectId: row.project_id }, { type: "t3.thread.deleted" });
+          else log("Deleted thread has no stored project identity", id);
+          stored.save(id, "deleted", row.cursor, row.thread);
+        });
       const follow = (id: string, target: number, catchup = false) => {
         if (!validId(id)) return;
         const active = open.get(id);
@@ -164,6 +175,18 @@ export function environmentLoop(
                 break;
               }
             }
+          } catch (error) {
+            if (controller.signal.aborted && !(error instanceof SourceDefect)) return;
+            if (!(error instanceof T3RpcError)) throw error;
+            // A thread can disappear between the shell item and its first snapshot.
+            try {
+              await client.threads.detail(threadId(id), { signal: lifetime.signal });
+            } catch (detailError) {
+              if (!(detailError instanceof T3NotFoundError)) throw detailError;
+              deleted(id);
+              return;
+            }
+            throw error;
           } finally {
             lifetime.signal.removeEventListener("abort", onAbort);
             open.delete(id);
@@ -185,7 +208,7 @@ export function environmentLoop(
       };
       const remove = async (id: string, sequence: number) => {
         const row = stored.row(id);
-        if (!row?.thread || row.status === "deleted") return;
+        if (!row || row.status === "deleted") return;
         let thread: OrchestrationThread;
         try {
           thread = (await client.threads.detail(threadId(id), { signal: lifetime.signal })).thread;
@@ -193,10 +216,7 @@ export function environmentLoop(
           if (!(error instanceof T3NotFoundError)) throw error;
           open.get(id)?.abort.abort();
           await open.get(id)?.done;
-          stored.atomic(() => {
-            publish(id, row.thread!, { type: "t3.thread.deleted" });
-            stored.save(id, "deleted", row.cursor, row.thread);
-          });
+          deleted(id);
           return;
         }
         // Keep following an archived thread through its final detail events.
@@ -256,7 +276,13 @@ export function environmentLoop(
                 for (const thread of item.snapshot.threads)
                   if (validId(thread.id)) {
                     const row = stored.row(thread.id);
-                    stored.save(thread.id, "followed", row?.cursor ?? 0, row?.thread ?? null);
+                    stored.save(
+                      thread.id,
+                      "followed",
+                      row?.cursor ?? 0,
+                      row?.thread ?? null,
+                      thread.projectId,
+                    );
                   }
                 stored.shell(item.snapshot.snapshotSequence);
               });
@@ -269,7 +295,13 @@ export function environmentLoop(
               if (validId(item.thread.id)) {
                 stored.atomic(() => {
                   const row = stored.row(item.thread.id);
-                  stored.save(item.thread.id, "followed", row?.cursor ?? 0, row?.thread ?? null);
+                  stored.save(
+                    item.thread.id,
+                    "followed",
+                    row?.cursor ?? 0,
+                    row?.thread ?? null,
+                    item.thread.projectId,
+                  );
                   stored.shell(item.sequence);
                 });
                 const row = stored.row(item.thread.id)!;
@@ -301,8 +333,7 @@ export function environmentLoop(
       }
       if (!signal.aborted && status.state !== "stopped") {
         const policy = configuration.reconnect;
-        const base = Math.min(policy.maxMs, policy.initialMs * policy.factor ** attempt++);
-        const wait = base * (1 + (Math.random() * 2 - 1) * (policy.jitter ?? 0));
+        const wait = retryDelay(policy, attempt++, Math.random());
         await delay(wait, undefined, { signal }).catch(() => {});
       }
     }

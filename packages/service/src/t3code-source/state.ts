@@ -15,13 +15,32 @@ export function compactThread(thread: OrchestrationThread): OrchestrationThread 
     activities: pendingRequests(thread).map((request) => request.activity),
   };
 }
+const turnStates = new Set(["running", "completed", "interrupted", "error"]);
+const sessionStatuses = new Set([
+  "idle",
+  "starting",
+  "running",
+  "ready",
+  "interrupted",
+  "stopped",
+  "error",
+]);
 export function threadState(thread: OrchestrationThread) {
   return {
     projectId: thread.projectId,
     turn:
-      thread.latestTurn && typeof thread.latestTurn.state === "string" ? thread.latestTurn : null,
+      thread.latestTurn &&
+      typeof thread.latestTurn.state === "string" &&
+      turnStates.has(thread.latestTurn.state)
+        ? thread.latestTurn
+        : null,
     requests: pendingRequests(thread),
-    session: thread.session && typeof thread.session.status === "string" ? thread.session : null,
+    session:
+      thread.session &&
+      typeof thread.session.status === "string" &&
+      sessionStatuses.has(thread.session.status)
+        ? thread.session
+        : null,
   };
 }
 export function threadChanges(

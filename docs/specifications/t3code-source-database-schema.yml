@@ -29,10 +29,12 @@ description: >-
   `deleted` after the server no longer has it. `cursor` is the highest
   sequence whose effect the row holds: the last applied event, the last
   snapshot, or the shell sequence that reopened a thread caught up while
-  idle. `thread` is the compact thread as JSON. At the environment's first
+  idle. `thread` is the compact thread as JSON. `project_id` holds the project
+  identity from the shell summary even before the first detail snapshot,
+  so a deletion can be published without a detail projection. At the environment's first
   connection every thread in the server's read model that is not deleted
   gets a row holding its compact thread at the origin; a thread created
-  later gets its row with its first snapshot. A row is written in the
+  later gets its row from its shell summary, then its projection from its first snapshot. A row is written in the
   transaction that publishes the changes it reflects.
 format: sql-ddl
 validation-criteria: >-
