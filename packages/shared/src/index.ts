@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   implements: [blueprint-expressions, decision-models, expressions-configuration, blueprint-loader]
+//   implements: [blueprint-expressions, decision-models, expressions-configuration, blueprint-loader, portfolio-ledger, portfolio-declaration, bindings-declaration]
 // ---
 export const packageName = "@wyrd-company/manifold-shared";
 
@@ -55,3 +55,15 @@ export type {
   LedgerErrorCode,
   PortfolioItem,
 } from "./ledger-portfolio.ts";
+
+export { lintPortfolioDeclaration, portfolioDeclarationAjv } from "./portfolio-declaration.ts";
+export {
+  portfolioDeclarationSchema,
+  bindingsDeclarationSchema,
+} from "./portfolio-declaration-schema.ts";
+export type {
+  PortfolioDeclaration,
+  PortfolioFinding,
+  PortfolioFindingKind,
+  PortfolioLintResult,
+} from "./portfolio-declaration-types.ts";

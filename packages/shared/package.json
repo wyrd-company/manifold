@@ -20,7 +20,8 @@
     "build": "tsc -p tsconfig.build.json && cp src/comparator.d.ts dist/comparator.d.ts",
     "typecheck": "tsc --noEmit",
     "test": "vp test run",
-    "generate:blueprint-schema": "node scripts/generate-blueprint-schema.mjs && vp fmt src/blueprint-schema.ts"
+    "generate:blueprint-schema": "node scripts/generate-blueprint-schema.mjs && vp fmt src/blueprint-schema.ts",
+    "generate:portfolio-schemas": "node scripts/generate-portfolio-schemas.mjs && vp fmt src/portfolio-declaration-schema.ts"
   },
   "dependencies": {
     "ajv": "^8.20.0",
