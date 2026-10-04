@@ -11,17 +11,17 @@ export interface TokenLintOptions {
   readonly configurationBound?: number;
 }
 export type TokenVerdict = "proved" | "violation" | "potential" | "unknown";
-export interface TokenStep {
+export type TokenStep = {
   readonly event: string;
   readonly configuration: string;
   readonly grant?: boolean;
-}
-export interface TokenChoice {
+};
+export type TokenChoice = {
   readonly step: number;
   readonly location: string;
   readonly raises?: string;
   readonly value: boolean;
-}
+};
 export interface GateTokenLint {
   readonly statePath: string;
   readonly location: string;

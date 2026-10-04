@@ -31,6 +31,17 @@ export function createRevisions(options: {
         message: `Invalid blueprint: ${path}`,
         detail: { commit: revision.commit, findings: findings.map((f) => ({ ...f })) },
       });
+    for (const [path, blueprint] of loaded.blueprints)
+      if (blueprint.warnings.length)
+        options.log({
+          level: "warn",
+          event: "blueprint-warnings",
+          message: `Blueprint warnings: ${path}`,
+          detail: {
+            commit: revision.commit,
+            warnings: blueprint.warnings.map((finding) => ({ ...finding })),
+          },
+        });
     const result = await options.portfolio.apply(revision);
     if (result.status === "rejected")
       options.log({

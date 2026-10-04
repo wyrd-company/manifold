@@ -109,6 +109,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     const blueprints = createBlueprintLoader({
       implementations: serviceImplementations(),
       onStateEntry: recordStateEntry,
+      configurationBound: configuration.blueprintLint.configurationBound,
       revisionAt: processRepository.revisionAt,
       onExpressionError: (error, version) =>
         log({

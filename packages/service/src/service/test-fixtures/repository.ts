@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import git from "isomorphic-git";
+import type { BlueprintDocument } from "@wyrd-company/manifold-shared";
 import { stringify } from "yaml";
 import { fixture } from "../../process-repository/test-fixtures/remote.ts";
 import { githubFake } from "../../github-source/test-fixtures/api.ts";
@@ -24,6 +25,7 @@ export async function serviceFixture() {
   async function commit(
     guarantee: number,
     usageFiles: { accounts?: unknown; prices?: unknown; bindings?: unknown } = {},
+    document?: BlueprintDocument,
   ) {
     async function blob(path: string, value: unknown) {
       return {
@@ -41,14 +43,17 @@ export async function serviceFixture() {
       fs,
       gitdir: remote.gitdir,
       tree: [
-        await blob("counter.yml", {
-          machine: {
-            initial: "counting",
-            context: { count: guarantee },
-            states: { counting: {}, done: { type: "final" } },
+        await blob(
+          "counter.yml",
+          document ?? {
+            machine: {
+              initial: "counting",
+              context: { count: guarantee },
+              states: { counting: {}, done: { type: "final" } },
+            },
+            schemas: { input: true, output: true, context: true, events: {} },
           },
-          schemas: { input: true, output: true, context: true, events: {} },
-        }),
+        ),
       ],
     });
     const tree = await git.writeTree({
