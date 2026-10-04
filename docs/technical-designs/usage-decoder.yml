@@ -137,10 +137,17 @@ proposed-design:
     harness writes, decodes in path order. The other providers pass one
     `seenKeys` set per provider. The first copy of a session in decode
     order owns its calls, and a later copy, in the same root or another,
-    yields only the calls the first copy lacks. A `session-total` record is
-    yielded once per key, from the first source in decode order that holds
-    the unit. The order fixes which unit owns a duplicated call, so the
-    same files always give the same records.
+    yields only the calls the first copy lacks. A running total only grows,
+    so of every copy of a session-total unit the decoder keeps the current
+    one: the copy with the latest timestamp, then the greatest sum of its
+    token classes, then the greatest token classes compared in the order
+    of the record's `tokens` object. Copies whose totals conflict, where
+    neither holds every class at or above the other, resolve by the same
+    comparison. The decoder holds each `session-total` record until every
+    source of its provider has decoded, and then yields one record per key,
+    from the current copy, whatever the order of the roots. The order fixes
+    which unit owns a duplicated call, so the same files always give the
+    same records.
   unit-identity: >-
     Every call carries `providerSessionId`, the session id the library
     assigns the call, which is the id the harness and T3 Code know, and a
@@ -262,4 +269,8 @@ proposed-design:
     with the same fixture root given twice, and with two distinct roots
     that each hold a copy of one Claude session and one Codex rollout, and
     check that the records equal those of the single root, with unique
-    keys.
+    keys. A session-total test drives `decodeUsage` over two roots that each
+    hold a copy of one Grok session and one OpenCode session, one copy
+    older with smaller totals and one newer with larger totals, in both
+    root orders, and checks that each order yields one record per key with
+    the newer totals.
