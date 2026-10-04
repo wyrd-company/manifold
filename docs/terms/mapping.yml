@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Mapping
+description: >-
+  A JSONata expression at a schema boundary: a child's input, a final state's output, or an event payload assigned into context.

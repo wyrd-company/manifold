@@ -1,0 +1,44 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - expressions
+    - blueprint-expressions
+description: >-
+  XState v5 calls guards, assignments, and input and output mappings
+  synchronously and uses their return value. JSONata 2 evaluates
+  asynchronously: `evaluate` returns a promise and has no synchronous form.
+  Blueprint expressions must return a value inside an XState transition, in
+  an initial transition, an eventless transition, a restored actor, and a
+  child machine alike.
+considered-options:
+  "1": >-
+    Evaluate in one worker thread with JSONata 2 and block the calling
+    thread on a shared buffer with `Atomics.wait` until the result arrives,
+    as the synckit package does.
+  "2": >-
+    Resolve before sending: run XState's pure `transition` from the current
+    snapshot, record each expression it needed, evaluate those
+    asynchronously, and repeat until no expression is missing, then send the
+    event with every result cached.
+  "3": >-
+    Use JSONata 1.8, whose `evaluate` is synchronous, for blueprint
+    expressions.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 keeps each implementation an ordinary synchronous function, so
+    it works at every XState site with no change to how the engine sends
+    events. Option 2 needs every send, start, and restore to go through a
+    resolve loop, and cannot see expressions in a child machine started
+    during the transition. Option 3 gives Manifold two JSONata versions, one
+    for blueprints and one for decision models, with different behavior and
+    error shapes.
+expected-outcomes:
+  positive:
+    - Guards, matches, assignments, and mappings are synchronous functions XState calls directly.
+    - Blueprints, the lint, and decision models share one JSONata version and one error shape.
+    - The worker holds nothing the service needs after a restart.
+  negative:
+    - Each evaluation copies its input to the worker and back, at a cost in microseconds per call.
+    - The calling thread blocks during each evaluation, as it would for an in-thread evaluation.
+    - A worker that exits during an evaluation leaves the calling thread waiting, since the wait has no timeout.

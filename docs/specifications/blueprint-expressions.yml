@@ -1,0 +1,184 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design;
+# `references` is the best fit for the design this specification realizes.
+relationships:
+  references:
+    - expressions
+description: |-
+  Defines how a blueprint carries JSONata guards, event matches, and
+  mappings, what each expression sees and must return, how the service runs
+  them inside XState v5, how a failure is reported, and how the expression
+  lint checks them. `docs/specifications/blueprint-expressions.schema.yml` is
+  the machine-readable definition of the expression reference, the
+  expression schemas a blueprint supplies, the `expression.error` event, and
+  the expression finding. JSONata is the `jsonata` npm package, major
+  version 2.
+
+  Expression reference. Every expression in a blueprint is an object with
+  `type` and `params`, where `params.expression` is the JSONata source. The
+  `type` names one of four generic implementations. `expression.guard` and
+  `expression.match` stand where XState accepts a guard.
+  `expression.assign` stands where XState accepts an action.
+  `expression.map` stands as the value of `input` on an `invoke`, and as the
+  value of `output` on a top-level final state. An `input` or `output` whose
+  value is an object with `type: expression.map` is a mapping; any other
+  value is static.
+
+  ```yaml
+  on:
+    parcel.scanned:
+      guard:
+        type: expression.guard
+        params:
+          expression: context.attempts < 3 and event.depot = context.depot
+      actions:
+        - type: expression.assign
+          params:
+            expression: '{ "attempts": context.attempts + 1 }'
+  ```
+
+  Sites. A site is one expression reference at one location. The location is
+  the RFC 6901 JSON Pointer of the reference object in the machine
+  configuration, for example `/states/sorting/on/parcel.scanned/guard`. The
+  site positions are: `guard` on a transition in `on`, `always`, `after`,
+  and on `onDone`, `onError`, and `onSnapshot` of an invoke; any entry of
+  `entry`, `exit`, or a transition's `actions`; `input` of an invoke; and
+  `output` of a top-level final state. A transition, action list, or invoke
+  may be written in any form XState v5 accepts: a string, an object, or an
+  array of either.
+
+  Bindings. What `$` is bound to, the result required, and the schemas that
+  bound each site:
+
+  - `expression.guard`: `$` is `{ "context": <context>, "event": <event> }`.
+    The result is a boolean. The guard passes when the result is `true`.
+  - `expression.match`: `$` is the event. The result is a boolean. The match
+    passes when the result is `true`.
+  - `expression.assign`: `$` is `{ "context": <context>, "event": <event> }`.
+    The result is an object. Each of its top-level properties replaces the
+    property of the same name in context, and the merged context validates
+    against the context schema.
+  - `expression.map` as `input`: `$` is `{ "context": <context>, "event":
+    <event> }`. The result validates against the input schema of the
+    invoked `src`.
+  - `expression.map` as `output`: `$` is `{ "context": <context>, "event":
+    <event> }`. The result validates against the blueprint's output schema.
+
+  No other variable is bound. JSONata's own functions are available
+  unchanged.
+
+  Expression schemas. A blueprint supplies JSON Schemas for its `input`,
+  `output`, and `context`; one schema per event type it accepts, under
+  `events`, describing the whole event object including `type`; and, under
+  `actors`, the `input` and `output` schema of each `src` it invokes. The
+  event schema at a site is fixed by its position:
+
+  - a transition in `on` under event type `T`: `events[T]`;
+  - `onDone` of an invoke of `src` `S` with id `I`: an object with `type`
+    equal to `xstate.done.actor.I` and `output` validating against
+    `actors[S].output`;
+  - `onError` of an invoke with id `I`: an object with `type` equal to
+    `xstate.error.actor.I` and `error` of any value;
+  - every other position: each of the declared events, `xstate.init` with
+    `input` validating against the blueprint's input schema, and
+    `expression.error`, in turn.
+
+  A mapping site whose input or output schema is absent is a
+  `schema-missing` finding, and the blueprint does not load. An `output`
+  mapping anywhere other than a top-level final state is a
+  `site-unsupported` finding.
+
+  Shared primitive. `packages/shared` exports the JSONata primitive and the
+  lint:
+
+  ```ts
+  function compileExpression(source: string, location: string): CompiledExpression; // throws ExpressionError of kind "syntax"
+  function evaluateExpression(compiled: CompiledExpression, input: unknown, bindings?: Record<string, unknown>): Promise<unknown>; // rejects with ExpressionError of kind "evaluation"
+  function collectExpressionSites(blueprint: ExpressionBlueprint): readonly ExpressionSite[];
+  function lintBlueprintExpressions(blueprint: ExpressionBlueprint): Promise<readonly ExpressionFinding[]>;
+  class ExpressionError extends Error { readonly detail: ExpressionErrorDetail }
+  ```
+
+  `ExpressionBlueprint` is `{ machine, schemas }`: the machine configuration
+  as parsed from YAML, and the expression schemas. `CompiledExpression`
+  carries its source and location, so each error it yields names both; a
+  decision model node passes its own location, such as a node and a cell.
+  The lint reads no file, network, clock, or
+  environment; the same blueprint gives the same findings in the same order.
+  It is asynchronous only because JSONata evaluation is.
+
+  Service seam. `packages/service` exports one function:
+
+  ```ts
+  function createBlueprintExpressions(
+    blueprint: ExpressionBlueprint,
+    options: { onError(error: ExpressionError): void },
+  ): {
+    machine: MachineConfig; // the configuration with every expression.map replaced by a mapping function
+    guards: { "expression.guard": Guard; "expression.match": Guard };
+    actions: { "expression.assign": Action };
+  };
+  ```
+
+  The caller passes `guards` and `actions` to XState's `setup` and
+  `machine` to `createMachine`. Loading compiles every site and every
+  schema it uses. A syntax error, a `schema-missing` site, or a
+  `site-unsupported` site makes `createBlueprintExpressions` throw an
+  `ExpressionError` naming the first such site in location order. Each
+  reference in the returned machine carries its location in
+  `params.location`, so a failure at run time names its site. Each
+  implementation evaluates synchronously through one worker thread per
+  service process, which compiles each source once and keeps it by source
+  text, and which does not keep the process alive.
+
+  Errors. `ExpressionErrorDetail` has `kind`, `location`, `expression`,
+  `message`, and, when they apply, the JSONata `code` (such as `S0211` or
+  `T0410`), the character `position` in the expression, and the
+  `schemaErrors` from validation. The kinds are `syntax`, `evaluation`,
+  `result` for a result of the wrong type, and `schema` for a result that
+  fails its schema. A function result is a `result` error.
+
+  - A guard or match that fails returns `false` and reports the error to
+    `onError`.
+  - An assignment that fails leaves context unchanged, reports the error to
+    `onError`, and raises an `expression.error` event carrying the detail.
+    Context is written only from a result that passed its schema, so no
+    partial write is possible.
+  - An input or output mapping that fails reports the error to `onError` and
+    throws it; XState stops the actor in error.
+
+  Running an expression twice over the same input gives the same result,
+  except through JSONata's clock and random functions. Evaluation writes
+  nothing outside the actor's next snapshot, so an event replayed after a
+  crash before the snapshot was saved evaluates afresh with no trace of the
+  first run.
+
+  Lint. For each site, the lint compiles the expression; a syntax error is
+  a finding and the site is not evaluated. It then evaluates the expression
+  once per sample of the site's input. A sample of `{ "context", "event" }`
+  pairs a context sample with an event sample, for each event schema the
+  position admits. The samples of one schema are each entry of its
+  `examples`, then one value with every optional property present, then one
+  value with required properties only, generated from a fixed seed. A
+  `default` or `examples` value inside the schema is used where it applies.
+  A finding is raised for an evaluation error, a guard or match result
+  that is not a boolean, an assignment result that is not an object or
+  whose merged context fails the context schema, and a mapping result that
+  fails its output schema. Each finding names its sample as `examples[n]`,
+  `full`, or `required`, and, for a `{ "context", "event" }` sample, the
+  event type. Findings are ordered by location, then by sample.
+format: json-schema
+validation-criteria: >-
+  Every expression reference, expression schema set, `expression.error`
+  event, and expression finding validates against
+  `docs/specifications/blueprint-expressions.schema.yml`. The service tests
+  load a small YAML machine that uses `expression.guard`,
+  `expression.match`, `expression.assign`, and `expression.map`, run it
+  through XState v5, and show that the parsed YAML round-trips through JSON
+  unchanged. They show that a guard that fails does not pass, and that an
+  assignment that fails leaves context unchanged and raises
+  `expression.error`. The lint tests in `packages/shared` use fixtures for a
+  valid mapping, a mapping whose result breaks its output schema, a guard
+  whose result is not a boolean, an expression that does not parse, and a
+  mapping with no output schema, and check each finding's kind, location,
+  and sample. Fixtures use a domain unrelated to Manifold.

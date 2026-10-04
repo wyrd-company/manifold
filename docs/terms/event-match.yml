@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Event Match
+description: >-
+  A JSONata expression over an event that decides whether a transition takes it.

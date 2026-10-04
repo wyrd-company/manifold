@@ -73,6 +73,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **deadline** a time at which an actor in a state receives an event.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
+- **event match** a JSONata expression over an event that decides whether a transition takes it.
 - **event source** a shared origin of events that Manifold routes to actors.
 - **gate** an implementation on a blueprint state that decides which waiting tasks may leave it.
 - **holder** a task actor holding a token from a gate.
@@ -80,6 +81,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **inbox** the per-actor store of routed events not yet consumed.
 - **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
 - **issue** a way to track tasks related to a repository on GitHub
+- **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, or an event payload assigned into context.
 - **pacing** a limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.
 - **parent** a task with subtasks
 - **population** the task actors in a gated state that hold no token from its gate.

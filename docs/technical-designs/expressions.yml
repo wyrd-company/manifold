@@ -21,6 +21,9 @@ background:
       Unconstrained user code in the service can reach the network, run
       forever, or grow into a process of its own.
 design-challenges:
+  synchronous-guards: >-
+    XState v5 guards, assignments, and mappings return their result
+    synchronously, and JSONata 2 returns every result as a promise.
   one-language-per-shape: >-
     A user should be able to say in one sentence why a piece of logic is
     written the way it is.
@@ -46,14 +49,48 @@ proposed-design:
     yielding a boolean. A mapping is a JSONata expression at a schema
     boundary: the input of a child state machine or invoked implementation,
     the output of a final state, or the assignment of an event payload into
-    context. An event match is a JSONata expression over the payload. Each is
-    carried in the YAML as the parameter of one generic implementation, so
-    the blueprint stays serializable.
+    context. An event match is a JSONata expression over the event, yielding
+    a boolean. Each is carried in the YAML as the parameter of one generic
+    implementation, `expression.guard`, `expression.match`,
+    `expression.assign`, or `expression.map`, so the blueprint stays
+    serializable. The specification `blueprint-expressions` defines each
+    shape, what `$` is bound to at each site, and which schemas bound it.
   expression-lint: >-
-    Every mapping sits between two declared schemas. The lint builds a sample
+    Every mapping sits between two declared schemas. The lint builds samples
     from the input schema, evaluates the expression, and validates the result
     against the output schema. Guards and matches are checked for a boolean
-    result. The host CLI runs the same lint.
+    result. The samples are each of the schema's `examples`, one generated
+    value with every optional property, and one with required properties
+    only, generated from a fixed seed so that a lint result is repeatable.
+    The lint is a pure function in `packages/shared` over a blueprint's
+    machine and schemas, and the host CLI runs the same function.
+  synchronous-evaluation: >-
+    XState calls guards, assignments, and input and output mappings
+    synchronously, and JSONata evaluates asynchronously. The service
+    evaluates blueprint expressions in one worker thread and waits for each
+    result on a shared buffer with `Atomics.wait`, so every implementation
+    is an ordinary synchronous function and works the same in an initial
+    transition, an eventless transition, a restored actor, and a child
+    machine. The worker compiles each expression once and keeps the compiled
+    form by its source text. The worker holds no state the service needs:
+    a restarted service starts a new worker, and a replayed event evaluates
+    again from the same snapshot.
+  expression-errors: >-
+    A failed expression yields an `ExpressionError` naming its kind (syntax,
+    evaluation, result, or schema), the expression, its location in the
+    blueprint as a JSON Pointer, and the JSONata error code and character
+    position when JSONata supplies them. A guard or match that fails does not
+    pass. An assignment that fails writes nothing to context and raises an
+    `expression.error` event the blueprint may handle. An input or output
+    mapping that fails throws, and the actor stops in error; the store keeps
+    the last good snapshot. Every failure is also reported to the service
+    through one callback, so it can be recorded.
+  jsonata-primitive: >-
+    `packages/shared` holds one JSONata primitive: compile an expression to
+    a compiled form or a syntax error, and evaluate a compiled form over an
+    input and bindings to a value or an evaluation error. The blueprint
+    worker, the expression lint, and the decision model nodes use it, so
+    JSONata has one version and one error shape in Manifold.
   decision-models: >-
     Manifold ships two custom Zen node types, a decision table and an
     expression node, with JSONata cells and expressions, built on the
