@@ -2,6 +2,7 @@ $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
     - gates
+    - github-event-source
     - portfolio
     - store
 objective: >-
@@ -64,7 +65,8 @@ proposed-design:
     name of the source that publishes it. `github.issue.<node-id>` carries
     issue, dependency, sub-issue, and Project item events, keyed by the
     issue's node id because Project item deliveries carry no issue number
-    and no repository; `github.project.<id>` carries Project-level events;
+    and no repository; `github.project.<id>` carries Project-level events
+    and every Project item event, beside the item's issue topic;
     `t3.environment.<id>.thread.<id>` carries thread events;
     `notify.action.<id>` carries notification actions;
     `usage.environment.<id>.session.<id>` carries usage; and
@@ -199,8 +201,8 @@ proposed-design:
     an invoked promise or callback that was running at the crash starts
     again with its actor.
   idempotency: >-
-    Every event carries an id from its source: the webhook delivery id, the
-    thread event sequence, the notification action id, the token id. The
+    Every event carries an id from its source: the GitHub mirror revision,
+    the thread event sequence, the notification action id, the token id. The
     inbox holds one row per actor and namespaced event id, consumed rows
     included, so a source event delivered twice reaches an actor once. A
     delivery replayed after a crash runs against the snapshot saved before
@@ -382,18 +384,21 @@ proposed-design:
     the thread topic. No actor holds a subscription to T3 Code of its own,
     so re-attaching after a restart is routing by thread id and nothing else.
   github-source: >-
-    The organization webhook is the source for Project item events; a
-    repository webhook is the source for issue, dependency, and sub-issue
-    events. A delivery received by both hooks carries one delivery id and is
-    accepted once. GitHub does not retry a failed delivery, so the source
-    redelivers through the hook deliveries API and a polling sweep with the
-    GraphQL queries for dependencies, sub-issues, and Project items covers
-    what never arrived; an issue's updated time does not move for those
-    changes, so the sweep compares relationship lists, never a since
-    timestamp. A blocking issue's close or reopen names only the blocker;
-    the source publishes it under the topic of every issue Manifold's
-    dependency graph shows as blocked by it, as one source event with one
-    topic per issue.
+    The GitHub event source, `github-event-source`, receives organization
+    and repository webhook deliveries and accepts each GUID once, so a
+    delivery both hooks send is accepted once. A delivery names the
+    entities that changed; the source reads their current state with
+    GraphQL, compares it with its mirror, and publishes each difference
+    under an event id made of the entity and its revision. GitHub does not
+    retry a failed delivery, so the source asks for redelivery through the
+    hook deliveries API, and a sweep runs the same comparison over every
+    bound Project's items and every tracked issue's dependencies and
+    sub-issues; an issue's updated time does not move for those changes, so
+    the sweep compares lists, never a since timestamp. A blocking issue's
+    close or reopen names only the blocker; the source publishes it under
+    the topic of every issue its mirror shows as blocked by it, as one
+    source event with one topic per issue. `github-events` fixes the
+    events, topics, and event ids.
   gate-restore: >-
     Gates are rebuilt in `afterDrain`, after every actor's inbox has been
     drained. A gate's holders are counted from token rows, consumed or not,

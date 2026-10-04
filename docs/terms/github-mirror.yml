@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - github-source-database-schema
+title: GitHub Mirror
+description: >-
+  The last state the GitHub event source read of each Project, item, field
+  value, issue, dependency, and sub-issue it follows, against which it
+  compares GitHub's current state to find the changes it publishes.

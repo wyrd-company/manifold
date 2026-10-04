@@ -1,0 +1,10 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - github-events
+title: Tracked Issue
+description: >-
+  An issue that is the content of a present item on a bound GitHub Project,
+  whose state and relationships the GitHub event source reads and publishes.

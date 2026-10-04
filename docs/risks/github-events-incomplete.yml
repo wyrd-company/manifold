@@ -11,6 +11,7 @@ title: GitHub webhooks may not deliver required dependency and Project events
 relationships:
   mitigated-by:
     - github-dependency-events
+    - github-event-source
 
 description: >-
   Manifold's dependency gate reads facts that must arrive as webhook deliveries:

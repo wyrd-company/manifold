@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - github-event-source
+title: Sweep
+description: >-
+  A periodic comparison of every bound GitHub Project's items and every
+  tracked issue's relationships with the GitHub mirror, which publishes the
+  changes no webhook delivery brought.

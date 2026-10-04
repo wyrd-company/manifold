@@ -1,0 +1,368 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: github-events
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/github-events
+title: GitHub events
+description: >-
+  The events the GitHub event source publishes to the router, and the fields
+  it reads from each webhook delivery it handles. A delivery definition
+  names only the fields the source reads; every other property is allowed.
+$defs:
+  node-id:
+    description: A GitHub GraphQL node id, usable as a topic segment as it stands.
+    type: string
+    pattern: "^[A-Za-z0-9_=+/-]{1,200}$"
+  node-ref:
+    type: object
+    required:
+      - node_id
+    properties:
+      node_id:
+        $ref: "#/$defs/node-id"
+
+  delivery-issues:
+    type: object
+    required:
+      - issue
+    properties:
+      issue:
+        $ref: "#/$defs/node-ref"
+  delivery-issue-dependencies:
+    description: >-
+      A cross-repository delivery carries only the issue in the hook's
+      repository, so at least one end is present.
+    type: object
+    anyOf:
+      - required:
+          - blocked_issue
+      - required:
+          - blocking_issue
+    properties:
+      blocked_issue:
+        $ref: "#/$defs/node-ref"
+      blocking_issue:
+        $ref: "#/$defs/node-ref"
+  delivery-sub-issues:
+    description: >-
+      A cross-repository delivery carries only the issue in the hook's
+      repository, so at least one end is present.
+    type: object
+    anyOf:
+      - required:
+          - parent_issue
+      - required:
+          - sub_issue
+    properties:
+      parent_issue:
+        $ref: "#/$defs/node-ref"
+      sub_issue:
+        $ref: "#/$defs/node-ref"
+  delivery-projects-v2-item:
+    type: object
+    required:
+      - projects_v2_item
+    properties:
+      projects_v2_item:
+        type: object
+        required:
+          - node_id
+          - project_node_id
+        properties:
+          node_id:
+            $ref: "#/$defs/node-id"
+          project_node_id:
+            $ref: "#/$defs/node-id"
+  delivery-projects-v2:
+    type: object
+    required:
+      - projects_v2
+    properties:
+      projects_v2:
+        $ref: "#/$defs/node-ref"
+  delivery-push:
+    type: object
+    required:
+      - ref
+      - after
+      - deleted
+      - repository
+    properties:
+      ref:
+        type: string
+      after:
+        type: string
+        pattern: "^[0-9a-f]{40}$"
+      deleted:
+        type: boolean
+      repository:
+        type: object
+        required:
+          - clone_url
+          - html_url
+        properties:
+          clone_url:
+            type: string
+          html_url:
+            type: string
+
+  issue:
+    type: object
+    required:
+      - nodeId
+      - repository
+      - number
+      - state
+      - stateReason
+    additionalProperties: false
+    properties:
+      nodeId:
+        $ref: "#/$defs/node-id"
+      repository:
+        description: "`owner/name`."
+        type: string
+        pattern: "^[^/\\s]+/[^/\\s]+$"
+      number:
+        type: integer
+        minimum: 1
+      state:
+        enum:
+          - open
+          - closed
+      stateReason:
+        enum:
+          - completed
+          - not_planned
+          - duplicate
+          - reopened
+          - null
+  project:
+    type: object
+    required:
+      - nodeId
+      - owner
+      - number
+    additionalProperties: false
+    properties:
+      nodeId:
+        $ref: "#/$defs/node-id"
+      owner:
+        type: string
+        minLength: 1
+      number:
+        type: integer
+        minimum: 1
+  item:
+    type: object
+    required:
+      - nodeId
+      - contentType
+      - contentNodeId
+    additionalProperties: false
+    properties:
+      nodeId:
+        $ref: "#/$defs/node-id"
+      contentType:
+        enum:
+          - issue
+          - pull-request
+          - draft-issue
+      contentNodeId:
+        $ref: "#/$defs/node-id"
+  field:
+    type: object
+    required:
+      - nodeId
+      - name
+    additionalProperties: false
+    properties:
+      nodeId:
+        $ref: "#/$defs/node-id"
+      name:
+        type: string
+  field-value:
+    oneOf:
+      - type: "null"
+      - type: object
+        required: [kind, text]
+        additionalProperties: false
+        properties:
+          kind:
+            const: text
+          text:
+            type: string
+      - type: object
+        required: [kind, number]
+        additionalProperties: false
+        properties:
+          kind:
+            const: number
+          number:
+            type: number
+      - type: object
+        required: [kind, date]
+        additionalProperties: false
+        properties:
+          kind:
+            const: date
+          date:
+            type: string
+            pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+      - type: object
+        required: [kind, optionId, name]
+        additionalProperties: false
+        properties:
+          kind:
+            const: single-select
+          optionId:
+            type: string
+            minLength: 1
+          name:
+            type: string
+      - type: object
+        required: [kind, iterationId, title, startDate, duration]
+        additionalProperties: false
+        properties:
+          kind:
+            const: iteration
+          iterationId:
+            type: string
+            minLength: 1
+          title:
+            type: string
+          startDate:
+            type: string
+            pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+          duration:
+            type: integer
+            minimum: 1
+
+  issue-state-event:
+    type: object
+    required: [type, issue, blocks, parent]
+    additionalProperties: false
+    properties:
+      type:
+        enum:
+          - github.issue.closed
+          - github.issue.reopened
+      issue:
+        $ref: "#/$defs/issue"
+      blocks:
+        type: array
+        uniqueItems: true
+        items:
+          $ref: "#/$defs/node-id"
+      parent:
+        oneOf:
+          - $ref: "#/$defs/node-id"
+          - type: "null"
+  dependency-event:
+    type: object
+    required: [type, blocked, blocking]
+    additionalProperties: false
+    properties:
+      type:
+        enum:
+          - github.dependency.added
+          - github.dependency.removed
+      blocked:
+        $ref: "#/$defs/issue"
+      blocking:
+        $ref: "#/$defs/issue"
+  sub-issue-event:
+    type: object
+    required: [type, parent, subIssue]
+    additionalProperties: false
+    properties:
+      type:
+        enum:
+          - github.sub-issue.added
+          - github.sub-issue.removed
+      parent:
+        $ref: "#/$defs/issue"
+      subIssue:
+        $ref: "#/$defs/issue"
+  item-added-event:
+    type: object
+    required: [type, project, item, issue, archived, fields]
+    additionalProperties: false
+    properties:
+      type:
+        const: github.project-item.added
+      project:
+        $ref: "#/$defs/project"
+      item:
+        $ref: "#/$defs/item"
+      issue:
+        oneOf:
+          - $ref: "#/$defs/issue"
+          - type: "null"
+      archived:
+        type: boolean
+      fields:
+        type: array
+        items:
+          type: object
+          required: [field, value]
+          additionalProperties: false
+          properties:
+            field:
+              $ref: "#/$defs/field"
+            value:
+              $ref: "#/$defs/field-value"
+  item-event:
+    type: object
+    required: [type, project, item]
+    additionalProperties: false
+    properties:
+      type:
+        enum:
+          - github.project-item.removed
+          - github.project-item.archived
+          - github.project-item.restored
+      project:
+        $ref: "#/$defs/project"
+      item:
+        $ref: "#/$defs/item"
+  field-changed-event:
+    type: object
+    required: [type, project, item, field, from, to]
+    additionalProperties: false
+    properties:
+      type:
+        const: github.project-item.field-changed
+      project:
+        $ref: "#/$defs/project"
+      item:
+        $ref: "#/$defs/item"
+      field:
+        $ref: "#/$defs/field"
+      from:
+        $ref: "#/$defs/field-value"
+      to:
+        $ref: "#/$defs/field-value"
+  project-event:
+    type: object
+    required: [type, project]
+    additionalProperties: false
+    properties:
+      type:
+        enum:
+          - github.project.closed
+          - github.project.reopened
+      project:
+        $ref: "#/$defs/project"
+  event:
+    description: Every event the GitHub event source publishes.
+    oneOf:
+      - $ref: "#/$defs/issue-state-event"
+      - $ref: "#/$defs/dependency-event"
+      - $ref: "#/$defs/sub-issue-event"
+      - $ref: "#/$defs/item-added-event"
+      - $ref: "#/$defs/item-event"
+      - $ref: "#/$defs/field-changed-event"
+      - $ref: "#/$defs/project-event"

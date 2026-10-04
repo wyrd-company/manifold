@@ -1,0 +1,561 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - durable-event-delivery
+    - service-configuration
+    - process-repository
+    - portfolio
+  mitigates:
+    - github-events-incomplete
+    - github-reads-lag-deliveries
+objective: >-
+  Turn GitHub webhook deliveries, and the changes GitHub never delivers,
+  into router events for the issues and Projects Manifold tracks, so that
+  each change reaches its actors once, a blocked issue's actor hears its
+  blocker close, and a push to the process repository pulls it.
+background:
+  current-design: >-
+    The router publishes source events through the seam `router-events`
+    defines, and `durable-event-delivery` names the GitHub topics. The
+    `github-dependency-events` spike measured that every dependency,
+    sub-issue, Project item, and Project change produces a delivery to the
+    organization hook, that a repository hook repeats a repository event
+    with the same GUID, that GitHub makes one attempt per delivery and keeps
+    failed ones for redelivery through the hook deliveries API, that a
+    blocking issue's close names only the blocker, and that an issue's
+    `updatedAt` does not move when a dependency, sub-issue, or Project item
+    changes. The process repository's `pull` takes the commit a push
+    names. Bindings name each bound Project by owner and number.
+  problems:
+    - >-
+      A delivery that fails is never retried by GitHub, and a delivery sent
+      while the service is down is a failure, so an actor waiting on it waits
+      forever unless the source recovers it.
+    - >-
+      A delivery describes a change at the moment GitHub sent it. A
+      redelivered or late delivery describes a state that may since have
+      changed back.
+    - >-
+      A blocker's close names no blocked issue, and Project item deliveries
+      name no issue number and no Project number.
+design-challenges:
+  once: >-
+    One change can arrive through two hooks, a redelivery, and a sweep, and
+    must reach each actor once.
+  recovery: >-
+    A change whose delivery never arrived, including one made while the
+    service was down for longer than GitHub keeps deliveries, must still be
+    published.
+  staleness: >-
+    A delivery applied as a fact can publish a state that is no longer true.
+  acknowledgement: >-
+    GitHub marks a delivery failed when the answer takes longer than ten
+    seconds, and reading GitHub's current state can take longer than that.
+proposed-design:
+  high-level-overview: >-
+    The GitHub event source is `packages/service/src/github-source/`, whose
+    only public file is `index.ts`. `startGitHubSource` migrates the
+    source's tables, `github-source-database-schema`, and returns a source
+    whose `receive` verifies a webhook delivery, records its GUID once, and
+    records the entities it names as pending reconciles, in one
+    transaction, before the HTTP answer. A delivery is a notice that an
+    entity changed, never the change itself. One serial runner reads each
+    pending entity's current state from the GitHub GraphQL API, compares it
+    with the GitHub mirror, and in one transaction writes the mirror and
+    publishes each difference to the router under the topics and event ids
+    `github-events` defines. The same comparison runs for every bound
+    Project and tracked issue on each sweep, and a redelivery scan asks
+    GitHub to redeliver each failed delivery once. A webhook delivery, a
+    redelivery, and a sweep that learn of one change all compare against
+    the same mirror, so the first publishes it and the rest find no
+    difference. The decision record
+    `reconcile-github-deliveries-against-fetched-state` records the choice.
+  public-interface: |-
+    `packages/service/src/github-source/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { IncomingMessage, ServerResponse } from "node:http";
+    import type { PullOutcome, PullRequest } from "../process-repository/index.ts";
+    import type { Router, RouterClock } from "../router/index.ts";
+    import type { Credentials } from "../service-configuration/index.ts";
+    import type { Store } from "../store/index.ts";
+
+    export function startGitHubSource(options: GitHubSourceOptions): GitHubSource;
+
+    export interface GitHubSourceOptions {
+      readonly configuration: GitHubConfiguration;
+      readonly credentials: Credentials;
+      readonly store: Store;
+      readonly router: Router;
+      /** The GitHub Project bindings of the current process repository revision. */
+      readonly boundProjects: () => readonly ProjectReference[];
+      readonly processRepository: ProcessRepositoryTrigger;
+      /** Defaults to Date.now and setTimeout. */
+      readonly clock?: RouterClock;
+      /** Called for each failure the source recovers from by itself. */
+      readonly onError?: (error: GitHubSourceError) => void;
+      /** Called after each reconcile's read, before its transaction. */
+      readonly probe?: () => void;
+    }
+
+    /** The `github` section of the service configuration, defaults applied. */
+    export interface GitHubConfiguration {
+      readonly apiUrl: string;
+      readonly owners: Readonly<Record<string, GitHubOwnerConfiguration>>;
+      readonly sweepIntervalMs: number;
+      readonly redeliveryIntervalMs: number;
+      readonly requestTimeoutMs: number;
+    }
+
+    export interface GitHubOwnerConfiguration {
+      readonly credential: string;
+      readonly hooks: readonly GitHubHookConfiguration[];
+    }
+
+    export interface GitHubHookConfiguration {
+      readonly id: number;
+      /** Absent for an organization hook. */
+      readonly repository: string | undefined;
+      /** Absolute; resolved against the configuration file's directory. */
+      readonly secretFile: string;
+    }
+
+    export interface ProjectReference {
+      readonly owner: string;
+      readonly number: number;
+    }
+
+    export interface ProcessRepositoryTrigger {
+      readonly url: string;
+      readonly branch: string;
+      pull(request?: PullRequest): Promise<PullOutcome>;
+    }
+
+    export interface GitHubSource {
+      receive(delivery: WebhookDelivery): DeliveryOutcome;
+      /** Reads the request body and answers from `receive`. */
+      readonly requestListener: (request: IncomingMessage, response: ServerResponse) => void;
+      /** Runs a sweep next, after the work running now. */
+      requestSweep(): void;
+      /** The mirror's view of a tracked issue, or undefined when it is not tracked. */
+      trackedIssue(nodeId: string): TrackedIssue | undefined;
+      stop(): Promise<void>;
+    }
+
+    export interface WebhookDelivery {
+      /** Header names in any case. */
+      readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
+      readonly body: Uint8Array;
+    }
+
+    export type DeliveryOutcome =
+      | { readonly status: "accepted"; readonly deliveryId: string; readonly duplicate: boolean }
+      | { readonly status: "rejected"; readonly error: GitHubDeliveryError };
+
+    export class GitHubDeliveryError extends Error {
+      readonly kind: "malformed" | "unknown-hook" | "signature";
+      /** The `X-GitHub-Delivery` header, when present. */
+      readonly deliveryId: string | undefined;
+    }
+
+    export class GitHubSourceError extends Error {
+      readonly kind: "api" | "unconfigured-owner" | "unresolved-project" | "secret-file" | "pull";
+      /** The HTTP status of a failed API request, when there was one. */
+      readonly status: number | undefined;
+    }
+
+    export interface GitHubIssue {
+      readonly nodeId: string;
+      readonly repository: string;
+      readonly number: number;
+      readonly state: "open" | "closed";
+      readonly stateReason: "completed" | "not_planned" | "duplicate" | "reopened" | null;
+    }
+
+    export interface GitHubProject {
+      readonly nodeId: string;
+      readonly owner: string;
+      readonly number: number;
+    }
+
+    export interface TrackedIssue {
+      readonly issue: GitHubIssue;
+      readonly blockedBy: readonly GitHubIssue[];
+      readonly blocking: readonly GitHubIssue[];
+      readonly subIssues: readonly GitHubIssue[];
+      readonly parent: GitHubIssue | undefined;
+      readonly projects: readonly GitHubProject[];
+    }
+    ```
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `verify.ts`
+    holds the pure checks of a delivery's headers, signature, and body.
+    `receive.ts` implements `receive` and `requestListener`. `reconcile.ts`
+    holds the pure functions from a mirror view and an observed state to the
+    mirror writes and the events to publish. `events.ts` holds the pure
+    functions that build each event's topics and event id. `mirror.ts`
+    holds every SQL read and write of the source's tables. `github-api.ts`
+    holds the GraphQL queries and the REST calls, and nothing else talks to
+    GitHub. `runner.ts` holds the serial runner, the sweep, the redelivery
+    scan, and the timers. `migrations.ts` holds the migration steps.
+    `fixtures/` holds the synthetic delivery payloads. Tests live beside the
+    module and import only `index.ts`, the router's and the store's
+    `index.ts`, and the service configuration's `index.ts`.
+  library: >-
+    GraphQL requests go through `@octokit/graphql`, and REST requests
+    through `@octokit/request`, which service configuration adds for the
+    `github-app` credential. Both are Octokit, GitHub's own maintained
+    JavaScript client family. `@octokit/graphql` derives the GraphQL URL of
+    GitHub Enterprise Server from the REST base URL and raises a
+    `GraphqlResponseError` that carries the partial data and each error's
+    path, which the source reads to tell a missing node from a failed
+    request. Signatures are HMAC-SHA256 from `node:crypto` compared with
+    `timingSafeEqual`, a few lines that need no dependency. Delivery bodies
+    and published events are validated with Ajv against
+    `github-events.schema.yml`, embedded as a constant in `packages/shared`
+    as the other specification schemas are.
+  configuration: >-
+    The `github` section is specified by `github-source-configuration`.
+    `GitHubConfiguration` is its type, exported here as the comparator
+    sandbox exports its section's type, and service configuration's loader
+    adds the section to `ServiceConfiguration` as `github`. Each owner's
+    `credential` resolves through `credentials.resolve` to a `github-app`
+    credential, whose `installationToken({ signal })` gives the token for
+    every request about that owner's entities. The token goes to Octokit
+    through `reveal()` and nowhere else.
+  permissions: >-
+    The installation token of each owner's `github-app` credential carries
+    the App's permissions on that account. The source uses these, and no
+    other: repository `Metadata: read`, which every App holds, for each
+    issue's `repository { nameWithOwner }`; repository `Issues: read`, for
+    each issue's state, `blockedBy`, `blocking`, `subIssues`, and `parent`;
+    repository `Pull requests: read`, so that a pull request item on a
+    Project shows its content node id instead of `REDACTED`; organization
+    `Projects: read`, to resolve a Project by owner and number and read its
+    `closed`, items, and field values; organization `Webhooks: read and
+    write`, on an account with an organization hook, to list the hook's
+    deliveries (read) and ask for a redelivery (write); and repository
+    `Webhooks: read and write`, on a repository with a repository hook, for
+    the same. The source never writes to an issue, a Project, or a
+    repository, and needs no `Contents` permission: a push reaches a hook
+    without it, the process repository's own `contents: read` token fetches
+    the pushed commit, and the source never links a repository to a
+    Project.
+  webhooks: >-
+    Each configured hook delivers `application/json` with a secret and
+    SSL verification on. An organization hook subscribes to `issues`,
+    `issue_dependencies`, `sub_issues`, `projects_v2_item`, `projects_v2`,
+    and `push`; it reaches every repository of the organization, and GitHub
+    sends Project events to organization hooks only. A repository hook
+    subscribes to `issues`, `issue_dependencies`, `sub_issues`, and `push`,
+    and serves a repository whose account has no organization hook, such as
+    a repository a user account owns. Both kinds may be configured for one
+    repository; the second delivery of each GUID is a duplicate. A Project
+    a user account owns has no Project deliveries, and the sweep alone
+    reads it. An account owner creates each hook in GitHub and copies its
+    id and secret into service configuration.
+  receive: >-
+    `receive(delivery)` runs synchronously. It verifies the delivery as
+    `github-events` defines, reading the hook's `secretFile` with
+    `readFileSync` at each call so a replaced secret applies at once. A
+    failed check returns `rejected` with a `GitHubDeliveryError` of that
+    kind, and writes and calls nothing. An unreadable secret file throws a
+    `GitHubSourceError` of kind `secret-file`. A verified delivery opens
+    one `store.connection.transaction`, inserts its `github_delivery` row,
+    and, when the GUID was already there, returns `accepted` with
+    `duplicate` true and writes nothing more. Otherwise it records the
+    pending reconciles the delivery names and commits. After the commit it
+    calls the process repository's `pull` for a matching push, sends a
+    rejection of that promise to `onError` as kind `pull`, and wakes the
+    runner. It returns `accepted` with `duplicate` false.
+  pending: >-
+    An issue a delivery names becomes a pending `issue` when it is tracked.
+    When it is not, each tracked issue the mirror shows beside it, through a
+    present dependency or sub-issue row in either direction, becomes a
+    pending `issue` instead, so a blocker outside every bound Project still
+    reaches the issues it blocks. An item becomes a pending `item` and a
+    Project a pending `project` only when the Project is bound. Recording a
+    pending row that exists moves its `requested_at` to now.
+  bound-projects: >-
+    The runner keeps the bound Projects as a map from Project node id to
+    Project reference, rebuilt at the start of each sweep from
+    `boundProjects()`. A reference whose owner and number match a
+    `github_project` row, without regard to the owner's case, takes that
+    row's node id. Any other is resolved with the `GitHubProjectByNumber`
+    query, and its row is written with the Project's `closed` as its
+    baseline and revision 0. An owner that `owners` does not name is an
+    `unconfigured-owner` error, and a Project the query does not find is
+    `unresolved-project`; each is sent to `onError` and left out of the map
+    until a later sweep resolves it. A delivery about a Project outside the
+    map names nothing.
+  runner: >-
+    One runner does all of the source's GitHub work, one step at a time, so
+    no two requests to GitHub overlap and no two reconciles write at once.
+    It holds three flags: a redelivery scan is due, a sweep is due, and
+    pending rows exist. On waking it runs a due scan first, then a due
+    sweep, then the pending reconciles, and sleeps when all three are clear.
+    `startGitHubSource` sets the scan and the sweep due and wakes it. After
+    each scan it arms one timer for `redeliveryIntervalMs`, and after each
+    sweep one for `sweepIntervalMs`, through the clock; a timer sets its
+    flag and wakes the runner. `receive` and `requestSweep` wake it too.
+    The intervals run from the end of the work, so a slow sweep never
+    overlaps the next.
+  reconcile-pending: >-
+    The runner takes pending rows oldest `requested_at` first. Issues are
+    read up to 50 at a time with the `GitHubIssues` query, grouped by the
+    credential that reads them; items up to 50 at a time with `GitHubItems`;
+    and a Project alone, as the sweep reconciles it. Before each read it
+    notes the time. After the read it opens one transaction that applies
+    each entity's comparison in turn, publishes each resulting event with
+    `router.publish` inside the transaction, and deletes each pending row
+    whose `requested_at` is earlier than the noted time. A failed request,
+    a request that runs past `requestTimeoutMs`, or a rate limit answer
+    stops the runner's pending work for this wake, leaves every unread row
+    pending, and sends a `GitHubSourceError` of kind `api` with the status
+    to `onError`; the next timer wakes it to try again. The source adds no
+    retry or backoff of its own. A `publish` that returns `rejected` is a
+    defect in the source and throws, which rolls the transaction back.
+  credentials-per-entity: >-
+    A Project and its items are read with the credential of the Project's
+    owner. A tracked issue is read with the credential of its repository's
+    owner when `owners` names that owner, and otherwise with the credential
+    of the owner of a bound Project that holds it.
+  queries: |-
+    Every query is named, so the test's GitHub fake answers by operation
+    name, and none filters by time.
+
+    ```graphql
+    query GitHubProjectByNumber($login: String!, $number: Int!) {
+      repositoryOwner(login: $login) {
+        ... on ProjectV2Owner {
+          projectV2(number: $number) { id number closed owner { ... on Organization { login } ... on User { login } } }
+        }
+      }
+    }
+
+    query GitHubProject($id: ID!, $after: String) {
+      node(id: $id) {
+        ... on ProjectV2 {
+          id number closed
+          items(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { ...GitHubItem } }
+        }
+      }
+    }
+
+    query GitHubItems($ids: [ID!]!) {
+      nodes(ids: $ids) { ...GitHubItem }
+    }
+
+    query GitHubIssues($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Issue {
+          ...GitHubIssueRef
+          parent { ...GitHubIssueRef }
+          blockedBy(first: 50) { pageInfo { hasNextPage endCursor } nodes { ...GitHubIssueRef } }
+          blocking(first: 50) { pageInfo { hasNextPage endCursor } nodes { ...GitHubIssueRef } }
+          subIssues(first: 50) { pageInfo { hasNextPage endCursor } nodes { ...GitHubIssueRef } }
+        }
+      }
+    }
+
+    fragment GitHubIssueRef on Issue {
+      id number state stateReason repository { nameWithOwner }
+    }
+
+    fragment GitHubItem on ProjectV2Item {
+      id type isArchived project { id }
+      content {
+        ... on Issue { ...GitHubIssueRef }
+        ... on PullRequest { id }
+        ... on DraftIssue { id }
+      }
+      fieldValues(first: 50) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          ... on ProjectV2ItemFieldTextValue { text field { ...GitHubField } }
+          ... on ProjectV2ItemFieldNumberValue { number field { ...GitHubField } }
+          ... on ProjectV2ItemFieldDateValue { date field { ...GitHubField } }
+          ... on ProjectV2ItemFieldSingleSelectValue { optionId name field { ...GitHubField } }
+          ... on ProjectV2ItemFieldIterationValue { iterationId title startDate duration field { ...GitHubField } }
+        }
+      }
+    }
+
+    fragment GitHubField on ProjectV2FieldConfiguration {
+      ... on ProjectV2FieldCommon { id name dataType }
+    }
+    ```
+
+    A connection whose `pageInfo.hasNextPage` is true is read to its end
+    with a query on that one node's connection, `after` its `endCursor`,
+    before the comparison runs, so every comparison sees whole lists. A node
+    that `nodes(ids:)` answers with `null` and a `NOT_FOUND` error at its
+    path is absent; any other GraphQL error fails the request. An item of
+    type `REDACTED` is skipped. Field values whose field `dataType` is not
+    `TEXT`, `NUMBER`, `DATE`, `SINGLE_SELECT`, or `ITERATION` are skipped.
+    Enum values are lower-cased into the shapes `github-events` defines, and
+    a node id outside the node id pattern fails the request.
+  compare-issues: >-
+    The comparison of a tracked issue `T` takes its observed state and
+    lists, the mirror rows of `T`, of every issue in its lists, and of every
+    dependency and sub-issue row that names `T`, and the set of tracked
+    issues. (1) Each issue it observed, `T` and every issue in its lists,
+    is written to `github_issue`; one whose row existed with another state
+    is a state change. (2) When `T` is baselined, each dependency and
+    sub-issue `T` takes part in that the lists show and the mirror holds
+    absent is an addition, and each the mirror holds present that the lists
+    do not show is a removal. When `T` is not baselined, the lists are
+    written as present without a change and `T` is marked baselined. (3)
+    Each change raises its row's revision by one and becomes one event:
+    relationship changes first, in list order, then state changes, so a
+    close's `blocks` and `parent` already reflect the relationships read
+    with it. `blocks` and `parent` are read from the mirror after the
+    writes. A batch applies its issues in turn, each against the mirror the
+    previous left, so a neighbor two tracked issues share changes state
+    once.
+  compare-items: >-
+    The comparison of an item takes its observed node, or absence, and its
+    mirror rows. An item with no row, or with `present` 0, that is observed
+    is an addition: its row and field values are written, and it publishes
+    `github.project-item.added` with its field values and its content issue.
+    Its content issue is written to `github_issue` as a baseline when it has
+    no row, and becomes a pending `issue`. A present item observed absent is
+    a removal. A change of `isArchived` is an archive or a restore. Each
+    field whose value differs from its row, a field with no value read as
+    `null`, is one `field-changed` event; a field with no row whose value is
+    not `null` is one too. Item changes publish before field changes. A
+    field's latest name is written without a change.
+  compare-projects: >-
+    A Project's comparison reads its `closed` and every page of its items.
+    A change of `closed` is `github.project.closed` or
+    `github.project.reopened`. Each page's items compare as items, in one
+    transaction per page. After the last page, each item the mirror holds
+    present on the Project that no page showed becomes a pending `item`, so
+    its own read decides whether it was removed or is archived and outside
+    the list. Every tracked issue of the Project then becomes a pending
+    `issue`, and the Project's pending row is deleted under the same rule as
+    any other.
+  sweep: >-
+    A sweep rebuilds the bound Projects, makes each bound Project a pending
+    `project`, calls the process repository's `pull` with no commit and
+    sends a rejection to `onError` as kind `pull`, and runs the pending
+    reconciles. A sweep is therefore a full comparison of every bound
+    Project's items and every tracked issue's relationships against the
+    mirror, by list and never by an updated time, and it publishes any
+    change no delivery brought, including one made while the service was
+    down. `requestSweep()` sets the sweep due; the service calls it after a
+    pull advances the process repository, so a newly bound Project is read
+    without waiting for the interval.
+  redelivery: >-
+    A redelivery scan runs for each configured hook. A hook with no
+    `github_hook_scan` row gets one whose `scanned_through` is now, and is
+    scanned from the next scan on. Otherwise the scan lists the hook's
+    deliveries, `GET /orgs/{owner}/hooks/{id}/deliveries` for an
+    organization hook and `GET /repos/{owner}/{repository}/hooks/{id}/deliveries`
+    for a repository hook, 100 per page, newest first, and stops at the
+    first page that reaches a `delivered_at` earlier than
+    `scanned_through`. A GUID is failed when none of its listed attempts
+    has a status code from 200 to 299, it has no `github_delivery` row, and
+    it has no `github_redelivery` row. For each failed GUID the scan calls
+    `POST .../deliveries/{attempt_id}/attempts` with its newest attempt and
+    then writes its `github_redelivery` row, so the source asks once per
+    GUID. When every page is read it sets `scanned_through` to the newest
+    `delivered_at` it read. A redelivered delivery arrives at `receive` with
+    its GUID as any delivery does. A delivery older than GitHub keeps is
+    recovered by the sweep alone.
+  push: >-
+    A push that matches the process repository, as `github-events` defines,
+    calls `processRepository.pull({ commit: after })` once per GUID. The
+    process repository serializes pulls and returns `unchanged` for a
+    commit it already holds, and every sweep calls `pull()`, so a push
+    whose delivery never arrived is pulled at the next sweep.
+  request-listener: >-
+    `requestListener` answers `405` to any method but `POST`. It reads the
+    body up to 26214400 bytes, GitHub's payload limit of 25 MB, and answers
+    `413` and stops reading beyond it. It then calls `receive` and answers
+    `202` for a new delivery, `200` for a duplicate, `400` for `malformed`,
+    `404` for `unknown-hook`, and `401` for `signature`. A throw answers
+    `500` and is sent to `onError`. Every answer is sent after `receive`
+    returns, so a `2xx` answer means the delivery's GUID and pending rows are
+    committed. The service's HTTP server mounts the listener at the path the
+    hooks deliver to.
+  tracked-issue: >-
+    `trackedIssue(nodeId)` reads the mirror: the issue, the present
+    dependencies in each direction, the present sub-issues and parent, and
+    the bound Projects with a present item for it. It returns `undefined`
+    for an issue that is not tracked. Intake and gates read the dependency
+    graph through it.
+  stop: >-
+    `stop()` clears both timers, aborts the request in flight, and resolves
+    when the runner has returned; the aborted work stays pending. `receive`
+    after `stop` throws a `TypeError`, and `stop` twice does nothing more.
+  convergence: >-
+    `receive` twice with one GUID writes one `github_delivery` row and one
+    set of pending rows, and calls `pull` once. A crash before its commit
+    leaves nothing and GitHub sees no `2xx`, so the redelivery scan asks for
+    it again. A crash after the commit and before the answer leaves the GUID
+    accepted; the redelivery is a duplicate and the pending rows do the
+    work. A reconcile twice against the same GitHub state publishes the
+    first time and finds no difference the second, since its mirror writes
+    and its events commit in one transaction. A crash during a read or
+    before that commit leaves the pending row, and the next wake reads
+    again. A redelivery request that GitHub took before a crash, with no
+    `github_redelivery` row yet, is asked again once, and the second
+    arrival is a duplicate. A sweep twice publishes nothing the second time
+    that the first published.
+  errors: >-
+    A delivery that fails verification is a `rejected` outcome, never a
+    throw, since GitHub and anyone who can reach the endpoint send it.
+    Failures of GitHub's API and of `pull` are `GitHubSourceError`s sent to
+    `onError`, and the runner recovers from them on its next wake. SQLite
+    errors and an unreadable secret file throw from `receive`; in the
+    runner they stop the wake, are sent to `onError`, and leave the work
+    pending. Misuse by service code throws a `TypeError`. Inputs from
+    service code are trusted otherwise.
+  tests: >-
+    Tests run against a real store file in a temporary directory, with a
+    router started on it and a recording actor host whose actors subscribe
+    to issue and Project topics. A local `node:http` server stands in for
+    GitHub: it mints installation tokens for a key generated by
+    `node:crypto`, answers each named GraphQL operation from an in-memory
+    model of issues, dependencies, sub-issues, Projects, items, and field
+    values, lists hook deliveries from its own delivery log, and answers a
+    redelivery request by signing and posting the logged delivery to the
+    source's listener with its GUID. The fake refuses any query with a
+    variable or argument that filters by time. Delivery fixtures are
+    synthetic, with generic owners, repositories, and node ids, in the
+    shapes the spike recorded. Nothing calls GitHub. A fake clock drives the
+    timers. Behaviours proved, each written red before green: a valid
+    delivery is accepted; a missing header, a non-JSON body, and a handled
+    event missing a field it reads are `malformed`; an unknown hook id is
+    `unknown-hook`; a body signed with the wrong secret, with another
+    hook's secret, or changed by one byte is `signature`; and no rejected
+    delivery writes a row, calls the fake, or publishes. One GUID from the
+    organization hook and then a repository hook is accepted once and read
+    once. A cross-repository dependency, whose two deliveries each carry
+    one end, publishes `github.dependency.added` once. With a populated dependency graph, tracked issues A, B, and C
+    blocked by an issue X outside every bound Project and D blocked by A,
+    closing X publishes one `github.issue.closed` under the topics of X, A,
+    B, and C, whose actors each take it once and D's none, and closing A
+    reaches A and D. A dropped delivery: the model gains a dependency and
+    no delivery is sent; the sweep publishes `github.dependency.added`
+    once; the delivery then arrives and publishes nothing new. A failed
+    delivery: the fake logs it as failed; the scan asks once, the
+    redelivery publishes it, a second scan asks nothing, and the next sweep
+    publishes nothing. An item added, edited, archived, restored, and
+    removed publishes each event once with its field values; the first
+    sweep of a newly bound Project publishes `added` for each item and no
+    `field-changed`; an issue's first read publishes no relationship; a
+    Project closed and reopened publishes both. A request made for an
+    entity during its read is still pending after the read. A `502`, a
+    rate limit answer, and a request that never answers, past
+    `requestTimeoutMs` on the fake clock, each leave the work pending and
+    report `api`, and the next wake completes it. A matching push calls
+    `pull` with its head once, a push to another branch or repository does
+    not, and each sweep calls `pull()`. Every published event validates
+    against `github-events.schema.yml`. The source's tables match
+    `github-source-database-schema`. Fault test, in a child Node process
+    that sends itself `SIGKILL` from `probe`, between a reconcile's read
+    and its commit, and whose kill signal the parent asserts: after a restart on the same
+    file the change is published once.

@@ -147,17 +147,21 @@ findings:
       reconciliation to ensure no events are lost.
 
   payload-content-for-dependencies:
-    verdict: complete identification of both ends
+    verdict: both ends identified within one repository; the local end only across repositories
     measurements:
       dependency-events: "issue_dependencies.blocked_by_added, blocked_by_removed, blocking_added, blocking_removed"
     notes: >-
-      Measured: blocked-by payloads carry the blocked issue id, number, node
-      id, repository (full_name), and state, plus the blocking issue id,
-      number, node id, repository, and state. For cross-repository blocked-by
-      relationships, both repository identifiers are present in the payload.
-      The closed or reopened issue payload includes issue_dependencies_summary
-      (blocking and blockedBy counts and open/total counts) but not the list
-      of affected issues.
+      Measured: when both issues are in one repository, blocked-by payloads
+      carry the blocked issue id, number, node id, repository (full_name),
+      and state, plus the blocking issue id, number, node id, repository, and
+      state. For a cross-repository relationship, each delivery carries the
+      issue object only for the issue in its own repository and the other
+      end as its numeric id alone (`blocking_issue_id` or
+      `blocked_issue_id`); the second delivery of the pair carries the other
+      end. Sub-issue deliveries behave the same way with `parent_issue` and
+      `sub_issue`. The closed or reopened issue payload includes
+      issue_dependencies_summary (blocking and blockedBy counts and
+      open/total counts) but not the list of affected issues.
 
   payload-content-for-project-items:
     verdict: no issue number; node id is key present in all deliveries

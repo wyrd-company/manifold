@@ -1,0 +1,80 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design this section configures.
+  realizes:
+    - github-event-source
+  references:
+    - service-configuration
+terms:
+  - sweep
+  - redelivery
+  - webhook-delivery
+description: |-
+  Defines the `github` section of the service configuration, specified by
+  `service-configuration`: which GitHub App installation reaches each
+  account, which webhooks deliver to the service and the secret of each,
+  and how often the GitHub event source runs its sweep and its redelivery
+  scan. `docs/specifications/github-source-configuration.schema.yml` is the
+  machine-readable definition of the section's value. The root names the
+  section as `github`, optional, default `{}`.
+
+  `apiUrl` is the base URL of the GitHub REST API. The GraphQL endpoint is
+  `<apiUrl>/graphql`, except that a base URL ending in `/api/v3` has that
+  suffix replaced by `/api` first. Default `https://api.github.com`.
+
+  `owners` maps the login of each organization or user account Manifold
+  reads to that account's settings. Logins compare without regard to case,
+  and two keys that differ only in case are an error. Default `{}`.
+
+  - `credential` is the name of a `github-app` credential in the
+    `credentials` section whose installation is on this account. Required.
+  - `hooks` lists the webhooks on this account that deliver to the service.
+    Each has `id`, the hook's numeric id; `repository`, the repository name
+    for a repository hook, absent for an organization hook; and
+    `secretFile`, the path of a file holding the hook's secret. A relative
+    path resolves against the directory of the configuration file. The
+    secret is the file's content with one trailing line ending removed, and
+    the source reads the file at each delivery, so a replaced secret applies
+    to the next delivery. Default `[]`.
+
+  `sweepIntervalMs` is the time in milliseconds from the end of one sweep to
+  the start of the next. Default 900000.
+
+  `redeliveryIntervalMs` is the time in milliseconds from the end of one
+  redelivery scan to the start of the next. Default 60000.
+
+  `requestTimeoutMs` is the most time in milliseconds one request to the
+  GitHub API may take before the source aborts it. Default 30000.
+
+  An example section:
+
+  ```yaml
+  github:
+    owners:
+      example-org:
+        credential: example-app
+        hooks:
+          - id: 1001
+            secretFile: example-org-hook.secret
+          - id: 1002
+            repository: example-repo
+            secretFile: example-repo-hook.secret
+  ```
+
+  Beyond the schema, the section is valid only when each `credential` names
+  a credential of kind `github-app`, each `secretFile` names a readable
+  file, no two hooks share an `id`, and no two `owners` keys are equal
+  without regard to case. A failure is an issue at the path of the property
+  that breaks the rule.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/github-source-configuration.schema.yml` is a valid
+  JSON Schema 2020-12 document whose declared-name reference resolves
+  against `service-configuration.schema.yml`. Loading a configuration with
+  no `github` section returns the section with every default. The service
+  rejects a configuration whose `github` value the schema rejects, naming
+  the property; rejects a `credential` that `credentials` does not define;
+  rejects a missing secret file at its `secretFile`; rejects a hook id used
+  twice at the second use; and rejects two owner keys equal without regard
+  to case at the second key.

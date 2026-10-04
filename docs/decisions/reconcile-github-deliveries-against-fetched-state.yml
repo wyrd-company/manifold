@@ -1,0 +1,40 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - github-event-source
+description: >-
+  The GitHub event source learns of a change through an organization hook, a
+  repository hook, a redelivery, or a sweep, and must publish it to each
+  actor once. GitHub makes one attempt per delivery, so a delivery sent
+  while the service is down is recovered only by redelivery or by reading
+  GitHub's state. A redelivered or late delivery describes the state at the
+  moment GitHub sent it, which may since have changed back. Deliveries carry
+  no sequence, and an issue's updated time does not move for dependency,
+  sub-issue, or Project item changes.
+considered-options:
+  "1": >-
+    Apply each delivery's payload to the mirror as a fact and publish it
+    under its delivery GUID; the sweep publishes what the mirror lacks under
+    ids of its own.
+  "2": >-
+    Publish each delivery's payload as an event under its GUID, and publish
+    a sweep's findings only when no delivery for the same change was
+    accepted, matched by the relationship's two node ids.
+  "3": >-
+    Treat a delivery as a notice that named entities changed: read their
+    current state from the GraphQL API, compare it with the mirror, and
+    publish each difference under an event id made of the entity and its
+    revision; the sweep runs the same comparison for every tracked entity.
+decision-outcome:
+  chosen-option: 3
+  justification: >-
+    Option 3 has one path from GitHub's state to an event, so a webhook, a
+    redelivery, and a sweep publish one change once under one event id, and
+    a stale delivery reads the current state and publishes nothing false.
+    It reads GitHub once per pending entity, batched 50 to a query, which is
+    a few rate limit points per delivery, and it moves the read out of the
+    HTTP answer so the answer stays within GitHub's ten seconds. Option 1
+    publishes a stale delivery's state as current and then the sweep's
+    correction, so an actor sees a change that did not hold. Option 2 keeps
+    two publishing paths whose events differ in shape and id, and cannot
+    tell a repeated add after a removal from a duplicate.

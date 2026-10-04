@@ -1,0 +1,80 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - github-event-source
+  references:
+    - store-database-schema
+    - router-database-schema
+    - github-events
+terms:
+  - github-mirror
+  - tracked-issue
+  - redelivery
+  - webhook-delivery
+description: |-
+  Defines the tables the GitHub event source owns in Manifold's SQLite
+  database file. `docs/specifications/github-source-database-schema.sql` is
+  the machine-readable definition: the schema that the source's migrations
+  produce. The source receives the connection from the store and migrates its
+  tables with `migrate("github", steps)`; its owner is `github`, so every
+  table it creates is named `github_<name>`. Times are milliseconds since the
+  Unix epoch. Node ids are GitHub GraphQL node ids.
+
+  Deliveries. `github_delivery` holds one row per accepted webhook delivery,
+  keyed by its GUID, with the id of the hook that delivered it first, its
+  event name, and the time it was accepted. A row is never updated or
+  deleted, so a later delivery with the same GUID is a duplicate.
+  `github_redelivery` holds one row per GUID the source has asked GitHub to
+  redeliver, with the hook, the id of the failed attempt it named, and the
+  time of the request, so the source asks once per GUID. `github_hook_scan`
+  holds, per hook, the `delivered_at` time of the newest delivery the last
+  completed redelivery scan read.
+
+  Pending reconciles. `github_pending` is the set of entities whose current
+  state the source has yet to read and compare with the mirror: a tracked
+  issue, a Project item, or a bound Project, keyed by kind and node id.
+  Requesting an entity already pending moves its `requested_at` forward. A
+  reconcile deletes the row in the transaction that applies its result, only
+  when `requested_at` is earlier than the time its read began, so a request
+  made during the read survives it.
+
+  Mirror. The remaining tables are the GitHub mirror: the last state the
+  source read of each entity, with the revision each published change gave
+  it. A relationship or item that goes away keeps its row with `present` 0,
+  so its revision carries on if it returns.
+
+  - `github_project`: a Project's owner login as GitHub returns it, its
+    number, and whether it is closed. Owner and number are unique without
+    regard to the owner's case.
+
+  - `github_item`: an item's Project, its content's type and node id, whether
+    it is present on the Project, and whether it is archived.
+
+  - `github_field_value`: an item's value of one custom field, as the JSON of
+    a field value `github-events` defines, `NULL` for no value, and the
+    field's name when last read.
+
+  - `github_issue`: an issue's repository as `owner/name`, number, state, and
+    state reason. `baselined` is 1 once the issue has been read as a tracked
+    issue, after which a change to its dependencies or sub-issues publishes.
+
+  - `github_dependency`: that one issue is blocked by another.
+
+  - `github_sub_issue`: that one issue is a sub-issue of another.
+
+  An issue is tracked when a `github_item` row with `present` 1 and
+  `content_type` `issue` names it as content and belongs to a bound Project.
+  Bound Projects are not stored: they come from the current process
+  repository revision.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/github-source-database-schema.sql` runs without
+  error on an empty SQLite database. A test starts the GitHub event source
+  on a store over an empty file and compares the `type`, `name`,
+  `tbl_name`, and `sql` of every `sqlite_schema` row whose name starts with
+  `github_` with the rows the same file's statements produce on a second
+  empty database, with each run of whitespace in `sql` read as one space;
+  they are equal. After the source starts, `schema_migration` holds the row
+  `('github', n)`, where n is the number of the source's migration steps.
