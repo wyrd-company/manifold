@@ -1,0 +1,497 @@
+// ---
+// relationships:
+//   verifies: blueprint-loader
+// ---
+import { describe, expect, it, vi } from "vite-plus/test";
+import { createActor, fromPromise } from "xstate";
+import { stringify } from "yaml";
+import { manifoldImplementationNames } from "@wyrd-company/manifold-shared";
+import { createBlueprintLoader } from "./index.ts";
+import type {
+  ImplementationRegistry,
+  ProcessRepositoryRevision,
+  LoadedBlueprint,
+} from "./index.ts";
+import { serviceImplementations } from "../implementations.ts";
+
+const first = "a".repeat(40),
+  second = "b".repeat(40);
+const registry = (): ImplementationRegistry => ({
+  actors: { courier: fromPromise(async () => ({})) },
+  actions: { mark: () => {} },
+  guards: { ready: () => true },
+  delays: { pause: 100 },
+});
+const document = (state = "sorting") => ({
+  machine: {
+    id: "parcel",
+    initial: state,
+    context: {},
+    states: { [state]: { on: { scanned: "delivered" } }, delivered: { type: "final" } },
+  },
+  schemas: { input: true, output: true, context: { type: "object" }, events: {} },
+});
+function revision(commit: string, files: Record<string, string>): ProcessRepositoryRevision {
+  return {
+    commit,
+    read: vi.fn(async (path) => files[path]),
+    list: vi.fn(async (prefix) => Object.keys(files).filter((path) => path.startsWith(prefix))),
+  };
+}
+function fixture() {
+  const files = (state: string) => ({
+    "blueprints/z-delivery.yml": stringify(document(state)),
+    "blueprints/nested/collection.yaml": stringify(document()),
+    "blueprints/a-return.yml": stringify(document()),
+    "blueprints/broken.yml": stringify({
+      ...document(),
+      machine: {
+        ...document().machine,
+        states: { sorting: { entry: "absent" }, delivered: { type: "final" } },
+      },
+    }),
+    "blueprints/readme.md": "ignore",
+  });
+  const revisions = new Map([
+    [first, revision(first, files("sorting"))],
+    [second, revision(second, files("routing"))],
+  ]);
+  const loader = createBlueprintLoader({
+    implementations: registry(),
+    revisionAt: async (commit) => revisions.get(commit),
+    onExpressionError: vi.fn(),
+  });
+  return { loader, revisions };
+}
+async function loaded(
+  loader: ReturnType<typeof createBlueprintLoader>,
+  commit = first,
+): Promise<LoadedBlueprint> {
+  const result = await loader.version({ commit, path: "blueprints/z-delivery.yml" });
+  expect(result.status).toBe("loaded");
+  if (result.status !== "loaded") throw new Error("fixture failed");
+  return result.blueprint;
+}
+
+describe("blueprint loader", () => {
+  it("loads populated revisions with isolated failures and reuses each immutable version", async () => {
+    const { loader, revisions } = fixture();
+    const initial = await loader.loadRevision(revisions.get(first)!);
+    expect([...initial.blueprints.keys()]).toEqual([
+      "blueprints/a-return.yml",
+      "blueprints/nested/collection.yaml",
+      "blueprints/z-delivery.yml",
+    ]);
+    expect([...initial.failures]).toEqual([
+      [
+        "blueprints/broken.yml",
+        [
+          expect.objectContaining({
+            path: "blueprints/broken.yml",
+            kind: "implementation-unknown",
+            location: "/machine/states/sorting/entry",
+          }),
+        ],
+      ],
+    ]);
+    const again = await loader.loadRevision(revisions.get(first)!);
+    expect(again.blueprints.get("blueprints/z-delivery.yml")).toBe(
+      initial.blueprints.get("blueprints/z-delivery.yml"),
+    );
+    expect(revisions.get(first)!.read).toHaveBeenCalledTimes(4);
+  });
+  it("restores an old version after a push and after a service restart", async () => {
+    const { loader, revisions } = fixture();
+    const old = await loaded(loader);
+    const actor = createActor(old.machine).start();
+    const snapshot = actor.getPersistedSnapshot();
+    actor.stop();
+    await loader.loadRevision(revisions.get(second)!);
+    expect((await loaded(loader)).machine).toBe(old.machine);
+    const restarted = createBlueprintLoader({
+      implementations: registry(),
+      revisionAt: async (commit) => revisions.get(commit),
+      onExpressionError: () => {},
+    });
+    const restoredVersion = await loaded(restarted);
+    expect(restoredVersion.checkRestore(snapshot)).toEqual({ ok: true });
+    const restored = createActor(restoredVersion.machine, { snapshot }).start();
+    restored.send({ type: "scanned" });
+    expect(restored.getSnapshot().value).toBe("delivered");
+    restored.stop();
+    expect((await loaded(loader, second)).checkRestore(snapshot)).toEqual({
+      ok: false,
+      mismatches: [{ kind: "state-missing", statePath: "sorting" }],
+    });
+  });
+  it("contains unreachable malformed schemas and never falls back to an older version", async () => {
+    const { loader, revisions } = fixture();
+    await loaded(loader);
+    revisions.set(
+      second,
+      revision(second, {
+        "blueprints/z-delivery.yml": stringify({
+          ...document(),
+          schemas: { ...document().schemas, context: { type: 17 } },
+          machine: {
+            ...document().machine,
+            states: {
+              ...document().machine.states,
+              unreachable: { entry: { type: "expression.assign", params: { expression: "{}" } } },
+            },
+          },
+        }),
+        "blueprints/valid.yml": stringify(document()),
+      }),
+    );
+    const result = await loader.loadRevision(revisions.get(second)!);
+    expect([...result.blueprints.keys()]).toEqual(["blueprints/valid.yml"]);
+    expect(result.failures.get("blueprints/z-delivery.yml")).toEqual([
+      expect.objectContaining({ kind: "schema-invalid", location: "/schemas/context" }),
+    ]);
+    expect(
+      (await loader.version({ commit: second, path: "blueprints/z-delivery.yml" })).status,
+    ).toBe("invalid");
+  });
+  it("retries missing commits, missing files, and I/O failures and shares concurrent loads", async () => {
+    const { loader, revisions } = fixture();
+    const version = { commit: "c".repeat(40), path: "blueprints/z-delivery.yml" };
+    expect(await loader.version(version)).toEqual({ status: "missing", reason: "commit" });
+    const current = revision(version.commit, {});
+    revisions.set(version.commit, current);
+    expect(await loader.version(version)).toEqual({ status: "missing", reason: "file" });
+    const good = revision(version.commit, { [version.path]: stringify(document()) });
+    vi.mocked(good.read).mockRejectedValueOnce(new Error("read failed"));
+    revisions.set(version.commit, good);
+    await expect(loader.version(version)).rejects.toThrow("read failed");
+    const [a, b] = await Promise.all([loader.version(version), loader.version(version)]);
+    expect(a).toBe(b);
+    expect(good.read).toHaveBeenCalledTimes(2);
+  });
+  it("rejects the reserved registry prefix in all kinds and ships matching names", () => {
+    for (const kind of ["actors", "actions", "guards", "delays"] as const) {
+      const implementations = registry();
+      const bad = {
+        ...implementations,
+        [kind]: { ...implementations[kind], "expression.custom": () => {} },
+      } as ImplementationRegistry;
+      expect(() =>
+        createBlueprintLoader({
+          implementations: bad,
+          revisionAt: async () => undefined,
+          onExpressionError: () => {},
+        }),
+      ).toThrow(/expression.custom/);
+    }
+    for (const kind of ["actors", "actions", "guards", "delays"] as const)
+      expect(new Set(Object.keys(serviceImplementations[kind]))).toEqual(
+        manifoldImplementationNames[kind],
+      );
+  });
+  it("checks incomplete compound and parallel values, history, child identity, and child implementation", async () => {
+    const doc = document();
+    doc.machine = {
+      id: "parcel",
+      initial: "sorting",
+      context: {},
+      states: {
+        sorting: {
+          type: "parallel",
+          states: {
+            left: { initial: "ready", states: { ready: {} } },
+            right: { initial: "ready", states: { ready: {} } },
+          },
+          invoke: { id: "route", src: "courier" },
+        },
+        delivered: { type: "final" },
+      },
+    } as typeof doc.machine;
+    const current = revision(first, { "blueprints/z-delivery.yml": stringify(doc) });
+    const loader = createBlueprintLoader({
+      implementations: registry(),
+      revisionAt: async () => current,
+      onExpressionError: () => {},
+    });
+    const blueprint = await loaded(loader);
+    const actor = createActor(blueprint.machine).start();
+    const snapshot = actor.getPersistedSnapshot();
+    actor.stop();
+    expect(blueprint.checkRestore(snapshot)).toEqual({ ok: true });
+    const changed = {
+      ...snapshot,
+      value: { sorting: { left: {} } },
+      historyValue: { missing: [{ id: "also-missing" }] },
+      children: { ghost: { src: "courier", snapshot: {} }, route: { src: "absent", snapshot: {} } },
+    };
+    expect(blueprint.checkRestore(changed)).toEqual({
+      ok: false,
+      mismatches: [
+        { kind: "state-incomplete", statePath: "sorting" },
+        { kind: "state-incomplete", statePath: "sorting.left" },
+        { kind: "history-missing", stateId: "also-missing" },
+        { kind: "history-missing", stateId: "missing" },
+        { kind: "child-missing", childId: "ghost" },
+        { kind: "child-missing", childId: "route" },
+        { kind: "implementation-missing", childId: "route", src: "absent" },
+      ],
+    });
+    const matching = {
+      ...snapshot,
+      value: { sorting: { left: "ready", right: "ready" } },
+      children: { route: { src: "courier", snapshot: {} } },
+    };
+    expect(blueprint.checkRestore(matching)).toEqual({ ok: true });
+  });
+});
+
+it("binds supplied implementations and expression sites and attributes runtime errors to their version", async () => {
+  const mark = vi.fn();
+  const onExpressionError = vi.fn();
+  const doc = {
+    machine: {
+      id: "parcel",
+      initial: "sorting",
+      context: { count: 0 },
+      states: {
+        sorting: {
+          entry: "mark",
+          on: {
+            scanned: {
+              target: "routing",
+              guard: {
+                type: "expression.guard",
+                params: { expression: 'event.count >= 0 ? true : $error("invalid count")' },
+              },
+              actions: {
+                type: "expression.assign",
+                params: { expression: '{"count": event.count}' },
+              },
+            },
+          },
+        },
+        routing: {
+          invoke: {
+            id: "route",
+            src: "courier",
+            input: { type: "expression.map", params: { expression: '{"count": context.count}' } },
+            onDone: "delivered",
+          },
+        },
+        delivered: {
+          type: "final",
+          output: { type: "expression.map", params: { expression: '{"count": context.count}' } },
+        },
+      },
+    },
+    schemas: {
+      input: true,
+      output: { type: "object" },
+      context: {
+        type: "object",
+        properties: { count: { type: "integer", minimum: 0 } },
+        required: ["count"],
+      },
+      events: {
+        scanned: {
+          type: "object",
+          properties: { type: { const: "scanned" }, count: { type: "integer", minimum: 0 } },
+          required: ["type", "count"],
+        },
+      },
+      actors: { courier: { input: { type: "object" }, output: true } },
+    },
+  };
+  const courier = vi.fn(async (input: unknown) => input);
+  const current = revision(first, { "blueprints/z-delivery.yml": stringify(doc) });
+  const loader = createBlueprintLoader({
+    implementations: {
+      ...registry(),
+      actions: { mark },
+      actors: { courier: fromPromise(({ input }) => courier(input)) },
+    },
+    revisionAt: async () => current,
+    onExpressionError,
+  });
+  const blueprint = await loaded(loader);
+  const actor = createActor(blueprint.machine).start();
+  expect(mark).toHaveBeenCalledOnce();
+  actor.send({ type: "scanned", count: -1 });
+  expect(actor.getSnapshot().value).toBe("sorting");
+  expect(onExpressionError).toHaveBeenCalledWith(
+    expect.objectContaining({
+      detail: expect.objectContaining({
+        kind: "evaluation",
+        location: "/states/sorting/on/scanned/guard",
+      }),
+    }),
+    blueprint.version,
+  );
+  actor.send({ type: "scanned", count: 7 });
+  await vi.waitFor(() => expect(actor.getSnapshot().status).toBe("done"));
+  expect(courier).toHaveBeenCalledWith({ count: 7 });
+  expect(actor.getSnapshot().output).toEqual({ count: 7 });
+  actor.stop();
+});
+
+it("checks invoked child machines recursively with prefixed paths without changing the snapshot", async () => {
+  const { loader: childLoader } = fixture();
+  const child = await loaded(childLoader);
+  const doc = {
+    ...document(),
+    machine: {
+      ...document().machine,
+      states: {
+        sorting: { invoke: { id: "route", src: "courier" } },
+        delivered: { type: "final" },
+      },
+    },
+  };
+  const current = revision(first, { "blueprints/z-delivery.yml": stringify(doc) });
+  const loader = createBlueprintLoader({
+    implementations: { ...registry(), actors: { courier: child.machine } },
+    revisionAt: async () => current,
+    onExpressionError: () => {},
+  });
+  const parent = await loaded(loader);
+  const actor = createActor(parent.machine).start();
+  const saved = actor.getPersistedSnapshot();
+  actor.stop();
+  expect(parent.checkRestore(saved)).toEqual({ ok: true });
+  const snapshot = {
+    ...saved,
+    children: {
+      route: {
+        src: "courier",
+        snapshot: {
+          value: "absent",
+          historyValue: { missing: [] },
+          children: { ghost: { src: "absent" } },
+        },
+      },
+    },
+  };
+  const before = structuredClone(snapshot);
+  expect(parent.checkRestore(snapshot)).toEqual({
+    ok: false,
+    mismatches: [
+      { kind: "state-missing", statePath: "route.absent" },
+      { kind: "history-missing", stateId: "route.missing" },
+      { kind: "child-missing", childId: "route.ghost" },
+      { kind: "implementation-missing", childId: "route.ghost", src: "absent" },
+    ],
+  });
+  expect(snapshot).toEqual(before);
+});
+
+it("omits files that disappear between list and read and propagates source failures", async () => {
+  const current = revision(first, { "blueprints/z-delivery.yml": stringify(document()) });
+  vi.mocked(current.list).mockResolvedValueOnce([
+    "blueprints/vanished.yml",
+    "blueprints/z-delivery.yml",
+    "blueprints/z-delivery.yml",
+  ]);
+  const loader = createBlueprintLoader({
+    implementations: registry(),
+    revisionAt: async () => current,
+    onExpressionError: () => {},
+  });
+  const result = await loader.loadRevision(current);
+  expect([...result.blueprints.keys()]).toEqual(["blueprints/z-delivery.yml"]);
+  expect(result.failures.size).toBe(0);
+  vi.mocked(current.list).mockRejectedValueOnce(new Error("list failed"));
+  await expect(loader.loadRevision(current)).rejects.toThrow("list failed");
+  let tries = 0;
+  const retry = createBlueprintLoader({
+    implementations: registry(),
+    revisionAt: async () => {
+      if (tries++ === 0) throw new Error("open failed");
+      return current;
+    },
+    onExpressionError: () => {},
+  });
+  await expect(retry.version({ commit: first, path: "blueprints/z-delivery.yml" })).rejects.toThrow(
+    "open failed",
+  );
+  expect((await retry.version({ commit: first, path: "blueprints/z-delivery.yml" })).status).toBe(
+    "loaded",
+  );
+});
+
+it("treats inherited actor properties as missing implementations", async () => {
+  const { loader } = fixture();
+  const blueprint = await loaded(loader);
+  const snapshot = {
+    status: "active" as const,
+    output: undefined,
+    error: undefined,
+    value: "sorting",
+    children: { ghost: { src: "toString", snapshot: {} } },
+  };
+  expect(blueprint.checkRestore(snapshot)).toEqual({
+    ok: false,
+    mismatches: [
+      { kind: "child-missing", childId: "ghost" },
+      { kind: "implementation-missing", childId: "ghost", src: "toString" },
+    ],
+  });
+});
+
+it("reports inherited state names as missing rather than traversing a prototype", async () => {
+  const { loader } = fixture();
+  const blueprint = await loaded(loader);
+  const snapshot = {
+    status: "active" as const,
+    output: undefined,
+    error: undefined,
+    value: "toString",
+  };
+  expect(blueprint.checkRestore(snapshot)).toEqual({
+    ok: false,
+    mismatches: [{ kind: "state-missing", statePath: "toString" }],
+  });
+});
+
+it("rejects a persisted child whose invoke is declared only on an inactive state", async () => {
+  const doc = {
+    ...document(),
+    machine: {
+      ...document().machine,
+      states: {
+        sorting: { invoke: { id: "route", src: "courier" } },
+        delivered: { type: "final" },
+      },
+    },
+  };
+  const current = revision(first, { "blueprints/z-delivery.yml": stringify(doc) });
+  const loader = createBlueprintLoader({
+    implementations: registry(),
+    revisionAt: async () => current,
+    onExpressionError: () => {},
+  });
+  const blueprint = await loaded(loader);
+  const snapshot = {
+    status: "done" as const,
+    output: undefined,
+    error: undefined,
+    value: "delivered",
+    children: { route: { src: "courier", snapshot: {} } },
+  };
+  expect(blueprint.checkRestore(snapshot)).toEqual({
+    ok: false,
+    mismatches: [{ kind: "child-missing", childId: "route" }],
+  });
+});
+
+it("orders discovery by Unicode code point", async () => {
+  const paths = ["blueprints/\u{10000}.yml", "blueprints/\uE000.yml"];
+  const current = revision(
+    first,
+    Object.fromEntries(paths.map((path) => [path, stringify(document())])),
+  );
+  const loader = createBlueprintLoader({
+    implementations: registry(),
+    revisionAt: async () => current,
+    onExpressionError: () => {},
+  });
+  expect([...(await loader.loadRevision(current)).blueprints.keys()]).toEqual(paths.toReversed());
+});

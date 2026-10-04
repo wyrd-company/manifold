@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   verifies: [host-cli-comparator-lint, host-cli-expressions-lint]
+//   verifies: [host-cli-comparator-lint, host-cli-expressions-lint, host-cli-blueprint-lint]
 // ---
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -54,6 +54,27 @@ describe("host CLI runs the comparator lint and the expressions lint", () => {
     writeFileSync(join(directory, "valid.yml"), blueprint("event.level > context.level"));
     writeFileSync(join(directory, "counting.yml"), blueprint("event.level + 1"));
     writeFileSync(join(directory, "broken.yml"), blueprint("event.level >"));
+    writeFileSync(
+      join(directory, "full.yml"),
+      blueprint("event.level > context.level")
+        .replace("    on: {}", "    on: { type: final }")
+        .replace("schemas:\n", "schemas:\n  input: true\n  output: true\n"),
+    );
+    writeFileSync(
+      join(directory, "unknown.yml"),
+      "machine: { initial: waiting, states: { waiting: { invoke: { src: unknown } }, done: { type: final } } }\nschemas: { input: true, output: true, context: true, events: {} }\n",
+    );
+    writeFileSync(join(directory, "invalid-yaml.yml"), "machine: [");
+    writeFileSync(
+      join(directory, "invalid-machine.yml"),
+      "machine: { initial: waiting, states: { waiting: { on: { scanned: absent } }, done: { type: final } } }\nschemas: { input: true, output: true, context: true, events: {} }\n",
+    );
+    writeFileSync(
+      join(directory, "full-counting.yml"),
+      blueprint("event.level + 1")
+        .replace("    on: {}", "    on: { type: final }")
+        .replace("schemas:\n", "schemas:\n  input: true\n  output: true\n"),
+    );
     writeFileSync(join(directory, "shapeless.yml"), "- just a list\n");
     const invalid = {
       context: "machine: {}\nschemas: { context: 42, events: {} }\n",
@@ -86,6 +107,41 @@ describe("host CLI runs the comparator lint and the expressions lint", () => {
     expect(lines[0]).toMatch(/^counting\.yml:\/states\/off\/on\/lamp\.switch\/guard result /);
     expect(lines.at(-1)).toMatch(/^broken\.yml:\/states\/off\/on\/lamp\.switch\/guard syntax /);
     expect(lines.filter((line) => line.startsWith("broken.yml"))).toHaveLength(1);
+  });
+
+  it("lints full blueprints and preserves expression-only inputs from the compiled binary", () => {
+    for (const [command, file] of [
+      ["blueprint", "full.yml"],
+      ["expressions", "full.yml"],
+      ["expressions", "valid.yml"],
+    ]) {
+      const clean = run(command!, "lint", file!);
+      expect([clean.status, clean.stdout, clean.stderr]).toEqual([0, "", ""]);
+    }
+    const result = run(
+      "blueprint",
+      "lint",
+      "invalid-yaml.yml",
+      "shapeless.yml",
+      "unknown.yml",
+      "invalid-machine.yml",
+      "full-counting.yml",
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toMatch(/invalid-yaml.yml: yaml .* \(line 1, column \d+\)/);
+    expect(result.stdout).toContain("shapeless.yml: shape ");
+    expect(result.stdout).toContain(
+      "unknown.yml:/machine/states/waiting/invoke/src implementation-unknown Implementation is not registered (actor unknown)",
+    );
+    expect(result.stdout).toContain("invalid-machine.yml:/machine/states/waiting machine ");
+    expect(result.stdout).toContain(
+      "full-counting.yml:/machine/states/off/on/lamp.switch/guard result ",
+    );
+    expect(run("blueprint", "lint").status).toBe(2);
+    const missing = run("blueprint", "lint", "unknown.yml", "absent.yml");
+    expect([missing.status, missing.stdout]).toEqual([2, ""]);
+    expect(missing.stderr).toContain("absent.yml:");
   });
 
   it("refuses a missing or shapeless blueprint before linting any file", () => {

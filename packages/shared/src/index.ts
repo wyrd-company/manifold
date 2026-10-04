@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   implements: [blueprint-expressions, decision-models, expressions-configuration]
+//   implements: [blueprint-expressions, decision-models, expressions-configuration, blueprint-loader]
 // ---
 export const packageName = "@wyrd-company/manifold-shared";
 
@@ -36,3 +36,9 @@ export {
 } from "./service-configuration-schemas.ts";
 
 export { expressionsConfigurationSchema } from "./expressions-configuration-schema.ts";
+export { lintBlueprint } from "./blueprint-lint.ts";
+export type { BlueprintDocument, BlueprintFinding, BlueprintLint } from "./blueprint-lint.ts";
+export { blueprintVersionKey, parseBlueprintVersionKey } from "./blueprint-version.ts";
+export type { BlueprintVersion } from "./blueprint-version.ts";
+export { manifoldImplementationNames } from "./implementation-names.ts";
+export type { ImplementationNames } from "./implementation-names.ts";

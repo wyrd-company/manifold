@@ -120,6 +120,12 @@ importers:
       jsonata:
         specifier: ^2.2.2
         version: 2.2.2
+      xstate:
+        specifier: ^5.33.2
+        version: 5.33.2
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
