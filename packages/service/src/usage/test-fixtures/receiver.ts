@@ -2,8 +2,7 @@
 // relationships:
 //   verifies: usage-intake
 // ---
-import { createServer } from "node:http";
-import type { RequestListener } from "node:http";
+import { createHttpHost } from "../../http-host/index.ts";
 import { openStore } from "../../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../../ledger/index.ts";
 import { openUsage, usageMigrationSteps } from "../index.ts";
@@ -60,35 +59,28 @@ usage.saveHook({
     },
   },
 });
-// Structural service assembly stand-in: identical path prefix and listener seam.
-let listener: RequestListener = (_request, response) => {
-  response.writeHead(404);
-  response.end();
-};
-function mountOperator(pathPrefix: string, handler: RequestListener) {
-  listener = (request, response) => {
-    if (!request.url?.startsWith(pathPrefix)) {
-      response.writeHead(404);
-      response.end();
-      return;
-    }
-    if (request.headers.authorization !== "Bearer example-token") {
-      response.writeHead(401);
-      response.end();
-      return;
-    }
-    requestNumber++;
-    const end = response.end.bind(response);
-    response.end = ((...args: Parameters<typeof response.end>) => {
-      if (config.crash === "committed" && requestNumber === 2) pause("committed");
-      return end(...args);
-    }) as typeof response.end;
-    handler(request, response);
-  };
-}
-mountOperator("/api/usage", usage.listener);
-const server = createServer((request, response) => listener(request, response));
-server.listen(0, "127.0.0.1", () => {
-  const address = server.address();
-  if (address && typeof address !== "string") process.send?.({ port: address.port });
+const http = createHttpHost({
+  configuration: { host: "127.0.0.1", port: 0, operatorCredential: "operator" },
+  credentials: {
+    names: ["operator"],
+    resolve: (name) => ({
+      kind: "operator-token",
+      name,
+      verify: async (token) => token === "example-token",
+    }),
+  },
+  onError: (error) => {
+    throw error;
+  },
 });
+http.mountOperator("/api/usage", (request, response) => {
+  requestNumber++;
+  const end = response.end.bind(response);
+  response.end = ((...args: Parameters<typeof response.end>) => {
+    if (config.crash === "committed" && requestNumber === 2) pause("committed");
+    return end(...args);
+  }) as typeof response.end;
+  usage.listener(request, response);
+});
+const { port } = await http.listen();
+process.send?.({ port });

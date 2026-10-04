@@ -21,7 +21,10 @@ export async function serviceFixture() {
   );
   await fs.writeFile(join(directory, "hook.secret"), "synthetic-secret");
   let previous: string | undefined;
-  async function commit(guarantee: number) {
+  async function commit(
+    guarantee: number,
+    usageFiles: { accounts?: unknown; prices?: unknown; bindings?: unknown } = {},
+  ) {
     async function blob(path: string, value: unknown) {
       return {
         path,
@@ -59,7 +62,11 @@ export async function serviceFixture() {
             beta: { allocations: { acct: { guarantee: 100 - guarantee } } },
           },
         }),
-        await blob("bindings.yml", {}),
+        await blob("bindings.yml", usageFiles.bindings ?? {}),
+        ...(usageFiles.accounts === undefined
+          ? []
+          : [await blob("accounts.yml", usageFiles.accounts)]),
+        ...(usageFiles.prices === undefined ? [] : [await blob("prices.yml", usageFiles.prices)]),
       ],
     });
     const author = {

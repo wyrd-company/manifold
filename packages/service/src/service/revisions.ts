@@ -3,6 +3,7 @@
 //   implements: service-assembly
 // ---
 import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
+import type { Usage } from "../usage/index.ts";
 import type { Portfolio } from "../portfolio/index.ts";
 import type { ProcessRepository } from "../process-repository/index.ts";
 import type { AppliedRevision, Revisions, ServiceLogEntry } from "./types.ts";
@@ -10,6 +11,7 @@ export function createRevisions(options: {
   readonly repository: ProcessRepository;
   readonly blueprints: BlueprintLoader;
   readonly portfolio: Portfolio;
+  readonly usage: Pick<Usage, "apply">;
   readonly log: (entry: ServiceLogEntry) => void;
   readonly applied?: (revision: AppliedRevision) => void;
 }): Revisions & { close(): Promise<void> } {
@@ -45,14 +47,27 @@ export function createRevisions(options: {
           })),
         },
       });
+    const usageResult = await options.usage.apply(revision);
+    if (usageResult.status === "rejected")
+      options.log({
+        level: "warn",
+        event: "usage-rejected",
+        message: "Usage declaration rejected",
+        detail: { commit: revision.commit, findings: usageResult.findings.map((f) => ({ ...f })) },
+      });
     followed = revision.commit;
     options.log({
       level: "info",
       event: "revision-applied",
       message: "Revision applied",
-      detail: { commit: revision.commit, portfolio: result.status },
+      detail: { commit: revision.commit, portfolio: result.status, usage: usageResult.status },
     });
-    options.applied?.({ commit: revision.commit, blueprints: loaded, portfolio: result.status });
+    options.applied?.({
+      commit: revision.commit,
+      blueprints: loaded,
+      portfolio: result.status,
+      usage: usageResult.status,
+    });
   }
   function enqueue<T>(job: () => Promise<T>): Promise<T> {
     if (closed) return Promise.reject(new TypeError("Revision follower is closed"));

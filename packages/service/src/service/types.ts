@@ -6,6 +6,7 @@ import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
 import type { Router } from "../router/index.ts";
 import type { ActorHost } from "../actor-host/index.ts";
 import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
+import type { Usage } from "../usage/index.ts";
 import type { Portfolio } from "../portfolio/index.ts";
 import type {
   ProcessRepository,
@@ -64,6 +65,7 @@ export interface ServiceParts {
   readonly configuration: ServiceConfiguration;
   readonly store: Store;
   readonly portfolio: Portfolio;
+  readonly usage: Usage;
   readonly processRepository: ProcessRepository;
   readonly blueprints: BlueprintLoader;
   readonly revisions: Revisions;
@@ -92,6 +94,7 @@ export interface AppliedRevision {
   readonly commit: string;
   readonly blueprints: RevisionLoad;
   readonly portfolio: "applied" | "unchanged" | "rejected";
+  readonly usage: "applied" | "unchanged" | "rejected";
 }
 
 export interface ServiceHttp {

@@ -8,6 +8,7 @@ import { loadServiceConfiguration } from "../service-configuration/index.ts";
 import { configureBlueprintExpressions } from "../blueprint-expressions.ts";
 import { openStore } from "../store/index.ts";
 import type { Store } from "../store/index.ts";
+import { openUsage, usageMigrationSteps } from "../usage/index.ts";
 import { ledgerMigrationSteps } from "../ledger/index.ts";
 import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
 import { openProcessRepository } from "../process-repository/index.ts";
@@ -19,7 +20,7 @@ import { createServiceActorHost } from "../actor-host/service.ts";
 import { recordStateEntry } from "../actor-host/index.ts";
 import { startGitHubSource } from "../github-source/index.ts";
 import type { GitHubSource } from "../github-source/index.ts";
-import { startT3CodeSource } from "../t3code-source/index.ts";
+import { startT3CodeSource, readThreadProject } from "../t3code-source/index.ts";
 import type { T3CodeSource } from "../t3code-source/index.ts";
 import { createHttpHost } from "../http-host/index.ts";
 import { mountConsole } from "../console/index.ts";
@@ -81,9 +82,19 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     });
     store.connection.migrate("ledger", ledgerMigrationSteps);
     store.connection.migrate("portfolio", portfolioMigrationSteps);
+    store.connection.migrate("usage", usageMigrationSteps);
     step("store-opened", "start");
     const portfolio = openPortfolio({ connection: store.connection });
     step("portfolio-opened", "start");
+    const usageConnection = store.connection;
+    const usage = openUsage({
+      connection: usageConnection,
+      ledger: portfolio.ledger,
+      portfolio,
+      threadProject: (environment, threadId) =>
+        readThreadProject(usageConnection, environment, threadId),
+      environments: new Set(Object.keys(configuration.environments)),
+    });
     const processRepository = await openProcessRepository({
       configuration: configuration.processRepository,
       credentials: configuration.credentials,
@@ -106,6 +117,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       repository: processRepository,
       blueprints,
       portfolio,
+      usage,
       log,
       ...(options.probes?.applied ? { applied: options.probes.applied } : {}),
     });
@@ -121,6 +133,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       configuration,
       store,
       portfolio,
+      usage,
       processRepository,
       blueprints,
       revisions,
@@ -205,6 +218,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           detail: { path: entry.path },
         }),
     });
+    http.mountOperator("/api/usage", parts.usage.listener);
     const address = await http.listen();
     step("listening", "start");
     log({ level: "info", event: "started", message: "Service started", detail: address });
