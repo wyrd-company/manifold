@@ -55,6 +55,7 @@ We need to be on the same page with terminology. When communicating, use this la
 
 - **account** a user profile that provides access to an artificial intelligence platform, tracks usage limits or subscription billing such as Anthropic, Cursor, GitHub, OpenAI, Opencode, OpenRouter, Command Code, X-AI, etc.
 - **actor** a state machine, promise, callback, observer, or transition instance.
+- **actor host** the service module that creates, restores, and saves state machine actors for the router, and derives each actor's subscription.
 - **actual** exact usage recorded for a task actor from provider session data.
 - **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
 - **allocation** a guaranteed percentage of a parent's capacity assigned to a portfolio item.
@@ -86,6 +87,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **implementation** a named piece of code a blueprint binds: actor logic, an action, a guard, or a delay.
 - **inbox** the per-actor store of routed events not yet consumed.
 - **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
+- **invocation** the identity of an invoked implementation: its actor id, its invoke id, and the entry id of the state entry that invoked it.
 - **issue** a way to track tasks related to a repository on GitHub
 - **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, or an event payload assigned into context.
 - **notification destination** a name the process repository uses for where an escalation is sent, mapped in service configuration to an ntfy server, topic, security posture, and credential.
@@ -105,8 +107,10 @@ We need to be on the same page with terminology. When communicating, use this la
 - **settle** when no more activity is occuring on a thread
 - **settlement** retiring a reservation and posting the actual when a task actor ends.
 - **snapshot** the persisted state of an actor: its state value and context.
+- **state entry** one entry of an actor into a state, named by an entry id that a replay reproduces and a re-entry changes.
 - **state machine** a declarative stateful actor, built from a blueprint.
 - **state machine actor** an actor running a blueprint.
+- **state visit** one run of a state machine actor's saves with the same state value, from the save that entered it until the next save with another value.
 - **subscription** (events) the topics an actor hears and the event types it takes, derived from its snapshot and its blueprint.
 - **T3code project** means an environment-local workspace record rooted at a directory.
 - **sweep** a periodic comparison of bound GitHub Projects and tracked issue relationships with the GitHub mirror.
@@ -115,6 +119,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **token** what a gate grants a task actor so it may leave the gated state.
 - **topic** a path of segments joined by `.` that names where an event comes from, whose first segment is its event source.
 - **tracked issue** an issue that is the content of a present item on a bound GitHub Project.
+- **trap** a configuration of a task actor holding a gate's token from which no run that keeps the token reaches the gate's return point.
 - **turn** a single, complete cycle of work executed by an agent in response to a user prompt
 - **unallocated remainder** the part of a parent's limit that no child's allocation guarantees, which its children borrow up to their ceiling.
 - **usage unit** a session, subagent, or child thread whose calls one provider session file records.
