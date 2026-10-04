@@ -13,6 +13,7 @@ objective:
   - Can Manifold put JSONata inside GoRules JDM decision models by implementing only two node types, decision table and expression node, as custom nodes?
   - What comes free from the stock editor, and what has to be rebuilt?
   - Is this a bounded port?
+  - Can the custom table implement strict cell matching, context bindings, output paths, cell errors, and model lint?
 
 background:
   current-design: >-
@@ -41,7 +42,9 @@ environment:
     - vitest 5.0.2
     - Playwright 1.63.0 (headless Chromium)
     - Node 26.5.1
-  resources: []
+  resources:
+    - docs/technical-designs/expressions.yml cell-semantics and explainability
+    - Published jsonata ast() API and installed ZenEngine customHandler types
 
 findings:
   stock-table-reusable:
@@ -160,7 +163,9 @@ findings:
       4-rule triage table, identical cell text produced identical output under
       the stock `decisionTableNode` and the JSONata table for both sample
       requests. Latency is not significant at scheduler scale (tens of cards).
-      The measurement is from one machine only and is not a benchmark.
+      The measurement is from one machine only and is not a benchmark. This
+      comparison uses the equality-fallback handler, not strict true-only
+      matching; it does not measure the handler proved by the cell tests.
   jsonata-edge-cases:
     verdict: >-
       stock unary shorthand does not port; range literals parse and silently
@@ -208,22 +213,225 @@ findings:
       contract test (like `editor/capture.mjs`) should guard these behaviours
       on upgrade.
 
+  strict-cell-matching:
+    verdict: confirmed after removing equality fallback
+    measurements:
+      policies: [first, collect]
+      expressions:
+        matches: ["true"]
+        does-not-match:
+          ["false", "null", "0", '""', "$missing", "[1,2]", "[]", '{"x":1}', "7", '"sample"']
+      result-cases-per-policy: 11
+      original-equality-fallback-failures: 16
+    notes: >-
+      Method: run each expression in a three-node graph (input, custom table,
+      output) through ZenEngine with the Node customHandler. Bind the input
+      column to item.value and set that value equal to the expression's result,
+      so an equality fallback cannot accidentally pass the tests. For $missing,
+      the input has no usable column value. A single candidate rule writes
+      result.value = "matched". Measured: first returns that object only for
+      true and {} otherwise; collect returns a one-element array only for true
+      and [] otherwise. The original handler matched null, 0, empty string,
+      both arrays, object, number, and string through JSON.stringify equality:
+      eight failures per policy. Replacing that fallback with result === true
+      passes all 22 cases. This falsifies the original implementation's
+      conformity, but proves strict matching is possible through the extension.
+  cell-bindings-and-blanks:
+    verdict: nested and missing column bindings and whole-input access confirmed
+    measurements:
+      present-column: "$ = 4 and $input.other = 9"
+      missing-column: "$exists($) = false and $input.other = 9"
+      column-field: item.value
+      input-cells: [empty string, whitespace, omitted cell]
+      policies: [first, collect]
+    notes: >-
+      Method: evaluate both binding expressions through ZenEngine under both
+      policies, using {item:{value:4},other:9} for the present case and {other:9}
+      for the missing case. Measured: all four evaluations match. $ is 4 or no
+      result respectively, while $input.other is 9 in both. The handler resolves
+      the column field against the whole input, then evaluates the cell with
+      that value as context and input as a JSONata binding. Empty string,
+      whitespace-only, and omitted input cells each match both a present value
+      and a missing value under both policies (12 evaluations in six tests).
+      Omitted means the key is absent, not a JavaScript undefined-valued key:
+      Zen converts an explicitly undefined config property to null, which the
+      original string-only blank check cannot trim. Null-valued cell text is
+      outside this tested string/omitted-cell contract.
+  output-cell-values:
+    verdict: nested object results written; blank and no-result outputs omitted
+    measurements:
+      expression: '{"number": other, "whole": $.item.value}'
+      field: result.value
+      input: { item: { value: 4 }, other: 9 }
+      output: { result: { value: { number: 9, whole: 4 } } }
+      blank-output: omitted
+      no-result-expression: "$missing"
+      no-result-field: unused.deep
+      no-result-output: omitted including unused parent
+    notes: >-
+      Method: one matching rule has three output columns: an object expression
+      at result.value, whitespace at result.blank, and $missing at unused.deep.
+      Measured through ZenEngine under both policies: the output expression
+      reads the whole input as $, and the object becomes the nested column
+      value. Neither blank nor undefined creates a property or parent object.
+      First returns the object and collect wraps it in an array. These omissions
+      are observed spike behavior; the design does not specify an alternative
+      blank-output or no-result representation.
+  failing-cell-trace:
+    verdict: evaluation stops; host enrichment supplies structured cell location
+    measurements:
+      expression: "$notAFunction($)"
+      jsonata-code: T1006
+      host-error: CellError
+      engine-error: Error with JSON message and type NodeError
+      node: table
+      rule: candidate
+      columns: [condition, answer]
+      policies: [first, collect]
+      native-failing-node-trace-data: null
+      enriched-trace-data:
+        error:
+          nodeId: table
+          ruleId: candidate
+          columnId: condition
+          expression: "$notAFunction($)"
+    notes: >-
+      Method: fail separately in an input and output cell under each policy;
+      append a catch-all fallback rule. Measured in four tests: the decision
+      rejects, no fallback result is returned, and the output node is absent
+      from the partial trace. Direct table evaluation throws CellError with
+      ruleId, columnId, and expression. Zen wraps the handler failure as Error;
+      its JSON message includes nodeId, source, type NodeError, and a partial
+      trace containing the input and failing table nodes. Native traceData on
+      the failing node is null. The customHandler serializes the CellError
+      location with the node id into its error message. A host evaluation
+      wrapper parses the error envelope and writes that location into the
+      failed node's traceData.error, then rejects with the enriched envelope.
+      All four tests assert both native null and enriched structured location.
+      No Zen fork or node_modules patch is needed. Inferred: production must
+      retain the error envelope and perform this enrichment to meet the
+      explainability contract; storing only Zen's native trace loses rule and
+      column. Assumed: the measured NodeError envelope remains compatible on
+      supported engine upgrades; this needs a contract test.
+  model-cell-lint:
+    verdict: parse rejection and conservative never-boolean warnings are practical
+    measurements:
+      lint-tests: 22
+      rejected: [unparsable input cell, unparsable output cell]
+      warning-expressions:
+        [
+          "7",
+          '"sample"',
+          "null",
+          "1+2",
+          "[1..5]",
+          "[]",
+          '{"x":1}',
+          '"a" & "b"',
+          "true ? 2 : 3",
+          "(1; 2)",
+        ]
+      no-warning-expressions:
+        [
+          "true",
+          "false",
+          "$ > 3",
+          "$",
+          "item.value",
+          "$custom()",
+          "$number($)",
+          "true ? true : 3",
+          "[true][0]",
+        ]
+      example-model-count: 1
+      example-input-cells: 12
+      example-blank-input-cells: 7
+      example-original-string-literals: 4
+      example-original-boolean-comparisons: 1
+      example-corrected-boolean-comparisons: 5
+      example-output-cells: 12
+      example-output-string-literals: 8
+      example-output-number-literals: 3
+      example-output-numeric-conditionals: 1
+      example-unknown-input-expressions: 0
+      original-example-warnings: 4
+      corrected-example-warnings: 0
+    notes: >-
+      Method: lintModel walks each JSONata table's rules and declared input and
+      output columns, compiles each nonblank cell with jsonata(), and inspects
+      ast() without evaluating it. Parse errors reject and carry nodeId,
+      ruleId, and columnId for either direction. Boolean warnings apply only to
+      input cells; numeric and string outputs are legitimate values. Measured:
+      numeric/string/null literals, arithmetic (+ - * / %), concatenation,
+      ranges, array/object constructors, and unary minus can be classified as
+      never returning boolean from their root AST shape. The implementation
+      also follows the final expression of a block and conditionals whose two
+      branches are both provably nonboolean. Ten representative expressions
+      warn. Variables, paths, calls (including $number), mixed conditional
+      branches, and AST nodes with predicates or stages are left unclassified.
+      In particular [true][0] must not be classified from its array root, since
+      its predicate can select a boolean. Known boolean literals and comparisons
+      do not warn. The lint is a conservative proof for supported AST shapes,
+      not a complete type checker or proof about every JSONata program. Unknown
+      expressions remain valid and are subject to strict runtime matching;
+      schema-based sample evaluation can add evidence but cannot prove never.
+      Measured corpus: the single repair-intake model has 12 input cells, seven
+      blank, four string literals, and one membership comparison. Reconstructing
+      those literals yields four warnings; using explicit $ = comparisons yields
+      zero. No numeric, arithmetic, range, array/object, block, conditional, or
+      unknown input classes occur in that model. Its 12 output cells contain
+      eight strings, three numbers, and one numeric conditional, with no boolean
+      warning. Its two standalone expression nodes are outside this cell lint.
+  cell-semantics-verification:
+    verdict: 69 tests pass; typecheck passes; three mutations detected
+    measurements:
+      command: npx vitest run
+      test-files: 3
+      tests-passed: 69
+      tests-failed: 0
+      cell-semantics-tests: 38
+      model-lint-tests: 22
+      existing-engine-tests: 9
+      typecheck: npx tsc --noEmit
+      always-match-mutation-failures: 20
+      suppress-warning-mutation-failures: 11
+      remove-trace-enrichment-mutation-failures: 4
+    notes: >-
+      Method: write the semantic tests before changing the handler, and write
+      lint tests before implementing lintModel. The initial semantic run had
+      18 failures: 16 equality-fallback mismatches and two undefined config
+      properties converted to null by Zen. The missing-cell fixtures omit the
+      property to represent absent cell text. Removing equality fallback causes
+      two existing example-model tests to fail until four input literal cells
+      use explicit $ = comparisons. Final measured result: npx vitest run passes
+      all 69 tests in three files, and npx tsc --noEmit exits zero. Independently
+      mutate strict matching to always true, disable warnings, and remove host
+      trace enrichment: the respective targeted runs fail 20, 11, and four
+      tests. Restore each mutation and run the final green suite and typecheck.
+      Spike code stays disposable on spike/zen-jsonata and is not pushed.
+      No editor/browser checks or latency measurements were repeated by this
+      semantic proof. This evidence proves extension feasibility at the listed
+      library versions, not production implementation or complete static analysis.
+
 conclusion: >-
-  JSONata inside decision models is a bounded port. The engine side is one
-  handler of about 150 lines. The editor side is two card components and a
-  cell renderer, about 250 lines. Graph, input, output, switch, simulator, and
-  the file format stay stock. Table editing does not need a rebuild. The stock
-  `DecisionTable`, bound to the custom node's config, gives rows, columns,
-  reorder, rename, and rule highlight in the simulator when the host evaluates
-  in Node. Input and output cells are evaluated as JSONata expressions, input
-  cells with the field value as `$` and the whole input as `$input`, output
-  cells against the input; empty cells match anything; cells match when the
-  result is true. Two table settings (hit policy and pass-through) must be
-  rebuilt on the card. The simulator works with custom nodes when the host
-  evaluates with the same customHandler that the engine uses.
+  JSONata decision tables and expression nodes are viable as Zen extensions.
+  Strict true-only matching, nested and missing column contexts, whole-input
+  binding, blank input matching, nested object outputs, parse rejection, and
+  conservative never-boolean warnings are proved through the Node handler.
+  Runtime cell errors stop the decision; structured failing-cell traces require
+  host enrichment of Zen's error envelope. The original equality fallback and
+  four literal input conditions do not implement the specified matching rule.
+  Explicit equality expressions implement the intended example behavior.
+  There is no contradiction with the technical design when the host performs
+  trace enrichment and lint warnings mean conservative static proof. Exhaustive
+  classification of all never-boolean JSONata expressions is not established.
+  The editor's exported table component supplies the measured editing controls;
+  settings and cell editing remain custom host/editor work.
 
 next-steps:
-  - Prove the custom node implementation matches the cell semantics specified in expressions.yml, including array results, falsy values (`null`, `false`, `0`, `""`), `undefined`, and the lint rules (reject unparsable, warn on never-boolean).
-  - Settle where the table opens: overlay, drawer, or undocumented `components` hook. Propose `renderTab` support for custom nodes upstream in the Zen editor; do not rely on it until shipped.
-  - Rebuild the settings panel on the card for `inputField`, `outputPath`, and `executionMode: loop`.
-  - Pin `@gorules/jdm-editor` and establish a contract test like `editor/capture.mjs` to guard undocumented behaviours on upgrade.
+  - Implement strict matching and the proved cell bindings and output behavior in the production custom node; retain behavior tests through ZenEngine.
+  - Preserve structured cell locations across the handler error boundary and enrich the failing node's trace in the host; contract-test the NodeError envelope on upgrades.
+  - Implement parse rejection for every cell and conservative AST warnings for input cells. Keep unclassified expressions valid and document the warning coverage.
+  - Specify blank-output and no-result output representation before production; the spike omits both.
+  - Settle where the table opens and rebuild settings for inputField, outputPath, and executionMode loop; these remain unproved by the cell tests.
+  - Pin the editor dependency and establish browser contract checks for the undocumented behaviors relied on by the table.

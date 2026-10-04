@@ -30,10 +30,12 @@ likelihood: 3
 impact: 4
 
 response-strategy: mitigate
-# Mitigation: the zen-jsonata spike measured the custom node structure and
-# proved table editing is reusable. A proof-of-implementation pass must measure
-# every cell semantic specified in expressions.yml: array results, falsy values
-# (null, false, 0, ""), undefined, and lint validation rules. That measurement
-# confirms the implementation matches the design and gates production use.
+# Mitigation: zen-jsonata proves strict true-only matching, present and missing
+# column bindings, whole-input access, blank input matching, nested object
+# outputs, parse rejection, conservative AST warnings, and structured failing
+# cell traces supplied by the host. All 69 tests and the spike typecheck pass.
+# Residual limits: never-boolean classification is conservative; output blanks
+# and no-result values are omitted by the spike; Zen error-envelope enrichment
+# needs an upgrade contract test. Production adoption remains implementation work.
 
-status: open
+status: mitigated
