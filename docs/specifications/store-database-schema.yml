@@ -47,8 +47,10 @@ description: >-
   and event name. `deadline_id` identifies one arm and is never reused, so a
   re-entry of the state that arms the deadline again gets a new id.
   `fire_at` is the time at which the event is due. `entry_id` names the
-  entry into the state that armed the row. A row exists only while its state
-  path is active in the actor's snapshot.
+  entry into the state that armed the row. `fired_at` is null while the
+  deadline is armed and holds the time it fired after that; a fired row stays
+  for the rest of its entry, so the entry does not fire twice. A row exists
+  only while its state path is active in the actor's snapshot.
 
   Times. Every time is an integer count of milliseconds since the Unix epoch.
 format: sql-ddl

@@ -56,7 +56,8 @@ CREATE TABLE store_deadline (
   event_name TEXT NOT NULL CHECK (length(event_name) > 0),
   fire_at INTEGER NOT NULL,
   entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
+  fired_at INTEGER,
   UNIQUE (actor_id, state_path, event_name)
 ) STRICT;
 
-CREATE INDEX store_deadline_by_fire_at ON store_deadline (fire_at, actor_id);
+CREATE INDEX store_deadline_due ON store_deadline (fire_at, actor_id) WHERE fired_at IS NULL;

@@ -177,6 +177,7 @@ proposed-design:
     export interface DeadlineRow extends DeadlineArm {
       readonly deadlineId: number;
       readonly actorId: string;
+      readonly firedAt: number | undefined;
     }
     ```
   module-layout: >-
@@ -302,25 +303,30 @@ proposed-design:
     not in the new snapshot's state paths. Then for each listed deadline,
     keyed by actor, state path, and event name: when no row exists it
     inserts one; when a row exists with the same `entryId` it leaves the
-    row unchanged, so a retained deadline and a replayed save keep the first
-    fire time; when a row exists with a different `entryId` it deletes that
+    row unchanged, fired or not, so a retained deadline and a replayed save
+    keep the first fire time and a fired deadline stays fired for the rest
+    of its entry; when a row exists with a different `entryId` it deletes that
     row and inserts the listed one, so a re-entry restarts the delay. A
     listed deadline whose state path is not in the snapshot's state paths
     makes `saveSnapshot` throw a `RangeError` and write nothing. Every
     inserted row takes a new `deadline_id` from an `AUTOINCREMENT` key,
     which SQLite never reuses, so each arm has its own id that stays the
     same across saves that retain it. `dueDeadlines(at)` returns every row
-    with `fire_at` at or before `at`, ordered by `fire_at` and actor id.
-    `fireDeadline(deadline, topic)`, in one transaction, deletes the row
-    whose `deadline_id` is `deadline.deadlineId`; when that deleted a row,
-    it writes an inbox row to the actor with event id
+    with `fired_at` null and `fire_at` at or before `at`, ordered by
+    `fire_at` and actor id. `fireDeadline(deadline, topic)`, in one
+    transaction, sets `fired_at` from `now` on the row whose `deadline_id`
+    is `deadline.deadlineId` where `fired_at` is null; when that changed a
+    row, it writes an inbox row to the actor with event id
     `deadline:<deadlineId>`, the given topic, and payload `{ "type":
     <eventName> }`, and returns it. The event id is the decimal deadline id,
     so it names exactly one arm whatever characters the state path and event
     name hold, stays the same when a crashed fire is retried, and differs
-    for every later arm of the same state and event. When no row matched,
+    for every later arm of the same state and event. When no row changed,
     because the arm was already fired, was replaced by a re-entry, or the
-    actor left the state, it returns `undefined` and writes nothing. The
+    actor left the state, it returns `undefined` and writes nothing. A fired
+    row stays until a save leaves its state or replaces it with a new
+    entry, so the knowledge that an entry has fired is durable across saves,
+    replays, and restarts, and a new entry arms the deadline again. The
     deadline loop that calls these and publishes the rows belongs to the
     router.
   probe: >-
@@ -335,7 +341,7 @@ proposed-design:
     `writeInbox` twice holds one row per actor and event and returns nothing
     the second time. `markConsumed` twice keeps the first consumed time.
     `deliver` on a consumed row is a no-op. `fireDeadline` twice writes one
-    inbox row. A crash inside any of these rolls back its transaction, and
+    inbox row and keeps the first fired time. A crash inside any of these rolls back its transaction, and
     a crash between a delivery's `send` and its commit leaves the row
     pending for the next drain.
   errors: >-
@@ -371,7 +377,15 @@ proposed-design:
     re-enters the same state with a new `entryId` replaces the fire time and
     the deadline id, saving that write again changes nothing, and the
     replaced fire time survives closing and reopening the store; a
-    `fireDeadline` for the replaced arm returns `undefined`; `fireDeadline`
+    `fireDeadline` for the replaced arm returns `undefined`; after a fire, a
+    save of the same entry that lists the deadline again keeps the row
+    fired, `dueDeadlines` omits it, and a second `fireDeadline` returns
+    `undefined`; delivering the deadline's event to a target whose save
+    stays in the state, with the same `entryId`, leaves the deadline fired
+    and not due; closing and reopening the store after a fire and before
+    delivery, then draining, delivers the event once and leaves the
+    deadline fired and not due; a save with a new `entryId` after a fire
+    arms a new deadline id that is due at its fire time and fires once; `fireDeadline`
     writes one inbox row once; one actor's two deadlines whose
     state paths and event names contain `:` and `.`, such as state path
     `phase.one` with event `tick` and state path `phase` with event

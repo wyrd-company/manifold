@@ -99,8 +99,9 @@ proposed-design:
     that saves the snapshot entering its state, and the same save deletes the
     rows of states the actor has left, so a row exists only while its state
     is active and survives a restart armed. A deadline loop fires a due row
-    by deleting it and writing its event to the actor's inbox in one
-    transaction, then publishes the event. Each arm names the state entry
+    by marking it fired and writing its event to the actor's inbox in one
+    transaction, then publishes the event. A fired row stays until its
+    entry ends, so a state entry fires its deadline once. Each arm names the state entry
     that armed it. A save that keeps the actor in the same entry keeps the
     fire time, so a replay or a later event does not restart the delay; a
     save from a new entry into the state replaces it, so the delay restarts
