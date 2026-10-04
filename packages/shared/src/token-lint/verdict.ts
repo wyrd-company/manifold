@@ -4,11 +4,8 @@
 // ---
 import { marker } from "./types.ts";
 import type { Choice, Edge, Gate, GateTokenLint, Graph, TokenStep, TokenVerdict } from "./types.ts";
-// Pending user decision: ending the actor alone does not make a trap safe.
 function trapVerdict(choices: number, endingOnly: boolean): TokenVerdict {
-  if (choices > 0) return "potential";
-  // This is the only policy choice for an actor-ending-only trap.
-  if (endingOnly) return "violation";
+  if (choices > 0 || endingOnly) return "potential";
   return "violation";
 }
 type Phase = "eligible" | "held" | "spent";
@@ -92,12 +89,20 @@ export function verdict(graph: Graph, gate: Gate): GateTokenLint {
   propagate(canEnd);
   const traps = new Set([...held].filter((key) => !safe.has(key)));
   let witness: Walk | undefined;
+  let result: TokenVerdict = "potential";
   for (const key of traps) {
     const walk = best.get(identity(key, "held"))!;
-    if (!witness || better(walk, witness)) witness = walk;
+    const candidate = trapVerdict(walk.choices.length, canEnd.has(key));
+    if (
+      !witness ||
+      (candidate === "violation" && result !== "violation") ||
+      (candidate === result && better(walk, witness))
+    ) {
+      witness = walk;
+      result = candidate;
+    }
   }
   if (!witness) return { ...gate, verdict: "proved", findings: [], traps };
-  const result = trapVerdict(witness.choices.length, canEnd.has(witness.key));
   return {
     statePath: gate.statePath,
     location: gate.location,
@@ -110,7 +115,9 @@ export function verdict(graph: Graph, gate: Gate): GateTokenLint {
         location: gate.location,
         gate: gate.statePath,
         steps: witness.steps,
-        ...(result === "potential" ? { choices: witness.choices } : {}),
+        ...(result === "potential" && witness.choices.length > 0
+          ? { choices: witness.choices }
+          : {}),
         message: `${result}: no route reaches the return point${canEnd.has(witness.key) ? "; only actor completion can return the token" : ""}; ${witness.steps.map((step) => `${step.event}${step.grant ? " (grant)" : ""} -> ${step.configuration}`).join("; ")}`,
       },
     ],

@@ -35,11 +35,11 @@ export const verdict = (doc: BlueprintDocument) => result(doc).gates[0]!.verdict
 export const fixtures: [string, BlueprintDocument, string][] = [
   ["dead end", flat(), "violation"],
   ["closed cycle", flat({ on: { loop: "working" } }), "violation"],
-  ["unreachable return", flat({ on: { finish: "done" } }), "violation"],
+  ["unreachable return", flat({ on: { finish: "done" } }), "potential"],
   ["cycle with return", flat({ on: { loop: "working", finish: "returned" } }), "proved"],
   ["exit return", flat({}, { meta: { gate: { ...gate, return: "exit" } } }), "proved"],
   ["transient return", flat({ always: "returned" }, {}), "proved"],
-  ["eventless bypass", flat({}, { always: "working" }), "proved"],
+  ["eventless bypass", flat({ always: "broken", on: { advance: "returned" } }), "violation"],
   ["root final completion", flat({ always: "done" }), "proved"],
   [
     "guard choice",
@@ -50,7 +50,8 @@ export const fixtures: [string, BlueprintDocument, string][] = [
   ["delay completion", flat({ after: { wait: "returned" } }), "proved"],
   ["wildcard strand", flat({ on: { finish: "returned", "break.*": "broken" } }, {}), "violation"],
 ];
-// Give the wildcard a real destination.
+// Give the bypass and wildcard real destinations.
+(fixtures[6]![1].machine["states"] as Record<string, unknown>)["broken"] = {};
 fixtures[11]![1].machine["states"] = {
   ...(fixtures[11]![1].machine["states"] as object),
   broken: {},
@@ -87,6 +88,8 @@ function parallel(flow: Record<string, unknown>, side: Record<string, unknown> =
     },
   });
 }
+const regionFinal = parallel({ type: "final" });
+delete (regionFinal.machine["states"] as Record<string, Record<string, unknown>>)["open"]!["on"];
 fixtures.push(
   [
     "parallel-region strand",
@@ -98,7 +101,7 @@ fixtures.push(
         },
       },
     }),
-    "violation",
+    "potential",
   ],
   [
     "ancestor trap",
@@ -121,7 +124,7 @@ fixtures.push(
         done: { type: "final" },
       },
     }),
-    "violation",
+    "potential",
   ],
   [
     "multi-target trap",
@@ -134,10 +137,10 @@ fixtures.push(
         break: { target: ["#sample.open.flow.broken", "#sample.open.side.changed"] },
       },
     }),
-    "violation",
+    "potential",
   ],
-  ["eventless grant bypass", flat({ always: "broken" }), "violation"],
-  ["region final is not actor completion", parallel({ type: "final" }), "violation"],
+  ["eventless grant bypass", flat({ always: "broken", on: { advance: "returned" } }), "violation"],
+  ["region final is not actor completion", regionFinal, "violation"],
   [
     "exact in guard",
     parallel({
@@ -157,19 +160,22 @@ for (const history of ["shallow", "deep"]) {
   fixtures.push([
     `${history} history trap`,
     document({
-      initial: "open",
+      initial: "box",
       states: {
-        open: {
+        box: {
           initial: "queued",
-          on: { pause: "away" },
           states: {
-            queued: { meta: { gate }, on: { token: "broken" } },
-            broken: {},
-            history: { type: "history", history },
+            queued: {
+              meta: { gate: { ...gate, return: { state: "box.returned" } } },
+              on: { token: "working" },
+            },
+            working: { on: { bad: "trap", advance: "returned" } },
+            trap: { on: { leave: "#sample.outside" } },
+            returned: {},
+            memory: { type: "history", history },
           },
         },
-        away: { on: { resume: "open.history", cancel: "done" } },
-        returned: {},
+        outside: { on: { back: "box.memory" } },
         done: { type: "final" },
       },
     }),
@@ -272,3 +278,17 @@ export const manyRegions = document({
     done: { type: "final" },
   },
 });
+
+fixtures.push(
+  [
+    "invoke without onError returns normally",
+    flat({ invoke: { src: "worker", onDone: "returned" } }),
+    "proved",
+  ],
+  [
+    "invoke without onError reaches a dead end",
+    flat({ invoke: { src: "worker", onDone: "broken" } }),
+    "violation",
+  ],
+);
+(fixtures.at(-1)![1].machine["states"] as Record<string, unknown>)["broken"] = {};

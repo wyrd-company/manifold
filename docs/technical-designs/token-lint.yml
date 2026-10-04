@@ -64,6 +64,9 @@ design-challenges:
     Most task blueprints let an operator end the actor from any
     configuration, such as an issue closed. If a route that ends the actor
     made a configuration safe, every strand in such a blueprint would pass.
+    An actor-ending route leaves the configuration in the trap set and
+    gives a fixed-choice trap a `potential` verdict, so the blueprint loads
+    with a warning and a holder entering the trap raises `stranded-token`.
   bounded-work: >-
     The graph grows with the product of parallel regions. Exploration must
     stop at a bound the operator sets, and stopping must never read as
@@ -320,12 +323,15 @@ proposed-design:
     finished, the graph reached the configuration bound, a macrostep
     reached XState's `maxIterations`, or one macrostep's choice scripts
     reached the bound; there is no trap set, for this gate or any other.
-    `violation`: a trap is reachable on a walk from the initial
-    configuration through a grant on which every choice is fixed, so a run
-    of the actor can strand the token. The walk may pass earlier grants
-    and returns of the same gate. `potential`: traps exist and every
-    path to them takes at least one choice of an expression guard, a named
-    guard, or a raise. `proved`: no held configuration is a trap, which
+    `violation`: a trap with no route to actor completion is reachable on a
+    walk from the initial configuration through a grant on which every
+    choice is fixed. The walk may pass earlier grants and returns of the
+    same gate. Every fixed-choice trap is checked, not only the shortest
+    witness. `potential`: traps exist, and every fixed-choice trap can reach
+    actor completion; traps whose every path takes a choice of an expression
+    guard, a named guard, or a raise also give this verdict. The blueprint
+    loads with a warning; a holder entering any trap raises `stranded-token`.
+    `proved`: no held configuration is a trap, which
     includes a gate whose every grant returns the token within its own
     macrostep and a gate whose state no reachable configuration holds.
   findings: >-
@@ -334,11 +340,13 @@ proposed-design:
     an error; `token-potential` and `token-unknown` are warnings. A
     `token-violation` or `token-potential` finding carries `steps`, the
     walk with the fewest choices, and among those the fewest edges, from
-    the initial configuration through the grant to the first trap on it:
+    the initial configuration through the grant to a trap that gives the
+    gate its verdict:
     each step the event sent and the key of the configuration reached, with
     every grant step marked and the walk's last grant the one that strands
-    the token. A `token-potential` finding also carries `choices`, each
-    choice on the path: the step, the pointer of the guard or action, the
+    the token. A `token-potential` finding whose path takes opaque choices
+    also carries `choices`, each choice on the path: the step, the pointer
+    of the guard or action, the
     event type for a raise, and the value. When no edge from a held
     configuration reaches the return point, the message says so. A `token-unknown`
     finding carries `configurationBound` and `configurations`. The trap set
@@ -398,15 +406,18 @@ proposed-design:
     keeps it and shows the same fixture is `potential`. The fixtures: the
     valid two-gate blueprint, `proved` for each gate; the parallel-region
     strand, the ancestor trap, and the multi-target trap, each a
-    `violation`, though `cancel` ends the actor from each trap; the dead
-    end, the closed cycle, and the unreachable return, each a `violation`;
+    `potential`, since `cancel` ends the actor from each trap; the dead
+    end and the closed cycle, each a `violation`; the unreachable return
+    whose only exit completes the actor, `potential`;
     the eventless bypass, a `violation`; shallow and deep history traps,
     each a `violation`; the history counterexample, the active-set false
     acceptance, a `violation`; the transient return, `proved`; region-final
-    completion, the spike's region-final fixture, a `violation`, against
+    completion with no actor-ending route, `violation`, against
     root-final completion, the same fixture with `working` always going to
     the root final `done`, `proved`; and the named-guard false positive,
-    `potential` with its choice. Further fixtures show a review cycle with
+    `potential` with its choice. An invocation without `onError` whose
+    `onDone` reaches the return is `proved`; one whose `onDone` reaches a
+    dead end is `violation`. Further fixtures show a review cycle with
     a route to the return point, `proved`; a same-entry return, a
     compound gated state `packing` whose token event takes `queued` to its
     child `returned`, the return state, and whose token event from

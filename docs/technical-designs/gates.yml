@@ -145,12 +145,16 @@ proposed-design:
     declaration.
   token-lint-verdicts: >-
     Each gate gets one verdict. `proved`: no trap is reachable. `violation`:
-    a trap is reachable on a path whose every guard choice is exact, so a
-    run of the actor can strand the token; this is an error and the
-    blueprint does not load. `potential`: every reachable trap depends on at
-    least one choice of an expression or named guard, which the lint
-    cannot evaluate; the finding names the path and each guard choice on
-    it, and the blueprint loads with a warning. `unknown`: the graph
+    a trap with no route to actor completion is reachable on a path whose
+    every choice is fixed; this is an error and the blueprint does not load.
+    Every fixed-choice trap is checked, not only the shortest witness.
+    `potential`: traps exist and every fixed-choice trap can reach actor
+    completion, or every path to a trap needs an expression or named guard
+    choice or a raise choice that the lint cannot evaluate. The finding
+    names a path that gives the verdict and each opaque choice on it, if
+    any. The blueprint loads with a warning; a holder entering any trap
+    raises `stranded-token`. Actor completion keeps a configuration in the
+    trap set even when it gives a `potential` verdict. `unknown`: the graph
     exceeded the lint's configuration bound before exploration finished;
     the finding names the gate and the bound, and the blueprint loads with
     a warning. The bound is an option of the lint, set in service

@@ -129,6 +129,13 @@ describe("host CLI runs the comparator lint and the expressions lint", () => {
     const unknown = run("blueprint", "lint", "--configuration-bound", "1", "token-violation.yml");
     expect(unknown.status).toBe(0);
     expect(unknown.stdout).toContain("token-unknown");
+    doc.machine.states.broken = { on: { finish: "done" } };
+    writeFileSync(join(directory, "token-ending.yml"), stringify(doc));
+    const ending = run("blueprint", "lint", "token-ending.yml");
+    expect(ending.status).toBe(0);
+    expect(ending.stdout).toContain("token-potential");
+    expect(ending.stdout).toContain("only actor completion");
+    doc.machine.states.broken = {};
     doc.machine.states.queued.on.token = {
       target: "broken",
       guard: { type: "expression.guard", params: { expression: "true" } },

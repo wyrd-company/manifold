@@ -32,16 +32,17 @@ description: >-
   including persisted history keys, transient returns, invocations, delays,
   wildcard events, opaque choices, and repeated grants. The remaining proof is
   the gate runtime's holder check: a persisted holder in a trap must raise the
-  stranded-token escalation without returning a different token. The policy
-  for a trap with only an actor-ending route is a user decision.
+  stranded-token escalation without returning a different token. A trap
+  whose only exit ends the actor loads with a warning and remains subject
+  to the holder check.
 
 categories:
   - technical
 likelihood: 3
 impact: 4
 response-strategy: mitigate
-# Mitigation: the gates design rejects a trap reachable on exact guard
-# choices, warns on a potential or unknown verdict, and checks each holder's
+# Mitigation: the gates design rejects a trap with no completion route
+# reachable on fixed choices, warns on a potential or unknown verdict, and checks each holder's
 # saved configuration against the trap configurations of its gate at run
 # time, raising an escalation for a stranded token. The trap set is sound
 # because the graph over-approximates the actor. The risk closes when the

@@ -645,7 +645,7 @@ export const blueprintSchema = {
         },
         steps: {
           description:
-            "For `token-violation` and `token-potential`, the path from the initial configuration through the grant to the first trap on it.",
+            "For `token-violation` and `token-potential`, the path from the initial configuration through the grant to a trap that gives the gate its verdict.",
           type: "array",
           minItems: 1,
           items: {
@@ -653,7 +653,8 @@ export const blueprintSchema = {
           },
         },
         choices: {
-          description: "For `token-potential`, each choice of a guard or a raise on the path.",
+          description:
+            "For `token-potential`, each opaque guard or raise choice on the path, omitted when the path has no opaque choices.",
           type: "array",
           minItems: 1,
           items: {

@@ -280,13 +280,15 @@ description: |-
      `site-unsupported` and its fields, with the location rewritten from
      the machine to the document. It runs only when rule 3 found nothing.
   9. The token lint of `token-lint`, for each gate: `token-violation`
-     when a run of the actor can strand the gate's token, `token-potential`
-     when every run that can strand it takes a choice of an expression
-     guard, a named guard, or a raise, and `token-unknown` when the
+     when a fixed-choice path reaches a trap with no route to actor
+     completion, `token-potential` when traps exist and every fixed-choice
+     trap can reach actor completion, or every path to a trap takes an
+     expression guard, named guard, or raise choice, and `token-unknown` when the
      configuration graph reached the lint's bound first. Each finding is
      at the gate's `meta/gate` and carries `gate`, the gated state's path;
      `token-violation` and `token-potential` carry `steps`, and
-     `token-potential` also `choices`; `token-unknown` carries
+     `token-potential` also `choices` when its path takes opaque choices;
+     `token-unknown` carries
      `configurationBound` and `configurations`. It runs only when rules 1
      to 8 found nothing.
 
@@ -371,9 +373,12 @@ validation-criteria: >-
   state node, each a `gate` finding;
   a bare `guard: in`, a `shape` finding; an `in` guard whose state path
   names no state, a `machine` finding at that entry; a gate whose token
-  can be stranded, a `token-violation` finding with its steps; a gate
+  reaches a trap on fixed choices with no actor-completion route, a
+  `token-violation` finding with its steps; a gate
   whose strand needs a named guard's choice, a `token-potential` warning
-  on a blueprint that loads; a gate whose graph passes a bound of 10, a
+  on a blueprint that loads; a gate whose every fixed-choice trap can
+  reach actor completion, a `token-potential` warning with its trap set
+  retained; a gate whose graph passes a bound of 10, a
   `token-unknown` warning; and a guard whose result is not a boolean,
   located in the document. A
   clean fixture returns the parsed document, and the same call twice

@@ -8,6 +8,56 @@ import type { MachineConfig } from "xstate";
 import { gate, document, flat, result, verdict, fixtures } from "./test-fixtures/blueprints.ts";
 describe("token lint", () => {
   it.each(fixtures)("%s", (_name, doc, expected) => expect(verdict(doc)).toBe(expected));
+  it("warns when every fixed-choice trap can reach actor completion", () => {
+    const doc = flat({ on: { stop: "ending" } });
+    (doc.machine["states"] as Record<string, unknown>)["ending"] = { on: { finish: "done" } };
+    const lint = result(doc).gates[0]!;
+    expect(lint.verdict).toBe("potential");
+    expect(lint.traps?.size).toBe(2);
+    expect(lint.findings[0]).toMatchObject({ kind: "token-potential" });
+    expect(lint.findings[0]!.choices).toBeUndefined();
+  });
+  it("rejects a later dead end even when the shortest trap can complete", () => {
+    const doc = flat({ on: { finish: "done", bad: "broken" } });
+    (doc.machine["states"] as Record<string, unknown>)["broken"] = {};
+    const lint = result(doc).gates[0]!;
+    expect(lint.verdict).toBe("violation");
+    expect(lint.findings[0]!.steps?.at(-1)?.event).toBe("bad");
+  });
+  it.each(["shallow", "deep"])("replays the %s history trap cycle", (history) => {
+    const doc = fixtures.find(([name]) => name === `${history} history trap`)![1];
+    const lint = result(doc);
+    const actor = createActor(
+      createMachine(doc.machine as MachineConfig<Record<string, unknown>, { type: string }>),
+    ).start();
+    for (const type of ["token", "bad", "leave"]) actor.send({ type });
+    const outside = lint.configurationKey(actor.getPersistedSnapshot());
+    expect(lint.gates[0]!.traps?.has(outside)).toBe(true);
+    actor.send({ type: "back" });
+    expect(actor.getSnapshot().matches({ box: "trap" })).toBe(true);
+    expect(lint.gates[0]!.traps?.has(lint.configurationKey(actor.getPersistedSnapshot()))).toBe(
+      true,
+    );
+    actor.send({ type: "leave" });
+    expect(lint.configurationKey(actor.getPersistedSnapshot())).toBe(outside);
+    expect(lint.configurations).toBe(6);
+    actor.stop();
+  });
+  it.each([
+    ["invoke without onError returns normally", "proved"],
+    ["invoke without onError reaches a dead end", "violation"],
+  ])("treats unhandled invoke errors as no move: %s", (name, expected) => {
+    const doc = fixtures.find(([label]) => label === name)![1];
+    const lint = result(doc);
+    expect(lint.gates[0]!.verdict).toBe(expected);
+    expect(lint.configurations).toBe(3);
+    for (const key of lint.gates[0]!.traps ?? []) expect(JSON.parse(key)[2]).toBe("active");
+    expect(
+      lint.gates[0]!.findings[0]?.steps?.some((step) =>
+        step.event.startsWith("xstate.error.actor."),
+      ),
+    ).not.toBe(true);
+  });
   it("sees a return entered and left in one macrostep", () => {
     const doc = flat({ on: { finish: "returned" } });
     (doc.machine["states"] as Record<string, unknown>)["returned"] = { always: "broken" };

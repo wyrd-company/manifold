@@ -53,7 +53,7 @@ validation-criteria: >-
   invoke `src` Manifold does not register, a `machine` line for a target
   that names no state, and a `result` line for a guard whose result is not
   a boolean, each located in the document, and a `token-violation` line
-  for a gate whose token can be stranded; exit 0 with a `token-potential`
+  for a gate with a fixed-choice trap that cannot reach actor completion; exit 0 with a `token-potential`
   line for a gate whose strand needs a named guard's choice, and with a
   `token-unknown` line for a gate linted with `--configuration-bound 10`
   on a graph larger than that; and exit 2 with no standard output for no
