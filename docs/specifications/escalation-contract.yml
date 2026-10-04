@@ -116,8 +116,10 @@ description: |-
   - A missing or wrong key, or an unknown id, answers `404`. An answer
     that names no choice of the escalation, sends text to an escalation
     that takes none, sends both or neither, or sends text over 4,096
-    characters answers `400` and changes nothing. A body over 16 KiB
-    answers `413`. Any other method answers `405`.
+    Unicode code points answers `400` and changes nothing. A body over
+    64 KiB answers `413`. Text length is counted in code points after
+    decoding, so the longest valid answer, which takes about 49 KB
+    form-encoded, is accepted. Any other method answers `405`.
 
   API. Served under `/api/escalations` behind the operator bearer token.
   Bodies are JSON.
@@ -130,7 +132,9 @@ description: |-
     answers through the channel `api`: `200` with `{ outcome, escalation }`,
     where `outcome` is `answered` when this answer won and `closed` when
     the escalation had already ended; `400` with `{ error }` for an answer
-    the escalation does not take; `404` for an unknown id.
+    the escalation does not take, or text over 4,096 code points; `404`
+    for an unknown id; `413` for a body over 64 KiB, which holds the
+    longest valid answer even with every character `\u`-escaped.
 
   An escalation, as the API returns it, has `id`, `raiser`, `title`,
   `question`, `choices`, `freeText`, `destinations`, `status`, `answer`

@@ -482,9 +482,14 @@ proposed-design:
     an empty question, fails the callback with an `EscalationInputError`,
     which the blueprint handles as an invoke error. An answer whose choice
     is not one of the escalation's, or text to an escalation that takes
-    none, or text longer than 4,096 characters, is `invalid`: `400` on the
-    page and the API, and nothing changes. A request body over 16 KiB
-    answers `413`. A notification that fails is recorded on its row and
+    none, or text longer than 4,096 Unicode code points, is `invalid`:
+    `400` on the page and the API, and nothing changes. A request body
+    over 64 KiB, on the answer endpoint or the API, answers `413`. The
+    bound holds the longest valid answer in either encoding: 4,096
+    four-byte code points take 49,152 bytes form-encoded, each byte
+    written as `%XX`, and the same as JSON `\u` escapes of surrogate
+    pairs, so the whole body stays under 50,000 bytes. Text length is
+    checked after decoding, never as bytes. A notification that fails is recorded on its row and
     never fails the escalation. SQLite errors propagate unchanged.
   tests: >-
     Tests import only the module's `index.ts`, the store's, and the
@@ -513,7 +518,11 @@ proposed-design:
     4,096-character answer of four-byte characters is at most 4,096 bytes
     in UTF-8, ends with `…`, and the API returns the whole answer; a
     question of 8,000 four-byte characters gives an ask message of at most
-    4,096 bytes; an `open` destination logs its warning at start, and
+    4,096 bytes; an answer of 4,096 four-byte code points is accepted as a
+    form-encoded body on the answer endpoint and as a JSON body, both raw
+    UTF-8 and `\u`-escaped, on the API, and one of 4,097 code points is
+    `400` on each; a body of 64 KiB plus one byte is `413` on each; an
+    `open` destination logs its warning at start, and
     a `reserved` destination whose topic the fake server reads anonymously
     logs that it is readable; no topic, server, or token appears in the
     store or a log line. Fault tests in a child process that sends itself
