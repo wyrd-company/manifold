@@ -223,13 +223,19 @@ proposed-design:
     ordinary connection loss. When a connection finds a different
     `environmentId`, readiness resets before the source reads its new
     baseline and resolves only after the replacement origin commits.
-    The source drains writes admitted by `write` before it reads the
-    replacement baseline. `write` checks readiness and admits a send
-    without yielding, and holds admission until the send finishes or fails.
-    `ready` resolves at that
-    moment, or at once after it, so a writer that sends a command only
-    after `ready` creates every thread and turn after the origin, and the
-    source publishes their changes. A crash before the first transaction
+    The source fails writes admitted by `write` when the identity changes,
+    so writers retry only after the replacement origin commits. `write`
+    checks readiness and admits a send without yielding, with a signal
+    that identity invalidation aborts. Each admitted write names its thread.
+    Before aborting it, the source saves that thread with a null projection.
+    Replacement origins preserve null projections as observations to recover,
+    rather than adopting their snapshot state as baseline. The thread is
+    subscribed without a cursor and compared with the empty state, so a
+    command already accepted before cancellation is published. The null
+    projection survives a failed origin read and a service restart.
+    `ready` resolves after the durable origin commits, or at once when the
+    environment is ready. Writers use `write` for admission so the source
+    publishes their changes across origin replacement. A crash before the first transaction
     commits leaves no row, and the environment is not ready in the next
     run until its own origin commits. An environment that stops before it
     is ready rejects every waiting `ready`.
@@ -289,7 +295,7 @@ proposed-design:
        * environment stops, is not configured, or `signal` aborts.
        */
       ready(environment: string, signal?: AbortSignal): Promise<void>;
-      write<T>(environment: string, signal: AbortSignal, send: () => Promise<T>): Promise<T>;
+      write<T>(environment: string, threadId: string, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>): Promise<T>;
       /** Closes every client; resolves when every environment loop has ended. */
       stop(): Promise<void>;
     }

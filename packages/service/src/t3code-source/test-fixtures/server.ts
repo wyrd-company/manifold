@@ -41,6 +41,7 @@ export async function fakeServer() {
     acknowledged?: (tag: string) => void;
     threadSubscribe?: () => void;
     beforeThreadSnapshot?: () => boolean | void;
+    deliverThreadItems?: () => boolean;
   } = {};
   const threads = new Map<string, ReturnType<typeof fixtureThread>>();
   const log: unknown[] = [];
@@ -153,6 +154,11 @@ export async function fakeServer() {
   const ws = new WebSocketServer({ server });
   function chunk(socket: WebSocket, requestId: string, values: unknown[]) {
     if (!values.length) return;
+    if (
+      subscriptions.get(socket)?.get(String(requestId))?.tag === "orchestration.subscribeThread" &&
+      hooks.deliverThreadItems?.() === false
+    )
+      return;
     if (
       bufferThreadItems &&
       subscriptions.get(socket)?.get(String(requestId))?.tag === "orchestration.subscribeThread"

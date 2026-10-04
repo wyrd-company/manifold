@@ -2,6 +2,8 @@
 // relationships:
 //   implements: t3code-environment-source
 // ---
+import { T3ConnectionError } from "@wyrd-company/t3code-client";
+import { persistence } from "./persistence.ts";
 import { migrations } from "./migrations.ts";
 import { environmentLoop } from "./environment.ts";
 import type { T3CodeSourceOptions, T3CodeSource } from "./types.ts";
@@ -25,7 +27,8 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
       return { promise, resolve, reject, ready: false };
     }
     let readiness = pendingReadiness();
-    const writes = new Set<Promise<void>>();
+    const writes = new Map<AbortController, string>();
+    const stored = persistence(options.store, name);
     const loop = environmentLoop(
       options,
       name,
@@ -36,7 +39,16 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
       },
       async () => {
         if (readiness.ready) readiness = pendingReadiness();
-        await Promise.all(writes);
+        // A request may already have committed even when its response is aborted.
+        // Keep its thread outside the replacement baseline until observation catches up.
+        stored.atomic(() => {
+          for (const id of writes.values()) {
+            const row = stored.row(id);
+            stored.save(id, "followed", row?.cursor ?? stored.environment()!.shell_sequence, null);
+          }
+        });
+        for (const controller of writes.keys())
+          controller.abort(new T3ConnectionError("closed", "T3 Code environment identity changed"));
       },
     );
     void loop.done.then(
@@ -76,27 +88,36 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
         );
       });
     },
-    async write(name, signal, send) {
+    async write(name, thread, signal, send) {
       const environment = environments.find((entry) => entry.status.environment === name);
       while (true) {
         await source.ready(name, signal);
         signal.throwIfAborted();
         // Check and acquire without yielding: invalidation cannot interleave.
         if (!environment!.readiness.ready) continue;
-        let release!: () => void;
-        const pending = new Promise<void>((resolve) => {
-          release = resolve;
+        const controller = new AbortController();
+        const writeSignal = AbortSignal.any([signal, controller.signal, stop.signal]);
+        writeSignal.throwIfAborted();
+        let interrupted!: () => void;
+        const interruption = new Promise<never>((_resolve, reject) => {
+          interrupted = () => reject(writeSignal.reason);
+          writeSignal.addEventListener("abort", interrupted, { once: true });
         });
-        environment!.writes.add(pending);
+        environment!.writes.set(controller, thread);
         try {
-          return await send();
+          const result = await Promise.race([send(writeSignal), interruption]);
+          writeSignal.throwIfAborted();
+          return result;
         } finally {
-          environment!.writes.delete(pending);
-          release();
+          writeSignal.removeEventListener("abort", interrupted);
+          environment!.writes.delete(controller);
         }
       }
     },
     async stop() {
+      for (const environment of environments)
+        for (const controller of environment.writes.keys())
+          controller.abort(environmentError(environment.status.environment));
       stop.abort();
       await Promise.all(environments.map((e) => e.done));
     },

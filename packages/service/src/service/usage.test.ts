@@ -161,14 +161,9 @@ test("attributes unowned usage through the assembled T3 Code source and portfoli
   cleanup.push(service.stop);
   const db = service.store.connection.database;
   db.prepare("INSERT INTO t3_environment VALUES (?,?,?,?)").run("env-one", "identity-one", 0, 0);
-  db.prepare("INSERT INTO t3_thread VALUES (?,?,?,?,?,?)").run(
-    "env-one",
-    "thread-one",
-    "followed",
-    0,
-    "{}",
-    "project-one",
-  );
+  db.prepare(
+    "INSERT INTO t3_thread (environment, thread_id, status, cursor, thread, project_id) VALUES (?,?,?,?,?,?)",
+  ).run("env-one", "thread-one", "followed", 0, "{}", "project-one");
   service.portfolio.ledger.credit({
     key: "credit-one",
     account: "acct",

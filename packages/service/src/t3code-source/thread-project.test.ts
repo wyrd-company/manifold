@@ -19,22 +19,12 @@ it("reads a thread project from the source partition without modifying its state
         0,
         0,
       );
-    db.prepare("INSERT INTO t3_thread VALUES (?,?,?,?,?,?)").run(
-      "env-one",
-      "thread-1",
-      "followed",
-      0,
-      "{}",
-      "project-1",
-    );
-    db.prepare("INSERT INTO t3_thread VALUES (?,?,?,?,?,?)").run(
-      "env-two",
-      "thread-1",
-      "followed",
-      0,
-      "{}",
-      "project-2",
-    );
+    db.prepare(
+      "INSERT INTO t3_thread (environment, thread_id, status, cursor, thread, project_id) VALUES (?,?,?,?,?,?)",
+    ).run("env-one", "thread-1", "followed", 0, "{}", "project-1");
+    db.prepare(
+      "INSERT INTO t3_thread (environment, thread_id, status, cursor, thread, project_id) VALUES (?,?,?,?,?,?)",
+    ).run("env-two", "thread-1", "followed", 0, "{}", "project-2");
     expect(readThreadProject(store.connection, "env-one", "thread-1")).toBe("project-1");
     expect(readThreadProject(store.connection, "env-two", "thread-1")).toBe("project-2");
     expect(readThreadProject(store.connection, "env-one", "missing")).toBeUndefined();

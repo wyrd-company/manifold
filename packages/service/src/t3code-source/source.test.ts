@@ -949,6 +949,29 @@ test("ready waits for the origin, survives lost connections, and rejects abort a
     kind: "environment",
   });
 });
+test("stopping the source fails an admitted write and aborts its transport signal", async () => {
+  const { start } = await setup();
+  const source = start();
+  await source.ready("station");
+  let transport: AbortSignal | undefined;
+  const pending = source.write(
+    "station",
+    "conversation",
+    new AbortController().signal,
+    (signal) => {
+      transport = signal;
+      return new Promise<void>(() => {});
+    },
+  );
+  const failed = expect(pending).rejects.toMatchObject({
+    name: "AgentThreadError",
+    kind: "environment",
+  });
+  await expect.poll(() => transport !== undefined).toBe(true);
+  await source.stop();
+  await failed;
+  expect(transport!.aborted).toBe(true);
+});
 test("ready rejects when the source stops before its first connection", async () => {
   const { server, options } = await setup();
   server.setToken("unavailable-token");

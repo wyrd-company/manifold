@@ -115,7 +115,8 @@ export async function fixtureService(configuration: FixtureConfiguration) {
     invocationOf,
     actorOf: (id) => host.actorOf(id),
     bindingArchived: () => false,
-    sourceWrite: (environment, signal, send) => source.write(environment, signal, send),
+    sourceWrite: (environment, thread, signal, send) =>
+      source.write(environment, thread, signal, send),
     sourceReady: (environment, signal) => source.ready(environment, signal),
     revisionAt: async () => revision,
     probe(command) {

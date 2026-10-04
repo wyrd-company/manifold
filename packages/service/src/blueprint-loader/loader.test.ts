@@ -11,7 +11,6 @@ import type { ProcessRepository } from "../process-repository/index.ts";
 import { serviceImplementations } from "../implementations.ts";
 import { createBlueprintLoader } from "./index.ts";
 import type { ImplementationRegistry, LoadedBlueprint } from "./index.ts";
-import { serviceImplementations } from "../implementations.ts";
 import { escalationImplementations } from "../escalations/index.ts";
 import { fixture as escalationFixture } from "../escalations/test-support.ts";
 

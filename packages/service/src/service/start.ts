@@ -41,7 +41,6 @@ import { createRevisions } from "./revisions.ts";
 import { stderrLog } from "./log.ts";
 import { githubWebhookPath } from "./types.ts";
 import type { Service, ServiceParts, ServiceStep, StartServiceOptions } from "./types.ts";
-import type { ActorHost } from "../actor-host/index.ts";
 export async function startService(options: StartServiceOptions): Promise<Service> {
   const log = options.log ?? stderrLog;
   let store: Store | undefined;
@@ -50,7 +49,6 @@ export async function startService(options: StartServiceOptions): Promise<Servic
   let actorHost: ActorHost | undefined;
   let github: GitHubSource | undefined;
   let t3code: T3CodeSource | undefined;
-  let actorHost: ActorHost | undefined;
   let agentThreads: AgentThreads | undefined;
   let sourceStarted!: (source: T3CodeSource) => void;
   const sourceStarting = new Promise<T3CodeSource>((resolve) => {
@@ -212,9 +210,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           }));
         await source.ready(environment, signal);
       },
-      sourceWrite: async (environment, signal, send) => {
+      sourceWrite: async (environment, thread, signal, send) => {
         signal.throwIfAborted();
-        return t3code!.write(environment, signal, send);
+        return t3code!.write(environment, thread, signal, send);
       },
       logger: {
         debug: commandLog("info"),

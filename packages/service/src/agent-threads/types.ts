@@ -19,8 +19,9 @@ export interface AgentThreadsOptions {
   readonly sourceReady: (environment: string, signal?: AbortSignal) => Promise<void>;
   readonly sourceWrite: <T>(
     environment: string,
+    threadId: string,
     signal: AbortSignal,
-    send: () => Promise<T>,
+    send: (signal: AbortSignal) => Promise<T>,
   ) => Promise<T>;
   readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
   readonly probe?: (accepted: AcceptedCommand) => void;

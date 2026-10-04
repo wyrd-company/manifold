@@ -196,13 +196,16 @@ proposed-design:
     resets an environment whose `environmentId` changed, the environment is
     not ready. Each send enters the source's `write` boundary after any
     thread shell read, so it checks readiness again immediately before
-    dispatch. An identity change blocks new sends and waits for admitted
-    sends to finish or fail before reading the replacement origin.
+    dispatch. An identity change blocks new sends and fails admitted sends;
+    the dispatcher retries the same command after the replacement origin
+    commits. The source records each interrupted write's thread for a fresh
+    observation, so a command accepted before cancellation is published
+    instead of becoming baseline.
     An environment the source stops fails the waiting command
-    with `environment`. Every turn and thread a command makes is therefore
-    created after the origin, so the source publishes its changes: a thread
-    the shell lists with no row is subscribed with no cursor and compared
-    with the empty state, and a running or settled turn in it is published.
+    with `environment`. Commands enter after a committed origin; interrupted
+    commands remain observations across its replacement. A thread the shell
+    lists with no row is subscribed with no cursor and compared with the
+    empty state, and a running or settled turn in it is published.
   child-blueprints: >-
     A child state machine gets no routed events and no engine-owned
     identity. `thread-create` and `follow-thread` are for top-level task
@@ -305,7 +308,7 @@ proposed-design:
       /** The environment source's `ready`. */
       readonly sourceReady: (environment: string, signal?: AbortSignal) => Promise<void>;
       /** The environment source's write admission boundary. */
-      readonly sourceWrite: <T>(environment: string, signal: AbortSignal, send: () => Promise<T>) => Promise<T>;
+      readonly sourceWrite: <T>(environment: string, threadId: string, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>) => Promise<T>;
       readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
       /** Called after the server answers a command and before the promise resolves. */
       readonly probe?: (accepted: AcceptedCommand) => void;

@@ -257,6 +257,12 @@ export function environmentLoop(
         const previous = stored.environment();
         if (!previous || previous.environment_id !== server) {
           await onNotReady();
+          const pending = new Set(
+            stored
+              .rows()
+              .filter((row) => row.status === "followed" && row.thread === null)
+              .map((row) => row.thread_id),
+          );
           const model = await client.shell.readModel(lifetime.signal);
           stored.atomic(() => {
             stored.reset();
@@ -265,11 +271,11 @@ export function environmentLoop(
               if (!thread.deletedAt && validId(thread.id))
                 stored.save(
                   thread.id,
-                  thread.archivedAt ? "archived" : "followed",
+                  pending.has(thread.id) ? "followed" : thread.archivedAt ? "archived" : "followed",
                   model.snapshotSequence,
-                  compactThread(thread),
+                  pending.has(thread.id) ? null : compactThread(thread),
                   thread.projectId,
-                  snapshotAttribution(thread),
+                  pending.has(thread.id) ? emptyAttribution : snapshotAttribution(thread),
                 );
           });
         }

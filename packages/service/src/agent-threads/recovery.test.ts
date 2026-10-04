@@ -132,40 +132,64 @@ test("guard ignores old, other-thread and ambiguous settlements then takes its t
   server.settle(context.thread);
   await expect.poll(() => service.actor.getSnapshot().status).toBe("done");
 });
-test.each(["response", "failure"])(
-  "replacement origin waits for an in-flight command %s",
-  async (outcome) => {
-    const { server, config } = await setup();
-    let releaseWrite!: () => void;
-    server.hooks.beforeDispatchResponse = (command) =>
-      (command as { type: string }).type === "thread.turn.start"
-        ? new Promise<void>((resolve) => {
-            releaseWrite = resolve;
-          })
-        : Promise.resolve();
-    const service = await fixtureService(config);
-    cleanup.push(() => service.stop());
-    await expect.poll(() => typeof releaseWrite).toBe("function");
-    let originRead = false;
-    server.hooks.beforeReadModel = async () => {
-      originRead = true;
-    };
-    server.setIdentity("server-two");
-    server.failShell();
-    // The source has confirmed the new identity, but cannot read its origin yet.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(originRead).toBe(false);
-    delete server.hooks.beforeDispatchResponse;
-    if (outcome === "failure") server.drop();
-    releaseWrite();
-    await expect.poll(() => originRead).toBe(true);
-    await service.source.ready("station");
-    await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
-    expect(server.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(
-      outcome === "failure" ? 2 : 1,
-    );
-  },
-);
+test("an admitted successful command survives identity replacement and restart with one settlement", async () => {
+  const { server, config } = await setup();
+  let releaseShell!: () => void;
+  server.hooks.beforeShellRead = () =>
+    new Promise<void>((resolve) => {
+      releaseShell = resolve;
+    });
+  let releaseWrite!: () => void;
+  let held = false;
+  server.hooks.beforeDispatchResponse = (command) =>
+    (command as { type: string }).type === "thread.turn.start" && !held
+      ? new Promise<void>((resolve) => {
+          held = true;
+          releaseWrite = resolve;
+        })
+      : Promise.resolve();
+  let service = await fixtureService(config);
+  cleanup.push(() => service.stop());
+  await expect.poll(() => typeof releaseShell).toBe("function");
+  await expect
+    .poll(
+      () =>
+        service.store.connection.database
+          .prepare("SELECT count(*) AS count FROM t3_thread WHERE thread IS NOT NULL")
+          .get()?.["count"],
+    )
+    .toBe(1);
+  server.hooks.deliverThreadItems = () => false;
+  delete server.hooks.beforeShellRead;
+  releaseShell();
+  await expect.poll(() => typeof releaseWrite).toBe("function");
+  const thread = [...server.threads.values()][0]!;
+  server.settle(thread.id);
+  let originRead = false;
+  server.hooks.beforeReadModel = async () => {
+    originRead = true;
+  };
+  server.setIdentity("server-two");
+  server.failShell();
+  await expect.poll(() => originRead).toBe(true);
+  await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
+  delete server.hooks.beforeDispatchResponse;
+  releaseWrite();
+  await service.source.ready("station");
+  await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
+  await service.stop();
+  delete server.hooks.deliverThreadItems;
+  service = await fixtureService(config);
+  await expect.poll(() => service.actor.getSnapshot().status).toBe("done");
+  expect(server.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(2);
+  expect(thread.messages).toHaveLength(1);
+  const settlements = service.store.connection.database
+    .prepare(
+      "SELECT count(*) AS count FROM store_inbox WHERE actor_id = ? AND json_extract(payload, '$.type') = ?",
+    )
+    .get("worker", "t3.turn.settled");
+  expect(settlements?.["count"]).toBe(1);
+});
 test("dropped response retries the exact command and gives one turn", async () => {
   const { server, config } = await setup();
   let dropped = false;

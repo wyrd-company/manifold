@@ -40,8 +40,8 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
     const command = createCommand(input, invocation, title, new Date().toISOString());
     const id = command.threadId;
     const result = await dispatch(options, owner.environment, signal, () =>
-      options.sourceWrite(owner.environment, signal, () =>
-        pool.get(owner.environment).threads.dispatcher.dispatch(command, signal),
+      options.sourceWrite(owner.environment, id, signal, (writeSignal) =>
+        pool.get(owner.environment).threads.dispatcher.dispatch(command, writeSignal),
       ),
     );
     signal.throwIfAborted();
@@ -90,8 +90,8 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
           throw failure("rejected", "Thread is absent from the server shell");
         command = turnCommand(input, text, current, new Date().toISOString());
       }
-      return options.sourceWrite(owner.environment, signal, () =>
-        client.threads.dispatcher.dispatch(command!, signal),
+      return options.sourceWrite(owner.environment, id, signal, (writeSignal) =>
+        client.threads.dispatcher.dispatch(command!, writeSignal),
       );
     });
     signal.throwIfAborted();

@@ -76,7 +76,7 @@ async function setup(overrides: Partial<AgentThreadsOptions> = {}) {
     invocationOf: () => invocation,
     bindingArchived: () => false,
     sourceReady: async () => {},
-    sourceWrite: (_environment, _signal, send) => send(),
+    sourceWrite: (_environment, _threadId, signal, send) => send(signal),
     revisionAt: async () =>
       memoryRevision(commit, {
         "templates/prompt.njk": '{% include "templates/fragment.njk" %} {{ parcel }}',
