@@ -247,22 +247,34 @@ proposed-design:
   grant: >-
     The gate grants a token only to an actor in the gated state with no
     undelivered event, so the token event is the next event the actor takes
-    there. A gate's grants are its token edges from the configurations
-    reachable from the initial configuration without that gate's token
-    edge. The token is held from the start of the grant's macrostep. A
-    held path continues along edges other than the gate's token edge, since
-    a holder is never offered a second token. A held path ends when an edge
-    carries the gate's return marker, at the grant or later, or when its
-    last snapshot's status is `done`, since an actor that ends returns
-    every token it holds. The held configurations are the configurations
-    held paths reach.
+    there. For each gate the lint walks the graph with one bit of
+    bookkeeping, whether the actor holds the gate's token, so a walk state
+    is a configuration and that bit. It starts at the initial configuration,
+    not holding. From a state that does not hold the token, every edge is
+    followed, and the gate's token edge is a grant: the token is held from
+    the start of its macrostep. From a state that holds it, every edge but
+    the gate's token edge is followed, since a holder is never offered a
+    second token. An edge that carries the gate's return marker, at the
+    grant or later in the same macrostep, or whose last snapshot's status
+    is `done`, since an actor that ends returns every token it holds,
+    leads to the configuration it ends in without the token. Every other
+    edge keeps the bit. So a token that comes back lets the walk reach
+    every later grant, including a grant from a configuration that only an
+    earlier grant and return can reach. The held configurations are the
+    configurations of the walk states that hold the token. The graph's
+    edges depend only on the configuration, so the walk reuses the one
+    graph and holds at most two states per configuration.
   configuration-key: >-
     The key of a configuration is computed from its persisted snapshot
     alone: the ids of the active state nodes with their ancestors, sorted by
     code point; each history state id with the state ids it remembers,
-    sorted; and the status. They are joined into one string in a fixed
-    form, `{a,b,c}`, then `history[h=x,y]` for each history entry, then the
-    status. The lint computes a node's key with the same function, from
+    sorted, the entries sorted by history state id; and the status. The key
+    is the canonical JSON text of the array `[states, history, status]`,
+    where `states` is the array of active ids, `history` an array of
+    `[historyId, rememberedIds]` pairs, and `status` a string, written with
+    `JSON.stringify` and no whitespace. JSON quotes and escapes every id,
+    so two different configurations never share a key, whatever
+    characters a state id holds, such as `,`, `=`, `[`, or `}`. The lint computes a node's key with the same function, from
     `machine.getPersistedSnapshot` of the lint snapshot, so a holder's saved
     snapshot and the lint's node give the same key. Context, children, and
     event payloads are not part of the key. `configurationKey` resolves
@@ -270,10 +282,11 @@ proposed-design:
     has the blueprint's state ids, and returns a key for any snapshot of
     the blueprint's machine, whether or not the graph reached it.
   traps: >-
-    A held configuration is a trap when no held path from it reaches an
-    edge that carries the gate's return marker. The lint finds them by
-    following held edges backwards from every edge that returns the token
-    at the return point; a held configuration it does not reach is a trap.
+    A held configuration is a trap when no walk that keeps holding the
+    token reaches, from it, an edge that carries the gate's return marker.
+    The lint finds them by following the holding walk's edges backwards
+    from every edge that returns the token at the return point; a held
+    configuration it does not reach is a trap.
     This catches a dead end, a closed cycle, a configuration whose every
     route leads into one, and a return point that is never reached after
     the grant. A cycle with a route to the return point is not a trap. An
@@ -291,9 +304,10 @@ proposed-design:
     finished, the graph reached the configuration bound, a macrostep
     reached XState's `maxIterations`, or one macrostep's choice scripts
     reached the bound; there is no trap set, for this gate or any other.
-    `violation`: a trap is reachable on a path from the initial
+    `violation`: a trap is reachable on a walk from the initial
     configuration through a grant on which every choice is fixed, so a run
-    of the actor can strand the token. `potential`: traps exist and every
+    of the actor can strand the token. The walk may pass earlier grants
+    and returns of the same gate. `potential`: traps exist and every
     path to them takes at least one choice of an expression guard, a named
     guard, or a raise. `proved`: no held configuration is a trap, which
     includes a gate whose every grant returns the token within its own
@@ -303,13 +317,14 @@ proposed-design:
     location, with `gate` set to its state path. Kind `token-violation` is
     an error; `token-potential` and `token-unknown` are warnings. A
     `token-violation` or `token-potential` finding carries `steps`, the
-    path with the fewest choices, and among those the fewest edges, from
+    walk with the fewest choices, and among those the fewest edges, from
     the initial configuration through the grant to the first trap on it:
     each step the event sent and the key of the configuration reached, with
-    the grant step marked. A `token-potential` finding also carries
-    `choices`, each choice on the path: the step, the pointer of the guard
-    or action, the event type for a raise, and the value. When no held edge
-    reaches the return point, the message says so. A `token-unknown`
+    every grant step marked and the walk's last grant the one that strands
+    the token. A `token-potential` finding also carries `choices`, each
+    choice on the path: the step, the pointer of the guard or action, the
+    event type for a raise, and the value. When no edge from a held
+    configuration reaches the return point, the message says so. A `token-unknown`
     finding carries `configurationBound` and `configurations`. The trap set
     names every trap; the finding names one. The message states the
     verdict, the reason, and the path in one line, so the host CLI prints
@@ -376,7 +391,16 @@ proposed-design:
     root-final completion, the same fixture with `working` always going to
     the root final `done`, `proved`; and the named-guard false positive,
     `potential` with its choice. Further fixtures show a review cycle with
-    a route to the return point, `proved`; a holder that leaves the gated
+    a route to the return point, `proved`; a repeated grant, a parallel
+    machine whose first grant enters the return state and whose `again`
+    event takes the flow back to the gated state while a second region
+    moves from `fresh` to `changed`, so the next grant, on an exact `in`
+    guard, enters a dead end from a configuration only the first grant and
+    return reach, a `violation`, with a real actor's persisted snapshot of
+    that dead end in the trap set; two parallel machines with sibling
+    leaf ids `x,y` and `z` against `x` and `y,z`, whose configurations get
+    different keys from `configurationKey` and stay different nodes in
+    `lintTokens`, one a trap and one not; a holder that leaves the gated
     state by an unguarded transition into a dead end, a `violation`; an
     `exit` return reached by that transition, `proved`; an invoke's
     `onDone` that returns and an unhandled error that is not a move; a
@@ -387,7 +411,8 @@ proposed-design:
     `configurationKey` of it is in the gate's trap set. Each part of the
     lint is killed by a named test when it is removed: history in the key,
     the microstep return, exact `in` guards, the choice branch, the
-    wildcard event, the exclusion of the token event, and the bound. A
+    wildcard event, the exclusion of the token event while held, the grant
+    after a return, the key's encoding, and the bound. A
     host CLI test runs every fixture through `manifold-host blueprint lint`
     and compares its lines with the loader's findings and warnings for the
     same text. Test values use a domain unrelated to Manifold.

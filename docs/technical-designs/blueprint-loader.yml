@@ -221,7 +221,8 @@ proposed-design:
     `createMachine` over a stub for every referenced name and walks every
     state node to resolve its `initial`, transitions, `always`, and
     `after`, turning a throw into a `machine` finding at that state node,
-    checks for a top-level final state, and runs
+    checks for a top-level final state, checks each gate declaration with
+    the `gate` rule, and runs
     `lintBlueprintExpressions` with each location prefixed by `/machine`,
     and last runs `lintTokens`, the token lint of `token-lint`, whose
     `token-violation` findings fail the blueprint and whose

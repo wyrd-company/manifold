@@ -137,6 +137,9 @@ $defs:
               $ref: "#/$defs/invoke"
       meta:
         type: object
+        properties:
+          gate:
+            $ref: "#/$defs/gate-declaration"
       tags:
         oneOf:
           - type: string
@@ -148,6 +151,48 @@ $defs:
           On a top-level final state, the machine's output: static, or an
           `expression.map`.
         $ref: "#/$defs/value-or-mapping"
+  gate-declaration:
+    description: >-
+      The gate a state declares in `meta.gate`: its comparator file, where
+      its token is returned, whether a reservation accompanies the token,
+      the token event's type, and the region the comparator reads as the
+      task's dependency state.
+    type: object
+    required:
+      - comparator
+      - return
+    additionalProperties: false
+    properties:
+      comparator:
+        description: The repository-relative path of the comparator's TypeScript file.
+        type: string
+        pattern: "^[^/].*\\.ts$"
+        not:
+          pattern: "(^|/)\\.{1,2}(/|$)"
+      return:
+        oneOf:
+          - const: exit
+          - type: object
+            required:
+              - state
+            additionalProperties: false
+            properties:
+              state:
+                $ref: "#/$defs/state-path"
+      reservation:
+        type: boolean
+        default: false
+      token:
+        description: The type of the event that delivers the token.
+        type: string
+        minLength: 1
+        default: token
+      dependencies:
+        $ref: "#/$defs/state-path"
+  state-path:
+    description: A state node's keys from the root, joined with `.`.
+    type: string
+    pattern: "^[^.#]+(\\.[^.#]+)*$"
   state-key:
     description: A state key. Targets and state paths separate keys with `.` and ids with `#`.
     type: string
@@ -226,10 +271,6 @@ $defs:
             minItems: 1
             items:
               $ref: "#/$defs/state-path"
-  state-path:
-    description: A state node's keys from the root, joined with `.`.
-    type: string
-    pattern: "^[^.#]+(\\.[^.#]+)*$"
   actions:
     oneOf:
       - $ref: "#/$defs/reference"
@@ -397,6 +438,7 @@ $defs:
           - implementation-unknown
           - machine
           - final-state-missing
+          - gate
           - syntax
           - evaluation
           - result

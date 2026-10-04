@@ -6,6 +6,8 @@ relationships:
     - blueprint-loader
   references:
     - blueprint-expressions
+    - gates
+    - gate-runtime
     - token-lint
 description: |-
   Defines the blueprint file: the YAML document in a process repository
@@ -103,6 +105,43 @@ description: |-
   delay implementation. An invoke is an object, or an array of objects,
   with `src`, `id`, `systemId`, `input`, `onDone`, `onError`, and
   `onSnapshot`.
+
+  Gate declaration. A state node other than the root may declare a gate
+  in `meta.gate`, as `gates` describes. The state is the gated state, and
+  the gate's key is `<path>#<statePath>`, the blueprint's path and the
+  state's path. The declaration is a mapping with these keys:
+
+  - `comparator`, required: the repository-relative path of the
+    comparator's TypeScript file, ending in `.ts`, with no `.` or `..`
+    segment and no leading `/`. The comparator is read from the process
+    repository at the blueprint version's commit.
+  - `return`, required: where the token is returned. `exit` returns it
+    when the actor leaves the gated state. `{ state: <statePath> }` returns
+    it when the actor enters that state, named by its state path.
+  - `reservation`, optional, default `false`: whether the comparator's
+    reservations are written to the ledger with the token.
+  - `token`, optional, default `token`: the type of the event that
+    delivers the token to the actor.
+  - `dependencies`, optional: the state path of the region whose active
+    child, `blocked` or `clear`, the comparator reads as the task's
+    dependency state.
+
+  ```yaml
+  open:
+    type: parallel
+    states:
+      lifecycle:
+        initial: waiting
+        states:
+          waiting:
+            meta:
+              gate:
+                comparator: comparators/oldest-first.ts
+                return: { state: open.lifecycle.packed }
+                reservation: true
+                token: slot.granted
+                dependencies: open.dependencies
+  ```
 
   Implementation references. Every implementation is referenced by name,
   so the file is serializable and diffable:
@@ -227,11 +266,20 @@ description: |-
      `machine` finding at that entry of `params/states`.
   6. `final-state-missing`: the machine has no top-level final state,
      at `/machine/states`.
-  7. The expression lint of `blueprint-expressions`, with its kinds
+  7. `gate`: a gate declaration that the schema accepts names a state
+     that does not exist, at `meta.gate`: a `return` state path that
+     names no state node, or names the gated state or one of its
+     ancestors; a `dependencies` path that names no state node, or one
+     whose child states are not exactly `blocked` and `clear`; or a
+     `token` type that another gate of the same blueprint also declares.
+     A declaration on the root state node is a `gate` finding. A
+     declaration without `comparator` or `return` is a `shape` finding
+     under rule 2, so a gate with no return point does not load.
+  8. The expression lint of `blueprint-expressions`, with its kinds
      `syntax`, `evaluation`, `result`, `schema`, `schema-missing`, and
      `site-unsupported` and its fields, with the location rewritten from
      the machine to the document. It runs only when rule 3 found nothing.
-  8. The token lint of `token-lint`, for each gate: `token-violation`
+  9. The token lint of `token-lint`, for each gate: `token-violation`
      when a run of the actor can strand the gate's token, `token-potential`
      when every run that can strand it takes a choice of an expression
      guard, a named guard, or a raise, and `token-unknown` when the
@@ -240,7 +288,7 @@ description: |-
      `token-violation` and `token-potential` carry `steps`, and
      `token-potential` also `choices`; `token-unknown` carries
      `configurationBound` and `configurations`. It runs only when rules 1
-     to 7 found nothing.
+     to 8 found nothing.
 
   Findings are ordered by rule, then by location; expression findings
   keep the expression lint's order. A blueprint with no findings loads.
@@ -291,7 +339,7 @@ description: |-
 
   `lintBlueprint` reads no file, network, clock, random source, or
   environment; the same path, text, names, and options give the same
-  result. `warnings` is empty unless rule 8 ran. `tokens` is the token
+  result. `warnings` is empty unless rule 9 ran. `tokens` is the token
   lint's result, which the gate runtime reads for each gate's verdict and
   trap set. `manifoldImplementationNames` lists every implementation name
   Manifold's service registers, with the events each of its actions
@@ -315,6 +363,12 @@ validation-criteria: >-
   implementation kind; an expression reference of the wrong kind, such
   as `expression.assign` as a guard; a
   target that names no state; a machine with no top-level final state;
+  a gate declaration with no `return`, a `shape` finding at its
+  `meta/gate`; a gate whose `return` state, or whose `dependencies`
+  region, names no state node, a `dependencies` region whose children are
+  not `blocked` and `clear`, a `return` state that is the gated state or
+  its ancestor, two gates with one `token` type, and a gate on the root
+  state node, each a `gate` finding;
   a bare `guard: in`, a `shape` finding; an `in` guard whose state path
   names no state, a `machine` finding at that entry; a gate whose token
   can be stranded, a `token-violation` finding with its steps; a gate
