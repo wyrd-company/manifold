@@ -934,9 +934,12 @@ proposed-design:
     Each turns the answer into a result: `ok` with the body; `missing` for
     `404` of kind `unknown-binding`; `unresolved` for `409` of kind
     `unresolved-project`; for an Apply, `stale` for `409` of kind
-    `plan-stale`, and `failed` with the error's message, its `writes`, and
-    each change's outcome for `502`; and `failed` with the error's
-    `message` for any other error, or a generic message for a network
+    `plan-stale`, `invalid` for `409` of kind `declaration-invalid`,
+    `pending` with the error's `commit` for `409` of kind
+    `declaration-pending`, and `failed` with the error's kind and message,
+    its `writes`, and each change's outcome for `502`, of kind
+    `declaration-unsaved` or a GitHub write's kind; and `failed` with the
+    error's `message` for any other error, or a generic message for a network
     error or a body that does not validate. Each mapping is a pure
     function, and each body is checked at this boundary with
     dependency-free guards in the same module, which a console test checks
@@ -1148,13 +1151,25 @@ proposed-design:
     reads "Another Apply finished these changes first." with the button at
     "Nothing to apply". The next Apply sends the new plan's digest, and
     asks again before removing, naming the new plan's removals. For
-    `missing`, the page shows "Project not bound". For `failed`, an error
-    alert in the plan card shows the message, and for a `502` the count of
-    writes made and the change that failed, with "Try again", which sends
-    the same request with the same digest; the list and the plan read
-    again; an Apply converges on the
-    service, so a second send writes only what is still to change, and
-    answers `stale` when the plan changed meanwhile.
+    `missing`, the page shows "Project not bound". For `invalid`, the
+    changes into the task fields would give a declaration with a finding,
+    and nothing was written: an error alert in the plan card shows the
+    message and "Nothing was written. Fix the task fields, or set the
+    field to Revert." with a "Task fields" link and no "Try again", since
+    the same Apply answers the same. For `pending`, the changes on GitHub
+    are made and the change into the task fields is pushed as the commit
+    the answer names but is not yet in force: an info alert reads
+    "Applied on GitHub. The task fields change is saved as <short commit>
+    and not yet in force." with "Try again"; the list and the plan read
+    again, and "Try again" sends the Apply with the plan read again and
+    its digest, which pushes nothing new and completes once the commit is
+    in force. For `failed`, an error alert in the plan card shows the
+    message, and for a `502` the count of writes made and the change that
+    failed, when one did; for `declaration-unsaved` it adds "The change
+    into the task fields was not saved." Its "Try again" sends the same
+    request with the same digest; the list and the plan read again; an
+    Apply converges on the service, so a second send writes only what is
+    still to change, and answers `stale` when the plan changed meanwhile.
   task-fields-editor: >-
     `TaskFieldsContent` is the Task fields tab of Settings, its editor
     under `src/screens/task-fields/`. It reads
@@ -1453,7 +1468,8 @@ proposed-design:
     `declarations-api`'s validation criteria state, `editBindings`,
     `editTaskFields`, and `taskFieldRows` through them. In
     `packages/console`, unit tests cover the projects and declarations
-    result mappings, the stale-plan answer included; `projectRows` and
+    result mappings, the `plan-stale`, `declaration-invalid`,
+    `declaration-pending`, and `declaration-unsaved` answers included; `projectRows` and
     `t3codeRows`, with an associated project, a project the environment
     does not hold, and an unknown environment; `planGroups` with the
     switch off and on, a drift change, a change that requires removal,
