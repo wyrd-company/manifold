@@ -66,12 +66,17 @@ test("child gate durably records identity before running program and recovery en
       },
     },
   );
-  expect(released).toBe(true);
-  expect(await processStartTime(child.record.pid)).toBe(child.record.startTime);
-  await recoverChildren(dir, control, { graceMs: 100, pollMs: 5 });
-  expect(await processStartTime(child.record.pid)).toBeUndefined();
-  expect(JSON.parse(await readFile(join(dir, "children.json"), "utf8"))).toEqual([]);
-  await control.close();
+  try {
+    expect(released).toBe(true);
+    expect(await processStartTime(child.record.pid)).toBe(child.record.startTime);
+    await recoverChildren(dir, control, { graceMs: 100, pollMs: 5 });
+    expect(await processStartTime(child.record.pid)).toBeUndefined();
+    expect(JSON.parse(await readFile(join(dir, "children.json"), "utf8"))).toEqual([]);
+  } finally {
+    // Recovery observes process death; the local ledger still owns its exit write.
+    await ledger.stop(child.record, { graceMs: 100, pollMs: 5 });
+    await control.close();
+  }
 });
 test("recovery never signals a reused identity, including the start entrypoint", async () => {
   const dir = await directory();
