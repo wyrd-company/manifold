@@ -406,13 +406,26 @@ proposed-design:
     `children.json`, an active or inactive hook, and a stale socket file.
     The next start, stop, or teardown stops the recorded children through
     recovery before it starts anything, and start's step 7 corrects the
-    hook.
+    hook. During the shutdown the supervisor keeps the socket bound and
+    answers `status` with `stopping`.
+
+    Child cleanup has one owner at a time: the process that holds
+    `control.sock` bound. A running supervisor, also while it shuts down,
+    is the only process that signals its children or writes
+    `children.json`. Recovery runs only in a process that found no
+    supervisor answering and then bound the socket itself, so start,
+    stop, and teardown never recover at the same time as each other or as
+    a supervisor; a second one that finds the socket held refuses.
   stop: >-
     `live:stop` sends `stop` on `control.sock` and waits up to 60 seconds
-    for the socket to close. When no supervisor answers, it removes the
-    stale socket file. In both cases it then runs recovery, and reports the
-    environment stopped. It signals no process other than the recorded
-    children whose start time matches.
+    for the socket to close. When the socket is still bound and the
+    supervisor still answers when the wait ends, stop reports the shutdown
+    as pending, exits non-zero, and touches neither the children nor
+    `children.json`; the supervisor goes on with its own shutdown, and a
+    later stop finds it ended. When no supervisor answers, at once or after
+    the socket closes, stop binds `control.sock` itself, runs recovery,
+    removes the socket, and reports the environment stopped. It signals no
+    process other than the recorded children whose start time matches.
   smoke: |-
     `live:smoke` asks the supervisor for `status` on `control.sock`, fails
     when no supervisor answers, and runs the steps in order. It prints
@@ -540,7 +553,13 @@ proposed-design:
     process, also a `src/start.ts` process, under another start time is
     removed and the process is left running; a second start refuses while
     a supervisor answers, and starts after a supervisor was killed and
-    left a stale socket file. The secret scan tests are stated above. A test
+    left a stale socket file. With child programs that ignore `SIGTERM`,
+    and the waits shortened for the test, a stop whose wait ends while the
+    supervisor still shuts down reports the shutdown pending, sends no
+    signal, and leaves `children.json` unchanged; the supervisor alone
+    sends each `SIGKILL`; and a stop after the supervisor ended reports
+    the environment stopped with no child running. The secret scan tests
+    are stated above. A test
     lints `content/` with the host CLI's manifest, blueprint, and
     portfolio lints. The live steps of start and smoke, which need
     GitHub and Pinggy, have no test in `task check`; the recorded live run
