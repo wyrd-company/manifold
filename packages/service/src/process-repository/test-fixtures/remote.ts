@@ -63,6 +63,7 @@ export async function fixture(directory: string) {
     beforeReceive?: () => Promise<void>;
     loseReceiveReply?: boolean;
     refuseNextFetch?: boolean;
+    closeEmptyInput?: boolean;
     hold?: { reached: () => void; released: Promise<void> };
   } = { mode: "healthy", auth: undefined, replay: undefined };
   const server = createServer((request, response) => {
@@ -131,7 +132,12 @@ export async function fixture(directory: string) {
       };
       // Stream errors arrive after writes return, outside the async handler's catch.
       backend.on("error", stop);
-      backend.stdin.on("error", stop);
+      backend.stdin.on("error", (error: NodeJS.ErrnoException) => {
+        // An empty request needs no input. The backend can close that pipe before
+        // Node finishes it; retain its output and require a successful CGI reply.
+        if (body.length === 0 && error.code === "EPIPE") return;
+        stop();
+      });
       backend.stdout.on("error", stop);
       backend.stderr.on("error", stop);
       response.on("close", stop);
@@ -142,8 +148,13 @@ export async function fixture(directory: string) {
       const chunks: Buffer[] = [];
       backend.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
       backend.stderr.resume();
-      backend.stdin.end(body);
-      backend.on("close", () => {
+      if (state.closeEmptyInput && body.length === 0) {
+        state.closeEmptyInput = false;
+        backend.stdin.destroy(Object.assign(new Error("Backend input closed"), { code: "EPIPE" }));
+      }
+      if (body.length === 0) backend.stdin.end();
+      else backend.stdin.end(body);
+      backend.on("close", (code) => {
         if (response.destroyed) return;
         if (request.url!.endsWith("git-receive-pack") && state.loseReceiveReply) {
           state.loseReceiveReply = false;
@@ -152,6 +163,10 @@ export async function fixture(directory: string) {
         }
         const result = Buffer.concat(chunks);
         const boundary = result.indexOf("\r\n\r\n");
+        if (code !== 0 || boundary < 0) {
+          stop();
+          return;
+        }
         const headers: Record<string, string> = {};
         let status = 200;
         for (const line of result.subarray(0, boundary).toString().split("\r\n")) {
