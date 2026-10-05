@@ -11,6 +11,7 @@ const children = [
   "src/comparator-lint/index.test.ts",
   "src/foundation.integration.test.ts",
   "src/manifest-lint/command.test.ts",
+  "src/mcp-command.test.ts",
   "src/portfolio-lint/command.test.ts",
   "src/usage-lint/binary.test.ts",
   "src/usage/usage.test.ts",

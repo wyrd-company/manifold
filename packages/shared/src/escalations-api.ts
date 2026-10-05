@@ -26,7 +26,12 @@ export interface Escalation {
       }
     | {
         readonly type: "service";
-        readonly kind: "held-actor" | "stranded-token" | "intake-failed" | "comparator-failed";
+        readonly kind:
+          | "held-actor"
+          | "stranded-token"
+          | "intake-failed"
+          | "comparator-failed"
+          | "agent-question";
         readonly subject: Readonly<Record<string, string>>;
         readonly occurrence: number;
       };
@@ -65,7 +70,13 @@ export function isEscalation(v: unknown): v is Escalation {
         }) ||
         shape(v, {
           type: oneOf("service"),
-          kind: oneOf("held-actor", "stranded-token", "intake-failed", "comparator-failed"),
+          kind: oneOf(
+            "held-actor",
+            "stranded-token",
+            "intake-failed",
+            "comparator-failed",
+            "agent-question",
+          ),
           subject: (v) => record(v) && Object.values(v).every(string),
           occurrence: (v) => natural(v) && Number(v) > 0,
         }),

@@ -10,6 +10,7 @@ const children = [
   "src/actor-host/crash.test.ts",
   "src/agent-threads/recovery.test.ts",
   "src/agent-threads/service-wiring.test.ts",
+  "src/agent-tools/recovery.test.ts",
   "src/capacity/recovery.test.ts",
   "src/console/board.browser.test.ts",
   "src/escalations/recovery.test.ts",
