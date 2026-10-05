@@ -44,6 +44,14 @@ description: >-
   matched, `lifecycle` `null` when it matched none and `fields` keyed by
   task field name, and `applied_at` the time
   the Apply recorded it, in epoch milliseconds. Step 2 creates it.
+
+  `metadata_pending_saves` holds, per binding, the accept save an Apply
+  pushed whose commit was not yet in force: `save_id`, the save's id;
+  `commit_id`, the pushed commit; and `saved_at`. An Apply writes the row
+  when `Revisions.save` resolves `saved` with no load, replacing the
+  binding's earlier row, reads it when a later save of the same id
+  rejects, and deletes it when it records the binding's applied
+  configuration. Step 2 creates it.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/task-metadata-tables.sql` runs without error on an

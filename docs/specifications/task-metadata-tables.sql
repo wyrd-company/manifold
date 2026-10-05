@@ -43,3 +43,12 @@ CREATE TABLE metadata_project_applies (
   applied_at INTEGER NOT NULL,
   PRIMARY KEY (binding, project_node_id)
 ) STRICT, WITHOUT ROWID;
+
+-- Per binding, the accept save an Apply pushed whose commit was not yet in
+-- force, so a retry whose save rejects reports the commit without pushing.
+CREATE TABLE metadata_pending_saves (
+  binding TEXT PRIMARY KEY CHECK (length(binding) > 0),
+  save_id TEXT NOT NULL CHECK (length(save_id) = 32),
+  commit_id TEXT NOT NULL CHECK (length(commit_id) > 0),
+  saved_at INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;

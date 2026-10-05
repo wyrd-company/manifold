@@ -532,6 +532,7 @@ components:
                 - forbidden
                 - transport
                 - rejected
+                - declaration-unsaved
             message:
               type: string
         changes:
@@ -566,4 +567,7 @@ components:
                 - method-not-allowed
                 - not-found
             message:
+              type: string
+            commit:
+              description: For `declaration-pending`, the pushed accept commit that is not yet in force.
               type: string

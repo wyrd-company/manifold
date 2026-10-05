@@ -196,14 +196,19 @@ description: |-
   `409` with kind `declaration-invalid` and writes nothing. A save that
   conflicts answers `409` with kind `declaration-conflict` after the
   GitHub changes are made. A save whose commit is pushed and not yet in
-  force answers `409` with kind `declaration-pending`, naming the commit;
-  the same Apply run again pushes nothing new and completes once the
-  commit is in force. Neither records an applied configuration. A
+  force answers `409` with kind `declaration-pending` and `commit`, the
+  pushed commit, in the error. The same Apply run again pushes nothing
+  new: while the process repository cannot be pulled it answers the same
+  `declaration-pending` with the same `commit`, and once the commit is in
+  force it completes. A save that fails before any commit of its text is
+  known answers `502` with kind `declaration-unsaved`, `writes`, and each
+  change's outcome. None of these records an applied configuration. A
   binding the declaration in force does not name answers `409` with kind
   `undeclared`, and an unresolved Project `409` with kind
   `unresolved-project`.
 
-  Errors. An error answer is `{ "error": { "kind", "message" } }`. While
+  Errors. An error answer is `{ "error": { "kind", "message" } }`, with
+  `commit` for `declaration-pending`. While
   the service stops, every request answers `503` with kind
   `unavailable`. A method
   the path does not take answers `405` with an `Allow` header. A path under

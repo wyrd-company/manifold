@@ -503,11 +503,12 @@ proposed-design:
     with the error and each change's outcome, and records nothing, so the
     next Apply plans from what GitHub then holds. (6) It saves the
     declaration text, as accept states, when the plan has declaration
-    changes. (7) It observes the fields again. (8) When the plan had
+    changes, and handles each result of `Revisions.save` as accept
+    states. (7) It observes the fields again. (8) When the plan had
     declaration changes, it re-plans against the declaration in force at
     that moment; while any accepted field still plans a declaration change,
     the save is not in force, and the Apply records nothing and answers
-    `409` with kind `declaration-pending` and the saved commit. (9) In one
+    `409` with kind `declaration-pending` and `commit` the saved commit. (9) In one
     transaction it replaces the binding's applied configuration with the
     observed fields, the id each owned field matched, and the commit of the
     declaration in force. The applied configuration is therefore replaced
@@ -545,10 +546,26 @@ proposed-design:
     commit is not in force the applied configuration is the earlier one,
     so the accepted fields stay drift in every plan, each plan holds the
     same declaration change, and an Apply run again builds the same text on
-    the same base commit with the same save id: `Revisions.save` answers
-    `already-saved` and pushes nothing, and its pull puts the commit in
-    force when the remote answers. The next pull of the follower, at a
-    sweep, a push delivery, or a restart, does the same. Once the commit is
+    the same base commit with the same save id. The Apply handles each
+    result of `Revisions.save` so that the pushed commit is never pushed
+    again and is reported until it is in force. `saved` with a load, or
+    `already-saved` or `unchanged`, goes on to step 7. `saved` with no load
+    writes the binding's row of `metadata_pending_saves` with the save id
+    and the saved commit, replacing any earlier row, and answers `409` with
+    kind `declaration-pending` and `commit` the saved commit. A rejection
+    of `Revisions.save`, whose job pulls before it saves and so rejects
+    while the remote cannot be pulled, reads that row: when its save id is
+    this save's, the commit is already on the branch, and the Apply answers
+    `409` with kind `declaration-pending` and `commit` the row's commit;
+    otherwise no commit of this text is known, and the Apply answers `502`
+    with kind `declaration-unsaved`, the rejection's message, `writes`,
+    and each change's outcome. Neither writes anything else. The save
+    job's own pull, the follower's next pull at a sweep or a push
+    delivery, and the pull at a restart each put the pushed commit in
+    force when the remote answers; a later Apply then finds the save by
+    its trailer, `already-saved`, and goes on. Step 9 deletes the
+    binding's pending save row in the transaction that records the
+    applied configuration. Once the commit is
     in force, the accepted fields equal GitHub's, so the plan has no change
     for them, and the next Apply records the applied configuration. A
     `conflict` answers `409` with kind `declaration-conflict`, after the
@@ -743,9 +760,14 @@ proposed-design:
     after it failing, an Apply that accepts a field renamed in the fake
     answers `409` `declaration-pending` with the saved commit, the applied
     configuration is unchanged, and the plan still shows the declaration
-    change with `drift`; a second Apply while the pull still fails answers
-    the same and the remote holds one accept commit; after a restart whose
-    pull succeeds, the declaration in force holds the new name, an Apply
+    change with `drift`; a second Apply while the pull still fails, whose
+    `Revisions.save` rejects with the pull's error, answers `409`
+    `declaration-pending` with the same `commit`, read from
+    `metadata_pending_saves`, while the process repository's save is
+    called once in all and the remote holds one accept commit; with the
+    pull failing before the first save, the Apply answers `502`
+    `declaration-unsaved` and the remote holds no accept commit; after a
+    restart whose pull succeeds, the declaration in force holds the new name, an Apply
     records the applied configuration and answers `in-sync`, and the
     remote still holds one accept commit. A blueprint guarded on
     `event.lifecycle` takes a person's move of a lifecycle field named
