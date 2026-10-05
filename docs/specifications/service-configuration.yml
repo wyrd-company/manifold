@@ -40,6 +40,8 @@ description: |-
   - `http`, optional, default `{}`, specified by `http-host-configuration`.
   - `blueprintLint`, optional, default `{}`, specified by
     `blueprint-lint-configuration`.
+  - `agentTools`, optional, default `{}`, specified by
+    `agent-tools-configuration`.
 
   An optional section that is absent takes `{}` and then the defaults of
   its own properties, so the loaded configuration has every section and

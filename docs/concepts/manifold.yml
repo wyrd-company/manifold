@@ -152,6 +152,9 @@ properties:
   harness-plugin: >-
     Lifecycle hooks and MCP tools for every provider T3 Code supports:
     `handoff`, `escalate` with up to three choices, and `get-messages`.
+    The host CLI serves the tools as an MCP server registered in each
+    provider's own configuration; Manifold identifies the calling thread
+    and its turn from what T3 Code records of the call.
   operator-console: >-
     A web UI in T3 Code's visual language: Board, Epics, Task, Actors,
     Portfolio, Blueprints with a graph editor, GitHub Projects, Environments,

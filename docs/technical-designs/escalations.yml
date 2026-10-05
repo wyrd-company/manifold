@@ -6,6 +6,7 @@ relationships:
     - blueprint-loader
     - service-configuration
     - store
+    - agent-tools
   # GAP-EDGE: the technical-design schema declares no edge to the
   # specifications that define its contracts; `references` is the best fit.
   references:
@@ -146,21 +147,19 @@ proposed-design:
     `hand-escalation-answers-to-the-asking-state` records the choice.
   raising-from-an-agent: >-
     An agent raises an escalation with the harness plugin's `escalate`
-    tool. The tool call reaches the task actor as an event, and the
-    blueprint's state that takes it invokes `escalate` with the agent's
-    question and choices. The tool returns at once and the agent ends its
-    turn, so no tool call waits on a person. The blueprint gives the answer
-    back to the thread by starting a turn in it. An operator who answers in
-    the thread starts a turn there; the blueprint may take that thread
-    change as the answer and leave the escalating state, which withdraws
-    the escalation.
+    tool. The agent tools module raises it as a service escalation of kind
+    `agent-question`, and gives the module that kind's handler, which
+    sends the answer back to the thread as a turn, as `agent-tools`
+    describes. The tool returns at once and the agent ends its turn, so no
+    tool call waits on a person. The decision record
+    `send-agent-escalation-answers-to-the-thread` records the choice.
   raising-from-the-service: >-
     The service raises an escalation with `raise({ kind, subject, question,
-    choices, title })`, where `subject` is a record of strings that names
+    choices, title, freeText })`, where `subject` is a record of strings that names
     what the escalation is about and `title` is optional, default
     `Question`. `raise` and `withdraw` join the caller's transaction, so a
     raiser writes its escalation in the transaction that records the cause.
-    Four kinds exist, as `escalation-contract` lists. `held-actor` is raised from the
+    Five kinds exist, as `escalation-contract` lists. `held-actor` is raised from the
     router's `onHeld`, with subject `{ actorId }`, the reason, the inbox
     row that errored or the restore mismatch, in its question, and the
     choices `retry` and `dismiss`. `stranded-token` is raised by a gate on
@@ -176,8 +175,13 @@ proposed-design:
     `comparator-failed` is raised by a gate whose comparator is missing,
     fails to load, or fails to evaluate, with subject `{ gate }`, the
     failure in its question, and the choices `retry` and `dismiss`, as
-    `gate-runtime` (comparator-failures) states. A service escalation goes to the `default` destination and takes no
-    free text. `withdraw({ kind, subject })` withdraws the open escalation
+    `gate-runtime` (comparator-failures) states.
+    `agent-question` is raised by the agent tools module for an agent's
+    `escalate` call, with subject `{ actorId, environment, threadId,
+    turnId }` and the agent's title, question, choices, and free-text flag.
+    A service escalation goes to the `default` destination; its title
+    defaults to `Question`, and it takes free text only when its request
+    asks for it. `withdraw({ kind, subject })` withdraws the open escalation
     of a kind and subject inside the caller's transaction; a gate calls it
     when the stranded token returns some other way, as on the holder's end.
   occurrences: >-
@@ -217,7 +221,10 @@ proposed-design:
     runs every gate. `start()`, called after the router has started, runs the
     handler of every answered service escalation whose handling is not
     recorded. `release` of an actor that is not held does nothing, and
-    `return` of a token already returned does nothing.
+    `return` of a token already returned does nothing. The `agent-question`
+    handler is the agent tools module's: inside the transaction it writes
+    the answer's pending turn once, and it returns a function that wakes
+    its sender.
   router-release: >-
     The router gains `release(actorId)`, as `durable-event-delivery`
     (held-actors) states. For a held actor it asks the host to restore the
@@ -422,7 +429,8 @@ proposed-design:
       | "held-actor"
       | "stranded-token"
       | "intake-failed"
-      | "comparator-failed";
+      | "comparator-failed"
+      | "agent-question";
     export type EscalationSubject = Readonly<Record<string, string>>;
     export type ServiceEscalationHandler = (escalation: Escalation) => void | (() => void);
 
@@ -433,6 +441,8 @@ proposed-design:
       readonly choices: readonly EscalationChoice[];
       /** Default `Question`. */
       readonly title?: string;
+      /** Default `false`. */
+      readonly freeText?: boolean;
     }
 
     export interface EscalateInput {

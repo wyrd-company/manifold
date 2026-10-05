@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://commonclischema.org/draft/2026-04/schema
+# ---
+# relationships:
+#   # GAP-EDGE: no schema declares an edge from an asset to its
+#   # specification; `asset-of` names it.
+#   asset-of: host-cli-mcp
+# ---
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+commands:
+  - name: mcp
+    summary: Serve the agent tools to a provider harness over MCP on standard input and output.
+    mode: non-interactive
+    options:
+      - name: service
+        flags: [--service]
+        kind: option
+        description: The base URL of the Manifold service, `http` or `https`.
+        required: true
+        repeatable: false
+        value:
+          type: string
+        examples:
+          - http://127.0.0.1:8080
+      - name: environment
+        flags: [--environment]
+        kind: option
+        description: >-
+          The name of this environment, as the service configuration's
+          `environments` section names it.
+        required: true
+        repeatable: false
+        value:
+          type: string
+        examples:
+          - workstation
+      - name: request-timeout-ms
+        flags: [--request-timeout-ms]
+        kind: option
+        description: >-
+          The most time in milliseconds the plugin waits for the service's
+          response to one tool call. Default 30000; from 1000 to 300000.
+        required: false
+        repeatable: false
+        value:
+          type: integer
+        examples:
+          - "30000"
+    output:
+      modes:
+        - name: mcp
+          description: >-
+            Model Context Protocol messages on standard output, one JSON-RPC
+            message per line, answering the client on standard input.
+          machine-readable: true
+      exit-codes:
+        - code: 0
+          meaning: Standard input closed and the server stopped.
+        - code: 2
+          meaning: >-
+            The command line is invalid: an unknown option, a missing
+            `--service` or `--environment`, a service URL that is not
+            `http` or `https`, an environment name that is not a declared
+            name, or a request timeout out of range. Nothing is served.
+    examples:
+      - manifold-host mcp --service http://127.0.0.1:8080 --environment workstation

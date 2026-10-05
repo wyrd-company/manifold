@@ -1,0 +1,48 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - agent-tools
+  references:
+    - store-database-schema
+    - escalations-database-schema
+    - agent-tools
+terms:
+  - escalation
+description: |-
+  Defines the tables the agent tools module owns in Manifold's SQLite
+  database file. `docs/specifications/agent-tools-database-schema.sql` is
+  the machine-readable definition: the schema that the module's migrations
+  produce. The module receives the connection from the store and migrates
+  its tables with `migrate("agenttool", steps)`; its owner is `agenttool`,
+  so every table it creates is named `agenttool_<name>`. Times are
+  milliseconds since the Unix epoch. Rows are never deleted.
+
+  Questions. `agenttool_question` holds one row per turn that escalated,
+  keyed by the call key: `environment`, `environment_id`, `thread_id`, and
+  `turn_id`. `escalation_id` is the escalation the turn raised, unique,
+  and `actor_id` the actor in its subject, whose end withdraws it.
+  `raised_at` is when the row was written, in the transaction that raised
+  the escalation.
+
+  Answers. `agenttool_answer` holds one row per answered agent question,
+  keyed by its `escalation_id`: the `environment` and `thread_id` it is
+  sent to, the `message_id` derived from the escalation id, and `text`,
+  the answer message. `status` is `pending`, `sent`, or `failed`.
+  `sequence` is the sequence T3 Code answered for the command, set exactly
+  when the row is `sent`; `error` is the server's message, set exactly
+  when the row is `failed`; `settled_at` is set exactly when the row
+  leaves `pending`. `written_at` orders the rows the sender takes.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/agent-tools-database-schema.sql` runs without error
+  on an empty SQLite database. A test opens the agent tools module on a
+  store over an empty file and compares the `type`, `name`, `tbl_name`, and
+  `sql` of every `sqlite_schema` row whose name starts with `agenttool`
+  with the rows the same file's statements produce on a second empty
+  database, with each run of whitespace in `sql` read as one space; they
+  are equal. After the module opens, `schema_migration` holds the row
+  `('agenttool', n)`, where n is the number of the module's migration
+  steps. A second question row for one turn, a sent answer without a
+  sequence, and a failed answer without an error each fail.

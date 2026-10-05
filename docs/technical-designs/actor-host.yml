@@ -106,6 +106,18 @@ proposed-design:
       actorOf(actorId: string): { readonly manifold: ManifoldIdentity; readonly commit: string } | undefined;
       /** Loads the version of a held actor's stored snapshot, then releases it through the router. */
       release(actorId: string): Promise<void>;
+      /** Loaded actors whose identity holds the environment and lists the thread, in actor id order. */
+      followers(environment: string, threadId: string): readonly string[];
+      /** Every thread the loaded actors list on the environment, unique. */
+      followedThreads(environment: string): readonly string[];
+      /** The validator of `schemas.events[type]` of a loaded actor's version; undefined when not declared or not loaded. */
+      eventSchema(actorId: string, type: string): EventValidator | undefined;
+    }
+
+    /** Ajv-style: true when the value validates; `errors` holds each failure otherwise. */
+    export interface EventValidator {
+      (value: unknown): boolean;
+      readonly errors?: readonly { readonly instancePath: string; readonly message?: string }[] | null;
     }
 
     export interface ActorStart {
@@ -200,9 +212,11 @@ proposed-design:
   subscriptions: >-
     `subscription(actor)` is a pure function of the stored snapshot and the
     loaded version. The topics are `github.issue.<issue>` when the identity
-    holds `issue`, as `github-events` defines, and `threadTopic(environment,
-    thread)`, exported by the T3 Code source, for each of `threads` when
-    the identity holds `environment`. `project`, `environment`,
+    holds `issue`, as `github-events` defines, and, for each of `threads`
+    when the identity holds `environment`, `threadTopic(environment,
+    thread)`, exported by the T3 Code source, and
+    `agentThreadTopic(environment, thread)`, exported by the agent tools
+    module. `project`, `environment`,
     `portfolioItem`, and `blueprintPath` add no topic of their own. Topics
     are unique and sorted by code point. A value that is not a string, or a
     `threads` that is not an array of strings, adds no topic. The event
@@ -380,6 +394,16 @@ proposed-design:
     actor the host holds, from its record. The record is written before the
     actor starts, so an invoke in the initial state reads it, and it takes
     the identity of every snapshot the host persists.
+  followers: >-
+    `followers(environment, threadId)` and `followedThreads(environment)`
+    read the identities of the actors the host holds loaded, as their
+    records hold them, so a thread an actor follows is listed from the save
+    that follows it. The host keeps an index from environment and thread to
+    actor ids, updated with each record, so neither read scans actors.
+    `eventSchema(actorId, type)` returns the compiled validator of the
+    event schema the actor's loaded version declares for `type`, compiled
+    once per version and type, and `undefined` for an actor not loaded or a
+    type the version does not declare.
   release: >-
     `release(actorId)` loads the version of the actor's stored snapshot
     through the loader, replacing a `missing` load the host kept, and then
@@ -439,10 +463,13 @@ proposed-design:
     and with a `manifold` that fails the identity schema, throws with each
     path and saves nothing; `start` twice saves one actor; the started
     actor's context holds `manifold` when its initial entry action runs;
-    the subscription holds the issue topic and one thread topic per thread
-    with an environment, and no Project or environment topic; a thread
-    added through a registered action makes the next event under its topic
-    reach the actor; `restore` of a snapshot whose version is missing, is
+    the subscription holds the issue topic and, per thread with an
+    environment, its thread topic and its agent topic, and no Project or
+    environment topic; a thread added through a registered action makes
+    the next event under either topic reach the actor, and lists the actor
+    in `followers` and the thread in `followedThreads`; an actor that ends
+    leaves both; `eventSchema` accepts and rejects by the version's declared
+    event schema and is undefined for an undeclared type; `restore` of a snapshot whose version is missing, is
     invalid, or fails `checkRestore` holds the actor with each reason; a
     delay arms one deadline row at its entry, keeps its fire time across
     later saves and a restart, fires once, and takes the transition; a

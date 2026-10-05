@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - agent-tools
+    - host-cli-mcp
+title: Harness plugin
+description: >-
+  The MCP server that each provider harness T3 Code runs starts from its
+  registration in the provider's configuration, giving the agent the tools
+  through which it hands off and escalates to its task.

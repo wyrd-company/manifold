@@ -52,6 +52,9 @@ properties:
   escalations:
     $ref: https://manifold.wyrd.company/schemas/escalations-configuration
     default: {}
+  agentTools:
+    $ref: https://manifold.wyrd.company/schemas/agent-tools-configuration
+    default: {}
 $defs:
   declared-name:
     description: >-

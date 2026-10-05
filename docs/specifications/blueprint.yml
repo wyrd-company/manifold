@@ -12,6 +12,7 @@ relationships:
     - escalation-contract
     - task-metadata-declaration
     - github-events
+    - agent-tools
 description: |-
   Defines the blueprint file: the YAML document in a process repository
   from which Manifold builds an XState v5 state machine, the version
@@ -299,6 +300,42 @@ description: |-
             and event.to.name = "Sorting"
   ```
 
+  Agent tool events. The harness plugin's tools reach the actors that
+  follow the calling thread as three events, which `agent-tools` defines:
+  `agent.handoff` when the agent hands off, `agent.escalated` when it asks
+  a person, and `agent.escalation.answered` when the person answers. A
+  blueprint takes one by declaring it under `schemas.events` with a schema
+  the event satisfies, such as `#/$defs/agent-handoff-event` of the
+  `agent-tools` schema asset. The schema a blueprint declares for
+  `agent.handoff` is its handoff schema: its `handoff` property describes
+  what the agent hands off, and a handoff that fails it is refused at the
+  call, with each failing path, and reaches no actor.
+
+  ```yaml
+  states:
+    sorting:
+      on:
+        agent.handoff:
+          target: routing
+          guard:
+            type: expression.guard
+            params:
+              expression: event.threadId = context.thread and event.handoff.outcome = "sorted"
+  schemas:
+    events:
+      agent.handoff:
+        type: object
+        required: [type, threadId, handoff]
+        properties:
+          type: { const: agent.handoff }
+          threadId: { type: string }
+          handoff:
+            type: object
+            required: [outcome]
+            properties:
+              outcome: { enum: [sorted, damaged] }
+  ```
+
   Version identity. The loader gives each blueprint it loads a version:
   the full id of the process repository commit it was read at, and its
   path. The version key is `<commit>:<path>`, which is unambiguous because
@@ -376,8 +413,14 @@ description: |-
      `token-unknown` carries
      `configurationBound` and `configurations`. It runs only when rules 1
      to 8 found nothing.
+  10. `event-unknown`: an event type declared under `schemas.events`
+      begins with `agent.` and is not one of the event types Manifold
+      publishes, the `events` of the names the lint is given. The
+      finding carries `name`, at the declaration, such as
+      `/schemas/events/agent.hand-off`. It runs when rule 2 found
+      nothing.
 
-  10. `lifecycle-option`: an invoke whose `src` is `github-card-move` has
+  11. `lifecycle-option`: an invoke whose `src` is `github-card-move` has
       a static `input` whose `status` is a string that is not among the
       lint's `lifecycleOptions`. The finding is at that `status`, such as
       `/machine/states/packing/invoke/input/status`, and carries `name`,
@@ -404,6 +447,8 @@ description: |-
     readonly delays: ReadonlySet<string>;
     /** Event types each named action may raise; an action not listed raises none. */
     readonly raises?: ReadonlyMap<string, readonly string[]>;
+    /** Event types Manifold publishes whose prefix it reserves: `agent.handoff`, `agent.escalated`, `agent.escalation.answered`. */
+    readonly events?: ReadonlySet<string>;
   }
   interface BlueprintLintOptions {
     /** The token lint's configuration bound. Default `defaultConfigurationBound`, 20000. */
@@ -440,11 +485,14 @@ description: |-
   lint's result, which the gate runtime reads for each gate's verdict and
   trap set. `manifoldImplementationNames` lists every implementation name
   Manifold's service registers, with the events each of its actions
-  raises, so a lint outside the service checks names against
-  the same set the service loads with. The service and the host CLI pass
-  as `lifecycleOptions` the declared options of `task-metadata-declaration`
-  at the blueprint's commit, when that declaration lints clean.
-  `parseBlueprintVersionKey` returns
+  raises and the agent tool events, so a lint outside the service checks
+  names against the same set the service loads with. The service and the
+  host CLI pass as `lifecycleOptions` the declared options of
+  `task-metadata-declaration` at the blueprint's commit, when that
+  declaration lints clean. `packages/shared` also exports
+  `agentToolDefinitions`, the name, description, and input schema of each
+  agent tool, from the `agent-tools` schema asset, which the host CLI
+  harness plugin serves. `parseBlueprintVersionKey` returns
   `undefined` for a string that is not a version key.
 format: json-schema
 validation-criteria: >-
@@ -483,7 +531,10 @@ validation-criteria: >-
   returns the same result. A test round-trips a version through its key,
   including a path that contains `:`, and shows that a string with no
   commit id is not a key. Lint tests show that an invoke `src` of
-  `blueprints/a.yml` lints clean with no actor names given, and that a
+  `blueprints/a.yml` lints clean with no actor names given, that a
+  blueprint declaring `agent.handoff` lints clean with
+  `manifoldImplementationNames` and one declaring `agent.hand-off` gives an
+  `event-unknown` finding at its declaration, and that a
   root `context` holding `manifold` is a `shape` finding at
   `/machine/context`. A test shows that the example in this
   specification lints clean when `courier.route` is among the actor

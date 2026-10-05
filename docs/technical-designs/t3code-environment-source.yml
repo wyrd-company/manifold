@@ -298,6 +298,8 @@ proposed-design:
       write<T>(environment: string, threadId: string, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>): Promise<T>;
       /** The stored view of a thread the source follows or followed; undefined for any other. */
       thread(environment: string, threadId: string): ThreadView | undefined;
+      /** Resolves after `ready` with the `environmentId` this run's connection confirmed. */
+      environmentId(environment: string, signal?: AbortSignal): Promise<string>;
       /** Closes every client; resolves when every environment loop has ended. */
       stop(): Promise<void>;
     }

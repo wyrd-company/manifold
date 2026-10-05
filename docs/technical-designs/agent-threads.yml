@@ -5,6 +5,7 @@ relationships:
     - durable-event-delivery
     - blueprint-loader
     - process-repository
+    - agent-tools
   mitigates:
     - t3code-command-receipts-undocumented
   # GAP-EDGE: the technical-design schema declares no edge to the
@@ -324,8 +325,28 @@ proposed-design:
     export interface AgentThreads {
       /** `thread-create`, `turn-prepare`, `turn-start`, and `follow-thread`. */
       readonly implementations: ImplementationRegistry;
+      /** One read of a thread's session and tool activities, after the source is ready. */
+      readThread(environment: string, threadId: string, signal: AbortSignal): Promise<ThreadReading | undefined>;
+      /** Ids of the threads whose session is `running` or `starting`, from one shell read. */
+      runningThreads(environment: string, signal: AbortSignal): Promise<readonly string[]>;
+      /** `turn-start`'s dispatch with a given message id and literal text. */
+      startTurn(request: TurnRequest): Promise<AcceptedCommand>;
       /** Stops waits and retries, closes every client; resolves when they are closed. */
       stop(): Promise<void>;
+    }
+
+    export interface ThreadReading {
+      readonly session: { readonly status: string; readonly activeTurnId: string | null } | null;
+      /** Every `tool.*` activity, with its turn id and `payload.toolCallId` when a string. */
+      readonly toolActivities: readonly { readonly turnId: string | null; readonly toolCallId: string | undefined }[];
+    }
+
+    export interface TurnRequest {
+      readonly environment: string;
+      readonly threadId: string;
+      readonly messageId: string;
+      readonly text: string;
+      readonly signal: AbortSignal;
     }
 
     export type { AgentThreadError, AgentThreadErrorKind } from "./types.ts";
@@ -337,6 +358,26 @@ proposed-design:
     `bindingArchived` is answered by the service wiring from the portfolio
     module's bindings at the current revision, for the binding named by
     `manifold.project`; an actor with no `project` is not archived.
+  service-reads-and-turns: >-
+    The agent tools module identifies a tool call and sends an answer
+    through this module's clients, so every T3 Code read and command goes
+    through one client per environment. `readThread` waits until the
+    environment source is ready, reads the thread with `threads.detail`,
+    and returns its session's status and active turn id and its `tool.*`
+    activities' turn ids and call ids, or `undefined` for a thread the
+    server does not hold; a lost connection rejects, and the caller reads
+    again. `runningThreads` reads the environment's shell once and returns
+    the threads whose session is `running` or `starting`. Both use the
+    `orchestration:read` scope. `startTurn` is the
+    dispatch path of `turn-start`: it reads the thread's current modes,
+    waits for the source, and sends `thread.turn.start` whose user message
+    carries the given message id and text under the command id derived from
+    that message id as `turn-start/command`, retrying a lost connection
+    with no limit on the environment's backoff until it is answered or its
+    signal aborts. It resolves with the accepted command, `implementation`
+    `turn-start`, and rejects with an agent thread error of kind
+    `rejected`, `unauthorized`, `environment`, or `input`, as `turn-start`
+    does.
   module-layout: >-
     `index.ts` re-exports the public names. `ids.ts` holds the pure id
     derivation. `inputs.ts` validates each input against its schema at the

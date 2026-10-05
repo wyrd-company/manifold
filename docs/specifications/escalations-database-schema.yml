@@ -22,7 +22,8 @@ description: |-
   Escalations. `escalation` holds one row per escalation, keyed by its id.
   A row raised by a blueprint has `actor_id`, `invoke_id`, and `entry_id`,
   unique together, and no `kind`, `subject`, or `occurrence`. A row raised
-  by the service has `kind`, `subject`, the JSON of the subject record
+  by the service has `kind`, `held-actor`, `stranded-token`, or
+  `agent-question`, `subject`, the JSON of the subject record
   with its keys sorted, and `occurrence`, unique together, and no actor,
   invoke, or entry id. `kind` is any non-empty name: the module's
   `ServiceEscalationKind` names the kinds, so a new kind needs no table

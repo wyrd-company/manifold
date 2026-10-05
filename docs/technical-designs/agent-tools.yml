@@ -1,0 +1,509 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - agent-threads
+    - escalations
+    - durable-event-delivery
+    - actor-host
+    - t3code-environment-source
+    - service-assembly
+  mitigates:
+    - t3code-tool-call-ids-undocumented
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  references:
+    - agent-tools
+    - agent-tools-configuration
+    - agent-tools-database-schema
+    - host-cli-mcp
+    - escalation-contract
+    - router-events
+    - blueprint
+terms:
+  - harness-plugin
+  - escalation
+  - topic
+  - inbox
+objective: >-
+  Give the agent in a thread that a task actor follows two tools, `handoff`
+  and `escalate`, through a harness plugin that each provider harness T3
+  Code runs, so that a handoff reaches the task actor once as a routed
+  event, an escalation reaches a person on every channel and its answer
+  reaches the agent's thread once, and neither is lost or taken twice
+  across a restart of the service or a call the agent makes again.
+background:
+  problems:
+    - >-
+      T3 Code 0.0.45 tells a provider process nothing about the thread it
+      serves: it sets no environment variable and passes no MCP
+      configuration that carries a thread id to any provider. It starts one
+      provider process per thread session, and an OpenCode server that the
+      operator runs outside T3 Code serves every thread at once.
+    - >-
+      T3 Code records each MCP tool call on the calling thread as a
+      `tool.started`, `tool.updated`, and `tool.completed` activity, with
+      the turn id and the provider's tool call id as `toolCallId`. Claude
+      sends the same id to the MCP server in the request's `_meta` as
+      `claudecode/toolUseId`, and Codex as `callId`. Cursor sends no
+      `_meta`. Grok and OpenCode record a `toolCallId`; what they send in
+      `_meta` is not measured.
+    - >-
+      T3 Code records an activity a short time after the provider makes the
+      call, so a lookup made the moment the MCP request arrives can miss it.
+    - >-
+      An agent calls a tool again: a provider retries, or the agent repeats
+      a call it thinks failed, within the same turn.
+    - >-
+      A person answers an escalation at any time, while the service is down
+      included, and the agent ended its turn when it asked.
+    - >-
+      Claude reads MCP servers from the user's configuration in the threads
+      T3 Code starts, Codex from `config.toml` in its home with T3 Code's
+      own server layered over it, and Cursor from `~/.cursor/mcp.json`.
+      Each has its own configuration format.
+design-challenges:
+  identity: >-
+    The service must learn which thread, and which turn, made a call, from
+    what a stateless plugin process can see, for every provider.
+  exactly-once: >-
+    A handoff called twice in one turn, sent twice by the plugin, or
+    accepted just before a crash must reach the actor once; an answer
+    committed just before a crash must reach the thread once.
+  validation: >-
+    A handoff must fail its blueprint's handoff schema at the call, while
+    the agent can still correct it, and publish nothing.
+  evolution: >-
+    A T3 Code or provider release that changes where a call id travels
+    must be absorbed by a service release, with no new host CLI on any
+    environment.
+proposed-design:
+  high-level-overview: >-
+    The harness plugin is the host CLI's `mcp` command, a stdio MCP server
+    named `manifold` that each provider harness starts from the plugin's
+    registration in that provider's user configuration. The registration
+    names the Manifold service's URL and the environment's declared name.
+    The plugin holds no state and knows no thread: for each tool call it
+    posts the tool name, the arguments, and the request's `_meta` to the
+    service's agent tools endpoint, `POST /api/agent-tools/calls`, and
+    returns the service's answer to the agent. The agent tools module,
+    `packages/service/src/agent-tools/`, finds the calling thread and its
+    turn from the call id in `_meta` by matching it against the tool
+    activities T3 Code records, or from a `thread` argument the agent
+    passes when its provider sends no call id. It fixes the call's event id
+    from the environment, the thread, the turn, and the tool, before
+    anything is published. A `handoff` is validated against the handoff
+    schema of each following actor's blueprint and published as
+    `agent.handoff` under the thread's agent topic, in one transaction that
+    rolls back when no actor takes it or the handoff fails a schema. An
+    `escalate` raises a service escalation of kind `agent-question` through
+    the escalations module, on every channel; its answer is written as a
+    pending answer turn in the transaction that records the answer's
+    handling, and sent to the thread as a `thread.turn.start` whose ids are
+    derived from the escalation id, so a resend after a crash is answered
+    with T3 Code's first receipt. The tools, the request, the events, and
+    the ids are specified in `agent-tools`; the command in `host-cli-mcp`;
+    the configuration in `agent-tools-configuration`; the tables in
+    `agent-tools-database-schema`.
+  plugin: >-
+    `manifold-host mcp --service <url> --environment <name>` serves MCP over
+    standard input and output with the MCP TypeScript SDK, as server
+    `manifold`, with two tools, `handoff` and `escalate`, whose names,
+    descriptions, and input schemas are `agentToolDefinitions` exported by
+    `packages/shared` from the `agent-tools` schema asset. On `tools/call`
+    it sends one `POST {service}/api/agent-tools/calls` with
+    `{ environment, tool, arguments, meta }`, where `meta` is the request's
+    `_meta` object as the provider sent it, or `{}`. It waits for the
+    response at most `--request-timeout-ms`, default 30000. A response with
+    a body the `agent-tools` schema accepts becomes the tool result: an
+    accepted call is a result whose text is the response's `message` and
+    whose `structuredContent` is the response; a refused call is the same
+    with `isError: true`. A timeout, a failed connection, or a response the
+    schema does not accept is a result with `isError: true` and code
+    `service-unreachable`, which says the call may have been taken and
+    that calling the tool again in the same turn is safe. The plugin never
+    retries, holds no state between calls, and reads no file, so one
+    process may serve any number of threads in turn or at once, and a
+    provider that restarts it loses nothing. It never prints to standard
+    output outside the MCP protocol; diagnostics go to standard error.
+  installation: >-
+    The plugin is installed by registering the command in the user-level
+    MCP configuration of each provider T3 Code runs on the environment,
+    under the key `manifold`, as `host-cli-mcp` gives for each provider:
+    `mcpServers.manifold` in Claude's `.claude.json` in its configuration
+    directory; `[mcp_servers.manifold]` in Codex's `config.toml` in its
+    home; `mcpServers.manifold` in Cursor's `~/.cursor/mcp.json`; and the
+    registrations `host-cli-mcp` gives for Grok and OpenCode. T3 Code
+    starts Claude with the user, project, and local setting sources and
+    without a strict MCP configuration, starts Codex with its own server
+    layered over the user's `config.toml`, and starts Cursor, Grok, and
+    OpenCode with their own configuration read, so the registration is
+    loaded in every thread T3 Code starts. A Claude or Codex instance that
+    T3 Code starts with its own configuration directory or home reads the
+    registration from that directory. The registration loads in sessions
+    started outside T3 Code too; a call from one finds no followed thread
+    and is refused. Manifold neither starts the plugin nor writes any
+    provider's configuration.
+  identity: >-
+    The service identifies the calling thread and turn. The plugin learns
+    the service from its registration and never learns its own thread. The
+    module reads the call id from `meta` by the keys the `agent-tools`
+    specification lists, `claudecode/toolUseId` for Claude and `callId` for
+    Codex, in that order, taking the first that holds a non-empty string.
+    With a call id, the candidates are the threads on the call's
+    environment that some loaded actor follows, as the actor host's
+    `followedThreads` gives them. For each candidate the module reads the
+    thread's detail through the environment's T3 Code client and looks for
+    a tool activity whose `payload.toolCallId` equals the call id; the
+    activity's `turnId` is the call's turn. Exactly one candidate holding
+    it identifies the call. The module repeats the reads every 100 ms until
+    `agentTools.identifyTimeoutMs`, default 3000, has passed since the
+    request arrived, since T3 Code may record the activity after the
+    request. A call with no call id, or whose call id no candidate holds
+    within the bound, is identified by the tool's `thread` argument when it
+    is given: the thread must be one a loaded actor follows on the call's
+    environment, and its session must be `running` with an active turn,
+    which is the call's turn. A call that neither rule identifies is
+    refused: with `not-followed` when one read of the threads whose
+    session is running on the environment finds a thread no actor follows
+    that holds the call id, or when the `thread` argument names such a
+    thread; with `caller-unidentified` otherwise. A blueprint whose agents run on a
+    provider that sends no call id gives the thread id to the prompt
+    template from `context.manifold.threads` and tells the agent to pass it
+    as `thread`. The keys of `meta` are read by the service, so a release
+    that moves the call id is followed by a service release alone, and the
+    per-provider evidence is the table in `agent-tools`.
+  call-key: >-
+    A call's key is its environment, the server's `environmentId` that the
+    environment source confirmed, the thread id, the turn id, and the tool,
+    and every id the call produces is derived from it before anything is
+    written. The key holds no call id, so a provider retry, a call the agent
+    makes again, and a request the plugin sends after a timeout all have
+    the same key within one turn, and each turn hands off once and
+    escalates once. The `handoff` event id is
+    `<environment>/<environmentId>/<thread>/turn/<turn>/handoff`, and the
+    `agent.escalated` event id the same with `escalate`, each id inside it
+    encoded as `t3code-thread-events` encodes thread ids. A second call in
+    a turn that has handed off is accepted as a replay and changes nothing:
+    the response says the turn's first handoff stands. A second
+    `escalate` in a turn returns the turn's escalation.
+  routing: >-
+    The module publishes under the event source `agent`. An actor that
+    follows a thread hears the thread's agent topic,
+    `agent.environment.<environment>.thread.<encoded thread>`, which
+    `agentThreadTopic(environment, threadId)` gives, encoding the thread id
+    as `threadTopic` does. The actor host derives it beside the thread's
+    `t3` topic for each of `context.manifold.threads` when the identity
+    holds `environment`, so every actor that follows a thread hears it from
+    the save that follows it, and a restored actor hears it from its stored
+    snapshot. An actor takes an agent event only when its blueprint
+    declares the event type under `schemas.events`, as for every routed
+    event.
+  handoff: >-
+    `handoff` takes `{ handoff, thread? }`; `handoff` is any JSON value the
+    agent gives. After identification, in one `store.connection.transaction`,
+    the module publishes the source event `{ source: "agent", eventId,
+    topics: [agentThreadTopic(environment, threadId)], event }` with the
+    event `{ type: "agent.handoff", environment, threadId, turnId, handoff
+    }`. A replay commits nothing new and answers `accepted` with `replay`
+    true. A first acceptance with no inbox row is rolled back and refused:
+    with `not-followed` when the actor host lists no follower of the
+    thread, and with `not-accepted` when followers exist and no follower's
+    blueprint declares `agent.handoff`. Otherwise, for each row's actor
+    whose blueprint version is loaded, the module validates the event
+    against that version's `schemas.events["agent.handoff"]`; a failure
+    rolls the transaction back and refuses the call with `invalid-handoff`
+    and each failing path, rewritten from the event to the tool's
+    arguments, so `/handoff/summary` names the argument the agent gave. A
+    row whose actor is held with its version not loaded is kept without
+    validation, as every event reaches a held actor's inbox. A commit
+    answers `accepted`, and the tool's message tells the agent to end its
+    turn. The router delivers the event as it delivers any event: an actor
+    killed after the commit and before its save takes the event once at
+    resume, and an actor whose state takes no `agent.handoff` consumes it
+    with no transition.
+  handoff-schema: >-
+    A blueprint names its handoff schema by declaring the `agent.handoff`
+    event under `schemas.events`: the schema of the whole event, whose
+    `handoff` property is the handoff schema. A blueprint whose states
+    take different handoffs writes a `oneOf` there and guards each
+    transition on the handoff's shape. The tool's own input schema accepts
+    any handoff, since the plugin serves every thread with one tool list;
+    the prompt tells the agent what to hand off, and the refusal names each
+    path that fails, so the agent corrects the call within its turn.
+  escalate: >-
+    `escalate` takes `{ question, title?, choices?, freeText?, thread? }`,
+    with the rules of the escalate input of `escalation-contract`: a
+    question of 1 to 8,000 characters, up to three choices with unique ids,
+    and at least one choice or free text. After identification the module
+    takes the thread's followers from the actor host; none refuses the call
+    with `not-followed`. The escalation's actor is the first follower in
+    actor id order. In one transaction the module reads the turn's
+    question row in `agenttool_question` by the call key; a row answers the
+    call with its escalation as a replay. Otherwise it calls the escalations
+    module's `raise` with kind `agent-question`, subject `{ actorId,
+    environment, threadId, turnId }`, the title, question, choices, and
+    free-text flag, and the `default` destination; inserts the question
+    row; and publishes `agent.escalated` with the escalation id, title,
+    question, choices, and free-text flag under the thread's agent topic.
+    `raise` joins the transaction, so the escalation, its notification
+    rows, the question row, and the event commit together or not at all.
+    The call answers `raised` with the escalation id, and the tool's
+    message tells the agent to end its turn: the answer arrives as a new
+    message in the thread. The escalation reaches a person on every
+    channel the escalations module offers: the `default` destination's
+    ntfy topic with a button per choice, its answer page, Manifold's API,
+    and the Task page, which shows every escalation.
+  answer-turn: >-
+    The module gives the escalations module the handler of kind
+    `agent-question`, which runs inside the transaction that records the
+    escalation's handling. For an answered escalation it derives the answer
+    message id from the escalation id; inserts the answer row in
+    `agenttool_answer` with the environment, the thread, the message id,
+    and the answer text unless the row exists; and publishes
+    `agent.escalation.answered` with the escalation id, the answer, its
+    channel, and the message id under the thread's agent topic. It returns
+    a function that wakes the answer sender after the commit. The sender
+    takes pending answer rows one at a time in the order they were written
+    and sends each through the agent threads module's `startTurn`, which
+    waits until the environment source is ready, reads the thread's current
+    modes, and sends `thread.turn.start` with the row's message id and text
+    under the command id derived from that message id, retrying a lost
+    connection on the environment's reconnect backoff with no limit, as
+    `turn-start` does. The server's answer marks the row `sent` with the
+    command's sequence. A command the server rejects marks the row
+    `failed` with the server's message and logs it; the answer stays on the
+    escalation, through Manifold's API and the Task page. T3 Code starts a
+    turn for the message when the thread has none running, and adds it to
+    the running turn when one runs, so the agent receives the answer once
+    either way. The text is the answer message of `agent-tools`: the
+    escalation's title, the chosen label and choice id or the text, and
+    the line that tells the agent to continue its work with the answer.
+    `agent.escalation.answered` carries the message id, so a blueprint
+    that guards turns on their message id, as `agent-threads` describes,
+    assigns it and takes the answer turn's changes.
+  withdrawal: >-
+    The module gives the actor host one save hook. A save whose snapshot
+    status is `done` or `stopped` withdraws, in the save's transaction, the
+    escalation of every question row whose actor is the saved actor, with
+    the escalations module's `withdraw`, so an answer after the task's end
+    is refused and starts no turn. A withdrawal of an escalation that is no
+    longer open does nothing.
+  blueprints: >-
+    A blueprint takes a handoff on the state that waits for the agent,
+    beside the turn's `t3.turn.settled`, guarded on the thread it follows:
+    `event.threadId = context.thread`. The turn id lets a blueprint take
+    only a handoff of the turn it started, by assigning `turnId` from the
+    turn's `t3.turn.started`. A blueprint that declares `agent.escalated`
+    leaves its waiting state for one that does not count the turn's
+    settlement as the end of the agent's work, and returns when it takes
+    `agent.escalation.answered`, assigning the answer turn's message id.
+    A blueprint that declares neither still gets the escalation and the
+    answer turn: the agent asks and is answered in its thread whatever the
+    process declares.
+  configuration: >-
+    The `agentTools` section of service configuration holds
+    `identifyTimeoutMs`, the longest time the module looks for a call id
+    among a thread's activities, default 3000, from 500 to 30000. The
+    plugin's request bound stays above it.
+  endpoint: >-
+    The service's HTTP host mounts the module's `requestListener` at
+    `/api/agent-tools` with `mount`, served without authentication as
+    `serve-the-api-without-authentication` records. It answers only
+    `POST /api/agent-tools/calls`, with a JSON body of at most 1 MiB; a
+    larger body answers `413`, and every other path or method `404` or
+    `405`. A body the request schema rejects answers `400` with each
+    failing path. An environment the service configuration does not
+    declare answers `404` with `unknown-environment`. A refusal answers
+    `409` for `not-followed`, `not-accepted`, and `caller-unidentified`,
+    and `422` for `invalid-handoff` and `invalid-escalation`. An
+    environment whose source is not ready within the identification bound
+    answers `503` with `environment-unavailable`. An accepted or raised
+    call answers `200`.
+  public-interface: |-
+    `packages/service/src/agent-tools/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { RequestListener } from "node:http";
+    import type { Store } from "../store/index.ts";
+    import type { Router } from "../router/index.ts";
+    import type { ActorHost, SaveHook } from "../actor-host/index.ts";
+    import type { AgentThreads } from "../agent-threads/index.ts";
+    import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
+    import type { AgentToolsConfiguration } from "../service-configuration/index.ts";
+
+    export function openAgentTools(options: AgentToolsOptions): AgentTools;
+
+    /** `agent.environment.<environment>.thread.<encoded thread id>`. */
+    export function agentThreadTopic(environment: string, threadId: string): string;
+
+    export interface AgentToolsOptions {
+      readonly store: Store;
+      readonly configuration: AgentToolsConfiguration;
+      /** Declared environment names. */
+      readonly environments: ReadonlySet<string>;
+      /** The router, read when a call arrives, after the router has started. */
+      readonly router: () => Router;
+      /** The escalations module, read when a call or a handling arrives. */
+      readonly escalations: () => Pick<Escalations, "raise" | "withdraw">;
+      /** The actor host, read when a call arrives. */
+      readonly actors: () => Pick<ActorHost, "followers" | "followedThreads" | "eventSchema">;
+      readonly threads: Pick<AgentThreads, "readThread" | "runningThreads" | "startTurn">;
+      /** The environment source's `environmentId`, read when a call arrives. */
+      readonly environmentId: (environment: string, signal?: AbortSignal) => Promise<string>;
+      /** Called after a call commits and before the response is written. */
+      readonly probe?: (committed: CommittedCall) => void;
+      readonly clock?: { now(): number; sleep(ms: number, signal?: AbortSignal): Promise<void> };
+      readonly log: (entry: { readonly level: "info" | "warn" | "error"; readonly event: string; readonly message: string }) => void;
+    }
+
+    export interface AgentTools {
+      /** Mounted with `mount("/api/agent-tools", ...)`. */
+      readonly requestListener: RequestListener;
+      /** Given to the escalations module as the `agent-question` handler. */
+      readonly questionHandler: ServiceEscalationHandler;
+      /** Added to `serviceSaveHooks`. */
+      readonly saving: SaveHook;
+      /** After the router and the escalations module start: sends pending answers. */
+      start(): void;
+      /** Stops identification waits and the answer sender; pending rows stay pending. */
+      stop(): Promise<void>;
+    }
+
+    export interface CommittedCall {
+      readonly tool: "handoff" | "escalate";
+      readonly eventId: string;
+      readonly replay: boolean;
+    }
+    ```
+
+    The actor host gains three reads, answered from the records of the
+    actors it holds loaded: `followers(environment, threadId)`, the ids of
+    the loaded actors whose identity holds the environment and lists the
+    thread, in actor id order; `followedThreads(environment)`, every
+    thread those actors list on the environment; and `eventSchema(actorId,
+    type)`, the compiled validator of `schemas.events[type]` of the actor's
+    loaded version, or `undefined` when the version does not declare it.
+    The agent threads module gains `readThread(environment, threadId,
+    signal)`, the thread's session status, active turn id, and tool
+    activities with their turn ids and call ids, read with
+    `threads.detail`; `runningThreads(environment, signal)`, the threads
+    whose session is `running` or `starting` in the environment's shell;
+    and `startTurn({ environment, threadId, messageId,
+    text, signal })`, the dispatch path of `turn-start` with a given
+    message id and literal text and no template. The environment source
+    gains `environmentId(environment, signal)`, which resolves after
+    `ready` with the `environmentId` its connection confirmed. The
+    escalations module's `ServiceEscalationKind` gains `agent-question`,
+    a service escalation request gains an optional `title` and
+    `freeText`, and `raise` joins a transaction its caller holds open.
+  service-wiring: >-
+    The module joins the service as `service-assembly` describes. It is
+    opened before the actor host, after the agent threads module and
+    before the escalations module, which takes its `questionHandler` among
+    its handlers, and its `saving` joins `serviceSaveHooks` through
+    `ServiceParts`. It reads the actor host, the router, the environment
+    source, and the escalations module through getters and functions that
+    the service answers once each is started, and no call reaches them
+    before the HTTP host listens. Its `requestListener` is mounted before
+    `listen`. `start()` runs after the escalations module's `start()`, so
+    the handlers of answers committed while the service was down have
+    written their answer rows before the sender runs, and `stop()` runs
+    after the HTTP host closes.
+  module-layout: >-
+    `index.ts` re-exports the public names. `calls.ts` holds the pure
+    rules: the call id read from `meta`, the call key, the event ids, the
+    answer message id and text, and the path rewrite of a handoff failure.
+    `identify.ts` runs the identification over the candidates with its
+    bound. `handoff.ts` and `escalate.ts` hold each tool's transaction.
+    `answers.ts` holds the handler and the sender. `http.ts` holds the
+    request listener. `migrations.ts` holds the migration steps under the
+    owner `agenttool`. Tests import only `index.ts` and the modules'
+    `index.ts` files they wire.
+  convergence: >-
+    A handoff called twice in one turn writes one source event row and one
+    inbox row per follower, and the second call answers `accepted` with
+    `replay` true. A crash inside its transaction commits nothing and the
+    agent's next call is a first acceptance. A crash after the commit and
+    before the response leaves the plugin with `service-unreachable`; the
+    agent's next call is a replay, and the router delivers the first one
+    once. An escalate called twice in one turn raises one escalation; a
+    crash inside its transaction raises none. A crash after an answer
+    commits and before its handling runs the handler at the escalations
+    module's `start`, and the handler writes the answer row once, since it
+    inserts only when the row is absent. A crash after the answer row
+    commits and before the command is sent sends it after the restart. A
+    crash after T3 Code accepts the command and before the row is marked
+    sent sends the same command id again, which T3 Code answers with its
+    first receipt, so the thread holds one answer message. A withdrawal on
+    the actor's end twice withdraws once.
+  failures: >-
+    A call refused for an identity, a schema, or a missing follower
+    publishes and raises nothing, and its result tells the agent what to
+    correct. An environment whose source is not ready by the end of the
+    identification bound refuses the call with `environment-unavailable`.
+    A thread detail read that fails on a lost connection is retried on the
+    next pass within the bound. SQLite errors propagate as `500` and roll
+    back the call. The answer sender treats a rejected command as final for
+    its row, since its ids are fixed, and keeps every other row pending
+    across stops and restarts.
+  dependencies: >-
+    The host CLI adds `@modelcontextprotocol/sdk`, the MCP TypeScript SDK,
+    for the stdio server; its releases are frequent and it is the protocol's
+    reference implementation. The service adds no dependency: it uses the
+    `@wyrd-company/t3code-client` release the environment source uses,
+    through the agent threads module.
+  tests: >-
+    Service tests run through a real store, router, actor host, escalations
+    module, agent threads module, and environment source, against the fake
+    T3 Code server of the environment source's tests, which also records
+    tool activities with a turn id and a call id, and answers thread detail
+    reads. Behaviours proved, each red before green: a `handoff` whose
+    `meta` holds a Claude call id, and one whose `meta` holds a Codex call
+    id, reaches the following actor once as `agent.handoff` with the
+    thread and turn; an activity the fake server records 500 ms after the
+    request is found within the bound; a call id no thread holds, with no
+    `thread` argument, is refused with `caller-unidentified` after the
+    bound; a call with no call id and a `thread` argument is identified
+    from the thread's active turn, and one whose thread has no running
+    turn is refused; a call from a thread no actor follows is refused with
+    `not-followed` and publishes nothing, so the same call is accepted as
+    new once an actor follows the thread; a follower whose blueprint does
+    not declare `agent.handoff` is refused with `not-accepted`; a handoff
+    that fails its schema is refused with `invalid-handoff` at
+    `/handoff/...` and a corrected call in the same turn is accepted; two
+    handoffs in one turn, sent at once and one after the other, give one
+    event, and the second answers `replay`; a handoff in the next turn is a
+    new event; an `escalate` with two choices raises one escalation on the
+    `default` destination and publishes `agent.escalated`; a second call in
+    the turn returns the same escalation; its answer through the API writes
+    one answer row, publishes `agent.escalation.answered` with the message
+    id, and starts one turn in the fake server's thread with the answer
+    text and that message id; an answer while the thread runs a turn is
+    sent once; an answer after the actor ends is refused; a command the
+    fake server rejects marks the row failed; the endpoint answers `413`,
+    `400`, `404`, and `405` as stated. The fault tests run the service in a
+    child Node process that sends itself `SIGKILL` and whose signal the
+    parent asserts before it starts the service again on the same file: a
+    kill from `probe` after a handoff commits and before the actor's save
+    leaves the actor to take the handoff once after the restart, and the
+    plugin's repeated call answers `replay`; a kill after an answer commits
+    and before its handling, and a kill after the fake server accepts the
+    answer's command and before the row is marked sent, each leave the
+    thread with exactly one answer message after the restart. Host CLI
+    tests run the compiled `mcp` command over stdio against a test HTTP
+    server: it lists the two tools with their schemas, forwards a call's
+    arguments and `_meta`, maps an accepted response, a refusal, a
+    timeout, and a refused connection to their results, and writes nothing
+    but protocol to standard output. The live test, run by the service
+    package's `test:live` script and not by `task check`, starts the `t3`
+    release the environment source targets, pinned as a devDependency, on a
+    loopback port with its own data directory, registers the compiled
+    plugin in a temporary configuration of each provider the usage decoder
+    covers, as `host-cli-mcp` gives, and for each provider with credentials
+    on the run starts a thread whose prompt asks the agent to call
+    `handoff`. It records for each provider whether the registration
+    loaded, the `_meta` keys the plugin received, whether the call id
+    equals the activity's `toolCallId`, and which rule identified the
+    call, and the evidence table in `agent-tools` is updated from that run.
+    Values are generic and never drawn from Manifold's own domain.

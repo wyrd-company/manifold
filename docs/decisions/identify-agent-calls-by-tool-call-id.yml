@@ -1,0 +1,60 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - agent-tools
+    - host-cli-mcp
+description: >-
+  An agent's `handoff` or `escalate` must reach the task actor that follows
+  the agent's thread, so the service must learn the thread, and the turn,
+  that made each call. T3 Code 0.0.45 gives a provider process no thread id
+  and no per-thread configuration Manifold can add to. It records each MCP
+  tool call on the calling thread with the turn id and the provider's tool
+  call id, which Claude and Codex also send in the MCP request's `_meta`.
+  Claude exposes its session id to an MCP server's environment and Codex
+  its thread id in `_meta`, and T3 Code keeps each thread's provider
+  session id in its own database, which the host CLI already reads for
+  usage. Cursor sends neither.
+considered-options:
+  "1": >-
+    Call id, matched by the service. The plugin forwards `_meta`; the
+    service reads the followed threads' activities through T3 Code's API
+    and finds the one holding the call id, which also gives the turn. A
+    `thread` argument the prompt supplies identifies a provider that sends
+    no call id.
+  "2": >-
+    Provider session id, mapped by the plugin. The plugin reads the
+    provider's session id from its environment or `_meta` and maps it to a
+    thread through `provider_session_runtime` in T3 Code's database, then
+    sends the thread id to the service.
+  "3": >-
+    Binding token. The plugin returns a random token in its first result,
+    and later calls find the thread whose recorded tool output holds it.
+  "4": >-
+    Thread argument only. Every prompt names the thread, and the agent
+    passes it with every call.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 identifies the exact call and its turn, so the event id is
+    fixed per turn and a repeated call is a replay. It reads only T3 Code's
+    API, which the service already reaches with the approved read scope,
+    so the plugin holds no credential, no state, and no T3 Code knowledge,
+    and a change in where a provider sends its id is a service release
+    with no host CLI release on any environment. Its cost is a bounded wait
+    for T3 Code to record the activity. Option 2 needs no wait but gives no
+    turn, depends on a database schema T3 Code does not publish, binds the
+    plugin to the machine of T3 Code's data directory, and covers the same
+    two providers. Option 3 fails for Cursor, which reports no tool output,
+    and a process-bound token is lost when a provider restarts the
+    process. Option 4 works for every provider and is kept as the fallback
+    for providers without a call id, but on its own it makes every
+    identity depend on the agent copying an id correctly.
+expected-outcomes:
+  positive:
+    - A call from Claude or Codex is identified with its turn, with nothing in the prompt.
+    - The plugin is stateless and identical for every provider; one process may serve many threads.
+    - A provider that moves its call id is followed by a service release alone.
+  negative:
+    - Each call from a provider without a call id waits the identification bound before the `thread` argument is used.
+    - A provider without a call id hands off only when its prompt names its thread.
+    - The call id's equality with T3 Code's `toolCallId` is undocumented behaviour, tracked as `t3code-tool-call-ids-undocumented`.

@@ -7,6 +7,7 @@ relationships:
     - store
     - escalations
     - agent-threads
+    - agent-tools
 objective: >-
   Deliver events from shared sources to state machine actors so that no
   event is lost across a service interruption, a resumed actor continues
@@ -70,7 +71,9 @@ proposed-design:
     and no repository; `github.project.<id>` carries Project-level events
     and every Project item event, beside the item's issue topic;
     `t3.environment.<name>.thread.<id>` carries thread changes, the thread
-    id encoded so that it holds no `.`; and
+    id encoded so that it holds no `.`;
+    `agent.environment.<name>.thread.<id>` carries the agent tool calls and
+    agent escalation answers of a thread, encoded the same way; and
     `deadline.<deadline-id>` carries a fired deadline. What happened is the
     event's `type`, never a topic segment, so an event type may hold `.` as
     XState event types do. A subscriber to a topic receives every event

@@ -170,6 +170,7 @@ $defs:
                   - stranded-token
                   - intake-failed
                   - comparator-failed
+                  - agent-question
               subject:
                 type: object
                 additionalProperties:
