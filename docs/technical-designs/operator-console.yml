@@ -86,8 +86,14 @@ design-challenges:
     keep the dialog's values when the file changed under it.
   reviewed-apply: >-
     An Apply writes to GitHub, and Manifold does not undo a removal there.
-    The operator must see every change before it runs, and a removal must
-    run only by the operator's explicit choice.
+    The operator must see every change before it runs, an Apply must run
+    only the plan the operator saw, and a removal must run only by the
+    operator's explicit choice.
+  visual-edits: >-
+    The Task fields table edits a YAML file that the operator may also
+    edit by hand. A change from a control must keep the file's comments
+    and other fields, follow the field shape the declaration specifies,
+    and show the same findings as an edit typed in the YAML.
   edit-durability: >-
     An edit must survive a reload, a failed save, a service restart, and a
     branch that moved under it, and must reach the branch at most once
@@ -921,31 +927,36 @@ proposed-design:
   projects-client: >-
     `src/api/projects.ts` exports `fetchProjects()`,
     `fetchProjectPlan(binding)`, and `applyProject(binding,
-    removeUndeclared)`, which send `GET /api/projects`, `GET
+    removeUndeclared, digest)`, which send `GET /api/projects`, `GET
     /api/projects/{binding}/plan`, and `POST /api/projects/{binding}/apply`
-    with `{ removeUndeclared }`, the binding percent-encoded. Each turns
-    the answer into `ok` with the body, `missing` for `404`, or `failed`
-    with the API's message, or a generic message for a network error or a
-    body that does not validate. Each mapping is a pure function. Bodies
-    are checked at this boundary with the guards the Project
-    configuration API exports from `@wyrd-company/manifold-shared`. The
-    console reads these members of its answers: a list entry's `binding`,
-    `owner`, `number`, `item`, `environment`, and configuration state
-    (`in-sync`, `drift` with its count, or `not-applied`), and its title,
-    URL, and last Apply time when the API answers them; a plan's changes,
-    each with its action (`create`, `change`, or `remove`), its storage
-    kind, where it applies, its target, what happens, and whether it undoes
-    drift, and the count of issues whose front matter does not match, with
-    a link to them, when the API answers it; and an Apply's resulting
-    configuration state and how many writes it made. Reads go through
-    TanStack Query under the keys `["projects"]` and `["project-plan",
-    binding]`. An Apply is a mutation; when it settles it marks both keys
-    and `["tasks"]` stale. No timer reads on a schedule.
+    with `{ removeUndeclared, digest }`, the binding percent-encoded and
+    `digest` the reviewed plan's digest. Each turns the answer into `ok`
+    with the body, `missing` for `404`, or `failed` with the API's
+    message, or a generic message for a network error or a body that does
+    not validate; `applyProject` turns the stale-plan `409` into `stale`
+    with the configuration state and the current plan's digest the answer
+    holds. Each mapping is a pure function. Bodies are checked at this
+    boundary with the guards the Project configuration API exports from
+    `@wyrd-company/manifold-shared`. The console reads these members of
+    its answers: a list entry's `binding`, `owner`, `number`, `item`,
+    `environment`, and configuration state (`in-sync`, `drift` with its
+    count, or `not-applied`), and its title, URL, and last Apply time when
+    the API answers them; a plan's digest and changes, each change with
+    its action (`create`, `change`, or `remove`), its storage kind, where
+    it applies, its target, what happens, and whether it undoes drift, and
+    the count of issues whose front matter does not match, with a link to
+    them, when the API answers it; an Apply's resulting configuration
+    state and how many writes it made; and a stale-plan answer's state and
+    digest. Reads go through TanStack Query under the keys `["projects"]`
+    and `["project-plan", binding]`. An Apply is a mutation; when it
+    settles it marks both keys and `["tasks"]` stale. No timer reads on a
+    schedule.
   declarations-client: >-
     `src/api/declarations.ts` exports
     `fetchDeclarationSource(path)`, `lintDeclarationText(path, text,
-    signal)`, `saveDeclaration(request)`, `fetchBindings()`, and
-    `saveBinding(request)`, for the endpoints of `declarations-api`. Each
+    signal)`, `saveDeclaration(request)`, `editTaskFields(request)`,
+    `fetchBindings()`, and `saveBinding(request)`, for the endpoints of
+    `declarations-api`. Each
     sends its request without authentication headers, with `Content-Type:
     application/json` for a body, and turns the answer into a result as
     the blueprints client does: `ok` with the body, a typed `conflict` or
@@ -953,8 +964,8 @@ proposed-design:
     Each mapping is a pure function, and each body is checked at this
     boundary with the guards of
     `@wyrd-company/manifold-shared/declarations-api`. Reads go through
-    TanStack Query under `["declaration", path]` and `["bindings"]`; lint
-    and saves are mutations, never cached. A settled binding save marks
+    TanStack Query under `["declaration", path]` and `["bindings"]`; lint,
+    field edits, and saves are mutations, never cached. A settled binding save marks
     `["bindings"]`, `["projects"]`, and `["tasks"]` stale, and a settled
     declaration save marks its path's key and `["projects"]` stale.
   projects-list: >-
@@ -1022,8 +1033,8 @@ proposed-design:
     takes control of this Project's fields and status options, and of the
     labels, issue types, issue fields, and milestones the task fields use.
     Nothing changes on GitHub until you apply." and the checkbox "I
-    understand". "Create one from the templates" is absent: creating
-    T3code projects is a later feature. "Bind and review changes"
+    understand". The dialog associates existing T3code projects and
+    creates none. "Bind and review changes"
     (primary) is enabled when "I understand" is checked and Project
     parses. It sends `saveBinding` with a `github-project` edit in mode
     `add`, the bindings read's commit as `base`, the message "Bind
@@ -1110,21 +1121,32 @@ proposed-design:
     `src/screens/projects/plan.ts` gives the groups, their rows and sums,
     and the count the Apply button names.
   apply: >-
-    "Apply N changes" sends `applyProject(binding, removeUndeclared)` with
-    the switch's value. With the switch on and a remove counted, it first
-    opens a 400px alert dialog, "Remove from GitHub?": "This Apply also
-    removes N things the task fields do not define: <up to five targets>,
-    and M more. Manifold does not restore them." with "Cancel" and "Apply
-    and remove" (solid error). While the request runs, the button shows a
-    spinner and the button and the switch are disabled. For `ok`, a
-    success toast says "Applied N changes" when the answer made writes, or
-    "Already in sync" when it made none because another channel finished
-    the same changes first; the header's badge shows the configuration
-    state the answer holds at once, and the list, the plan, and the tasks
-    read again. For `missing`, the page shows "Project not bound". For
-    `failed`, an error alert in the plan card shows the message with "Try
-    again", which sends the same request; an Apply converges on the
-    service, so a second send writes only what is still to change.
+    "Apply N changes" sends `applyProject(binding, removeUndeclared,
+    digest)` with the switch's value and the digest of the plan on screen,
+    so the service applies only the plan the operator reviewed. With the
+    switch on and a remove counted, it first opens a 400px alert dialog,
+    "Remove from GitHub?": "This Apply also removes N things the task
+    fields do not define: <up to five targets>, and M more. Manifold does
+    not restore them." with "Cancel" and "Apply and remove" (solid error),
+    naming the removals of the plan on screen. While the request runs, the
+    button shows a spinner and the button and the switch are disabled.
+    For `ok`, a success toast says "Applied N changes" when the answer
+    made writes, or "Already in sync" when it made none; the header's
+    badge shows the configuration state the answer holds at once, and the
+    list, the plan, and the tasks read again. For `stale`, the plan
+    changed after the operator reviewed it: the badge shows the answer's
+    state, the plan reads again, and an info alert above the groups reads
+    "The plan changed since you reviewed it. Review the changes, then
+    apply again." When the new plan counts no change and the state is
+    `in-sync`, another channel finished the changes first, and the alert
+    reads "Another Apply finished these changes first." with the button at
+    "Nothing to apply". The next Apply sends the new plan's digest, and
+    asks again before removing, naming the new plan's removals. For
+    `missing`, the page shows "Project not bound". For `failed`, an error
+    alert in the plan card shows the message with "Try again", which sends
+    the same request with the same digest; an Apply converges on the
+    service, so a second send writes only what is still to change, and
+    answers `stale` when the plan changed meanwhile.
   task-fields-editor: >-
     `TaskFieldsContent` is the Task fields tab of Settings, its editor
     under `src/screens/task-fields/`. It reads
@@ -1136,34 +1158,78 @@ proposed-design:
     description "The fields Manifold keeps on each bound Project's
     tasks.", "Discard draft" (ghost), and "Publish" (primary). A line under
     it holds "Published <short commit>" in mono, `task-metadata.yml` in
-    mono, and, when the latest lint answers impact, "Changes N bound
+    mono, and, when the latest answer has impact, "Changes N bound
     Projects" with "Review impact", which opens the Publish dialog. Under
-    the header, the Fields pane and the Source pane sit side by side, each
-    half the width; under 1024px of content width they become the tabs
-    "Fields" and "Source". The Problems strip runs under both panes.
-    The Fields pane is a table of the latest lint answer's `fields`,
-    grouped by Project with a group row of the binding name and
-    `<owner>/<number>` in mono. Columns, in percent widths: Field (30),
-    Type (18), Stored as (20), Required (12), and When changed on GitHub
-    (20). The lifecycle field has the 20px lock icon after its name, with
-    the tooltip and label "Set by Manifold". Stored as names the storage
-    kind: Project field, Label, Org issue type, Org issue field,
-    Milestone, or Front matter. A missing value is a muted dash.
-    Selecting a row moves the editor's cursor to the start of the field's
-    range, and moving the cursor into a field's range selects its row.
-    While the latest lint answer has findings, the pane keeps the last
-    fields, dimmed, with the muted line "Showing the last text with no
-    findings." With no field, the pane shows the empty state "No task
-    fields", "Declare each bound Project's fields in task-metadata.yml."
-    The table is a view of the text: fields change in the Source pane.
-    The Source pane is the Blueprints editor's `SourcePane` over the text,
-    with the path `task-metadata.yml`, and the Problems strip is its
-    `ProblemsStrip` with no states. Lint follows the text as
-    lint-as-you-type states, through `lintDeclarationText` with the same
-    300 ms wait, abort, and rule that an answer applies only to the text
-    it was sent for. The pure function `fieldGroups(fields, projects)` in
-    `src/screens/task-fields/fields.ts` groups the rows, and
-    `fieldAtCursor(cursor, fields)` finds the row for a cursor.
+    it, `SchemaEditor` in storage mode, with the tabs "Visual" and "YAML",
+    Visual first, and the Problems strip under both. The YAML tab is the
+    Blueprints editor's `SourcePane` over the draft's text, with the path
+    `task-metadata.yml`. The Problems strip is the Blueprints
+    editor's `ProblemsStrip` with no states, its header showing
+    "Checking…" while a lint or an edit is pending. Lint follows the text
+    as lint-as-you-type states, through `lintDeclarationText` with the
+    same 300 ms wait, abort, and rule that an answer applies only to the
+    text it was sent for.
+  task-fields-visual: >-
+    The Visual tab is the fields table and, on its right, the field panel
+    (320px) for the selected field. The table lists the latest answer's
+    `fields` grouped by Project, each group row holding the binding name
+    and `<owner>/<number>` in mono and "Add field" (ghost) on its right.
+    Columns, in percent widths: Field (36), Type (22), Stored as (24),
+    Required (10), and a remove icon button (8, `aria-label` "Remove
+    field"). Field is the name, with the 20px lock icon after the
+    lifecycle field's name (tooltip and label "Set by Manifold") and a
+    red "!" on a row that a finding locates at or under it. Type is a
+    select of the types the row's storage kind holds, with the row's type
+    kept as a choice; Stored as is a select of the storage kinds, by the
+    names Project field, Label, Org issue type, Org issue field,
+    Milestone, and Front matter; and Required is a checkbox. A nested row
+    shows "in parent" in Stored as. A finding at the field's type or
+    storage gives both selects a red border. The lifecycle field's name,
+    Required, and Stored as are disabled, and it has no remove button.
+    Selecting a row selects it in the field panel and moves the YAML
+    cursor to the start of its range; moving the YAML cursor into a
+    field's range selects its row. The field panel shows the field's
+    name, as a text field; "Stored as", with the line "Can hold <type>"
+    in success text or "Cannot hold <type>" in error text; the storage
+    kind's settings, each a text field with the label the kind gives it:
+    the Project field or issue field name, the label prefix, or the front
+    matter key; the options, for a type with options, each a text field
+    with a remove button and "Add option" under them; what exists on
+    GitHub for it, from the impact's field observations: "On GitHub",
+    "Missing on GitHub", or "Differs on GitHub" with its detail, or "Not
+    read from GitHub yet"; its scope, from its storage kind: "On
+    <owner>/<number>" for a Project field, "On the <owner> organization"
+    for an org issue type or field, "In each repository with issues on
+    <owner>/<number>" for a label or milestone, and "In each issue's
+    body" for front matter; and "When changed on GitHub", a two-option
+    segmented control, Revert or Accept. With no field, the table shows
+    the empty state "No task fields", "Add a field to a bound Project." with
+    a group row per bound Project. While the latest answer has no
+    `fields`, because the text does not parse, the tab keeps the last
+    fields, dimmed and disabled, with the muted line "Fix the YAML to
+    edit fields here."
+  task-field-edits: >-
+    A change in the Visual tab is a field edit of the draft's text, made
+    on the service. A select, the checkbox, the segmented control, "Add
+    field", "Add option", and a remove button send at once; a text field
+    sends when it loses focus or on Enter, when its value changed. Each
+    sends `editTaskFields({ text, edit })` with the draft's text and one
+    edit of `declarations-api`: `add-field` with the binding, `set-field`
+    with the field's location and the changed values, or `remove-field`
+    with the location. While it runs, the table and the panel are
+    disabled. A `200` answer whose request text is still the draft's text
+    becomes the draft's text, as a change in the YAML tab does, and its
+    findings, fields, and impact are the latest answer; the row at the
+    answer's `location` is selected, so "Add field" selects the new
+    field. An answer for another text is dropped and the control shows
+    the latest answer's value. A `422` shows its findings in the Problems
+    strip and the control returns to the latest answer's value. A failed
+    request shows "Cannot apply this change. Try again." in the Problems
+    header with "Try again", which sends the same request. The pure
+    functions `fieldGroups(fields, projects)`, `fieldAtCursor(cursor,
+    fields)`, `rowFindings(fields, findings)`, and `fieldScope(field,
+    project)` in `src/screens/task-fields/fields.ts` give the groups, the
+    row at a cursor, the "!" rows and red selects, and the scope line.
   task-fields-drafts: >-
     A Task fields draft is a draft as blueprint-drafts states, kept under
     `manifold.declaration-draft.task-metadata.yml`, with the same pending
@@ -1199,20 +1265,27 @@ proposed-design:
   declarations-endpoints: >-
     `mountDeclarationsApi(host, options)` mounts one listener at
     `/api/declarations` that implements `declarations-api`, with the paths
-    `/source`, `/lint`, `/save`, `/bindings`, and `/bindings/save` under
-    the prefix. Every read takes the commit of `revisions.latest()` and
+    `/source`, `/lint`, `/save`, `/task-fields/edit`, `/bindings`, and
+    `/bindings/save` under the prefix. Every read takes the commit of `revisions.latest()` and
     reads files at it through `processRepository.revisionAt`, and answers
     `503` before the first. `task-metadata.yml` lints with
     `lintTaskMetadataDeclaration` and `bindings.yml` at that commit;
     `bindings.yml` lints with `lintPortfolioDeclaration` and
     `portfolio.yml` at that commit, keeping the findings whose `file` is
-    `bindings`. `findingRanges` gives each finding its range; its
-    parameter takes any finding with `kind`, `location`, and `message`.
-    A clean task metadata text answers `fields` from the pure
-    `taskFieldRows(text, declaration)` and `impact` from
+    `bindings`; `portfolio.yml` lints with `lintPortfolioDeclaration` and
+    `bindings.yml` at that commit, keeping the findings of both files with
+    their `file`, and with `lintAllocatedAccounts` and `accounts.yml` at
+    that commit for its warnings. `findingRanges` gives each finding of
+    the edited file its range; its parameter takes any finding with
+    `kind`, `location`, and `message`. A task metadata text that parses
+    answers `fields` from the pure `taskFieldRows(text)`, which reads the
+    rows from the document, and `storageKinds` from the declaration's
+    storage kind table; a clean one answers `impact` from
     `options.planDeclaration`, one entry per GitHub Project binding that
-    is not archived, with no counts when the option is absent or answers
-    none for the binding. A save lints first and answers `422` for a
+    is not archived, with no counts when it answers none for the binding,
+    and each row's GitHub observation from the entry's field
+    observations. A field edit applies `editTaskFields` and answers as a
+    lint of the result. A save lints first and answers `422` for a
     finding, then awaits `revisions.save` and maps its result as the
     blueprints endpoint's `saveAnswer` does, with `loaded` true when the
     result carries the latest load. The bindings read parses
@@ -1243,6 +1316,22 @@ proposed-design:
     file in the block style the `yaml` package writes keeps every other
     line unchanged. A text that does not parse gives its `syntax` finding
     and no edit.
+  task-field-edit: >-
+    `editTaskFields(text, edit)` in `declarations-api/task-field-edit.ts`
+    is pure. It parses the text as `editBindings` does and writes the
+    members `task-metadata-declaration` gives a field. `add-field` adds,
+    at the end of the binding's fields, a front-matter field of type
+    string named `field-<n>`, the lowest `n` from 1 that no field of the
+    binding uses, with that name as its front matter key, adding the
+    binding's entry when absent. `set-field` sets each value the edit
+    names on the field at the location and keeps its other members and
+    its place; a changed storage kind removes the settings the new kind
+    does not take. `remove-field` deletes the field's entry. It refuses,
+    with no change, a text that does not parse, a location that names no
+    field (`field-missing`), and a change of the lifecycle field's name,
+    required, or storage, or its removal (`field-locked`). It writes the
+    document as `editBindings` does and answers the edited field's
+    location.
   declarations-public-interface: |-
     `packages/service/src/declarations-api/index.ts` exports exactly these
     names.
@@ -1262,10 +1351,8 @@ proposed-design:
       readonly environments: readonly string[];
       /** The T3 Code source's `projects`. */
       t3codeProjects(environment: string): readonly DeclarationsT3codeProject[] | undefined;
-      /** The Project configuration planner over a declaration that is not in force. */
-      readonly planDeclaration?: (
-        declaration: TaskMetadataDeclaration,
-      ) => readonly DeclarationImpact[];
+      /** The task-metadata module's planner over a declaration that is not in force. */
+      planDeclaration(declaration: TaskMetadataDeclaration): readonly DeclarationImpact[];
       readonly log: (entry: { level: "error"; path: string; error: string }) => void;
     }
 
@@ -1284,6 +1371,12 @@ proposed-design:
         readonly changes: number;
         readonly removes: number;
       };
+      /** What GitHub holds for each declared field, by the field's location. */
+      readonly fields?: readonly {
+        readonly location: string;
+        readonly onGitHub: "present" | "missing" | "differs";
+        readonly detail: string;
+      }[];
     }
 
     /** Mounts the declarations endpoints at `/api/declarations`. */
@@ -1301,31 +1394,30 @@ proposed-design:
   declarations-wiring: >-
     The declarations API joins the service through its wiring part,
     `packages/service/src/declarations-api/wiring.ts`, a service wiring
-    part named `declarations-api`, listed once in `service/start.ts` after
-    the task-metadata module's part. Its start mounts the listener with
-    the revision follower, the process repository, the configured
-    repository URL and branch, the environment names of service
-    configuration, the T3 Code source's `projects`, and the task-metadata
-    module's planner over a declaration as `planDeclaration`; its stop
-    does nothing, since the host stops its listeners. Until the service
-    wiring and the task-metadata module merge, `start.ts` calls
-    `mountDeclarationsApi` beside `mountBlueprintsApi` with no
-    `planDeclaration`, and the console reads a structural stand-in of the
-    Project configuration API's guards in `src/api/projects.ts`.
+    part `{ name: "declarations-api", start(members, context) }` chained
+    after the task-metadata module's part and not exported from the
+    module's index. Its start calls `mountDeclarationsApi` on
+    `members.http` with the revision follower, the process repository,
+    the configured repository URL and branch, the environment names of
+    service configuration, the T3 Code source's `projects`, and the
+    task-metadata module's planner as `planDeclaration`. It registers no
+    `context.onStop`, since it opens nothing that stop closes; the HTTP
+    host closes its listeners in the `requests` stage.
   declarations-module-layout: >-
     In `packages/service/src/declarations-api/`, `index.ts` re-exports the
     public names and nothing else, `listener.ts` holds the routing and
     request checks, `answers.ts` the pure functions from a lint, a save,
     or a read to an answer, `binding-edit.ts` `editBindings`,
-    `task-fields.ts` `taskFieldRows`, and `wiring.ts` the wiring part. In
+    `task-field-edit.ts` `editTaskFields`, `task-fields.ts`
+    `taskFieldRows`, and `wiring.ts` the wiring part. In
     `packages/console`, `src/screens/projects/` holds `ProjectsList.tsx`,
     `T3codeProjectsTable.tsx`, `ProjectPage.tsx`, `PlanCard.tsx`,
     `RemoveDialog.tsx`, `BindProjectDialog.tsx`,
     `BindT3codeProjectDialog.tsx`, `AssociateDialog.tsx`, and the pure
     modules `rows.ts`, `plan.ts`, and `binding-names.ts`
     (`parseProjectReference` and `bindingName`); `src/screens/task-fields/`
-    holds `TaskFieldsEditor.tsx`, `FieldsPane.tsx`, `ImpactTable.tsx`, and
-    the pure module `fields.ts`. `ProjectsContent.tsx` switches between
+    holds `TaskFieldsEditor.tsx`, `SchemaEditor.tsx`, `FieldsTable.tsx`,
+    `FieldPanel.tsx`, `ImpactTable.tsx`, and the pure module `fields.ts`. `ProjectsContent.tsx` switches between
     the list and the page, and `TaskFieldsContent.tsx` renders the editor.
     The router adds `projects/$binding`.
   projects-convergence: >-
@@ -1340,45 +1432,55 @@ proposed-design:
     commits the first; the second finds `bindings.yml` changed and answers
     `409`, or `name-taken` after it reads again. An Apply converges on the
     service as the Project configuration API states; a resend after a
-    lost answer makes only the writes still to make and answers the state.
+    lost answer makes only the writes still to make and answers the
+    state, or `stale` when the plan changed, so no Apply runs a plan the
+    operator has not seen. A field edit only computes a text; the draft
+    holds its result, written whole.
     Source, lint, and the bindings read only read. The browser's one new
     write is the Task fields draft, written whole on each change.
   projects-tests: >-
     Each behavior is red before green, and tests go through public
     interfaces. The declarations endpoints are tested as
-    `declarations-api`'s validation criteria state, `editBindings` and
-    `taskFieldRows` through them. In `packages/console`, unit tests cover
-    the projects and declarations result mappings; `projectRows` and
+    `declarations-api`'s validation criteria state, `editBindings`,
+    `editTaskFields`, and `taskFieldRows` through them. In
+    `packages/console`, unit tests cover the projects and declarations
+    result mappings, the stale-plan answer included; `projectRows` and
     `t3codeRows`, with an associated project, a project the environment
     does not hold, and an unknown environment; `planGroups` with the
     switch off and on, a drift change, and front matter;
-    `parseProjectReference` and `bindingName`; `fieldGroups` and
-    `fieldAtCursor`; and `readDraft` and `writeDraft` with the Task fields
-    prefix beside a blueprint draft of a like name. The browser test,
+    `parseProjectReference` and `bindingName`; `fieldGroups`,
+    `fieldAtCursor`, `rowFindings`, and `fieldScope`; and `readDraft` and
+    `writeDraft` with the Task fields prefix beside a blueprint draft of a
+    like name. The browser test,
     `packages/service/src/declarations-api/projects.browser.test.ts`,
     starts the production HTTP host with the built console, the console,
-    tasks, and declarations mounts, and the Project configuration API, on
-    a fixture process repository served over smart HTTP with push enabled
-    and a bound Project in drift. It opens GitHub Projects and reads
-    "Drift · 2" and the card counts; opens "Review changes", reads the
-    groups with a "Drift" badge and a "Kept" removal; applies and reads
-    "In sync" and "Nothing to apply"; applies again through `POST
-    /api/projects/{binding}/apply` and, from the page, reads "Already in
-    sync". It binds a second Project with a T3code project associated,
-    first after committing a change to `bindings.yml` on the remote, and
-    reads the conflict alert with every value kept, then "Bind and review
-    changes" again opens the new Project's page with "Not applied", and the
-    remote holds the binding with the earlier change and every comment.
-    In Settings, Task fields, it adds an option twice, reads the `schema`
-    finding in the Problems strip and Publish disabled, removes the
-    duplicate, reads the marks clear and the impact, publishes, reads the
-    success toast, "Published <short commit>" at the new commit, and the
-    new option in the Fields pane, and `GET /api/declarations/source`
-    answers the new text at that commit. Until the task-metadata module
-    merges, the Project configuration API in this test is a fixture
-    listener with the stand-in's answers; after it merges, it is that
-    module over the GitHub fake its own tests use. Fixture values are
-    generic and never drawn from Manifold's own domain.
+    tasks, and declarations mounts, and the task-metadata module's Project
+    configuration API over the GitHub fake its own tests use, on a fixture
+    process repository served over smart HTTP with push enabled and a
+    bound Project in drift. It opens GitHub Projects and reads "Drift · 2"
+    and the card counts; opens "Review changes" and reads the groups with
+    a "Drift" badge and a "Kept" removal; turns the switch on, and while
+    the confirmation is open a change made on the GitHub fake adds a
+    removal, so "Apply and remove" reads the stale-plan alert and the new
+    removal, asks again naming it, and applies to "In sync" and "Nothing to
+    apply". On a second Project in drift it reads the plan, applies
+    through `POST /api/projects/{binding}/apply` with that plan's digest,
+    then applies from the page and reads "Another Apply finished these
+    changes first." with "In sync". It binds a third Project with a
+    T3code project associated, first after committing a change to
+    `bindings.yml` on the remote, and reads the conflict alert with every
+    value kept, then "Bind and review changes" again opens the new
+    Project's page with "Not applied", and the remote holds the binding
+    with the earlier change and every comment. In Settings, Task fields,
+    it adds a field in the Visual tab and reads it selected in the field
+    panel; sets its storage to a kind that cannot hold its type and reads
+    the "!", the red selects, the finding in the Problems strip, and
+    Publish disabled; sets a type the storage holds and reads the marks
+    clear and the impact; switches to YAML and reads the new field in the
+    text; publishes and reads the success toast, "Published <short
+    commit>" at the new commit, and the field in the Visual tab; and `GET
+    /api/declarations/source` answers the new text at that commit.
+    Fixture values are generic and never drawn from Manifold's own domain.
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It
     takes the request's path, which the HTTP host passes unchanged,

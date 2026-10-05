@@ -818,9 +818,6 @@ changes, with "Review impact".
   name (tooltip and label "Set by Manifold"). Its name, Required box, and
   storage are shown disabled, and it has no remove button.
 - A nested row shows "in parent" in the Stored as column.
-- The YAML sits beside the table, as the Source pane sits beside the graph
-  in the blueprint editor; under 1024px of content width they become tabs.
-  Selecting a row moves the YAML cursor to the field.
 - Selecting a row shows it in the field panel: "Stored as", whether that storage
   can hold the type, the kind's settings (project or issue field name, label
   prefix, front matter key), what exists on GitHub for it, its scope, and

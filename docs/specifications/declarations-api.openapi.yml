@@ -10,8 +10,9 @@ info:
   version: 0.1.0
   description: >-
     The declarations endpoints of Manifold's API: read, lint, and save of
-    `bindings.yml` and `task-metadata.yml`, the read of the bindings, and
-    the save of one binding as a structured edit.
+    `bindings.yml`, `task-metadata.yml`, and `portfolio.yml`, the edit of
+    one task field, the read of the bindings, and the save of one binding
+    as a structured edit.
 security: []
 paths:
   /api/declarations/source:
@@ -101,6 +102,40 @@ paths:
           $ref: "#/components/responses/Invalid"
         "502":
           $ref: "#/components/responses/RemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/task-fields/edit:
+    post:
+      operationId: editTaskFields
+      summary: Edit one task field of a task metadata text and lint the result; writes nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskFieldEditRequest"
+      responses:
+        "200":
+          description: The edited text, the edited field's location, and the lint of the edited text.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskFieldEditResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
         "503":
           $ref: "#/components/responses/Error"
   /api/declarations/bindings:
@@ -218,7 +253,7 @@ components:
       type: string
       pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
     DeclarationPath:
-      enum: [bindings.yml, task-metadata.yml]
+      enum: [bindings.yml, task-metadata.yml, portfolio.yml]
     DeclaredName:
       type: string
       maxLength: 64
@@ -242,11 +277,14 @@ components:
     Finding:
       type: object
       description: >-
-        The declaration lint's finding without its `file`, with `range`
-        when it has a place in the text. Members beyond those listed are
-        the lint's finding details.
+        The declaration lint's finding, with `range` when it is in the
+        linted text and has a place there, and with `file` only in an
+        answer for `portfolio.yml`. Members beyond those listed are the
+        lint's finding details.
       required: [kind, location, message]
       properties:
+        file:
+          enum: [portfolio, bindings]
         kind:
           type: string
         location:
@@ -277,28 +315,64 @@ components:
     TaskField:
       type: object
       additionalProperties: false
-      required: [binding, name, storage, lifecycle, location]
+      required: [binding, name, lifecycle, location]
       properties:
         binding:
           $ref: "#/components/schemas/DeclaredName"
         name:
           type: string
-          minLength: 1
         storage:
-          enum: [project-field, label, issue-type, issue-field, milestone, front-matter]
+          $ref: "#/components/schemas/StorageKindName"
         type:
           type: string
           minLength: 1
         required:
           type: boolean
+        settings:
+          type: object
+          additionalProperties:
+            type: string
+        options:
+          type: array
+          items:
+            type: string
+        parent:
+          type: string
+          description: The location of the field a nested field belongs to.
         lifecycle:
           type: boolean
         whenChanged:
           enum: [revert, accept]
+        onGitHub:
+          type: object
+          additionalProperties: false
+          required: [state, detail]
+          properties:
+            state:
+              enum: [present, missing, differs]
+            detail:
+              type: string
         location:
           type: string
         range:
           $ref: "#/components/schemas/Range"
+    StorageKindName:
+      enum: [project-field, label, issue-type, issue-field, milestone, front-matter]
+    StorageKind:
+      type: object
+      additionalProperties: false
+      required: [kind, types, settings]
+      properties:
+        kind:
+          $ref: "#/components/schemas/StorageKindName"
+        types:
+          type: array
+          items:
+            type: string
+        settings:
+          type: array
+          items:
+            type: string
     ProjectImpact:
       type: object
       additionalProperties: false
@@ -332,13 +406,16 @@ components:
             $ref: "#/components/schemas/Finding"
         warnings:
           type: array
-          maxItems: 0
           items:
             $ref: "#/components/schemas/Finding"
         fields:
           type: array
           items:
             $ref: "#/components/schemas/TaskField"
+        storageKinds:
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageKind"
         impact:
           type: array
           items:
@@ -370,6 +447,73 @@ components:
     LintResponse:
       allOf:
         - $ref: "#/components/schemas/Findings"
+      unevaluatedProperties: false
+    TaskFieldEditRequest:
+      type: object
+      additionalProperties: false
+      required: [text, edit]
+      properties:
+        text:
+          type: string
+        edit:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind, binding]
+              properties:
+                kind:
+                  const: add-field
+                binding:
+                  $ref: "#/components/schemas/DeclaredName"
+            - type: object
+              additionalProperties: false
+              required: [kind, location, values]
+              properties:
+                kind:
+                  const: set-field
+                location:
+                  type: string
+                values:
+                  type: object
+                  additionalProperties: false
+                  minProperties: 1
+                  properties:
+                    name:
+                      type: string
+                    type:
+                      type: string
+                    storage:
+                      $ref: "#/components/schemas/StorageKindName"
+                    required:
+                      type: boolean
+                    settings:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    options:
+                      type: array
+                      items:
+                        type: string
+                    whenChanged:
+                      enum: [revert, accept]
+            - type: object
+              additionalProperties: false
+              required: [kind, location]
+              properties:
+                kind:
+                  const: remove-field
+                location:
+                  type: string
+    TaskFieldEditResponse:
+      allOf:
+        - $ref: "#/components/schemas/Findings"
+        - type: object
+          required: [text, location]
+          properties:
+            text:
+              type: string
+            location:
+              type: string
       unevaluatedProperties: false
     SaveFields:
       type: object

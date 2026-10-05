@@ -9,6 +9,7 @@ relationships:
     - bindings-declaration
     - portfolio-declaration
     - task-metadata-declaration
+    - accounts-declaration
     - blueprints-api
     - t3code-environment-source
     - lint-console-edits-on-the-service
@@ -19,10 +20,11 @@ terms:
   - revision
 description: >-
   Defines the declarations endpoints of Manifold's API: the read, lint, and
-  save of the two process repository files the GitHub Projects screen and
-  the Task fields section of the operator console change, `bindings.yml`
-  and `task-metadata.yml`; the read of the bindings with what a binding may
-  name; and the save of one binding as a structured edit.
+  save of the process repository files the operator console changes,
+  `bindings.yml`, `task-metadata.yml`, and `portfolio.yml`; the edit of
+  one task field in a task metadata text; the read of the bindings with
+  what a binding may name; and the save of one binding as a structured
+  edit.
   `docs/specifications/declarations-api.openapi.yml` is the
   machine-readable definition. The console reads and writes through them,
   and any automation may.
@@ -30,22 +32,23 @@ description: >-
   The endpoints are mounted with the HTTP host's `mount` at the prefix
   `/api/declarations` and are always served without authentication.
   Access control belongs to the deployment. A path under the prefix that
-  is not one of the five below answers `404`. A method an endpoint does not
+  is not one of the six below answers `404`. A method an endpoint does not
   take answers `405` with `Allow` naming the one it takes.
 
-  **Declaration paths.** A declaration path is `bindings.yml` or
-  `task-metadata.yml`, the files at the root of the process repository
-  that `bindings-declaration` and `task-metadata-declaration` define. No
+  **Declaration paths.** A declaration path is `bindings.yml`,
+  `task-metadata.yml`, or `portfolio.yml`, the files at the root of the
+  process repository that `bindings-declaration`,
+  `task-metadata-declaration`, and `portfolio-declaration` define. No
   other path is read, linted, or saved through these endpoints. A request
   that names another path answers `400`.
 
-  **Findings.** A finding is the declaration lint's finding, as
-  `bindings-declaration` and `task-metadata-declaration` define it,
-  without its `file`, and with `range` when the finding has a place in the
-  text, by the rule `blueprints-api` states for a finding located by a
-  JSON Pointer or by a line and column. A text lints with the same
-  function and the same companion file as the service's revision follower
-  and the host CLI:
+  **Findings.** A finding is the declaration lint's finding, as the
+  file's specification defines it, with `range` when the finding is in
+  the linted text and has a place there, by the rule `blueprints-api`
+  states for a finding located by a JSON Pointer or by a line and column.
+  A finding keeps its `file` only in an answer for `portfolio.yml`. A
+  text lints with the same functions and the same companion files as the
+  service's revision follower and the host CLI:
 
   - `task-metadata.yml` lints with `lintTaskMetadataDeclaration`, with
     `bindings.yml` at the latest applied revision as `bindings`, as
@@ -55,23 +58,42 @@ description: >-
     `manifold-host portfolio lint` lints a checkout. The answer keeps the
     findings whose file is `bindings`; a finding in `portfolio.yml` is not
     the edited file's.
+  - `portfolio.yml` lints with `lintPortfolioDeclaration`, with
+    `bindings.yml` at the latest applied revision as `bindings`, as
+    `manifold-host portfolio lint` lints a checkout. The answer keeps the
+    findings of both files, each with its `file`, `portfolio` or
+    `bindings`, since a portfolio change can make the bindings fail, as
+    archiving an item a binding names does, and the service refuses a
+    revision whose bindings fail. Its warnings are those of
+    `lintAllocatedAccounts`, with `accounts.yml` at the latest applied
+    revision, as `accounts-declaration` defines them.
 
-  `findings` holds every finding, and `warnings` is empty; the two lists
-  keep the shape of `blueprints-api` so that one Problems list shows
-  either.
+  `findings` holds every finding, and `warnings` the warnings; a warning
+  does not refuse a save. `bindings.yml` and `task-metadata.yml` have no
+  warnings. The two lists keep the shape of `blueprints-api` so that one
+  Problems list shows either.
 
-  **Task fields.** A lint of `task-metadata.yml` with no finding answers
-  `fields`, one row per declared task field of each Project the document
-  names, in document order: `binding`; `name`; `storage`, the storage kind
-  of the field as `task-metadata-declaration` declares it, one of
-  `project-field`, `label`, `issue-type`, `issue-field`, `milestone`, and
-  `front-matter`; `type`, the field's value type when the declaration
-  gives one; `required` when the declaration gives it; `lifecycle`, true
-  for the Project's lifecycle field; `whenChanged`, `revert` or `accept`,
-  when the declaration gives the field's choice for a change made on
-  GitHub; `location`, the JSON Pointer of the field's entry; and `range`
-  by the rule for findings. The lifecycle field is a `project-field` of
-  type `single-select`, required.
+  **Task fields.** A lint of a `task-metadata.yml` text that parses as one
+  YAML document answers `fields`, read from the document whatever its
+  findings, so that a field with a finding still shows: one row per task
+  field of each Project the document names, in document order, a member
+  of the wrong kind read as absent. A row holds `binding`; `name`;
+  `storage`, the storage kind of the field as `task-metadata-declaration`
+  declares it, one of `project-field`, `label`, `issue-type`,
+  `issue-field`, `milestone`, and `front-matter`, or absent when the
+  document gives none; `type`, the field's value type, when given;
+  `required`, when given; `settings`, the storage kind's settings the
+  document gives, by their names in `task-metadata-declaration`;
+  `options`, the option names of a type with options; `parent`, the
+  location of the field a nested field belongs to; `lifecycle`, true for
+  the Project's lifecycle field; `whenChanged`, `revert` or `accept`,
+  when given; `onGitHub`, `{ state, detail }` with `state` `present`,
+  `missing`, or `differs`, when the service has observed the Project and
+  the text has no finding; `location`, the JSON Pointer of the field's
+  entry; and `range` by the rule for findings. The lifecycle field is a
+  `project-field` of type `single-select`, required. The answer also
+  holds `storageKinds`: each storage kind of `task-metadata-declaration`
+  with `kind`, the `types` it can hold, and the names of its `settings`.
 
   **Impact.** A lint of `task-metadata.yml` with no finding answers
   `impact`, one entry per GitHub Project binding of `bindings.yml` at the
@@ -80,21 +102,50 @@ description: >-
   `creates`, `changes`, and `removes`, the counts of each change that the
   plan of the linted declaration against the Project's observed state
   holds, as the Project configuration API plans an Apply. An entry with
-  no counts is a Project the service has not observed yet. Impact reads
-  GitHub state the service already holds and makes no GitHub request.
+  no counts is a Project the service has not observed yet. The same plan
+  gives each field row's `onGitHub`. Impact reads GitHub state the
+  service already holds and makes no GitHub request.
 
   **Source.** `GET /api/declarations/source?path=<path>` answers `200`
   with `path`; `commit`, the commit of the latest applied revision, which
   is the base for a save of this path; `exists`, whether the revision
   holds the file; `text`, the file's text, or the empty string when it
   holds none; `findings`; `warnings`; and for `task-metadata.yml`,
-  `fields` and `impact` when the text has no finding. Before the first
-  applied revision it answers `503`.
+  `fields` and `storageKinds` when the text parses and `impact` when it
+  has no finding. Before the first applied revision it answers `503`.
 
   **Lint.** `POST /api/declarations/lint` takes `{ path, text }` and
   answers `200` with `findings`, `warnings`, and for `task-metadata.yml`,
-  `fields` and `impact` when the text has no finding. It reads and writes
-  nothing else. Before the first applied revision it answers `503`.
+  `fields` and `storageKinds` when the text parses and `impact` when it
+  has no finding. It reads and writes nothing else. Before the first
+  applied revision it answers `503`.
+
+  **Field edit.** `POST /api/declarations/task-fields/edit` takes `{
+  text, edit }`, a task metadata text and one edit of it, and answers
+  `200` with `text`, the edited text; `location`, the JSON Pointer of the
+  edited, added, or removed field; and the lint answer of the edited text. It
+  writes nothing; the caller keeps the text. `edit` is one of:
+
+  - `{ kind: "add-field", binding }`: adds, at the end of the binding's
+    fields, a `front-matter` field of type string named `field-<n>`, the
+    lowest `n` from 1 that no field of the binding uses, with that name as
+    its front matter key, adding the binding's entry when absent.
+  - `{ kind: "set-field", location, values }`: sets each member `values`
+    names, of `name`, `type`, `storage`, `required`, `settings`,
+    `options`, and `whenChanged`, on the field at `location`, and keeps
+    its other members and its place. A changed `storage` removes the
+    settings the new kind does not take.
+  - `{ kind: "remove-field", location }`: deletes the field's entry.
+
+  The edit keeps every comment, and in a file in the block style the
+  `yaml` package writes, every line outside the edited field stays
+  unchanged. An edited text may have findings; they are in the answer. A
+  text that does not parse answers `422` with its `syntax` finding; a
+  `location` that names no field answers `422` with a `field-missing`
+  finding at it; and a change of the lifecycle field's `name`,
+  `required`, or `storage`, or its removal, answers `422` with a
+  `field-locked` finding at it. Before the first applied revision it
+  answers `503`.
 
   **Save.** `POST /api/declarations/save` takes `{ path, base, text,
   message, saveId }`, with the meaning and limits of the blueprint save in
@@ -160,7 +211,8 @@ description: >-
   answers are those of a save, the `409` text being `bindings.yml` on the
   branch. A `base` the process repository does not hold answers `400`.
 
-  **Requests.** `lint`, `save`, and `bindings/save` take the request
+  **Requests.** `lint`, `save`, `task-fields/edit`, and `bindings/save`
+  take the request
   checks of `blueprints-api`: `Content-Type: application/json` or `415`,
   the same-site checks or `403`, a body of 8 MiB at most or `413`, and a
   body that is not JSON or not of the stated shape `400` with the first
@@ -176,14 +228,25 @@ validation-criteria: >-
   schema; that `source` of `task-metadata.yml` answers its text, the
   revision's commit, and `fields` with the lifecycle field locked as
   stated, and of an absent file answers `exists` false, empty text, and no
-  finding; that `lint` of `task-metadata.yml` answers, for the
+  finding; that `lint` of a task metadata text with a field whose storage
+  cannot hold its type answers that field's row with the finding located
+  under it, and of a text that does not parse answers no `fields`; that
+  `lint` of `task-metadata.yml` answers, for the
   `task-metadata-declaration` lint fixtures, the findings whose kinds and
   locations `manifold-host task-metadata lint` prints for the same files,
   each with its range, and of `bindings.yml` the findings `manifold-host
   portfolio lint` prints for the bindings file, without the findings of a
-  broken `portfolio.yml`; that `impact` counts a fixture planner's creates,
+  broken `portfolio.yml`, and of `portfolio.yml` that archives an item a
+  binding names the `bindings` finding with its `file` and the
+  allocated-account warnings of a fixture `accounts.yml`; that a
+  `portfolio.yml` save with a `bindings` finding answers `422`, and one
+  with only warnings saves; that `impact` counts a fixture planner's creates,
   changes, and removes per bound Project and lists an unobserved Project
-  with no counts; that a save answers `saved` with `loaded` true and the
+  with no counts, and each field row's `onGitHub` from the fixture
+  planner; that each field edit keeps a comment above another field,
+  `add-field` twice adds `field-1` and `field-2` and answers each
+  location, a `set-field` of `storage` drops the old kind's settings, and
+  a lifecycle `remove-field` answers `422` `field-locked`; that a save answers `saved` with `loaded` true and the
   remote branch holds one new commit with the message, the same save again
   answers `already-saved`, a text with a finding answers `422`, and a base
   whose file changed answers `409` with the branch's text; that `bindings`
