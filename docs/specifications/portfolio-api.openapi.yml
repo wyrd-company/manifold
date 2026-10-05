@@ -9,10 +9,9 @@ info:
   title: Manifold portfolio API
   version: 0.1.0
   description: >-
-    The portfolio endpoints of Manifold's API: the portfolio read with
-    allocations, accounts, windows, and balances, and the source, lint,
-    and save of `portfolio.yml` as a commit pushed to the process
-    repository.
+    The portfolio endpoint of Manifold's API: the portfolio read with
+    allocations, accounts, windows, balances, and the warnings of the
+    declaration in force.
 security: []
 paths:
   /api/portfolio:
@@ -29,118 +28,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PortfolioResponse"
+        "404":
+          $ref: "#/components/responses/Error"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
-          $ref: "#/components/responses/Error"
-  /api/portfolio/source:
-    get:
-      operationId: readPortfolioSource
-      summary: Read `portfolio.yml` at the latest applied revision with its findings.
-      responses:
-        "200":
-          description: The file's text, the base commit for a save, and the text's findings.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PortfolioSource"
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
-        "503":
-          $ref: "#/components/responses/Error"
-  /api/portfolio/lint:
-    post:
-      operationId: lintPortfolioText
-      summary: Lint a `portfolio.yml` text as the service applies a revision.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LintRequest"
-      responses:
-        "200":
-          description: The text's findings and warnings.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LintResponse"
-        "400":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
-        "413":
-          $ref: "#/components/responses/Error"
-        "415":
-          $ref: "#/components/responses/Error"
-        "503":
-          $ref: "#/components/responses/Error"
-  /api/portfolio/save:
-    post:
-      operationId: savePortfolio
-      summary: Commit a `portfolio.yml` text to the configured branch and push it.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SaveRequest"
-      responses:
-        "200":
-          description: The text is on the branch.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SaveResponse"
-        "400":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
-        "409":
-          description: The file on the branch changed since the base, or the branch moved under the save.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SaveConflict"
-        "413":
-          $ref: "#/components/responses/Error"
-        "415":
-          $ref: "#/components/responses/Error"
-        "422":
-          description: The text has lint findings; nothing was written.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SaveInvalid"
-        "502":
-          description: The remote refused the push or could not be reached.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SaveRemoteError"
-        "503":
           $ref: "#/components/responses/Error"
 components:
   headers:
@@ -162,7 +54,7 @@ components:
       headers:
         Allow:
           schema:
-            enum: [GET, POST]
+            const: GET
         Cache-Control:
           $ref: "#/components/headers/NoStore"
       content:
@@ -199,13 +91,8 @@ components:
         error:
           type: string
           enum:
-            - bad-request
-            - cross-site
             - not-found
             - method-not-allowed
-            - too-large
-            - unsupported-media-type
-            - unavailable
             - internal
         message:
           type: string
@@ -421,135 +308,20 @@ components:
     Finding:
       type: object
       additionalProperties: false
-      required: [file, kind, location, message]
+      required: [file, kind, location, severity, message]
+      description: A warning of the declaration in force, as `lintAllocatedAccounts` gives it.
       properties:
         file:
-          enum: [portfolio, bindings, accounts]
+          const: portfolio
         kind:
           type: string
           minLength: 1
         location:
           type: string
           description: An RFC 6901 JSON Pointer in the file's document.
-        message:
-          type: string
         severity:
           const: warning
+        message:
+          type: string
         details:
           type: object
-    PortfolioSource:
-      type: object
-      additionalProperties: false
-      required: [path, commit, exists, text, findings, warnings]
-      properties:
-        path:
-          const: portfolio.yml
-        commit:
-          $ref: "#/components/schemas/Commit"
-        exists:
-          type: boolean
-        text:
-          type: string
-        findings:
-          type: array
-          items:
-            $ref: "#/components/schemas/Finding"
-        warnings:
-          type: array
-          items:
-            $ref: "#/components/schemas/Finding"
-    LintRequest:
-      type: object
-      additionalProperties: false
-      required: [text]
-      properties:
-        text:
-          type: string
-    LintResponse:
-      type: object
-      additionalProperties: false
-      required: [findings, warnings]
-      properties:
-        findings:
-          type: array
-          items:
-            $ref: "#/components/schemas/Finding"
-        warnings:
-          type: array
-          items:
-            $ref: "#/components/schemas/Finding"
-    SaveRequest:
-      type: object
-      additionalProperties: false
-      required: [base, text, message, saveId]
-      properties:
-        base:
-          $ref: "#/components/schemas/Commit"
-        text:
-          type: string
-        message:
-          type: string
-          minLength: 1
-          maxLength: 4096
-          pattern: "\\S"
-        saveId:
-          type: string
-          pattern: "^[0-9a-f]{32}$"
-    SaveResponse:
-      type: object
-      additionalProperties: false
-      required: [outcome, commit, loaded]
-      properties:
-        outcome:
-          enum: [saved, already-saved, unchanged]
-        commit:
-          $ref: "#/components/schemas/Commit"
-        loaded:
-          type: boolean
-          description: Whether the service holds the commit, as that commit or a later commit of the branch.
-    SaveConflict:
-      type: object
-      additionalProperties: false
-      required: [error, message, reason, head]
-      properties:
-        error:
-          const: conflict
-        message:
-          type: string
-        reason:
-          enum: [file-changed, branch-moved]
-          description: >-
-            `file-changed`: the file on the branch differs from the file at
-            the base. `branch-moved`: the branch moved under the push and
-            again under its one retry.
-        head:
-          $ref: "#/components/schemas/Commit"
-        text:
-          type: string
-    SaveInvalid:
-      type: object
-      additionalProperties: false
-      required: [error, message, findings, warnings]
-      properties:
-        error:
-          const: invalid
-        message:
-          type: string
-        findings:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/Finding"
-        warnings:
-          type: array
-          items:
-            $ref: "#/components/schemas/Finding"
-    SaveRemoteError:
-      type: object
-      additionalProperties: false
-      required: [error, message]
-      properties:
-        error:
-          enum: [rejected, authentication, remote]
-        message:
-          type: string

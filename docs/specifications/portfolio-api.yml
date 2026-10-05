@@ -9,11 +9,8 @@ relationships:
     - portfolio-declaration
     - accounts-declaration
     - bindings-declaration
-    - process-repository
     - service-assembly
-    - host-cli-portfolio-lint
-    - blueprints-api
-    - lint-console-edits-on-the-service
+    - declarations-api
 terms:
   - portfolio-item
   - allocation
@@ -27,22 +24,22 @@ terms:
   - reservation
   - actual
 description: >-
-  Defines the portfolio endpoints of Manifold's API: the portfolio read,
+  Defines the portfolio endpoint of Manifold's API: the portfolio read,
   which answers the portfolio items with their allocations, the accounts
-  with their capacity and current window, and each item's available
-  balance per account; the text of `portfolio.yml` with its findings; the
-  lint of edited text; and the save of edited text as a commit pushed to
-  the process repository. `docs/specifications/portfolio-api.openapi.yml`
-  is the machine-readable definition. The Portfolio screen of the operator
-  console reads and writes through them, and any automation may.
+  with their capacity and current window, each item's available balance
+  per account, and the warnings of the declaration in force.
+  `docs/specifications/portfolio-api.openapi.yml` is the machine-readable
+  definition. The Portfolio screen of the operator console reads it, and
+  any automation may. The text of `portfolio.yml` is read, linted, and
+  saved through the `portfolio.yml` path of `declarations-api`.
 
-  The endpoints are mounted with the HTTP host's `mount` at the prefix
-  `/api/portfolio` and are always served without authentication. Access
-  control belongs to the deployment. A path under the prefix that is not
-  one of the four below answers `404`. A method an endpoint does not take
-  answers `405` with `Allow` naming the one it takes. Every answer is JSON
-  with `Cache-Control: no-store`, and every error answer holds `error` and
-  `message`.
+  The endpoint is mounted with the HTTP host's `mount` at the prefix
+  `/api/portfolio` and is always served without authentication. Access
+  control belongs to the deployment. A path under the prefix other than
+  the prefix itself answers `404`. A method other than `GET` answers
+  `405` with `Allow: GET`. Every answer is JSON with `Cache-Control:
+  no-store`, and every error answer holds `error` and `message`. The
+  query string is ignored.
 
   **Amounts.** Every amount is an integer in its account's native unit,
   as the ledger holds it: for an account whose unit is `usd`, millionths
@@ -85,11 +82,14 @@ description: >-
   - `unallocated`: the top level's unallocated remainder, one entry per
     account in `accounts`.
 
-  - `warnings`: the warnings of the declaration in force:
+  - `warnings`: the warnings of the declaration in force,
     `lintAllocatedAccounts` over `portfolio.yml` and `accounts.yml` at
     the commit of the declaration in force, the revision whose apply
-    accepted it, so they are the warnings that apply reported. Empty
-    before the first accepted declaration.
+    accepted it, so they are the warnings that apply reported, such as
+    `account-undeclared` at an allocation's account name. Each holds
+    `file`, `kind`, `location`, the RFC 6901 JSON Pointer in the file's
+    document, `severity`, `message`, and `details`, as the lint gives
+    them. Empty before the first accepted declaration.
 
   An item's `projects` holds `github`, each GitHub Project binding that
   is not archived and names the item, as `{ binding, owner, number }` in
@@ -126,107 +126,29 @@ description: >-
   capacity module's balance read before it reads, as a gate's balance
   read does, so the balances are those of the window that covers `at`.
   It writes nothing else. A read that throws answers `500`.
-
-  **Findings.** A finding holds `file`, `portfolio`, `bindings`, or
-  `accounts`; `kind`; `location`, the RFC 6901 JSON Pointer in that
-  file's document; `message`; `severity`, `warning`, on a warning; and
-  `details` when the lint gives them. A text lints with the functions the
-  service applies to every revision and `manifold-host portfolio lint`
-  runs, so the three report the same findings for the same files:
-  `findings` holds the findings of `lintPortfolioDeclaration` over the
-  text and `bindings.yml`, which refuse a declaration, and `warnings`
-  holds the warnings of `lintAllocatedAccounts` over the text and
-  `accounts.yml`, such as `account-undeclared` at an allocation's account
-  name, which do not, each in the lint's order.
-
-  **Source.** `GET /api/portfolio/source` answers `200` with `path`,
-  `portfolio.yml`; `commit`, the commit of the latest applied revision,
-  which is the base for a save; `exists`, whether that revision holds the
-  file; `text`, the file's text, or the empty string when the file is
-  absent; and `findings` and `warnings` of that text with `bindings.yml`
-  and `accounts.yml` at that revision. Before the first applied revision
-  it answers `503`.
-
-  **Lint.** `POST /api/portfolio/lint` takes `{ text }` and answers `200`
-  with `findings` and `warnings` of the text with `bindings.yml` and
-  `accounts.yml` at the latest applied revision. It reads and writes
-  nothing else. Before the first applied revision it answers `503`.
-
-  **Save.** `POST /api/portfolio/save` takes `{ base, text, message,
-  saveId }`. `base` is the commit the edit started from. `message` is the
-  commit message, 1 to 4096 UTF-16 code units with at least one character
-  that is not white space. `saveId` is 32 lower-case hexadecimal
-  characters that the caller chooses once for one text and sends again
-  with every retry of that text. The service lints `text` first, as the
-  lint endpoint does: a text with a finding answers `422` with `findings`
-  and `warnings`, and nothing is written. Otherwise the revision follower
-  pulls, commits `text` at `portfolio.yml` on top of the branch's commit,
-  pushes it, pulls it, and applies it, as `process-repository` and
-  `service-assembly` state. The answer is `200` with `outcome`, `commit`,
-  and `loaded`:
-
-  - `saved`: the commit was pushed; `commit` is the new commit.
-  - `already-saved`: a commit on the branch carries this `saveId`;
-    `commit` is that commit, and nothing new is pushed.
-  - `unchanged`: the file at the branch's commit already equals `text`;
-    `commit` is the branch's commit, and nothing is pushed.
-
-  `loaded` is true when the service holds the answer's commit, as that
-  commit or a later commit of the branch, and false when the pull after
-  the push failed. A save that conflicts answers `409` with `reason`,
-  `head`, the branch's commit, and `text`, the file's text there, absent
-  when the file is not there; nothing of the save is on the branch.
-  `reason` is `file-changed` when the file on the branch differs from the
-  file at `base`, and `branch-moved` when the branch moved under the
-  save's push and again under its one retry. A save the remote refuses
-  while the branch stays where the save found it answers `502` with
-  `error` `rejected` and the remote's reason; an authentication the remote
-  refuses answers `502` with `error` `authentication`; any other failure
-  to reach the remote, its pull timeout included, answers `502` with
-  `error` `remote`. Before the first applied revision, and while the
-  service stops, a save answers `503`. The service never force-pushes.
-
-  **Requests.** `lint` and `save` take `Content-Type: application/json`
-  and answer `415` for any other type. A request with `Sec-Fetch-Site:
-  cross-site` answers `403`, and so does one with an `Origin` header whose
-  host and port equal neither its `Host` header nor its
-  `X-Forwarded-Host` header, as `blueprints-api` states. A body over 8 MiB
-  answers `413`. A body that is not JSON or not of the stated shape
-  answers `400` with the first problem. The query string of every
-  endpoint is ignored.
 format: openapi
 validation-criteria: >-
   `docs/specifications/portfolio-api.openapi.yml` is a valid OpenAPI 3.1
-  document. Tests in `packages/service` serve a fixture process repository
-  over smart HTTP with push enabled, start the service on it with a
-  fixture clock, and call each endpoint without authentication through
-  the service's HTTP host. The fixture declares accounts `acct-a` (`usd`,
-  `api`) and `acct-b` (`usd`, `subscription`), items `alpha` holding
-  `beta` and `gamma`, and `delta` archived, and an allocation for
-  `acct-c`, which `accounts.yml` does not declare. They check that each
-  body validates against its response schema; that the read lists
-  `acct-a`, `acct-b`, then `acct-c` with `declared` false and no window;
-  that the first read credits the current window of each declared
-  account once and a second read credits nothing; that after a
-  reservation and actuals on `beta` for `acct-a`, `beta` and `alpha`
-  answer the actual, outstanding, available, and reservable the ledger's
-  `balance` answers, `lifetime` counts an actual in an earlier window,
-  and the account's `used` equals the window's actuals plus outstanding
-  reservations, an actual on `delta` and one on an item the declaration
-  no longer holds included; that `alpha/other` follows `gamma` and the
-  top-level `other` comes last; that `unallocated` at the top level and
-  under `alpha` hold the remainder's percentage and amount; that
-  `activeTasks` counts an active snapshot on `gamma` under `alpha`; that
-  the read's `warnings` and `source`'s `warnings` hold the
-  `account-undeclared` warning at the allocation's account name, and
-  `source` answers the file's text and the revision's commit; that
-  `lint` of a text whose guarantees under `alpha` total 110% answers one
-  `guarantee-limit` finding at `/items/alpha/items`, the line `manifold-host
-  portfolio lint` prints for the same files; that a save answers `saved`
-  with `loaded` true, the remote branch holds one new commit with the
-  message, the read then answers the new commit as the declaration in
-  force with the new guarantee, and the same save again answers
-  `already-saved`; that a save whose base file changed on the remote
-  answers `409` with reason `file-changed` and the remote's text; that a
-  text with a finding answers `422` and pushes nothing; and the `400`,
-  `403`, `404`, `405`, `413`, `415`, and `503` answers.
+  document. Tests in `packages/service` serve a fixture process repository,
+  start the service on it with a fixture clock, and request the endpoint
+  without authentication through the service's HTTP host. The fixture
+  declares accounts `acct-a` (`usd`, `api`) and `acct-b` (`usd`,
+  `subscription`), items `alpha` holding `beta` and `gamma`, and `delta`
+  archived, and an allocation for `acct-c`, which `accounts.yml` does not
+  declare. They check that each body validates against its response
+  schema; that the read lists `acct-a`, `acct-b`, then `acct-c` with
+  `declared` false and no window, and holds the `account-undeclared`
+  warning at the allocation's account name; that the first read credits
+  the current window of each declared account once and a second read
+  credits nothing; that after a reservation and actuals on `beta` for
+  `acct-a`, `beta` and `alpha` answer the actual, outstanding, available,
+  and reservable the ledger's `balance` answers, `lifetime` counts an
+  actual in an earlier window, and the account's `used` equals the
+  window's actuals plus outstanding reservations, an actual on `delta`
+  and one on an item the declaration no longer holds included; that
+  `alpha/other` follows `gamma` and the top-level `other` comes last; that
+  `unallocated` at the top level and under `alpha` hold the remainder's
+  percentage and amount; that `activeTasks` counts an active snapshot on
+  `gamma` under `alpha`; that after a commit that changes `alpha`'s
+  guarantee is applied, the read answers its commit and the new guarantee;
+  and the `404`, `405`, and `500` answers.

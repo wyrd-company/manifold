@@ -129,9 +129,9 @@ proposed-design:
     the read carries the `account-undeclared` warnings of the declaration
     in force. The read credits each declared account's current window as
     a gate's balance read does, and changes nothing else. The operator
-    edits `portfolio.yml` from the Portfolio screen, which lints with
-    `lintPortfolioDeclaration` and `lintAllocatedAccounts` and saves
-    through the revision follower, as `operator-console` states.
+    edits `portfolio.yml` from the Portfolio screen, which reads, lints,
+    and saves it through the `portfolio.yml` path of `declarations-api`,
+    as `operator-console` states.
   settlement: >-
     When an actor ends, by final state, by forced re-intake, or by its issue
     closing, its reservations are retired and its actuals stay. After a

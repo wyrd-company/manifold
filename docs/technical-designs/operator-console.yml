@@ -1543,11 +1543,16 @@ proposed-design:
     unchanged. The route's search parameter `account` names the account
     whose allocations the table shows and edits; with no `account`, or one
     that names no listed account, the table shows the first account the
-    read lists. The screen reads `GET /api/portfolio` and `GET
-    /api/portfolio/source` through TanStack Query under the keys
-    `["portfolio"]` and `["portfolio-source"]`, which read again when the
-    window regains focus, when the screen opens, and from the ghost
-    "Refresh" icon button in the title row. No timer reads on a schedule.
+    read lists. The screen reads `GET /api/portfolio` of `portfolio-api`
+    under the key `["portfolio"]`, and the text of `portfolio.yml` with
+    `fetchDeclarationSource("portfolio.yml")` of `declarations-api` under
+    `["declaration", "portfolio.yml"]`. Both read again when the window
+    regains focus, when the screen opens, and from the ghost "Refresh"
+    icon button in the title row. No timer reads on a schedule. The
+    screen lints and saves `portfolio.yml` through the `portfolio.yml`
+    path of `declarations-api`, the one save path of process repository
+    declarations: `lintDeclarationText` and `saveDeclaration` of
+    `src/api/declarations.ts`.
   portfolio-screen: >-
     From top to bottom, as `DESIGN.md` lays out Portfolio: the title row,
     with "Edit allocations" (outline) and "Add item" (primary); the budget
@@ -1740,69 +1745,72 @@ proposed-design:
     answers `ok: false`. The empty text with an add gives `items:` with
     the item.
   portfolio-drafts: >-
-    The portfolio draft is the draft of `portfolio.yml`, kept in
-    `localStorage` under `manifold.portfolio-draft` as JSON `{ base,
-    baseText, edits, text, saveId?, message?, saved? }`, where `text` is
+    The portfolio draft is the draft of `portfolio.yml`. It is kept with
+    `readDraft` and `writeDraft` of `src/screens/blueprints/draft.ts`
+    under the declarations prefix, as
+    `manifold.declaration-draft.portfolio.yml`, with one more member,
+    `edits`, the draft's list of `PortfolioEdit`, so its `text` is
     `applyEdits(baseText, edits)`. `src/screens/portfolio/draft.ts` holds
-    the pure functions that read, write, and change it; a value that does
-    not parse as that shape is removed and ignored. An edit appends to
-    `edits`, recomputes `text`, and removes `saveId`. The draft is removed
-    when its text equals `baseText` and it has no `saved`, and when it is
-    discarded. A save, a pending save, and the settling of a draft by a
-    source read follow `blueprint-drafts` and `pending-save` for the path
-    `portfolio.yml`: a `200` sets `saved` and keeps the draft; a source
-    read whose text equals the draft's removes it; when the answer had
-    `loaded` and the source's text differs, the draft becomes an ordinary
-    draft based on the source, with its edits applied again to the
-    source's text. A draft with `saved` and no `loaded` answer shows the
+    the pure functions that check `edits`, append an edit, and apply the
+    edits again to another base; a stored draft whose `edits` is not a
+    list of edits is removed and ignored. An edit appends to `edits`,
+    recomputes `text`, and removes `saveId`. A save, a pending save, and
+    the settling of a draft by a source read follow `blueprint-drafts` and
+    `pending-save` through `savedDraft`, `settleDraft`, and
+    `createSaveId`, with the save answer's `loaded` where the blueprint
+    answer's `blueprint` stands; when a source read after a `loaded`
+    answer differs from the draft's text, the draft becomes an ordinary
+    draft based on the source with its edits applied again to the
+    source's text. A draft with `saved` before a `loaded` answer shows the
     pending alert "Saved as <short commit>. The service has not loaded it
     yet. Your changes are kept." with "Load saved version", which sends
     the save again with the same `saveId`.
   portfolio-save: >-
     "Save allocations" is enabled when the draft's text differs from its
     base text, the latest lint answer is for that text, and it has no
-    finding; warnings do not block it. It sends `POST /api/portfolio/save`
-    with the draft's base, text, message, "Update portfolio allocations"
-    when it has none, and `saveId`, which the editor sets first when the
-    draft has none, as `publish` states. The button shows a spinner while
-    the request runs. For `200` the screen shows "Saved as <short commit>",
-    "Already saved as <short commit>", or "No change to save" in a success
-    toast, and reads the portfolio and the source again. For `422` the
-    findings mark the draft. For `409` the conflict alert opens under the
-    title row in the error tint: "portfolio.yml changed on the branch at
-    <short head>. Your changes are kept." for `file-changed`, and "The
-    branch moved while saving, at <short head>. Your changes are kept."
-    for `branch-moved`, with "Apply my changes to the latest" and "Discard
-    changes". "Apply my changes to the latest" sets the draft's base to
-    the head and its base text to the conflict's text, the empty string
-    when absent, applies its edits again, and removes `saveId`; when an
-    edit drops, an info alert lists each dropped edit. For `502`, `503`, a
-    network failure, or a request whose answer never arrives, an error
-    alert shows the message with "Try again", which sends the same
-    request. The screen never discards the draft on its own.
+    finding; warnings do not block it. It opens the Blueprints editor's
+    `PublishDialog` with the title "Save allocations", the file
+    `portfolio.yml` with `A` or `M`, and the message prefilled with
+    "Update portfolio allocations". "Commit and push" sends
+    `saveDeclaration` with the path `portfolio.yml`, the draft's base,
+    text, message, and `saveId`, set first when the draft has none, as
+    `publish` states. The edit item dialog saves with its own message and
+    no publish dialog. For `200` the screen shows "Saved as <short
+    commit>", "Already saved as <short commit>", or "No change to save" in
+    a success toast and reads the portfolio and the source again, so the
+    saved commit shows as the declaration in force. For `422` the findings
+    mark the draft. For `409` the conflict alert opens under the title row
+    in the error tint: "portfolio.yml changed on <branch> at <short head>.
+    Your changes are kept." for `file-changed`, and "<branch> moved while
+    saving, at <short head>. Your changes are kept." for `branch-moved`,
+    with "Apply my changes to the latest" and "Discard changes". "Apply my
+    changes to the latest" sets the draft's base to the head and its base
+    text to the conflict's text, the empty string when absent, applies its
+    edits again, and removes `saveId`; when an edit drops, an info alert
+    lists each dropped edit. For `502`, `503`, a network failure, or a
+    request whose answer never arrives, an error alert shows the message
+    with "Try again", which sends the same request. The screen never
+    discards the draft on its own.
   portfolio-lint-as-you-change: >-
     Each change of the draft's text, from the table or the dialog, starts
     a 300 ms wait, the wait the Blueprints editor uses; a change during
-    the wait starts it again. When it ends, the screen sends `POST
-    /api/portfolio/lint` with the text and aborts the lint request still in
-    flight with its `AbortController`. An answer is applied only while the
-    text is still the text it was sent for. While a lint is pending the
-    status bar shows "Checking…" and the previous marks stay. A lint
-    request that fails shows "Cannot check these changes. Try again." with
-    "Try again", and saving stays disabled.
+    the wait starts it again. When it ends, the screen sends
+    `lintDeclarationText("portfolio.yml", text, signal)` and aborts the
+    lint request still in flight. An answer is applied only while the text
+    is still the text it was sent for. While a lint is pending the status
+    bar shows "Checking…" and the previous marks stay. A lint request that
+    fails shows "Cannot check these changes. Try again." with "Try again",
+    and saving stays disabled.
   portfolio-client: >-
-    `src/api/portfolio.ts` exports `fetchPortfolio()`,
-    `fetchPortfolioSource()`, `lintPortfolioText(text, signal)`, and
-    `savePortfolio(request)`. Each sends its request without
-    authentication headers, with `Content-Type: application/json` for a
-    body, and turns the answer into a result as `blueprints-client` does:
-    `ok` with the body, a typed `conflict` or `invalid`, or `failed` with
-    the API's message or a generic message for a network error or a body
-    that does not match. The mapping from a status and a body to a result
-    is a pure function, and each body is checked at this boundary with the
-    guards of `@wyrd-company/manifold-shared/portfolio-api`. Lint and save
-    are mutations, never cached; when a save settles it marks
-    `["portfolio"]` and `["portfolio-source"]` stale.
+    `src/api/portfolio.ts` exports `fetchPortfolio()`. It sends `GET
+    /api/portfolio` without authentication headers and turns the answer
+    into `ok` with the body, or `failed` with the API's message or a
+    generic message for a network error or a body that does not match.
+    The mapping from a status and a body to a result is a pure function,
+    and the body is checked at this boundary with the guard of
+    `@wyrd-company/manifold-shared/portfolio-api`. When a save of
+    `portfolio.yml` settles, the screen marks `["portfolio"]` stale beside
+    the key the declarations client marks.
   amounts: |-
     Every amount the console shows, on Portfolio and in the Task page's
     Usage panel, is formatted in its account's unit by one module,
@@ -1839,30 +1847,21 @@ proposed-design:
     variance, signed, with the entry's `unit` from `tasks-api`.
   portfolio-endpoints: >-
     `mountPortfolioApi(host, options)` mounts one listener at
-    `/api/portfolio` that implements `portfolio-api`, with the paths `""`
-    (the read), `/source`, `/lint`, and `/save` under the prefix. A pure
-    function, `portfolioRead(input)` in `read.ts`, builds the read's
-    answer from the declaration in force, the accounts in force, each
-    item's balance and the account's window and totals for each account,
-    and the active snapshots; the listener gathers them per request and
-    holds no cache. It reads balances through the portfolio whose ledger
-    is the capacity module's, so the first `balance` of a declared account
-    credits its current window as a gate's read does; it then reads the
-    window with `windowAt` and the totals with `totals`. The read's
-    `warnings` are `lintAllocatedAccounts` over `portfolio.yml` and
-    `accounts.yml` read through `processRepository.revisionAt` at the
-    commit of the declaration in force, kept for that one commit until
-    the commit changes. Source and lint read `bindings.yml` and
-    `accounts.yml` at the latest applied revision, `revisions.latest()`'s
-    commit, and run `lintPortfolioDeclaration` and
-    `lintAllocatedAccounts`. A save lints first, answers `422` for a
-    finding, and otherwise awaits `revisions.save` with the path
-    `portfolio.yml` and maps its result as `blueprints-endpoints` does,
-    with `loaded` true when the result carries its load. The request
-    checks are the blueprints API's pure checks in
-    `blueprints-api/request-checks.ts`, run before a body is read, and a
-    body is read up to 8 MiB. Any other error answers `500` and goes to
-    `log` with the path.
+    `/api/portfolio` that implements `portfolio-api`. A pure function,
+    `portfolioRead(input)` in `read.ts`, builds the answer from the
+    declaration in force, the accounts in force, each item's balance and
+    the account's window and totals for each account, the warnings, and
+    the active snapshots; the listener gathers them per request. It reads
+    balances through the portfolio whose ledger is the capacity module's,
+    so the first `balance` of a declared account credits its current
+    window as a gate's read does; it then reads the window with
+    `windowAt` and the totals with `totals`. The warnings are
+    `lintAllocatedAccounts` over `portfolio.yml` and `accounts.yml` read
+    through `processRepository.revisionAt` at the commit of the
+    declaration in force; the listener keeps them for that one commit
+    until the declaration in force changes, so a read reads the files
+    once per commit. A read that throws answers `500`, and the error goes
+    to `log` with the path.
   portfolio-public-interface: |-
     `packages/service/src/portfolio-api/index.ts` exports exactly these
     names.
@@ -1873,7 +1872,6 @@ proposed-design:
     import type { Ledger } from "../ledger/index.ts";
     import type { PortfolioInForce } from "../portfolio/index.ts";
     import type { ProcessRepository } from "../process-repository/index.ts";
-    import type { Revisions } from "../service/index.ts";
     import type { UsageAccount } from "@wyrd-company/manifold-shared";
     import type { ServiceWiringPart } from "../service/index.ts";
 
@@ -1885,7 +1883,6 @@ proposed-design:
       };
       /** The accounts declaration in force: usage intake's `accounts`. */
       accounts(): Readonly<Record<string, UsageAccount>>;
-      readonly revisions: Pick<Revisions, "latest" | "save">;
       readonly processRepository: Pick<ProcessRepository, "revisionAt">;
       readonly store: Pick<Store, "activeSnapshots">;
       /** The service clock. Defaults to Date.now. */
@@ -1902,12 +1899,13 @@ proposed-design:
 
     `@wyrd-company/manifold-shared` adds the subpath export
     `./portfolio-api`, which holds no lint and no YAML parser: the path
-    `portfolioApiPath` (`/api/portfolio`), the request and response types
-    of `portfolio-api`, and a guard for each response. It adds the subpath
-    export `./amounts` of `amounts`. In `packages/service/src/portfolio-api/`,
-    `index.ts` re-exports the public names, `listener.ts` holds the
-    routing, `read.ts` the pure read, `answers.ts` the pure mapping from a
-    lint or a save result to an answer, and `wiring.ts` the part. In
+    `portfolioApiPath` (`/api/portfolio`), the response types of
+    `portfolio-api`, and a dependency-free guard for the response, which a
+    shared test checks against the OpenAPI definition with fixtures that
+    pass and fail. It adds the subpath export `./amounts` of `amounts`. In
+    `packages/service/src/portfolio-api/`, `index.ts` re-exports the public
+    names, `listener.ts` holds the routing and the warnings kept per
+    commit, `read.ts` the pure read, and `wiring.ts` the part. In
     `packages/console`, `src/screens/portfolio/` holds `PortfolioContent.tsx`,
     `BudgetSourceCards.tsx`, `PortfolioTable.tsx`, `CurrentUsageCell.tsx`,
     `StatusBar.tsx`, `ProblemsList.tsx`, `EditItemDialog.tsx`,
@@ -1915,30 +1913,33 @@ proposed-design:
     `rows.ts` (the read to table rows for an account, the current-usage
     choice, and the window labels), and `findings.ts`.
   portfolio-wiring: >-
-    `portfolioApiPart` is the service wiring part named `portfolio-api`,
-    in `packages/service/src/portfolio-api/wiring.ts`, listed once in
-    `start.ts` after the blueprints API's entry. It starts by calling
-    `mountPortfolioApi` with the HTTP host, the portfolio whose ledger is
-    `capacity.ledger`, `usage.accounts`, the revision follower, the
-    process repository, the store, the service clock, and `log`, and stops
-    with nothing to release, since the host stops serving its mounts.
+    `portfolioApiPart` is the service wiring part `{ name: "portfolio-api",
+    start(members, context) }` in
+    `packages/service/src/portfolio-api/wiring.ts`, listed once in
+    `start.ts` after the declarations API's part. Its `start` calls
+    `mountPortfolioApi(members.http, options)` with the portfolio member,
+    whose ledger is the capacity module's that the portfolio part wires,
+    usage intake's `accounts`, the process repository, the store, the
+    service clock, and the service log; a member whose part starts after
+    it is read through `context.later`. It registers no `onStop`, since it
+    holds nothing to release and the host stops serving its mount.
   portfolio-convergence: >-
     The read's one write is the credit of an account's current window,
     which the capacity module writes once per account and window by its
     key, so a read that runs twice credits once and answers twice from the
     ledger as it is, and a read that crashes before the credit commits
-    leaves nothing for the next read to repeat. Source and lint only read.
-    A save converges as `process-repository` and `service-assembly` state:
-    a retry with the same `saveId` answers `already-saved` or pushes the
-    change once, and a crash after the push and before the browser reads
-    the answer leaves the draft with no `saved`, whose retry answers
-    `already-saved`. A draft is written whole on each edit, so a reload or
-    a crash of the browser leaves the last edit. Applying a draft's edits
-    to the same text twice gives the same text, since each edit sets
-    values rather than adding to them.
+    leaves nothing for the next read to repeat. A save of `portfolio.yml`
+    converges as the declarations save does: a retry with the same
+    `saveId` answers `already-saved` or pushes the change once, and a
+    crash after the push and before the browser reads the answer leaves
+    the draft with no `saved`, whose retry answers `already-saved`. A
+    draft is written whole on each edit, so a reload or a crash of the
+    browser leaves the last edit. Applying a draft's edits to the same text
+    twice gives the same text, since each edit sets values rather than
+    adding to them.
   portfolio-tests: >-
     Each behavior is red before green, and tests go through public
-    interfaces. The endpoints are tested as `portfolio-api`'s validation
+    interfaces. The endpoint is tested as `portfolio-api`'s validation
     criteria state. In `packages/shared`, tests of `amounts` show `$1.00`
     for 1,000,000, `$0.0177` for 17,700, `$0.50` for 500,000, `$0.0012`
     for 1,234, `<$0.0001` for 40, `$1.00` for 999,995, `$1,234.57` for
@@ -1965,7 +1966,8 @@ proposed-design:
     70% and `beta` to 40% for `acct-a`, and, once the lint answers, sees
     the error borders, the error status bar naming the top level and 110%,
     and "Save allocations" disabled; sets `beta` to 30%, sees the marks
-    clear, saves, and sees the toast; reloads and reads `alpha` at 70%
+    clear, saves through the publish dialog, and sees the toast; reloads
+    and reads `alpha` at 70%
     with its new amount; and finds one new commit on the fixture remote
     whose `portfolio.yml` keeps the fixture's comment, and the read's
     `commit` equal to it. The Board and Task page browser test checks the
