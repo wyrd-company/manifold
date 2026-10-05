@@ -147,6 +147,7 @@ export async function openActorHost({
       },
       send(row) {
         record.sending = true;
+        record.eventId = row.eventId;
         try {
           if (row.topic.startsWith("deadline."))
             deliverDeadline(record, (row.payload as { type: string }).type);
@@ -168,6 +169,7 @@ export async function openActorHost({
         const active = raw.status === "active";
         const save: ActorSave = {
           actorId: record.actorId,
+          ...(record.eventId ? { eventId: record.eventId } : {}),
           machine: record.blueprint.key,
           snapshot,
           entered: [...new Set(record.entered.map((entry) => entry.path))],
@@ -180,6 +182,7 @@ export async function openActorHost({
             : {},
           activeInvokes: active ? activeInvokes(record) : [],
         };
+        delete record.eventId;
         saves.set(snapshot, save);
         return {
           machine: record.blueprint.key,
@@ -301,6 +304,26 @@ export async function openActorHost({
           }),
         ),
       ].sort();
+    },
+    issueThreads(issue) {
+      return store
+        .activeSnapshots()
+        .flatMap((stored) => {
+          const identity = identityOf(stored.snapshot);
+          return identity.issue === issue && identity.environment
+            ? (identity.threads ?? []).map((threadId) => ({
+                actorId: stored.actorId,
+                environment: identity.environment!,
+                threadId,
+              }))
+            : [];
+        })
+        .sort(
+          (a, b) =>
+            a.environment.localeCompare(b.environment) ||
+            a.threadId.localeCompare(b.threadId) ||
+            a.actorId.localeCompare(b.actorId),
+        );
     },
     eventSchema(actorId, eventType) {
       const stored = store.loadSnapshot(actorId);

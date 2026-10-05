@@ -28,6 +28,7 @@ export default async function setup(project: TestProject) {
     await execute(bun, [
       "build",
       join(host, "src/cli.ts"),
+      join(host, "src/hook/worker.ts"),
       "--compile",
       "--bytecode",
       "--outfile",

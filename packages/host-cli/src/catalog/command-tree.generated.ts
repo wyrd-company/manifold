@@ -191,6 +191,92 @@ export const commandTree = {
       examples: ["manifold-host help", "manifold-host help usage push"],
     },
     {
+      name: "hook",
+      summary: "Run the harness plugin's hooks for a provider harness.",
+      arguments: [],
+      flags: [],
+      exitCodes: [],
+      examples: [],
+      subcommands: [
+        {
+          name: "post-tool-use",
+          summary: "Tell the agent of new messages for its thread after a tool call.",
+          arguments: [],
+          flags: [
+            {
+              flags: ["--service"],
+              kind: "option",
+              description: "The base URL of the Manifold service, `http` or `https`.",
+              required: true,
+              repeatable: false,
+              value: {
+                type: "string",
+              },
+            },
+            {
+              flags: ["--environment"],
+              kind: "option",
+              description:
+                "The name of this environment, as the service configuration's `environments` section names it.",
+              required: true,
+              repeatable: false,
+              value: {
+                type: "string",
+              },
+            },
+            {
+              flags: ["--provider"],
+              kind: "option",
+              description:
+                "The provider harness that runs the hook, which sets the hook input it reads and the output it writes: `claude`, `codex`, or `cursor`.",
+              required: true,
+              repeatable: false,
+              value: {
+                type: "string",
+              },
+            },
+            {
+              flags: ["--t3-home"],
+              kind: "option",
+              description:
+                "T3 Code's data directory, whose `userdata/state.sqlite` holds each thread's provider session. When absent, `T3CODE_HOME`, else `~/.t3`.",
+              required: false,
+              repeatable: false,
+              value: {
+                type: "string",
+              },
+            },
+            {
+              flags: ["--timeout-ms"],
+              kind: "option",
+              description:
+                "The most time in milliseconds the whole run takes, from the parsed command line to exit: reading standard input, the session mapping, and the request. Default 2000; from 100 to 10000.",
+              required: false,
+              repeatable: false,
+              value: {
+                type: "integer",
+              },
+            },
+          ],
+          exitCodes: [
+            {
+              code: 0,
+              meaning:
+                "The hook ran, whether or not it found a notice, read its input, or reached the service.",
+            },
+            {
+              code: 2,
+              meaning:
+                "The command line is invalid: an unknown option, a missing `--service`, `--environment`, or `--provider`, a service URL that is not `http` or `https`, an environment name that is not a declared name, an unknown provider, or a timeout out of range. Nothing is sent.",
+            },
+          ],
+          examples: [
+            "manifold-host hook post-tool-use --service http://127.0.0.1:8080 --environment workstation --provider codex",
+          ],
+        },
+      ],
+    },
+    {
       name: "manifest",
       summary: "Work with the manifest of a process repository.",
       arguments: [],
@@ -528,6 +614,7 @@ export type RunnablePath =
   | "comparator lint"
   | "expressions lint"
   | "help"
+  | "hook post-tool-use"
   | "manifest lint"
   | "mcp"
   | "portfolio lint"

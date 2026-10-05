@@ -37,9 +37,27 @@ export const agentToolDefinitions = [
       },
     },
   },
+  {
+    name: "get-messages",
+    description:
+      "Read messages other tasks send to your thread. A notice tells you when one arrives. Read them when your current step is done; you may also call between notices. Do not end your turn to read them. Pass thread when the prompt names the T3 Code thread id.",
+    inputSchema: {
+      ...agentToolsSchema.$defs["get-messages-input"],
+      properties: { thread: agentToolsSchema.$defs["thread-argument"] },
+    },
+  },
 ] as const;
 
+export interface ThreadMessage {
+  messageId: string;
+  from: { actorId: string; issue: string | null };
+  text: string;
+  sentAt: string;
+  deliveredAt: string;
+}
+
 export type AgentToolCallResponse =
+  | { status: "read"; threadId: string; turnId: string; messages: ThreadMessage[]; message: string }
   | {
       status: "accepted";
       replay: boolean;

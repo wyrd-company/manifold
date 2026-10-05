@@ -5,6 +5,8 @@
 import { stringify } from "yaml";
 import { memoryRevision } from "@wyrd-company/manifold-shared";
 import { openStore } from "../../store/index.ts";
+import type { Router } from "../../router/index.ts";
+import type { Escalations } from "../../escalations/index.ts";
 import { startRouter } from "../../router/index.ts";
 import { openActorHost, invocationOf, recordStateEntry } from "../../actor-host/index.ts";
 import type { ActorHost } from "../../actor-host/index.ts";
@@ -22,20 +24,34 @@ export interface RecoveryConfiguration {
   identifyTimeoutMs?: number;
   held?: "different" | "unavailable" | "available";
   soleHeld?: boolean;
-  crash?: "handoff" | "answer-committed" | "answer-sent";
+  noMessages?: boolean;
+  ignoreMessage?: boolean;
+  crash?: "handoff" | "answer-committed" | "answer-sent" | "message";
 }
 export async function recoveryService(config: RecoveryConfiguration) {
   const store = openStore({ path: config.path });
   let host: ActorHost;
   let source: T3CodeSource;
+  let router: Router;
+  let escalations: Escalations;
   const document = {
     machine: {
       id: "parcel",
       initial: "waiting",
-      context: { answerTurn: null, answers: 0, handoffs: 0 },
+      context: { answerTurn: null, answers: 0, handoffs: 0, messages: 0 },
       states: {
         waiting: {
           on: {
+            ...(config.ignoreMessage || config.noMessages
+              ? {}
+              : {
+                  "agent.message": {
+                    actions: {
+                      type: "expression.assign",
+                      params: { expression: '{"messages": context.messages + 1}' },
+                    },
+                  },
+                }),
             "agent.handoff": {
               actions: {
                 type: "expression.assign",
@@ -79,6 +95,7 @@ export async function recoveryService(config: RecoveryConfiguration) {
             },
           },
         },
+        ...(config.noMessages ? {} : { "agent.message": true }),
         "agent.escalated": true,
         "agent.escalation.answered": true,
         "t3.turn.started": true,
@@ -92,6 +109,12 @@ export async function recoveryService(config: RecoveryConfiguration) {
   const revision = memoryRevision("a".repeat(40), {
     "blueprints/parcel.yml": stringify(document),
     "blueprints/held.yml": stringify(heldDocument),
+    "blueprints/sender.yml": stringify(
+      senderDocument(
+        { environment: "station", threadId: "conversation" },
+        "The depot schedule changed.",
+      ),
+    ),
   });
   const threads = openAgentThreads({
     environments: config.environments,
@@ -103,31 +126,6 @@ export async function recoveryService(config: RecoveryConfiguration) {
     sourceWrite: (name, id, signal, send) => source.write(name, id, signal, send),
     revisionAt: async () => revision,
   });
-  const loader = createBlueprintLoader({
-    implementations: threads.implementations,
-    revisionAt: async () => revision,
-    onStateEntry: recordStateEntry,
-    onExpressionError: (error) => {
-      throw error;
-    },
-  });
-  const loaded = await loader.version({ commit: revision.commit, path: "blueprints/parcel.yml" });
-  if (loaded.status !== "loaded") throw new Error(JSON.stringify(loaded));
-  if (config.held) {
-    const held = await loader.version({ commit: revision.commit, path: "blueprints/held.yml" });
-    if (held.status !== "loaded") throw new Error(JSON.stringify(held));
-    store.saveSnapshot({
-      actorId: "held-follower",
-      machine: config.held === "unavailable" ? "missing-version" : held.blueprint.key,
-      snapshot: {
-        status: "active",
-        value: "missing-state",
-        context: { manifold: { environment: "station", threads: ["conversation"] } },
-      },
-    });
-  }
-  host = await openActorHost({ store, blueprints: loader, saveHooks: [], log: () => {} });
-  const router = startRouter({ store, host });
   const tools = openAgentTools({
     store,
     configuration: { identifyTimeoutMs: config.identifyTimeoutMs ?? 100 },
@@ -151,7 +149,46 @@ export async function recoveryService(config: RecoveryConfiguration) {
     },
     log: () => {},
   });
-  const escalations = openEscalations({
+  const loader = createBlueprintLoader({
+    implementations: {
+      ...threads.implementations,
+      actors: { ...threads.implementations.actors, ...tools.implementations.actors },
+    },
+    revisionAt: async () => revision,
+    onStateEntry: recordStateEntry,
+    onExpressionError: (error) => {
+      throw error;
+    },
+  });
+  const loaded = await loader.version({ commit: revision.commit, path: "blueprints/parcel.yml" });
+  if (loaded.status !== "loaded") throw new Error(JSON.stringify(loaded));
+  if (config.held) {
+    const held = await loader.version({ commit: revision.commit, path: "blueprints/held.yml" });
+    if (held.status !== "loaded") throw new Error(JSON.stringify(held));
+    store.saveSnapshot({
+      actorId: "held-follower",
+      machine: config.held === "unavailable" ? "missing-version" : held.blueprint.key,
+      snapshot: {
+        status: "active",
+        value: "missing-state",
+        context: {
+          manifold: {
+            issue: "shipment-recipient",
+            environment: "station",
+            threads: ["conversation"],
+          },
+        },
+      },
+    });
+  }
+  host = await openActorHost({
+    store,
+    blueprints: loader,
+    saveHooks: [tools.saving],
+    log: () => {},
+  });
+  router = startRouter({ store, host });
+  escalations = openEscalations({
     store,
     configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
     tokenFile: () => "",
@@ -173,7 +210,13 @@ export async function recoveryService(config: RecoveryConfiguration) {
     host.start({
       actorId: "parcel",
       blueprint: loaded.blueprint,
-      input: { manifold: { environment: "station", threads: ["conversation"] } },
+      input: {
+        manifold: {
+          issue: "shipment-recipient",
+          environment: "station",
+          threads: ["conversation"],
+        },
+      },
     });
   escalations.start();
   tools.start();
@@ -184,6 +227,35 @@ export async function recoveryService(config: RecoveryConfiguration) {
     host,
     escalations,
     source,
+    url: http.url,
+    async send(to: unknown, text: unknown, senderId = "depot", entry = "announce") {
+      const sender = senderDocument(to, text, entry);
+      const sendingRevision = memoryRevision(revision.commit, {
+        "blueprints/sender.yml": stringify(sender),
+      });
+      const sendingLoader = createBlueprintLoader({
+        implementations: tools.implementations,
+        revisionAt: async () => sendingRevision,
+        onStateEntry: recordStateEntry,
+        onExpressionError: (error) => {
+          throw error;
+        },
+      });
+      const loaded = await sendingLoader.version({
+        commit: revision.commit,
+        path: "blueprints/sender.yml",
+      });
+      if (loaded.status !== "loaded") throw new Error(JSON.stringify(loaded));
+      host.start({
+        actorId: senderId,
+        blueprint: loaded.blueprint,
+        input: { manifold: { issue: "shipment" } },
+      });
+      if (config.crash === "message") {
+        // The invoke commits synchronously; its completion save is queued after this callback.
+        queueMicrotask(() => process.kill(process.pid, "SIGKILL"));
+      }
+    },
     snapshot: () => store.loadSnapshot("parcel")!.snapshot,
     async call(tool: string, args: unknown, meta: Record<string, unknown> = {}) {
       const response = await fetch(http.url + "/api/agent-tools/calls", {
@@ -200,6 +272,48 @@ export async function recoveryService(config: RecoveryConfiguration) {
       await escalations.stop();
       router.stop();
       store.close();
+    },
+  };
+}
+
+function senderDocument(to: unknown, text: unknown, entry = "announce") {
+  return {
+    machine: {
+      id: "sender",
+      initial: "sending",
+      context: {},
+      states: {
+        sending: {
+          invoke: {
+            id: entry,
+            src: "send-message",
+            input: { to, text },
+            onDone: {
+              target: "sent",
+              actions: {
+                type: "expression.assign",
+                params: { expression: '{"result": event.output}' },
+              },
+            },
+            onError: {
+              target: "failed",
+              actions: {
+                type: "expression.assign",
+                params: { expression: '{"error": event.error}' },
+              },
+            },
+          },
+        },
+        sent: { type: "final" },
+        failed: { type: "final" },
+      },
+    },
+    schemas: {
+      input: true,
+      output: true,
+      context: true,
+      events: {},
+      actors: { "send-message": { input: true, output: true } },
     },
   };
 }

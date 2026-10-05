@@ -27,7 +27,7 @@ beforeAll(() => {
   binary = join(directory, "manifold-host");
   const build = spawnSync(
     "bun",
-    ["build", "src/cli.ts", "--compile", "--bytecode", "--outfile", binary],
+    ["build", "src/cli.ts", "src/hook/worker.ts", "--compile", "--bytecode", "--outfile", binary],
     { encoding: "utf8" },
   );
   expect(build.status, build.stderr).toBe(0);

@@ -19,6 +19,10 @@ export const commandHandlers = {
     const { expressionsLintCommand } = await import("./expressions-lint/command.ts");
     return expressionsLintCommand(args);
   },
+  "hook post-tool-use": async (args) => {
+    const { hookCommand } = await import("./hook/command.ts");
+    return hookCommand(args);
+  },
   "manifest lint": async (args) => {
     const { manifestLintCommand } = await import("./manifest-lint/command.ts");
     return manifestLintCommand(args);

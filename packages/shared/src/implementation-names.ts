@@ -12,10 +12,22 @@ export interface ImplementationNames {
 }
 // Providers add their names here when their implementation joins the service registry.
 export const manifoldImplementationNames: ImplementationNames = {
-  actors: new Set(["github-card-move", "escalate", "thread-create", "turn-prepare", "turn-start"]),
+  actors: new Set([
+    "github-card-move",
+    "escalate",
+    "thread-create",
+    "turn-prepare",
+    "turn-start",
+    "send-message",
+  ]),
   actions: new Set(["follow-thread"]),
   guards: new Set(),
   delays: new Set(),
   raises: new Map(),
-  events: new Set(["agent.handoff", "agent.escalated", "agent.escalation.answered"]),
+  events: new Set([
+    "agent.handoff",
+    "agent.escalated",
+    "agent.escalation.answered",
+    "agent.message",
+  ]),
 };

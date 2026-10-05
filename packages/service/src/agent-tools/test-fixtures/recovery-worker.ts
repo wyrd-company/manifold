@@ -12,6 +12,11 @@ process.on("message", (value: unknown) => {
   void (async () => {
     if (message.kind === "call")
       process.send?.({ kind: "call", result: await service.call(message.tool!, message.args) });
+    if (message.kind === "send")
+      await service.send(
+        { environment: "station", threadId: "conversation" },
+        "The depot schedule changed.",
+      );
     if (message.kind === "answer") {
       service.escalations.answer(message.escalationId!, { text: "Upper shelf" }, "api");
       process.send?.({ kind: "answered" });

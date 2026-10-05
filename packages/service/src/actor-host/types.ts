@@ -33,6 +33,9 @@ export interface ActorHost extends RouterActorHost {
     | { readonly status: "declared"; readonly validate: ValidateFunction }
     | { readonly status: "undeclared" }
     | { readonly status: "unavailable" };
+  issueThreads(
+    issue: string,
+  ): readonly { actorId: string; environment: string; threadId: string }[];
   release(actorId: string): Promise<void>;
 }
 export interface ActorStart {
@@ -50,6 +53,7 @@ export interface ActiveInvoke {
   readonly entryId: string;
 }
 export interface ActorSave {
+  readonly eventId?: string;
   readonly actorId: string;
   readonly machine: string;
   readonly snapshot: PersistedSnapshot;

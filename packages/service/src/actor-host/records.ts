@@ -15,6 +15,7 @@ export interface EntryRecords {
 }
 export interface ActorRecord {
   actorId: string;
+  eventId?: string;
   blueprint: LoadedBlueprint;
   root?: AnyActorRef;
   entries: EntryRecords;

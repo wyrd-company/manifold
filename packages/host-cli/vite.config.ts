@@ -14,6 +14,7 @@ const children = [
   "src/starter.test.ts",
   "src/manifest-lint/command.test.ts",
   "src/mcp-command.test.ts",
+  "src/hook-command.test.ts",
   "src/portfolio-lint/command.test.ts",
   "src/usage-lint/binary.test.ts",
   "src/usage/usage.test.ts",

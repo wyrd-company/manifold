@@ -19,7 +19,7 @@ export const agentTools = wiringPart({
     },
     context,
   ): { agentTools: AgentTools } => {
-    const { store, configuration, agentThreads, http, log } = members;
+    const { store, configuration, agentThreads, log } = members;
     const router = context.later(routerPart);
     const actorHost = context.later(actorHostPart);
     const escalations = context.later(escalationsPart);
@@ -32,12 +32,15 @@ export const agentTools = wiringPart({
       actors: () => actorHost.get().actorHost,
       escalations: () => escalations.get().escalations,
       threads: agentThreads,
+      sourceReady: (environment) =>
+        source.current()?.t3code.status().some((status) => status.environment === environment && status.state === "following") ?? false,
       environmentId: async (environment, signal) =>
         (await source.ready()).t3code.environmentId(environment, signal),
       log,
     });
     context.onStop("commands", () => agentTools.stop());
-    http.mount("/api/agent-tools", agentTools.requestListener);
+    context.addImplementations(agentTools.implementations);
+    members.http.mount("/api/agent-tools", agentTools.requestListener);
     return { agentTools };
   },
 });

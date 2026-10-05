@@ -136,6 +136,7 @@ const service = await startService({
       actorOf: () => undefined,
       followers: () => [],
       followedThreads: () => [],
+      issueThreads: () => [],
       eventSchema: () => ({ status: "unavailable" }),
       release: async () => {},
       subscription(record) {

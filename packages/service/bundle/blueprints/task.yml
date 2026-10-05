@@ -453,6 +453,8 @@ schemas:
         type:
           const: github.issue.closed
         issue: *a5
+    agent.message:
+      $ref: https://manifold.wyrd.company/schemas/agent-tools#/$defs/agent-message-event
     agent.handoff:
       type: object
       required:

@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { T3Client, schemas, threadId } from "@wyrd-company/t3code-client";
 
@@ -42,10 +43,16 @@ const environment = {
 let child: ReturnType<typeof spawn> | undefined;
 let client: T3Client | undefined;
 let activeThread = "";
+let noticed = false;
+let readMail = false;
+let noticeRequests = 0;
 let received: { arguments: Record<string, unknown>; meta: Record<string, unknown> } | undefined;
 const records: {
   provider: string;
   loaded: boolean;
+  noticeReached?: boolean;
+  getMessagesCalled?: boolean;
+  userMessages?: number;
   metaKeys: string[];
   callIdMatchesActivity: boolean | null;
   identifiedBy: string;
@@ -54,18 +61,48 @@ const records: {
 const endpoint = httpServer(async (request, response) => {
   let body = "";
   for await (const chunk of request) body += String(chunk);
-  received = JSON.parse(body);
+  const requestBody = JSON.parse(body);
   response.setHeader("Content-Type", "application/json");
-  response.end(
-    JSON.stringify({
-      status: "accepted",
-      replay: false,
-      eventId: "live-handoff",
-      threadId: activeThread,
-      turnId: "live-turn",
-      message: "Handoff accepted. End your turn now.",
-    }),
-  );
+  if (request.url === "/api/agent-tools/notices") {
+    noticeRequests++;
+    const notice =
+      !noticed && (requestBody.threadId === activeThread || requestBody.callId)
+        ? "Manifold: 1 new message for this thread. Read it with the manifold get-messages tool when your current step is done. Do not stop or end your turn for it."
+        : null;
+    if (notice) noticed = true;
+    response.end(JSON.stringify({ notice }));
+  } else if (requestBody.tool === "get-messages") {
+    readMail = true;
+    response.end(
+      JSON.stringify({
+        status: "read",
+        threadId: activeThread,
+        turnId: "live-turn",
+        messages: [
+          {
+            messageId: "00000000-0000-4000-8000-000000000001",
+            from: { actorId: "depot", issue: null },
+            text: "The depot schedule changed.",
+            sentAt: new Date().toISOString(),
+            deliveredAt: new Date().toISOString(),
+          },
+        ],
+        message: "You have 1 message. The depot schedule changed.",
+      }),
+    );
+  } else {
+    received = requestBody;
+    response.end(
+      JSON.stringify({
+        status: "accepted",
+        replay: false,
+        eventId: "live-handoff",
+        threadId: activeThread,
+        turnId: "live-turn",
+        message: "Handoff accepted. End your turn now.",
+      }),
+    );
+  }
 });
 
 async function freePort() {
@@ -84,6 +121,66 @@ async function linkAuth(source: string, target: string) {
   await mkdir(dirname(target), { recursive: true });
   await symlink(source, target);
 }
+async function trustCodexHook() {
+  const server = spawn("codex", ["app-server"], {
+    cwd: workspace,
+    env: environment,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const responses = new Map<number, Record<string, unknown>>();
+  createInterface({ input: server.stdout }).on("line", (line) => {
+    try {
+      const value = JSON.parse(line);
+      if (typeof value.id === "number") responses.set(value.id, value);
+    } catch {}
+  });
+  async function rpc(id: number, method: string, params: unknown) {
+    server.stdin.write(JSON.stringify({ id, method, params }) + "\n");
+    const until = Date.now() + 10000;
+    while (!responses.has(id) && Date.now() < until) await delay(50);
+    const response = responses.get(id);
+    if (!response || response["error"])
+      throw Error(`Codex ${method} failed: ${JSON.stringify(response)}`);
+    return response["result"];
+  }
+  try {
+    await rpc(1, "initialize", {
+      clientInfo: { name: "mail-notice-fixture", version: "1" },
+      capabilities: { experimentalApi: true },
+    });
+    const result = await rpc(2, "hooks/list", { cwds: [workspace] });
+    console.log(JSON.stringify({ codexHooks: result }));
+    const hooks: { key: string; currentHash: string }[] = [];
+    function visit(value: unknown) {
+      if (!value || typeof value !== "object") return;
+      if (
+        "key" in value &&
+        "currentHash" in value &&
+        typeof value.key === "string" &&
+        typeof value.currentHash === "string"
+      )
+        hooks.push({ key: value.key, currentHash: value.currentHash });
+      for (const child of Object.values(value)) visit(child);
+    }
+    visit(result);
+    assert(hooks.length > 0, "No Codex hook found to trust");
+    const { appendFile } = await import("node:fs/promises");
+    await appendFile(
+      join(home, ".codex/config.toml"),
+      hooks
+        .map(
+          (hook) =>
+            `\n[hooks.state.${JSON.stringify(hook.key)}]\ntrusted_hash = ${JSON.stringify(hook.currentHash)}\n`,
+        )
+        .join(""),
+    );
+  } finally {
+    const exited = once(server, "exit");
+    server.kill("SIGTERM");
+    await exited;
+  }
+}
+
 try {
   for (const path of [
     home,
@@ -114,7 +211,7 @@ try {
   );
   await execute(
     resolve("../host-cli/node_modules/.bin/bun"),
-    ["build", "src/cli.ts", "--compile", "--bytecode", "--outfile", plugin],
+    ["build", "src/cli.ts", "src/hook/worker.ts", "--compile", "--bytecode", "--outfile", plugin],
     {
       cwd: resolve("../host-cli"),
     },
@@ -131,14 +228,34 @@ try {
     "workstation",
   ];
   const registration = { command: plugin, args };
+  const hook = (provider: string) =>
+    `${plugin} hook post-tool-use --service http://127.0.0.1:${address.port} --environment workstation --provider ${provider} --t3-home ${base}`;
+  await writeFile(
+    join(home, ".claude/settings.json"),
+    JSON.stringify({
+      hooks: {
+        PostToolUse: [{ matcher: "*", hooks: [{ type: "command", command: hook("claude") }] }],
+      },
+    }),
+  );
+  await writeFile(
+    join(home, ".cursor/hooks.json"),
+    JSON.stringify({ version: 1, hooks: { postToolUse: [{ command: hook("cursor") }] } }),
+  );
+  await mkdir(join(home, ".config/opencode/plugin"), { recursive: true });
+  await writeFile(
+    join(home, ".config/opencode/plugin/manifold.js"),
+    `export const Manifold = async () => ({"tool.execute.after":async(input,output)=>{try {const response=await fetch("http://127.0.0.1:${address.port}/api/agent-tools/notices",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({environment:"workstation",callId:input.callID}),signal:AbortSignal.timeout(2000)});const body=response.ok ? await response.json():undefined;if(typeof body?.notice==="string") output.output=String(output.output??"")+"\\n\\n"+body.notice;}catch{}}});`,
+  );
   await writeFile(
     join(home, ".claude/.claude.json"),
     JSON.stringify({ mcpServers: { manifold: { type: "stdio", ...registration } } }),
   );
   await writeFile(
     join(home, ".codex/config.toml"),
-    `[mcp_servers.manifold]\ncommand = ${JSON.stringify(plugin)}\nargs = ${JSON.stringify(args)}\n`,
+    `[mcp_servers.manifold]\ncommand = ${JSON.stringify(plugin)}\nargs = ${JSON.stringify(args)}\n[[hooks.PostToolUse]]\nmatcher = "*"\n[[hooks.PostToolUse.hooks]]\ntype = "command"\ncommand = ${JSON.stringify(hook("codex"))}\n`,
   );
+  await trustCodexHook();
   await writeFile(
     join(home, ".cursor/mcp.json"),
     JSON.stringify({ mcpServers: { manifold: registration } }),
@@ -252,6 +369,9 @@ try {
     }
     activeThread = `parcel-${driver}`;
     received = undefined;
+    noticed = false;
+    readMail = false;
+    noticeRequests = 0;
     const model = provider.models.find((m) => m.isDefault) ?? provider.models[0]!;
     const modelSelection = { instanceId: provider.instanceId, model: model.slug };
     await client.threads.dispatch(
@@ -277,7 +397,7 @@ try {
         message: {
           messageId: `parcel-message-${driver}`,
           role: "user",
-          text: `This is a tool availability measurement. Call the manifold handoff tool exactly once, immediately, with handoff {"outcome":"done","summary":"Sorted a parcel."} and thread "${activeThread}". Do no other work. Then end your turn. If that tool is unavailable, say so and end your turn.`,
+          text: `This is a tool and mail notice measurement. First run one shell command that prints ready. Then use the manifold get-messages tool with thread "${activeThread}" to read any messages. In your final reply state the message text and mail-notice-seen if you saw a Manifold new-message notice in the shell tool result, or mail-notice-absent if you did not. Then call manifold handoff once with handoff {"outcome":"done","summary":"Sorted a parcel."} and thread "${activeThread}" and end your turn. Do no other work.`,
           attachments: [],
         },
         modelSelection,
@@ -292,7 +412,6 @@ try {
       await delay(500);
       detail = await client.threads.detail(threadId(activeThread));
       if (
-        received ||
         detail.thread.session?.status === "error" ||
         detail.thread.latestTurn?.state === "completed" ||
         detail.thread.latestTurn?.state === "failed"
@@ -325,6 +444,13 @@ try {
     records.push({
       provider: driver,
       loaded: !!call,
+      getMessagesCalled: readMail,
+      noticeReached:
+        noticed &&
+        detail.thread.messages.some(
+          (message) => message.role === "assistant" && message.text.includes("mail-notice-seen"),
+        ),
+      userMessages: detail.thread.messages.filter((message) => message.role === "user").length,
       metaKeys: Object.keys(call?.meta ?? {}).sort(),
       callIdMatchesActivity: typeof callId === "string" ? matched : null,
       identifiedBy: identified,
@@ -336,7 +462,7 @@ try {
           }
         : {}),
     });
-    console.log(JSON.stringify(records.at(-1)));
+    console.log(JSON.stringify({ ...records.at(-1), noticeRequests }));
     await client.threads.stopSession(threadId(activeThread));
   }
   records.push({
@@ -351,7 +477,14 @@ try {
   if (
     records
       .filter((r) => r.provider !== "grok")
-      .some((r) => !r.loaded || r.identifiedBy === "not identified")
+      .some(
+        (r) =>
+          !r.loaded ||
+          !r.getMessagesCalled ||
+          !r.noticeReached ||
+          r.userMessages !== 1 ||
+          r.identifiedBy === "not identified",
+      )
   )
     process.exitCode = 1;
 } finally {

@@ -2,6 +2,7 @@
 // relationships:
 //   implements: agent-tools
 // ---
+import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
 import type { RequestListener } from "node:http";
 import type { Store } from "../store/index.ts";
 import type { Router } from "../router/index.ts";
@@ -16,7 +17,10 @@ export interface AgentToolsOptions {
   readonly environments: ReadonlySet<string>;
   readonly router: () => Router;
   readonly escalations: () => Pick<Escalations, "raise" | "withdraw">;
-  readonly actors: () => Pick<ActorHost, "followers" | "followedThreads" | "eventSchema">;
+  readonly actors: () => Pick<
+    ActorHost,
+    "followers" | "followedThreads" | "eventSchema" | "issueThreads" | "actorOf"
+  >;
   readonly threads: Pick<AgentThreads, "readThread" | "runningThreads" | "startTurn">;
   readonly environmentId: (environment: string, signal?: AbortSignal) => Promise<string>;
   readonly probe?: (committed: CommittedCall) => void;
@@ -28,11 +32,12 @@ export interface AgentToolsOptions {
   }) => void;
 }
 export interface CommittedCall {
-  readonly tool: "handoff" | "escalate";
+  readonly tool: "handoff" | "escalate" | "get-messages";
   readonly eventId: string;
   readonly replay: boolean;
 }
 export interface AgentTools {
+  readonly implementations: ImplementationRegistry;
   readonly requestListener: RequestListener;
   readonly questionHandler: ServiceEscalationHandler;
   readonly messagePlaced: (placement: MessagePlacement) => void;
@@ -42,7 +47,7 @@ export interface AgentTools {
 }
 export interface CallRequest {
   environment: string;
-  tool: "handoff" | "escalate";
+  tool: "handoff" | "escalate" | "get-messages";
   arguments: Record<string, unknown>;
   meta: Record<string, unknown>;
 }

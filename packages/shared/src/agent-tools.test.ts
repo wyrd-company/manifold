@@ -45,10 +45,14 @@ test("embedded agent tools schemas agree with the declared contracts and compile
     response!({ status: "refused", code: "service-unreachable", message: "Retry in this turn." }),
   ).toBe(true);
   expect(response!({ status: "accepted", message: "Done" })).toBe(false);
-  expect(agentToolDefinitions.map((tool) => tool.name)).toEqual(["handoff", "escalate"]);
+  expect(agentToolDefinitions.map((tool) => tool.name)).toEqual([
+    "handoff",
+    "escalate",
+    "get-messages",
+  ]);
   for (const tool of agentToolDefinitions) {
     expect(tool.inputSchema.type).toBe("object");
-    expect(tool.description).toContain("end your turn");
+    if (tool.name !== "get-messages") expect(tool.description).toContain("end your turn");
   }
   const [escalate] = compile([agentToolDefinitions[1]!.inputSchema]);
   expect(

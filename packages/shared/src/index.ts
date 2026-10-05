@@ -125,7 +125,7 @@ export { taskMetadataDeclarationSchema } from "./task-metadata-schema.ts";
 export { agentToolsSchema } from "./agent-tools-schema.ts";
 export { agentToolsConfigurationSchema } from "./agent-tools-configuration-schema.ts";
 export { agentToolDefinitions, isAgentToolCallResponse } from "./agent-tools.ts";
-export type { AgentToolCallResponse } from "./agent-tools.ts";
+export type { AgentToolCallResponse, ThreadMessage } from "./agent-tools.ts";
 
 export { createSchemaCompiler } from "./schema-compiler.ts";
 

@@ -50,26 +50,30 @@ async function fixture(
         events:
           options.declared === false
             ? []
-            : ["agent.handoff", "agent.escalated", "agent.escalation.answered"],
+            : ["agent.handoff", "agent.escalated", "agent.escalation.answered", "agent.message"],
       }),
       restore: () => ({ status: "held", reason: "test hold" }),
     },
   });
   const sent: { messageId: string; text: string }[] = [];
+  let reads = 0;
   const tools = openAgentTools({
     store,
     configuration: { identifyTimeoutMs: 500 },
     environments: new Set(["station"]),
     router: () => router,
     actors: () => ({
-      followers: () => ["parcel"],
+      followers: (_environment, threadId) => (threadId === "thread.a" ? ["parcel"] : []),
+      issueThreads: () => [{ actorId: "parcel", environment: "station", threadId: "thread.a" }],
+      actorOf: () => ({ manifold: { issue: "shipment" }, commit: "a".repeat(40) }),
       followedThreads: () => ["thread.a"],
       eventSchema: () =>
         schema === "declared" ? { status: schema, validate } : { status: schema },
     }),
     threads: {
-      readThread: async () =>
-        schemas.orchestrationReadModel.OrchestrationThread.parse({
+      readThread: async () => {
+        reads++;
+        return schemas.orchestrationReadModel.OrchestrationThread.parse({
           ...fixtureThread("thread.a"),
           session: {
             threadId: "thread.a",
@@ -99,7 +103,8 @@ async function fixture(
               createdAt: "2026-01-01T00:00:00Z",
             },
           ],
-        }),
+        });
+      },
       runningThreads: async () => [],
       startTurn: async (input) => {
         if (options.rejected) throw { kind: "rejected", message: "Rejected by fixture" };
@@ -145,6 +150,7 @@ async function fixture(
   };
   return {
     url: http.url,
+    reads: () => reads,
     store,
     tools,
     escalations,
@@ -358,4 +364,105 @@ test("an unavailable environment refuses the call without writing", async () => 
     code: "environment-unavailable",
   });
   expect(f.store.pendingInbox("parcel")).toHaveLength(0);
+});
+
+test("messages are invisible until delivery, reads append late mail, notices count once", async () => {
+  const f = await fixture();
+  const db = f.store.connection.database;
+  const insert = db.prepare(
+    "INSERT INTO agenttool_message(message_id,environment,thread_id,sender_actor_id,text,sent_at) VALUES (?, 'station', 'thread.a', 'depot', ?, 0)",
+  );
+  const older = "00000000-0000-4000-8000-000000000001";
+  const newer = "00000000-0000-4000-8000-000000000002";
+  insert.run(older, "Older parcel");
+  insert.run(newer, "Newer parcel");
+  expect((await f.call("get-messages", {})).body).toMatchObject({
+    status: "read",
+    messages: [],
+    message: "You have no messages.",
+  });
+  function deliver(id: string) {
+    f.tools.saving({
+      actorId: "parcel",
+      machine: "sort",
+      snapshot: { status: "active", value: "waiting" },
+      activeInvokes: [],
+      entered: [],
+      entries: {},
+      eventId: "agent:message/" + id,
+    });
+  }
+  const notice = async (body: unknown = { environment: "station", threadId: "thread.a" }) => {
+    const response = await fetch(f.url + "/api/agent-tools/notices", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+  expect(await notice()).toMatchObject({ status: 200, body: { notice: null } });
+  deliver(newer);
+  expect(await notice({ environment: "station", callId: "call-a" })).toMatchObject({
+    status: 200,
+    body: { notice: expect.stringContaining("1 new message") },
+  });
+  const beforeNotice = f.reads();
+  expect(await notice({ environment: "station", callId: "call-a" })).toMatchObject({
+    body: { notice: null },
+  });
+  expect(f.reads()).toBe(beforeNotice);
+  expect(await notice()).toMatchObject({ body: { notice: null } });
+  const first = await f.call("get-messages", {});
+  expect(first.body).toMatchObject({
+    status: "read",
+    messages: [{ messageId: newer, text: "Newer parcel" }],
+  });
+  expect(await f.call("get-messages", {})).toEqual(first);
+  deliver(older);
+  const second = await f.call("get-messages", {});
+  expect(second.body).toMatchObject({ messages: [{ messageId: newer }, { messageId: older }] });
+  expect((second.body as { message: string }).message).toBe(
+    "You have 2 messages.\n\nMessage 1 of 2, from task `depot`, sent 1970-01-01T00:00:00.000Z:\n\nNewer parcel\n\nMessage 2 of 2, from task `depot`, sent 1970-01-01T00:00:00.000Z:\n\nOlder parcel",
+  );
+  expect(await notice()).toMatchObject({ body: { notice: null } });
+  expect((await f.call("get-messages", { thread: "other" }, {})).body).toMatchObject({
+    code: "not-followed",
+  });
+  expect(await notice({ environment: "station", threadId: "other" })).toMatchObject({
+    body: { notice: null },
+  });
+  expect(await notice({ environment: "unknown", threadId: "thread.a" })).toMatchObject({
+    status: 404,
+  });
+  expect(await notice({ environment: "station" })).toMatchObject({ status: 400 });
+});
+
+test("only a declared delivery save sets the first message receipt", async () => {
+  const f = await fixture();
+  const id = "00000000-0000-4000-8000-000000000003";
+  f.store.connection.database
+    .prepare(
+      "INSERT INTO agenttool_message(message_id,environment,thread_id,sender_actor_id,text,sent_at) VALUES (?, 'station', 'thread.a', 'depot', 'Parcel', 0)",
+    )
+    .run(id);
+  const save: Parameters<typeof f.tools.saving>[0] = {
+    actorId: "parcel",
+    machine: "sort",
+    snapshot: { status: "active", value: "waiting" },
+    activeInvokes: [],
+    entered: [],
+    entries: {},
+  };
+  f.tools.saving(save);
+  expect((await f.call("get-messages", {})).body).toMatchObject({ messages: [] });
+  f.schema("undeclared");
+  f.tools.saving({ ...save, eventId: "agent:message/" + id });
+  expect((await f.call("get-messages", {})).body).toMatchObject({ messages: [] });
+  f.schema("declared");
+  f.tools.saving({ ...save, eventId: "agent:message/" + id });
+  f.tools.saving({ ...save, actorId: "other", eventId: "agent:message/" + id });
+  expect(
+    f.store.connection.database
+      .prepare("SELECT delivered_to FROM agenttool_message WHERE message_id=?")
+      .get(id)!["delivered_to"],
+  ).toBe("parcel");
 });

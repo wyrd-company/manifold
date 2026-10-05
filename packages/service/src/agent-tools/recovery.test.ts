@@ -5,6 +5,9 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
+import { createInterface } from "node:readline";
+import { spawn } from "node:child_process";
 import { fork } from "node:child_process";
 import { once } from "node:events";
 import { afterEach, expect, test } from "vite-plus/test";
@@ -374,3 +377,171 @@ test("an outside running thread's call id is refused without a source record", a
       .get()?.["n"],
   ).toBe(0);
 });
+
+test("blueprint message reaches the follower once and is read once across turns", async () => {
+  const f = await fixture(true);
+  const service = await recoveryService(f.config);
+  cleanup.push(() => service.stop());
+  await service.send(
+    { environment: "station", threadId: "conversation" },
+    "The depot schedule changed.",
+  );
+  await expect.poll(() => service.snapshot()["context"]).toMatchObject({ messages: 1 });
+  const first = await service.call("get-messages", { thread: "conversation" });
+  expect(first).toMatchObject({
+    status: "read",
+    messages: [
+      { from: { actorId: "depot", issue: "shipment" }, text: "The depot schedule changed." },
+    ],
+  });
+  expect(await service.call("get-messages", { thread: "conversation" })).toEqual(first);
+  f.thread.session = {
+    ...f.thread.session!,
+    activeTurnId: schemas.common.TurnId.parse("later-turn"),
+  };
+  expect(await service.call("get-messages", { thread: "conversation" })).toMatchObject({
+    status: "read",
+    messages: [],
+  });
+  expect(f.receipts.size).toBe(0);
+});
+
+test("SIGKILL after a message commits resumes one delivery and one read", async () => {
+  const f = await fixture(true);
+  const crash = worker({ ...f.config, crash: "message" });
+  await crash.ready();
+  const exited = once(crash.child, "exit");
+  crash.child.send({ kind: "send" });
+  expect(await exited, crash.error()).toEqual([null, "SIGKILL"]);
+  const resumed = await recoveryService(f.config);
+  cleanup.push(() => resumed.stop());
+  await expect.poll(() => resumed.snapshot()["context"]).toMatchObject({ messages: 1 });
+  await expect
+    .poll(() => resumed.store.loadSnapshot("depot")?.snapshot)
+    .toMatchObject({
+      status: "done",
+      value: "sent",
+      context: { result: { messages: [{ threadId: "conversation" }] } },
+    });
+  expect(await resumed.call("get-messages", { thread: "conversation" })).toMatchObject({
+    status: "read",
+    messages: [{ text: "The depot schedule changed." }],
+  });
+  expect(
+    resumed.store.connection.database
+      .prepare("SELECT COUNT(*) AS n FROM agenttool_message WHERE read_at IS NOT NULL")
+      .get()!["n"],
+  ).toBe(1);
+});
+
+test("two task actors deliver a message read through the compiled MCP plugin and service endpoint", async () => {
+  const f = await fixture(true);
+  const service = await recoveryService(f.config);
+  cleanup.push(() => service.stop());
+  await service.send(
+    { environment: "station", threadId: "conversation" },
+    "The depot schedule changed.",
+  );
+  await expect.poll(() => service.snapshot()["context"]).toMatchObject({ messages: 1 });
+  const child = spawn(childArtifacts().host, [
+    "mcp",
+    "--service",
+    service.url,
+    "--environment",
+    "station",
+  ]);
+  const exited = once(child, "exit");
+  const replies: Record<string, unknown>[] = [];
+  createInterface({ input: child.stdout }).on("line", (line) => replies.push(JSON.parse(line)));
+  cleanup.push(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.stdin.end();
+      await exited;
+    }
+  });
+  child.stdin.write(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "parcel", version: "1" },
+      },
+    }) + "\n",
+  );
+  await expect.poll(() => replies.find((r) => r["id"] === 1)).toHaveProperty("result");
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+  child.stdin.write(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "get-messages", arguments: { thread: "conversation" } },
+    }) + "\n",
+  );
+  await expect
+    .poll(() => replies.find((r) => r["id"] === 2))
+    .toMatchObject({
+      result: {
+        isError: false,
+        structuredContent: { status: "read", messages: [{ text: "The depot schedule changed." }] },
+      },
+    });
+  child.stdin.end();
+  expect(await exited).toEqual([0, null]);
+  expect(f.receipts.size).toBe(0);
+});
+
+test("an issue address delivers mail without a transition for the event", async () => {
+  const f = await fixture(true);
+  const service = await recoveryService({ ...f.config, ignoreMessage: true });
+  cleanup.push(() => service.stop());
+  expect(service.host.issueThreads("shipment-recipient")).toEqual([
+    { actorId: "parcel", environment: "station", threadId: "conversation" },
+  ]);
+  await service.send({ issue: "shipment-recipient" }, "The depot schedule changed.");
+  await expect
+    .poll(
+      () =>
+        service.store.connection.database
+          .prepare("SELECT delivered_at FROM agenttool_message")
+          .get()?.["delivered_at"],
+    )
+    .toBeTypeOf("number");
+  expect(service.snapshot()["context"]).toMatchObject({ messages: 0 });
+  expect(await service.call("get-messages", { thread: "conversation" })).toMatchObject({
+    status: "read",
+    messages: [{ text: "The depot schedule changed." }],
+  });
+});
+
+test.each([
+  [{ environment: "missing", threadId: "conversation" }, "text", false, "input"],
+  [{ environment: "station", threadId: "absent" }, "text", false, "no-recipient"],
+  [{ issue: "absent" }, "text", false, "no-recipient"],
+  [{ environment: "station", threadId: "conversation" }, "", false, "input"],
+  [{ environment: "station", threadId: "conversation" }, "text", true, "not-accepted"],
+] as const)(
+  "send refusal leaves no message or routed event: %j",
+  async (to, text, noMessages, kind) => {
+    const f = await fixture(true);
+    const service = await recoveryService({ ...f.config, noMessages });
+    cleanup.push(() => service.stop());
+    await service.send(to, text);
+    await expect
+      .poll(() => service.store.loadSnapshot("depot")?.snapshot["context"])
+      .toMatchObject({ error: { type: "send-message", kind } });
+    expect(
+      service.store.connection.database
+        .prepare("SELECT COUNT(*) AS n FROM agenttool_message")
+        .get()!["n"],
+    ).toBe(0);
+    expect(
+      service.store.connection.database
+        .prepare("SELECT COUNT(*) AS n FROM router_source_event WHERE source='agent'")
+        .get()!["n"],
+    ).toBe(0);
+  },
+);
