@@ -129,6 +129,7 @@ function Editor({
         if (controller.signal.aborted || current.current.text !== text) return;
         setChecking(false);
         if (answer.kind === "ok") {
+          setRetry(0);
           setLint({ text, body: answer.body });
           setLintFailed(false);
         } else setLintFailed(true);

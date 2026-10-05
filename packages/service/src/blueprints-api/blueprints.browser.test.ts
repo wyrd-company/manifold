@@ -384,8 +384,8 @@ test("late lint answers cannot mark newer text", async () => {
   }
 }, 30_000);
 
-test.each(["aborted", "failed"] as const)(
-  "returning to checked text restores Publish after a %s lint",
+test.each(["aborted", "failed", "successful retry"] as const)(
+  "lint recovery keeps Publish ready after %s",
   async (outcome) => {
     const fixture = await serviceFixture();
     const service = await startService({ configurationFile: fixture.file, log: () => {} });
@@ -417,6 +417,10 @@ test.each(["aborted", "failed"] as const)(
       await page.route("**/api/blueprints/lint", async (route) => {
         requests++;
         received();
+        if (outcome === "successful retry" && requests === 2) {
+          await route.continue();
+          return;
+        }
         if (outcome === "aborted") await held;
         await route.fulfill({
           status: 502,
@@ -426,16 +430,17 @@ test.each(["aborted", "failed"] as const)(
       });
       await page.locator(".cm-content").fill(original.replace("count: 60", "count: 62"));
       await seen;
-      if (outcome === "failed")
+      if (outcome !== "aborted")
         await page.getByText("Cannot check this text.", { exact: false }).waitFor();
       else await page.getByText("Checking…", { exact: true }).waitFor();
-      if (outcome === "failed") {
+      if (outcome !== "aborted") {
         const retried = page.waitForResponse("**/api/blueprints/lint");
         await page.getByRole("button", { name: "Try again", exact: true }).click();
         await retried;
-        await page.getByText("Cannot check this text.", { exact: false }).waitFor();
+        if (outcome === "failed")
+          await page.getByText("Cannot check this text.", { exact: false }).waitFor();
       }
-      await page.locator(".cm-content").fill(checked);
+      if (outcome !== "successful retry") await page.locator(".cm-content").fill(checked);
       await page.waitForFunction(
         () =>
           !document.querySelector<HTMLButtonElement>(".blueprint-header-actions button:last-child")
@@ -445,12 +450,12 @@ test.each(["aborted", "failed"] as const)(
       );
       expect(await page.getByText("Checking…", { exact: true }).count()).toBe(0);
       expect(await page.getByText("Cannot check this text.", { exact: false }).count()).toBe(0);
-      // Wait past the lint debounce to prove cached text stays ready after a retry.
+      // Wait past the lint debounce to prove recovery sends no redundant request.
       await page.waitForTimeout(500);
       expect(await page.getByRole("button", { name: "Publish", exact: true }).isDisabled()).toBe(
         false,
       );
-      expect(requests).toBe(outcome === "failed" ? 2 : 1);
+      expect(requests).toBe(outcome === "aborted" ? 1 : 2);
     } finally {
       release();
       await browser.close();
