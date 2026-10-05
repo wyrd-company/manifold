@@ -87,6 +87,9 @@ escalations:
       # The `ntfy-token` credential that publishes to the topic.
       credential: ntfy-token
 
+# Defaults apply; see agent-tools-configuration.schema.yml.
+agentTools: {}
+
 # Defaults apply; see expressions-configuration.schema.yml.
 expressions: {}
 

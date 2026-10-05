@@ -2,6 +2,8 @@ $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
     - service-assembly
+    - default-process
+    - agent-tools
     - service-configuration
     - github-event-source
     - t3code-environment-source
@@ -18,6 +20,9 @@ relationships:
     - host-cli-manifest-lint
     - bindings-declaration
     - accounts-declaration
+    - task-metadata-declaration
+    - host-cli-mcp
+    - agent-tools-configuration
     - t3code-environments-configuration
   # GAP-EDGE: the decision record is context, not a contract; the schema
   # declares no edge for it, and `contextualized-by` is its inverse.
@@ -204,7 +209,10 @@ proposed-design:
     joins the root in a later task joins the example in the same change,
     and the test below fails until it does. Account capacity is declared in
     the process repository's `accounts.yml`, not here, so it adds no
-    section. The specification's own inline example is replaced by a
+    section. The `agentTools` section, which `agent-tools-configuration`
+    specifies, is in the example at its defaults; the example test passes
+    once that section is in the root schema, which the merge order puts
+    before this design's implementation. The specification's own inline example is replaced by a
     reference to this asset.
   example-test: >-
     A test in `packages/service/src/service-configuration/` copies the
@@ -245,11 +253,26 @@ proposed-design:
     the task repositories; record the App id and the installation id, the
     two ids the `github-app` credential takes (the App's client id is not
     used); generate the private key into `credentials/` with mode 0600. (5) The process
-    repository: create it from the starter repository; run its first lint
-    with the host CLI; declare the test Project's binding; declare each
-    account in `accounts.yml` with its `unit`, `kind`, and `capacity`
-    (`amount`, `reset`, `every`), as `accounts-declaration` specifies;
-    check the declarations with `manifold-host usage lint`; push. (6) Exposure: the proxy rule below, and the public base
+    repository: copy `examples/starter/` from the checkout into a new
+    repository on the organization; replace each placeholder its comments
+    name: in `bindings.yml` the test Project's `owner` and `number`, the
+    environment name, and the id of the T3code project the task threads
+    run in, which intake reads from the binding; in `task-metadata.yml`
+    the lifecycle field of the test Project, whose options must include
+    `In Progress` and `Done`, the statuses the bundled default blueprint
+    moves cards to (a new Project's `Status` field holds `Todo`,
+    `In Progress`, and `Done`); in `accounts.yml` each account's `unit`,
+    `kind`, and `capacity` (`amount`, `reset`, `every`), within the bounds
+    `accounts-declaration` states, which the lint reports. The starter
+    holds no blueprint: intake names `blueprints/task.yml`, which Manifold
+    bundles, and a file committed at that path replaces it. Run the first
+    lint from the repository's root with `manifold-host manifest lint`,
+    `manifold-host portfolio lint`, `manifold-host usage lint`,
+    `manifold-host task-metadata lint`, and `manifold-host comparator lint
+    comparators/estimate.ts`, expect no finding, and push. On each
+    environment, add the task repository's checkout as a T3code project
+    with `t3 project add <path>` and record its id for `bindings.yml`.
+    (6) Exposure: the proxy rule below, and the public base
     URL it gives. (7) The organization hook: payload URL
     `<public base URL>/webhooks/github`, content type `application/json`,
     a secret generated into `credentials/` and never typed, SSL
@@ -269,7 +292,13 @@ proposed-design:
     binary and run `manifold-host usage push --service <url> --environment
     <name>` after agent work, from a scheduler the operator chooses, with
     one example: a systemd timer that runs it every 10 minutes. A late
-    push only delays the actuals the ledger posts. (12) Check: add an issue to the test Project and
+    push only delays the actuals the ledger posts. (11a) The harness
+    plugin on each environment: register `manifold-host mcp --service
+    <url> --environment <name>` as the MCP server `manifold` in each
+    provider's MCP configuration, as `host-cli-mcp` gives it per provider;
+    the guide links that specification for each provider's file and
+    snippet and restates none of them, and checks the registration by the
+    provider listing the `handoff` and `escalate` tools. (12) Check: add an issue to the test Project and
     find its `task:<issue node id>` actor in the console or through
     `GET /api/actors`. (13) When something is wrong: the log events an
     operator meets first (`start-failed` with its issues, `pull-failed`,
@@ -354,13 +383,18 @@ proposed-design:
     service listens on `127.0.0.1`. The webhook endpoint verifies each
     delivery by its hook's secret, and both escalation endpoints need the
     escalation's key, so these are the endpoints that are safe to expose;
-    `/api/`, `/console/`, and `/api/usage/push` are not. The section gives
+    `/api/`, `/console/`, `/api/usage/push`, and
+    `/api/agent-tools/calls` are not. The section gives
     the rule as a table of method, path, and reason, then one example in a
     widely used proxy (Caddy) that matches each endpoint by method and
     exact path pattern. A tunnel for testing follows the same rule and
-    enables only the endpoints its test exercises. How environments on
-    another machine reach `/api/usage/push` is a decision reserved to the
-    user.
+    enables only the endpoints its test exercises. The host CLI on each
+    environment calls two API endpoints: `usage push` posts to
+    `/api/usage/push`, and the harness plugin posts each tool call to
+    `/api/agent-tools/calls`. An environment on the service host reaches
+    both over loopback. How environments on another machine reach them is
+    a decision reserved to the user, and neither goes through the public
+    proxy.
   verification: >-
     The executor follows the guide on a clean machine or container, step
     by step, once against real GitHub through the test environment of the
