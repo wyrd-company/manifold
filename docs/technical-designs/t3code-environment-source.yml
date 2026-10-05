@@ -327,6 +327,8 @@ proposed-design:
       thread(environment: string, threadId: string): ThreadView | undefined;
       /** Resolves after `ready` with the `environmentId` this run's connection confirmed. */
       environmentId(environment: string, signal?: AbortSignal): Promise<string>;
+      /** The environment's T3code projects as its shell last listed them; undefined before the first list. */
+      projects(environment: string): readonly T3CodeProjectView[] | undefined;
       /** Closes every client; resolves when every environment loop has ended. */
       stop(): Promise<void>;
     }
@@ -339,6 +341,14 @@ proposed-design:
       readonly turn?: "running" | "completed" | "interrupted" | "error";
       /** True when T3 Code has archived or deleted the thread. */
       readonly archived: boolean;
+    }
+
+    export interface T3CodeProjectView {
+      readonly id: string;
+      readonly title: string;
+      readonly workspaceRoot: string;
+      /** The count of the project's threads the source follows. */
+      readonly activeThreads: number;
     }
 
     export interface EnvironmentStatus {
@@ -365,6 +375,22 @@ proposed-design:
     and the thread id, each id percent-encoded, which is the route the T3
     Code web client serves a thread on. The operator console links a
     task's threads through it.
+  project-view: >-
+    `projects(environment)` answers the T3code projects of the
+    environment's shell: the projects of the last shell snapshot the
+    source read, from `shell.readModel` or `shell.watch`, with each later
+    `project-upserted` and `project-removed` item applied, each with its
+    `id`, `title`, and `workspaceRoot`. The source keeps this list in
+    memory per environment, since T3 Code holds it and every connection
+    reads it again; it answers `undefined` for an environment that is not
+    configured or whose shell it has not read since the service started.
+    `activeThreads` counts the environment's `t3_thread` rows with that
+    `project_id` whose status is `followed`, read synchronously at the
+    call. The operator console lists an environment's T3code projects
+    through it. A test against the fake server shows `undefined` before
+    the first shell read, the list after a snapshot, after a project
+    upserted and after one removed, and a count that drops when a thread
+    is archived.
   module-layout: >-
     `index.ts` re-exports the public names. `state.ts` holds the pure
     functions: `compactThread`, `threadState`, and `threadChanges`.

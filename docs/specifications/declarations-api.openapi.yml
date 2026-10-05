@@ -1,0 +1,606 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: declarations-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold declarations API
+  version: 0.1.0
+  description: >-
+    The declarations endpoints of Manifold's API: read, lint, and save of
+    `bindings.yml` and `task-metadata.yml`, the read of the bindings, and
+    the save of one binding as a structured edit.
+security: []
+paths:
+  /api/declarations/source:
+    get:
+      operationId: readDeclarationSource
+      summary: Read one declaration file at the latest applied revision, with its findings.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/DeclarationPath"
+      responses:
+        "200":
+          description: The file's text at the latest applied revision, or the empty string when the revision holds none.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeclarationSource"
+        "400":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/lint:
+    post:
+      operationId: lintDeclaration
+      summary: Lint an edited declaration text as the service and the host CLI lint it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LintRequest"
+      responses:
+        "200":
+          description: The findings of the text, with task fields and impact for a clean task metadata text.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LintResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/save:
+    post:
+      operationId: saveDeclaration
+      summary: Commit a declaration text to the configured branch and push it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Saved"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "502":
+          $ref: "#/components/responses/RemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/bindings:
+    get:
+      operationId: readBindings
+      summary: Read the bindings at the latest applied revision, with the items and environments a binding may name.
+      responses:
+        "200":
+          description: The bindings, items, and environments.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BindingsResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/bindings/save:
+    post:
+      operationId: saveBinding
+      summary: Set one binding in bindings.yml at the base, then save the file.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BindingSaveRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Saved"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "502":
+          $ref: "#/components/responses/RemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
+components:
+  headers:
+    NoStore:
+      schema:
+        const: no-store
+  responses:
+    Error:
+      description: An error with its kind and message.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowed:
+      description: A method the endpoint does not take.
+      headers:
+        Allow:
+          schema:
+            enum: [GET, POST]
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Saved:
+      description: The text is on the branch.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SaveResponse"
+    Conflict:
+      description: The file on the branch changed since the base, or the branch moved under the save.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SaveConflict"
+    Invalid:
+      description: The text has lint findings, or the binding edit's name is taken or missing; nothing was written.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SaveInvalid"
+    RemoteError:
+      description: The remote refused the push or could not be reached.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SaveRemoteError"
+  schemas:
+    Commit:
+      type: string
+      pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    DeclarationPath:
+      enum: [bindings.yml, task-metadata.yml]
+    DeclaredName:
+      type: string
+      maxLength: 64
+      pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum:
+            - bad-request
+            - cross-site
+            - not-found
+            - method-not-allowed
+            - too-large
+            - unsupported-media-type
+            - unavailable
+        message:
+          type: string
+    Finding:
+      type: object
+      description: >-
+        The declaration lint's finding without its `file`, with `range`
+        when it has a place in the text. Members beyond those listed are
+        the lint's finding details.
+      required: [kind, location, message]
+      properties:
+        kind:
+          type: string
+        location:
+          type: string
+          description: The RFC 6901 JSON Pointer of the failing value in the document.
+        message:
+          type: string
+        range:
+          $ref: "#/components/schemas/Range"
+    Range:
+      type: object
+      additionalProperties: false
+      required: [from, to, line, column]
+      properties:
+        from:
+          type: integer
+          minimum: 0
+          description: Offset into the text in UTF-16 code units.
+        to:
+          type: integer
+          minimum: 0
+        line:
+          type: integer
+          minimum: 1
+        column:
+          type: integer
+          minimum: 1
+    TaskField:
+      type: object
+      additionalProperties: false
+      required: [binding, name, storage, lifecycle, location]
+      properties:
+        binding:
+          $ref: "#/components/schemas/DeclaredName"
+        name:
+          type: string
+          minLength: 1
+        storage:
+          enum: [project-field, label, issue-type, issue-field, milestone, front-matter]
+        type:
+          type: string
+          minLength: 1
+        required:
+          type: boolean
+        lifecycle:
+          type: boolean
+        whenChanged:
+          enum: [revert, accept]
+        location:
+          type: string
+        range:
+          $ref: "#/components/schemas/Range"
+    ProjectImpact:
+      type: object
+      additionalProperties: false
+      required: [binding]
+      description: >-
+        One bound Project's plan counts for the linted declaration; with no
+        counts, the service has not observed the Project yet.
+      properties:
+        binding:
+          $ref: "#/components/schemas/DeclaredName"
+        creates:
+          type: integer
+          minimum: 0
+        changes:
+          type: integer
+          minimum: 0
+        removes:
+          type: integer
+          minimum: 0
+      dependentRequired:
+        creates: [changes, removes]
+        changes: [creates, removes]
+        removes: [creates, changes]
+    Findings:
+      type: object
+      required: [findings, warnings]
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          maxItems: 0
+          items:
+            $ref: "#/components/schemas/Finding"
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskField"
+        impact:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectImpact"
+    DeclarationSource:
+      allOf:
+        - $ref: "#/components/schemas/Findings"
+        - type: object
+          required: [path, commit, exists, text]
+          properties:
+            path:
+              $ref: "#/components/schemas/DeclarationPath"
+            commit:
+              $ref: "#/components/schemas/Commit"
+            exists:
+              type: boolean
+            text:
+              type: string
+      unevaluatedProperties: false
+    LintRequest:
+      type: object
+      additionalProperties: false
+      required: [path, text]
+      properties:
+        path:
+          $ref: "#/components/schemas/DeclarationPath"
+        text:
+          type: string
+    LintResponse:
+      allOf:
+        - $ref: "#/components/schemas/Findings"
+      unevaluatedProperties: false
+    SaveFields:
+      type: object
+      required: [base, message, saveId]
+      properties:
+        base:
+          $ref: "#/components/schemas/Commit"
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: "\\S"
+        saveId:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+    SaveRequest:
+      allOf:
+        - $ref: "#/components/schemas/SaveFields"
+        - type: object
+          required: [path, text]
+          properties:
+            path:
+              $ref: "#/components/schemas/DeclarationPath"
+            text:
+              type: string
+      unevaluatedProperties: false
+    BindingSaveRequest:
+      allOf:
+        - $ref: "#/components/schemas/SaveFields"
+        - type: object
+          required: [edit]
+          properties:
+            edit:
+              oneOf:
+                - $ref: "#/components/schemas/GitHubProjectEdit"
+                - $ref: "#/components/schemas/T3codeProjectEdit"
+      unevaluatedProperties: false
+    GitHubProjectEdit:
+      type: object
+      additionalProperties: false
+      required: [kind, mode, name, owner, number, environment, item, t3codeProjects]
+      properties:
+        kind:
+          const: github-project
+        mode:
+          enum: [add, replace]
+        name:
+          type: string
+        owner:
+          type: string
+        number:
+          type: integer
+        environment:
+          type: string
+        item:
+          type: string
+        t3codeProjects:
+          type: array
+          items:
+            type: string
+    T3codeProjectEdit:
+      type: object
+      additionalProperties: false
+      required: [kind, mode, name, environment, project, item]
+      properties:
+        kind:
+          const: t3code-project
+        mode:
+          enum: [add, replace]
+        name:
+          type: string
+        environment:
+          type: string
+        project:
+          type: string
+        item:
+          type: string
+    SaveResponse:
+      type: object
+      additionalProperties: false
+      required: [outcome, commit, loaded]
+      properties:
+        outcome:
+          enum: [saved, already-saved, unchanged]
+        commit:
+          $ref: "#/components/schemas/Commit"
+        loaded:
+          type: boolean
+          description: The latest applied revision holds the commit.
+    SaveConflict:
+      type: object
+      additionalProperties: false
+      required: [error, message, reason, head]
+      properties:
+        error:
+          const: conflict
+        message:
+          type: string
+        reason:
+          enum: [file-changed, branch-moved]
+        head:
+          $ref: "#/components/schemas/Commit"
+        text:
+          type: string
+    SaveInvalid:
+      type: object
+      additionalProperties: false
+      required: [error, message, findings, warnings]
+      properties:
+        error:
+          const: invalid
+        message:
+          type: string
+        findings:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+    SaveRemoteError:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error:
+          enum: [rejected, authentication, remote]
+        message:
+          type: string
+    BindingsResponse:
+      type: object
+      additionalProperties: false
+      required: [repository, commit, findings, githubProjects, t3codeProjects, items, environments]
+      properties:
+        repository:
+          type: object
+          additionalProperties: false
+          required: [url, branch]
+          properties:
+            url:
+              type: string
+            branch:
+              type: string
+        commit:
+          $ref: "#/components/schemas/Commit"
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        githubProjects:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, owner, number, environment, item, t3codeProjects, archived]
+            properties:
+              name:
+                $ref: "#/components/schemas/DeclaredName"
+              owner:
+                type: string
+              number:
+                type: integer
+                minimum: 1
+              environment:
+                $ref: "#/components/schemas/DeclaredName"
+              item:
+                type: string
+                minLength: 1
+              t3codeProjects:
+                type: array
+                items:
+                  type: string
+                  minLength: 1
+              archived:
+                type: boolean
+        t3codeProjects:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, environment, project, item, archived]
+            properties:
+              name:
+                $ref: "#/components/schemas/DeclaredName"
+              environment:
+                $ref: "#/components/schemas/DeclaredName"
+              project:
+                type: string
+                minLength: 1
+              item:
+                type: string
+                minLength: 1
+              archived:
+                type: boolean
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id]
+            properties:
+              id:
+                type: string
+                minLength: 1
+              title:
+                type: string
+        environments:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name:
+                $ref: "#/components/schemas/DeclaredName"
+              projects:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [id, title, workspaceRoot, activeThreads]
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                    title:
+                      type: string
+                    workspaceRoot:
+                      type: string
+                    activeThreads:
+                      type: integer
+                      minimum: 0

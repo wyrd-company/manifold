@@ -1,0 +1,199 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - operator-console
+    - process-repository
+    - service-assembly
+    - bindings-declaration
+    - portfolio-declaration
+    - task-metadata-declaration
+    - blueprints-api
+    - t3code-environment-source
+    - lint-console-edits-on-the-service
+terms:
+  - binding
+  - portfolio-item
+  - lifecycle-field
+  - revision
+description: >-
+  Defines the declarations endpoints of Manifold's API: the read, lint, and
+  save of the two process repository files the GitHub Projects screen and
+  the Task fields section of the operator console change, `bindings.yml`
+  and `task-metadata.yml`; the read of the bindings with what a binding may
+  name; and the save of one binding as a structured edit.
+  `docs/specifications/declarations-api.openapi.yml` is the
+  machine-readable definition. The console reads and writes through them,
+  and any automation may.
+
+  The endpoints are mounted with the HTTP host's `mount` at the prefix
+  `/api/declarations` and are always served without authentication.
+  Access control belongs to the deployment. A path under the prefix that
+  is not one of the five below answers `404`. A method an endpoint does not
+  take answers `405` with `Allow` naming the one it takes.
+
+  **Declaration paths.** A declaration path is `bindings.yml` or
+  `task-metadata.yml`, the files at the root of the process repository
+  that `bindings-declaration` and `task-metadata-declaration` define. No
+  other path is read, linted, or saved through these endpoints. A request
+  that names another path answers `400`.
+
+  **Findings.** A finding is the declaration lint's finding, as
+  `bindings-declaration` and `task-metadata-declaration` define it,
+  without its `file`, and with `range` when the finding has a place in the
+  text, by the rule `blueprints-api` states for a finding located by a
+  JSON Pointer or by a line and column. A text lints with the same
+  function and the same companion file as the service's revision follower
+  and the host CLI:
+
+  - `task-metadata.yml` lints with `lintTaskMetadataDeclaration`, with
+    `bindings.yml` at the latest applied revision as `bindings`, as
+    `manifold-host task-metadata lint` lints a checkout.
+  - `bindings.yml` lints with `lintPortfolioDeclaration`, with
+    `portfolio.yml` at the latest applied revision as `portfolio`, as
+    `manifold-host portfolio lint` lints a checkout. The answer keeps the
+    findings whose file is `bindings`; a finding in `portfolio.yml` is not
+    the edited file's.
+
+  `findings` holds every finding, and `warnings` is empty; the two lists
+  keep the shape of `blueprints-api` so that one Problems list shows
+  either.
+
+  **Task fields.** A lint of `task-metadata.yml` with no finding answers
+  `fields`, one row per declared task field of each Project the document
+  names, in document order: `binding`; `name`; `storage`, the storage kind
+  of the field as `task-metadata-declaration` declares it, one of
+  `project-field`, `label`, `issue-type`, `issue-field`, `milestone`, and
+  `front-matter`; `type`, the field's value type when the declaration
+  gives one; `required` when the declaration gives it; `lifecycle`, true
+  for the Project's lifecycle field; `whenChanged`, `revert` or `accept`,
+  when the declaration gives the field's choice for a change made on
+  GitHub; `location`, the JSON Pointer of the field's entry; and `range`
+  by the rule for findings. The lifecycle field is a `project-field` of
+  type `single-select`, required.
+
+  **Impact.** A lint of `task-metadata.yml` with no finding answers
+  `impact`, one entry per GitHub Project binding of `bindings.yml` at the
+  latest applied revision that is not archived, in declaration order:
+  `binding`, and, when the service has observed the Project on GitHub,
+  `creates`, `changes`, and `removes`, the counts of each change that the
+  plan of the linted declaration against the Project's observed state
+  holds, as the Project configuration API plans an Apply. An entry with
+  no counts is a Project the service has not observed yet. Impact reads
+  GitHub state the service already holds and makes no GitHub request.
+
+  **Source.** `GET /api/declarations/source?path=<path>` answers `200`
+  with `path`; `commit`, the commit of the latest applied revision, which
+  is the base for a save of this path; `exists`, whether the revision
+  holds the file; `text`, the file's text, or the empty string when it
+  holds none; `findings`; `warnings`; and for `task-metadata.yml`,
+  `fields` and `impact` when the text has no finding. Before the first
+  applied revision it answers `503`.
+
+  **Lint.** `POST /api/declarations/lint` takes `{ path, text }` and
+  answers `200` with `findings`, `warnings`, and for `task-metadata.yml`,
+  `fields` and `impact` when the text has no finding. It reads and writes
+  nothing else. Before the first applied revision it answers `503`.
+
+  **Save.** `POST /api/declarations/save` takes `{ path, base, text,
+  message, saveId }`, with the meaning and limits of the blueprint save in
+  `blueprints-api`. The service lints `text` first: a text with a finding
+  answers `422` with `findings` and `warnings`, and nothing is written.
+  Otherwise the revision follower saves it as `process-repository` and
+  `service-assembly` state, and the answer is `200` with `outcome`
+  (`saved`, `already-saved`, or `unchanged`) and `commit` as
+  `blueprints-api` defines them, and `loaded`: true when the latest
+  applied revision then holds the answer's commit, as that commit or a
+  later commit of the branch, and false when the pull after the push
+  failed. The `409`, `502`, and `503` answers are those of the blueprint
+  save.
+
+  **Bindings.** `GET /api/declarations/bindings` answers `200` with:
+
+  - `repository`: the configured URL and branch.
+  - `commit`: the commit of the latest applied revision, the base for a
+    binding save.
+  - `findings`: the findings of `bindings.yml` at that commit. With a
+    finding, `githubProjects` and `t3codeProjects` are empty, since the
+    document does not declare bindings Manifold can read.
+  - `githubProjects`: each GitHub Project binding in document order, with
+    `name`, `owner`, `number`, `environment`, `item`, `t3codeProjects`
+    (the associated T3code project ids, empty when none), and `archived`.
+  - `t3codeProjects`: each T3code project binding in document order, with
+    `name`, `environment`, `project`, `item`, and `archived`.
+  - `items`: the portfolio items of `portfolio.yml` at that commit that a
+    binding that is not archived may name: every item that is not an
+    Other item and is not archived, with `id` and `title` when it declares
+    one, in document order. Empty when `portfolio.yml` has a finding.
+  - `environments`: each environment of service configuration, in
+    configuration order, with `name`, and `projects` when the T3 Code
+    source has read the environment's projects since the service started:
+    each T3code project with `id`, `title`, `workspaceRoot`, and
+    `activeThreads`, the count of its threads the source follows, sorted
+    by `title`, then `id`.
+
+  Before the first applied revision it answers `503`.
+
+  **Binding save.** `POST /api/declarations/bindings/save` takes `{ edit,
+  base, message, saveId }`. `base`, `message`, and `saveId` have the
+  meaning and limits of a save. `edit` is one binding:
+
+  - `{ kind: "github-project", mode, name, owner, number, environment,
+    item, t3codeProjects }`
+  - `{ kind: "t3code-project", mode, name, environment, project, item }`
+
+  `mode` is `add` or `replace`. The service reads `bindings.yml` at `base`,
+  sets the binding with the `yaml` package's document model, and saves the
+  result at `bindings.yml` as a save does, lint first. `add` puts the
+  binding at the end of its section, creating the file, the document, or
+  the section when absent. `replace` sets each member the edit names on
+  the binding of that name in its section and keeps its other members,
+  `archived` included, and its place. Every comment stays, and in a file
+  in the block style the `yaml` package writes, every line outside the
+  edited binding stays unchanged. An empty `t3codeProjects` removes the
+  key. An
+  `add` whose name is already a binding of either section, and a `replace`
+  whose name is no binding of the edit's section, answers `422` with one
+  finding of kind `name-taken` or `name-missing`, located at the binding's
+  entry, and nothing is written. The `200`, `409`, `422`, `502`, and `503`
+  answers are those of a save, the `409` text being `bindings.yml` on the
+  branch. A `base` the process repository does not hold answers `400`.
+
+  **Requests.** `lint`, `save`, and `bindings/save` take the request
+  checks of `blueprints-api`: `Content-Type: application/json` or `415`,
+  the same-site checks or `403`, a body of 8 MiB at most or `413`, and a
+  body that is not JSON or not of the stated shape `400` with the first
+  problem. Every answer is JSON with `Cache-Control: no-store`, and every
+  error answer holds `error` and `message`.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/declarations-api.openapi.yml` is a valid OpenAPI 3.1
+  document. Tests in `packages/service` serve a fixture process repository
+  over smart HTTP with push enabled, start the declarations endpoints on
+  it, and call each endpoint without authentication through the service's
+  HTTP host. They check that each body validates against its response
+  schema; that `source` of `task-metadata.yml` answers its text, the
+  revision's commit, and `fields` with the lifecycle field locked as
+  stated, and of an absent file answers `exists` false, empty text, and no
+  finding; that `lint` of `task-metadata.yml` answers, for the
+  `task-metadata-declaration` lint fixtures, the findings whose kinds and
+  locations `manifold-host task-metadata lint` prints for the same files,
+  each with its range, and of `bindings.yml` the findings `manifold-host
+  portfolio lint` prints for the bindings file, without the findings of a
+  broken `portfolio.yml`; that `impact` counts a fixture planner's creates,
+  changes, and removes per bound Project and lists an unobserved Project
+  with no counts; that a save answers `saved` with `loaded` true and the
+  remote branch holds one new commit with the message, the same save again
+  answers `already-saved`, a text with a finding answers `422`, and a base
+  whose file changed answers `409` with the branch's text; that `bindings`
+  lists both binding kinds, the items a binding may name without Other and
+  archived items, and an environment with its T3code projects from a
+  fixture source and one without; that a binding save of each kind and
+  mode keeps a comment above another binding and above the edited one, an
+  `add` to an absent file creates it, an `add` of a taken name answers
+  `422` `name-taken`, a `replace` of a missing name answers `422`
+  `name-missing`, an edit naming an unknown item answers `422`
+  `unknown-item` at the item, and the same binding save again answers
+  `already-saved`; and the `400`, `403`, `404`, `405`, `413`, `415`, and
+  `503` answers. Fixtures use a domain unrelated to Manifold.

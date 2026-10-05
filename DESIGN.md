@@ -748,13 +748,15 @@ and "Bind a T3code project" (outline) on the right of the heading.
   `org/name`" under it in muted text, and it has no Edit button. A GitHub
   Project can have many associated T3code projects.
 - Bind a T3code project and Edit are one 440px dialog: T3code project (a
-  select of the environment's T3code projects), Environment, and Portfolio
-  item.
+  select of the environment's T3code projects), Name (the binding name,
+  prefilled from the project's title, read only on Edit), Environment, and
+  Portfolio item.
 
 #### Bind a Project
 
-A 480px dialog: Project, Environment, Portfolio item (the item the Project
-attaches to), T3code projects, and a warning note that Manifold takes
+A 480px dialog: Project (`org/number` or the Project's URL), Name (the
+binding name, prefilled from the Project), Environment, Portfolio item (the
+item the Project attaches to), T3code projects, and a warning note that Manifold takes
 control of the Project's fields and status options and of the labels, issue
 types, issue fields, and milestones the task fields use. T3code projects
 has a "Create one from the templates" checkbox, which shows the name and
@@ -786,6 +788,8 @@ Project's page with its first Apply.
   dimmed with a "Kept" badge and does not count.
 - Front matter has nothing to apply. When issues hold front matter that does
   not match the task fields, the group says how many, with a link to them.
+- With the switch on, "Apply N changes" first asks in a 400px alert dialog
+  that names what will be removed; the confirm button is solid error.
 
 ### Settings
 
@@ -814,6 +818,9 @@ changes, with "Review impact".
   name (tooltip and label "Set by Manifold"). Its name, Required box, and
   storage are shown disabled, and it has no remove button.
 - A nested row shows "in parent" in the Stored as column.
+- The YAML sits beside the table, as the Source pane sits beside the graph
+  in the blueprint editor; under 1024px of content width they become tabs.
+  Selecting a row moves the YAML cursor to the field.
 - Selecting a row shows it in the field panel: "Stored as", whether that storage
   can hold the type, the kind's settings (project or issue field name, label
   prefix, front matter key), what exists on GitHub for it, its scope, and
