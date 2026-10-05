@@ -95,4 +95,4 @@ test("built Board reads settled usage and records panel answers once, including 
     await server.close();
     await f.close();
   }
-}, 20000);
+});
