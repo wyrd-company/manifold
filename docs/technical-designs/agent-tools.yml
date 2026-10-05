@@ -150,8 +150,8 @@ proposed-design:
     specification lists, `claudecode/toolUseId` for Claude and `callId` for
     Codex, in that order, taking the first that holds a non-empty string.
     With a call id, the candidates are the threads on the call's
-    environment that some loaded actor follows, as the actor host's
-    `followedThreads` gives them. For each candidate the module reads the
+    environment that some active actor follows, loaded or held, as the
+    actor host's `followedThreads` gives them. For each candidate the module reads the
     thread's detail through the environment's T3 Code client and looks for
     a tool activity whose `payload.toolCallId` equals the call id; the
     activity's `turnId` is the call's turn. Exactly one candidate holding
@@ -160,8 +160,8 @@ proposed-design:
     request arrived, since T3 Code may record the activity after the
     request. A call with no call id, or whose call id no candidate holds
     within the bound, is identified by the tool's `thread` argument when it
-    is given: the thread must be one a loaded actor follows on the call's
-    environment, and its session must be `running` with an active turn,
+    is given: the thread must be one an active actor follows on the call's
+    environment, loaded or held, and its session must be `running` with an active turn,
     which is the call's turn. A call that neither rule identifies is
     refused: with `not-followed` when one read of the threads whose
     session is running on the environment finds a thread no actor follows
@@ -547,7 +547,12 @@ proposed-design:
     `invalid-handoff` and reaches neither inbox; a handoff whose held
     follower's version cannot be loaded is refused with `task-held` and
     reaches no inbox, and the same call is accepted once that actor is
-    restored; a held follower is listed by `followers`; an answer after the actor ends is refused; a command the
+    restored; a held follower is listed by `followers`; with a held actor
+    as the thread's sole follower, a call identified by its call id and
+    one identified by its `thread` argument are each accepted into the
+    held actor's inbox when its version declares `agent.handoff` and the
+    handoff passes it, and each refused with `task-held` when its version
+    cannot be loaded; an answer after the actor ends is refused; a command the
     fake server rejects marks the row failed; the endpoint answers `413`,
     `400`, `404`, and `405` as stated. The fault tests run the service in a
     child Node process that sends itself `SIGKILL` and whose signal the
