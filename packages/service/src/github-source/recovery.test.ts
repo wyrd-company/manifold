@@ -819,7 +819,7 @@ test("the issue-presence migration preserves populated mirrors from version one"
     prior.connection.database
       .prepare("SELECT version FROM schema_migration WHERE owner='github'")
       .get()?.["version"],
-  ).toBe(2);
+  ).toBe(3);
 });
 
 test("uses the loaded GitHub section and named installation credential for fetched state", async () => {

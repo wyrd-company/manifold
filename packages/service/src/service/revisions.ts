@@ -4,6 +4,7 @@
 //     - service-assembly
 //     - gate-runtime
 // ---
+import type { TaskMetadata } from "../task-metadata/index.ts";
 import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
 import type { IntakeRevision } from "../intake/index.ts";
 import type { Usage } from "../usage/index.ts";
@@ -16,6 +17,7 @@ export function createRevisions(options: {
   readonly blueprints: BlueprintLoader;
   readonly portfolio: Portfolio;
   readonly usage: Pick<Usage, "apply">;
+  readonly taskMetadata?: Pick<TaskMetadata, "apply">;
   readonly gates?: Gates;
   readonly log: (entry: ServiceLogEntry) => void;
   readonly applied?: (revision: AppliedRevision) => void;
@@ -62,6 +64,17 @@ export function createRevisions(options: {
             kind: f.kind,
             message: f.message,
           })),
+        },
+      });
+    const metadataResult = await options.taskMetadata?.apply(revision);
+    if (metadataResult?.status === "rejected")
+      options.log({
+        level: "warn",
+        event: "task-metadata-rejected",
+        message: "Task metadata declaration rejected",
+        detail: {
+          commit: revision.commit,
+          findings: metadataResult.findings.map((f) => ({ ...f })),
         },
       });
     const usageResult = await options.usage.apply(revision);

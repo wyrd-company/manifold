@@ -29,6 +29,7 @@ export type BlueprintFinding = {
     | "implementation-unknown"
     | "machine"
     | "final-state-missing"
+    | "lifecycle-option"
     | "gate"
     | "token-violation"
     | "token-potential"
@@ -47,6 +48,7 @@ export type BlueprintFinding = {
 } & Partial<Omit<ExpressionFinding, "kind" | "location" | "message">>;
 export interface BlueprintLintOptions {
   readonly configurationBound?: number;
+  readonly lifecycleOptions?: ReadonlySet<string>;
 }
 export type BlueprintLint =
   | {
@@ -211,6 +213,19 @@ export async function lintBlueprint(
       const invoke = record(item),
         at = `${location}/invoke${Array.isArray(config["invoke"]) ? `/${i}` : ""}`;
       reference(invoke["src"], "actor", `${at}/src`);
+      const input = record(invoke["input"]);
+      if (
+        invoke["src"] === "github-card-move" &&
+        options.lifecycleOptions !== undefined &&
+        typeof input["status"] === "string" &&
+        !options.lifecycleOptions.has(input["status"])
+      )
+        finding(
+          "lifecycle-option",
+          `${at}/input/status`,
+          `Lifecycle option is not declared: ${input["status"]}`,
+          { name: input["status"] },
+        );
       for (const key of ["onDone", "onError", "onSnapshot"])
         transitions(invoke[key], `${at}/${key}`);
     });

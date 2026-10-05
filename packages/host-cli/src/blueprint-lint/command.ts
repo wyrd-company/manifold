@@ -2,6 +2,8 @@
 // relationships:
 //   implements: host-cli-blueprint-lint
 // ---
+import { readTaskMetadata, printTaskMetadataFindings } from "../task-metadata-lint/command.ts";
+import { declaredLifecycleOptions } from "@wyrd-company/manifold-shared";
 import { readFile } from "node:fs/promises";
 import { lintBlueprint, manifoldImplementationNames } from "@wyrd-company/manifold-shared";
 import type { BlueprintFinding } from "@wyrd-company/manifold-shared";
@@ -21,10 +23,19 @@ function line(file: string, finding: BlueprintFinding) {
 }
 export async function blueprintLintCommand(args: readonly string[]) {
   const files: string[] = [];
+  let repository: string | undefined;
+  let lifecycleOptions: ReadonlySet<string> | undefined;
   let configurationBound: number | undefined;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!;
-    if (arg === "--configuration-bound") {
+    if (arg === "--repository") {
+      const value = args[++index];
+      if (repository !== undefined || !value || value.startsWith("--")) {
+        console.error("--repository requires a directory");
+        return 2;
+      }
+      repository = value;
+    } else if (arg === "--configuration-bound") {
       const value = args[++index];
       if (
         configurationBound !== undefined ||
@@ -46,6 +57,19 @@ export async function blueprintLintCommand(args: readonly string[]) {
     console.error("Usage: manifold-host blueprint lint <file>...");
     return 2;
   }
+  if (repository !== undefined) {
+    try {
+      const result = await readTaskMetadata(repository);
+      if (!result.ok) {
+        printTaskMetadataFindings(result);
+        return 2;
+      }
+      lifecycleOptions = declaredLifecycleOptions(result.declaration);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 2;
+    }
+  }
   const inputs = [];
   for (const file of files) {
     try {
@@ -57,12 +81,10 @@ export async function blueprintLintCommand(args: readonly string[]) {
   }
   let exitCode = 0;
   for (const { file, text } of inputs) {
-    const result = await lintBlueprint(
-      file,
-      text,
-      manifoldImplementationNames,
-      configurationBound === undefined ? {} : { configurationBound },
-    );
+    const result = await lintBlueprint(file, text, manifoldImplementationNames, {
+      ...(configurationBound === undefined ? {} : { configurationBound }),
+      ...(lifecycleOptions === undefined ? {} : { lifecycleOptions }),
+    });
     if (!result.ok) {
       for (const finding of result.findings) console.log(line(file, finding));
       exitCode = 1;

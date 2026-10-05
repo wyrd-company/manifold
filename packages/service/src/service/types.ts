@@ -50,6 +50,7 @@ export interface ServiceProbes {
   readonly capacityCredited?: (credit: import("../capacity/index.ts").CapacityCredit) => void;
   /** Called after each start and stop step completes. */
   readonly step?: (step: ServiceStep) => void;
+  readonly cardMove?: (move: import("../github-source/index.ts").CardMove) => void;
   /** Passed to the process repository. */
   readonly pull?: PullProbe;
   /** Passed to the store. */

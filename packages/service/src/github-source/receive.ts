@@ -86,6 +86,8 @@ export function startGitHubSource(options: GitHubSourceOptions): GitHubSource {
         );
       });
     },
+    project: (id) => mirror.read().projects.get(id)?.project,
+    moveCard: runner.moveCard,
     requestSweep: runner.requestSweep,
     trackedIssue: (id) => mirror.trackedIssue(id, runner.bound),
     trackedIssueIds: () => mirror.trackedIssueIds(runner.bound),

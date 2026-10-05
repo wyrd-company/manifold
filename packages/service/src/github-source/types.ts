@@ -42,11 +42,14 @@ export interface GitHubSourceOptions {
   readonly clock?: RouterClock;
   readonly onError?: (error: GitHubSourceError) => void;
   readonly probe?: () => void;
+  readonly probeMove?: (move: CardMove) => void;
   readonly onTracked?: (issueNodeIds: readonly string[]) => void;
   /** Runs after a transaction commits changed mirror rows, including silent changes. */
   readonly onMirrorChanged?: () => void;
 }
 export interface GitHubSource {
+  project(nodeId: string): GitHubProject | undefined;
+  moveCard(move: CardMove, signal?: AbortSignal): Promise<void>;
   receive(delivery: WebhookDelivery): DeliveryOutcome;
   readonly requestListener: (request: IncomingMessage, response: ServerResponse) => void;
   requestSweep(): void;
@@ -136,4 +139,39 @@ export interface ObservedItem {
   readonly issue: GitHubIssue | null;
   readonly archived: boolean;
   readonly fields: readonly ObservedField[];
+}
+
+export interface CardMove {
+  readonly actorId: string;
+  readonly invokeId: string;
+  readonly entryId: string;
+  readonly projectNodeId: string;
+  readonly issueNodeId: string;
+  readonly field: string;
+  readonly option: string;
+}
+export class GitHubWriteError extends Error {
+  readonly status: number | undefined;
+  readonly kind:
+    | "field-missing"
+    | "option-missing"
+    | "item-missing"
+    | "forbidden"
+    | "transport"
+    | "rejected";
+  constructor(
+    kind:
+      | "field-missing"
+      | "option-missing"
+      | "item-missing"
+      | "forbidden"
+      | "transport"
+      | "rejected",
+    message: string,
+    status?: number,
+  ) {
+    super(message);
+    this.kind = kind;
+    this.status = status;
+  }
 }

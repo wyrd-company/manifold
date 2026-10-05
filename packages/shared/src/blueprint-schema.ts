@@ -504,6 +504,57 @@ export const blueprintSchema = {
         },
       },
     },
+    "card-move-input": {
+      description: "The input of `github-card-move`.",
+      type: "object",
+      required: ["status"],
+      additionalProperties: false,
+      properties: {
+        status: {
+          description:
+            "The name of an option of the lifecycle field the task metadata declaration declares for the actor's Project.",
+          $ref: "https://manifold.wyrd.company/schemas/task-metadata-declaration#/$defs/name",
+        },
+      },
+    },
+    "card-move-output": {
+      description: "The output of `github-card-move`, once GitHub holds the option.",
+      type: "object",
+      additionalProperties: false,
+      maxProperties: 0,
+    },
+    "card-move-error": {
+      description: "The error a `github-card-move` invoke fails with.",
+      type: "object",
+      required: ["type", "kind", "message"],
+      additionalProperties: false,
+      properties: {
+        type: {
+          const: "card-move",
+        },
+        kind: {
+          enum: [
+            "input",
+            "identity",
+            "undeclared",
+            "field-missing",
+            "option-missing",
+            "item-missing",
+            "forbidden",
+            "transport",
+            "rejected",
+          ],
+        },
+        message: {
+          type: "string",
+        },
+        status: {
+          description:
+            "The `status` the move was asked for, when the input had one that is a string.",
+          type: "string",
+        },
+      },
+    },
     "actor-identity": {
       description: "The engine's identity of an actor, at `context.manifold`.",
       type: "object",
@@ -592,6 +643,7 @@ export const blueprintSchema = {
             "token-violation",
             "token-potential",
             "token-unknown",
+            "lifecycle-option",
           ],
         },
         location: {
@@ -616,7 +668,8 @@ export const blueprintSchema = {
           enum: ["actor", "action", "guard", "delay"],
         },
         name: {
-          description: "For `implementation-unknown`, the name referenced.",
+          description:
+            "For `implementation-unknown`, the name referenced; for `lifecycle-option`, the `status` that is not a declared option.",
           type: "string",
         },
         expression: {

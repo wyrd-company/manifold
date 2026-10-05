@@ -92,6 +92,19 @@ export async function githubFake() {
   let deliveryPagination: "normal" | "repeated" = "normal";
   let target: string | undefined;
   let failure = 0;
+  let writeFailure: { type: string; status?: number } | undefined;
+  const fields = [
+    {
+      id: "F_stage",
+      name: "Stage",
+      options: [
+        { id: "O_sorting", name: "Sorting" },
+        { id: "O_packed", name: "Packed" },
+        { id: "O_shipped", name: "Shipped" },
+      ],
+    },
+  ];
+  let paginateItem: string | undefined;
   let held: { operation: string; entered: () => void; released: Promise<void> } | undefined;
   let paginate: string | undefined;
   const rawIssue = (id: string) => {
@@ -117,9 +130,17 @@ export async function githubFake() {
   };
   const rawItem = (id: string) => {
     const value = items.get(id);
-    return value
-      ? { ...value, content: value.type === "ISSUE" ? issues.get(value.content.id) : value.content }
-      : null;
+    if (!value) return null;
+    const raw = {
+      ...value,
+      content: value.type === "ISSUE" ? issues.get(value.content.id) : value.content,
+    };
+    if (paginateItem === id)
+      raw.fieldValues = {
+        nodes: raw.fieldValues.nodes.slice(0, 1),
+        pageInfo: { hasNextPage: true, endCursor: "next" },
+      };
+    return raw;
   };
   const server = createServer(async (req, res) => {
     authorizations.push(req.headers.authorization);
@@ -133,7 +154,7 @@ export async function githubFake() {
         res.writeHead(400).end();
         return;
       }
-      const operation = /query\s+(\w+)/.exec(input.query)![1]!;
+      const operation = /(?:query|mutation)\s+(\w+)/.exec(input.query)![1]!;
       log.push({ operation, variables: input.variables });
       if (held?.operation === operation) {
         const current = held;
@@ -150,6 +171,63 @@ export async function githubFake() {
       }
       let data: unknown;
       switch (operation) {
+        case "GitHubProjectField":
+          data = {
+            node: { field: fields.find((f) => f.name === input.variables["name"]) ?? null },
+          };
+          break;
+        case "GitHubCardMove": {
+          if (writeFailure) {
+            const failure = writeFailure;
+            writeFailure = undefined;
+            if (failure.status)
+              res
+                .writeHead(failure.status, { "content-type": "application/json" })
+                .end(JSON.stringify({ message: "synthetic refusal" }));
+            else
+              res.writeHead(200, { "content-type": "application/json" }).end(
+                JSON.stringify({
+                  data: { updateProjectV2ItemFieldValue: null },
+                  errors: [
+                    {
+                      type: failure.type,
+                      path: ["updateProjectV2ItemFieldValue"],
+                      message: "synthetic refusal",
+                    },
+                  ],
+                }),
+              );
+            return;
+          }
+          const item = items.get(input.variables["item"] as string);
+          const field = fields.find((f) => f.id === input.variables["field"])!;
+          const option = field.options.find((o) => o.id === input.variables["option"])!;
+          if (!item) {
+            res.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                errors: [
+                  {
+                    type: "NOT_FOUND",
+                    message: "synthetic missing item",
+                    path: ["updateProjectV2ItemFieldValue"],
+                  },
+                ],
+              }),
+            );
+            return;
+          }
+          const value = {
+            field: { id: field.id, name: field.name, dataType: "SINGLE_SELECT" },
+            optionId: option.id,
+            name: option.name,
+          };
+          item.fieldValues.nodes = [
+            ...item.fieldValues.nodes.filter((v) => (v["field"] as { id: string }).id !== field.id),
+            value,
+          ];
+          data = { updateProjectV2ItemFieldValue: { projectV2Item: { id: item.id } } };
+          break;
+        }
         case "GitHubProjectByNumber":
           data = { repositoryOwner: { projectV2: project } };
           break;
@@ -184,11 +262,17 @@ export async function githubFake() {
           break;
         case "GitHubConnection":
           data = {
-            node: {
-              blockedBy: connection(
-                rawIssue(input.variables["id"] as string)!.blockedBy.nodes.slice(1),
-              ),
-            },
+            node: input.query.includes("fieldValues")
+              ? {
+                  fieldValues: connection(
+                    items.get(input.variables["id"] as string)!.fieldValues.nodes.slice(1),
+                  ),
+                }
+              : {
+                  blockedBy: connection(
+                    rawIssue(input.variables["id"] as string)!.blockedBy.nodes.slice(1),
+                  ),
+                },
           };
           break;
         default:
@@ -248,6 +332,13 @@ export async function githubFake() {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return {
+    fields,
+    failWrite(type: string, status?: number) {
+      writeFailure = { type, ...(status === undefined ? {} : { status }) };
+    },
+    paginateItem(id: string) {
+      paginateItem = id;
+    },
     issues,
     items,
     dependencies,

@@ -2,7 +2,7 @@
 // relationships:
 //   realizes: github-events
 // ---
-// Generated from docs/specifications/github-events.schema.yml; agreement is tested.
+// Generated from the specification asset; agreement is tested.
 export const githubEventsSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://manifold.wyrd.company/schemas/github-events",
@@ -420,7 +420,7 @@ export const githubEventsSchema = {
     },
     "field-changed-event": {
       type: "object",
-      required: ["type", "project", "item", "field", "from", "to"],
+      required: ["type", "project", "item", "field", "from", "to", "movedBy"],
       additionalProperties: false,
       properties: {
         type: {
@@ -440,6 +440,29 @@ export const githubEventsSchema = {
         },
         to: {
           $ref: "#/$defs/field-value",
+        },
+        movedBy: {
+          description:
+            "The card move whose option `to` is: confirmed when GitHub confirmed the actor's write, unconfirmed when the source cannot show that the write set it; null when no write Manifold recorded or attempted set the value.",
+          oneOf: [
+            {
+              type: "null",
+            },
+            {
+              type: "object",
+              required: ["actorId", "confirmed"],
+              additionalProperties: false,
+              properties: {
+                actorId: {
+                  type: "string",
+                  minLength: 1,
+                },
+                confirmed: {
+                  type: "boolean",
+                },
+              },
+            },
+          ],
         },
       },
     },
@@ -483,4 +506,4 @@ export const githubEventsSchema = {
       ],
     },
   },
-} as const;
+};

@@ -15,6 +15,9 @@ async function main() {
   } else if (process.argv[2] === "blueprint" && process.argv[3] === "lint") {
     const { blueprintLintCommand } = await import("./blueprint-lint/command.ts");
     process.exitCode = await blueprintLintCommand(process.argv.slice(4));
+  } else if (process.argv[2] === "task-metadata" && process.argv[3] === "lint") {
+    const { taskMetadataLintCommand } = await import("./task-metadata-lint/command.ts");
+    process.exitCode = await taskMetadataLintCommand(process.argv.slice(4));
   } else if (process.argv[2] === "portfolio" && process.argv[3] === "lint") {
     const { portfolioLintCommand } = await import("./portfolio-lint/command.ts");
     process.exitCode = await portfolioLintCommand(process.argv.slice(4));

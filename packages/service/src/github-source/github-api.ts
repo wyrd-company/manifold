@@ -6,7 +6,7 @@ import { graphql, GraphqlResponseError } from "@octokit/graphql";
 import { request } from "@octokit/request";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { githubEventsSchema } from "@wyrd-company/manifold-shared";
-import { GitHubSourceError } from "./types.ts";
+import { GitHubSourceError, GitHubWriteError } from "./types.ts";
 import type {
   GitHubSourceOptions,
   GitHubIssue,
@@ -101,6 +101,7 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
   async function call<T>(
     owner: string,
     work: (token: string, signal: AbortSignal) => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T> {
     if (stopped) throw new GitHubSourceError("api", "GitHub source is stopped");
     const entry = Object.entries(options.configuration.owners).find(
@@ -110,8 +111,12 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
       throw new GitHubSourceError("unconfigured-owner", `GitHub owner is not configured: ${owner}`);
     const active = new AbortController();
     controller = active;
+    const abort = () => active.abort(signal?.reason);
+    if (signal?.aborted) abort();
+    signal?.addEventListener("abort", abort, { once: true });
     const cancel = clock.setTimer(options.configuration.requestTimeoutMs, () => active.abort());
     try {
+      if (active.signal.aborted) throw new GitHubSourceError("api", "GitHub request aborted");
       const aborted = new Promise<never>((_resolve, reject) =>
         active.signal.addEventListener(
           "abort",
@@ -142,6 +147,7 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
       throw new GitHubSourceError("api", "GitHub request failed", status, error);
     } finally {
       cancel();
+      signal?.removeEventListener("abort", abort);
       if (controller === active) controller = undefined;
     }
   }
@@ -149,28 +155,45 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
     owner: string,
     text: string,
     variables: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<T> {
-    return call(owner, async (token, signal) => {
-      try {
-        return await graphql<T>(text, {
-          ...variables,
-          baseUrl: options.configuration.apiUrl,
-          headers: { authorization: `token ${token}` },
-          request: { signal },
-        });
-      } catch (error) {
-        if (
-          error instanceof GraphqlResponseError &&
-          error.errors?.length &&
-          error.errors.every((e) => {
-            const path = e.path as readonly (string | number)[] | undefined;
-            return e.type === "NOT_FOUND" && path?.[0] === "nodes" && typeof path[1] === "number";
-          })
-        )
-          return error.data as T;
-        throw error;
-      }
-    });
+    return call(
+      owner,
+      async (token, signal) => {
+        try {
+          return await graphql<T>(text, {
+            ...variables,
+            baseUrl: options.configuration.apiUrl,
+            headers: { authorization: `token ${token}` },
+            request: { signal },
+          });
+        } catch (error) {
+          if (
+            error instanceof GraphqlResponseError &&
+            error.errors?.length &&
+            error.errors.every((e) => {
+              const path = e.path as readonly (string | number)[] | undefined;
+              return e.type === "NOT_FOUND" && path?.[0] === "nodes" && typeof path[1] === "number";
+            })
+          )
+            return error.data as T;
+          throw error;
+        }
+      },
+      signal,
+    );
+  }
+  async function writeQuery<T>(
+    owner: string,
+    text: string,
+    variables: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    try {
+      return await query<T>(owner, text, variables, signal);
+    } catch (error) {
+      throw writeError(error);
+    }
   }
   async function connection<T>(
     owner: string,
@@ -266,6 +289,53 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
     abort() {
       stopped = true;
       controller?.abort();
+    },
+    async projectField(
+      owner: string,
+      project: string,
+      name: string,
+      optionName: string,
+      signal?: AbortSignal,
+    ) {
+      const data = await writeQuery<{
+        node: {
+          field: { id: string; name: string; options: { id: string; name: string }[] } | null;
+        } | null;
+      }>(
+        owner,
+        "query GitHubProjectField($id: ID!, $name: String!) { node(id: $id) { ... on ProjectV2 { field(name: $name) { ... on ProjectV2SingleSelectField { id name options { id name } } } } } }",
+        { id: project, name },
+        signal,
+      );
+      const field = data.node?.field;
+      if (!field?.id || field.name !== name || !Array.isArray(field.options))
+        throw new GitHubWriteError("field-missing", `Single-select field is absent: ${name}`);
+      const option = field.options.find((option) => option.name === optionName);
+      if (!option?.id)
+        throw new GitHubWriteError(
+          "option-missing",
+          `Single-select option is absent: ${optionName}`,
+        );
+      return { field: nodeId(field.id), option: nodeId(option.id) };
+    },
+    async moveCard(
+      owner: string,
+      project: string,
+      item: string,
+      field: string,
+      option: string,
+      signal?: AbortSignal,
+    ) {
+      const data = await writeQuery<{
+        updateProjectV2ItemFieldValue: { projectV2Item: { id: string } | null } | null;
+      }>(
+        owner,
+        "mutation GitHubCardMove($project: ID!, $item: ID!, $field: ID!, $option: String!) { updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }) { projectV2Item { id } } }",
+        { project, item, field, option },
+        signal,
+      );
+      if (data.updateProjectV2ItemFieldValue?.projectV2Item?.id !== item)
+        throw new GitHubWriteError("rejected", "GitHub did not confirm the card move");
     },
     async resolveProject(owner: string, number: number) {
       const data = await query<{ repositoryOwner: { projectV2: RawProject | null } | null }>(
@@ -432,4 +502,34 @@ function hookAttempts(value: unknown): HookAttempt[] {
       status_code: row["status_code"],
     };
   });
+}
+
+function writeError(error: unknown): GitHubWriteError {
+  if (error instanceof GitHubWriteError) return error;
+  const source = error instanceof GitHubSourceError ? error : undefined;
+  const cause = source?.cause ?? error;
+  const status = source?.status;
+  const graphql = cause instanceof GraphqlResponseError ? cause : undefined;
+  const types = graphql?.errors?.map((error) => error.type) ?? [];
+  const message =
+    graphql?.errors?.map((error) => error.message).join("; ") ||
+    (error instanceof Error ? error.message : "GitHub write failed");
+  if (
+    source?.kind === "unconfigured-owner" ||
+    status === 401 ||
+    status === 403 ||
+    types.includes("FORBIDDEN")
+  )
+    return new GitHubWriteError("forbidden", message, status);
+  if (
+    status === 429 ||
+    (status !== undefined && status >= 500) ||
+    types.includes("RATE_LIMITED") ||
+    types.includes("RATE_LIMIT")
+  )
+    return new GitHubWriteError("transport", message, status);
+  if (types.includes("NOT_FOUND")) return new GitHubWriteError("item-missing", message, status);
+  if (graphql || (status !== undefined && status >= 400))
+    return new GitHubWriteError("rejected", message, status);
+  return new GitHubWriteError("transport", message, status);
 }

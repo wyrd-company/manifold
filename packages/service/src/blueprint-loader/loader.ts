@@ -7,6 +7,8 @@ import type { AnyActorLogic, AnyActorRef, AnyStateMachine, Snapshot } from "xsta
 import {
   blueprintVersionKey,
   lintBlueprint,
+  lintTaskMetadataDeclaration,
+  declaredLifecycleOptions,
   ExpressionError,
   compileStateGuards,
 } from "@wyrd-company/manifold-shared";
@@ -115,14 +117,16 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
     if (!source) return { status: "missing", reason: "commit" };
     const text = await source.read(version.path);
     if (text === undefined) return { status: "missing", reason: "file" };
-    const lint = await lintBlueprint(
-      version.path,
-      text,
-      names,
-      options.configurationBound === undefined
+    const metadata = lintTaskMetadataDeclaration({
+      taskMetadata: await source.read("task-metadata.yml"),
+      bindings: await source.read("bindings.yml"),
+    });
+    const lint = await lintBlueprint(version.path, text, names, {
+      ...(options.configurationBound === undefined
         ? {}
-        : { configurationBound: options.configurationBound },
-    );
+        : { configurationBound: options.configurationBound }),
+      ...(metadata.ok ? { lifecycleOptions: declaredLifecycleOptions(metadata.declaration) } : {}),
+    });
     if (!lint.ok) return { status: "invalid", findings: lint.findings };
     try {
       const expressions = createBlueprintExpressions(lint.blueprint, {

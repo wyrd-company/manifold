@@ -29,6 +29,7 @@ export async function serviceFixture() {
       prices?: unknown;
       bindings?: unknown;
       comparator?: string;
+      taskMetadata?: unknown;
     } = {},
     document?: BlueprintDocument,
   ) {
@@ -73,6 +74,9 @@ export async function serviceFixture() {
           },
         }),
         await blob("bindings.yml", usageFiles.bindings ?? {}),
+        ...(usageFiles.taskMetadata === undefined
+          ? []
+          : [await blob("task-metadata.yml", usageFiles.taskMetadata)]),
         ...(usageFiles.comparator === undefined
           ? []
           : [await blob("order.ts", usageFiles.comparator, true)]),

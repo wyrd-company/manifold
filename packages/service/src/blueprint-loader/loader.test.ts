@@ -98,7 +98,7 @@ describe("blueprint loader", () => {
     expect(again.blueprints.get("blueprints/z-delivery.yml")).toBe(
       initial.blueprints.get("blueprints/z-delivery.yml"),
     );
-    expect(revisions.get(first)!.read).toHaveBeenCalledTimes(4);
+    expect(revisions.get(first)!.read).toHaveBeenCalledTimes(12);
   });
   it("restores an old version after a push and after a service restart", async () => {
     const { loader, revisions, repository } = fixture();
@@ -166,7 +166,7 @@ describe("blueprint loader", () => {
     await expect(loader.version(version)).rejects.toThrow("read failed");
     const [a, b] = await Promise.all([loader.version(version), loader.version(version)]);
     expect(a).toBe(b);
-    expect(good.read).toHaveBeenCalledTimes(2);
+    expect(good.read).toHaveBeenCalledTimes(4);
   });
   it("rejects the reserved registry prefix in all kinds and ships matching names", async () => {
     for (const kind of ["actors", "actions", "guards", "delays"] as const) {
@@ -738,4 +738,57 @@ it("shares every fixture verdict and finding with the pure lint", async () => {
       expect(load.blueprint.warnings).toEqual(pure.warnings);
     } else expect(load).toEqual({ status: "invalid", findings: pure.findings });
   }
+});
+
+it("checks card move literals against the same immutable revision and skips invalid declarations", async () => {
+  const path = "blueprints/parcel.yml";
+  const doc = {
+    schemas: {
+      input: true,
+      output: true,
+      context: true,
+      events: {},
+      actors: { "github-card-move": { input: true, output: true } },
+    },
+    machine: {
+      initial: "packing",
+      states: {
+        packing: {
+          invoke: { src: "github-card-move", input: { status: "Packed" }, onDone: "done" },
+        },
+        done: { type: "final" },
+      },
+    },
+  };
+  const revisions = new Map(
+    [first, second].map((commit, index) => [
+      commit,
+      memoryRevision(commit, {
+        [path]: stringify(doc),
+        "bindings.yml":
+          "githubProjects: { parcels: { owner: sample, number: 1, environment: local, item: shipments } }",
+        "task-metadata.yml": `projects: { parcels: { lifecycle: { field: Stage, options: [${index ? "Shipped" : "Packed"}] } } }`,
+      }),
+    ]),
+  );
+  const loader = createBlueprintLoader({
+    implementations: {
+      actors: { "github-card-move": fromPromise(async () => ({})) },
+      actions: {},
+      guards: {},
+      delays: {},
+    },
+    revisionAt: async (commit) => revisions.get(commit),
+    onExpressionError: () => {},
+  });
+  expect((await loader.version({ commit: first, path })).status).toBe("loaded");
+  expect(await loader.version({ commit: second, path })).toMatchObject({
+    status: "invalid",
+    findings: [{ kind: "lifecycle-option", name: "Packed" }],
+  });
+  revisions.set(
+    "c".repeat(40),
+    memoryRevision("c".repeat(40), { [path]: stringify(doc), "task-metadata.yml": "projects: []" }),
+  );
+  expect((await loader.version({ commit: "c".repeat(40), path })).status).toBe("loaded");
 });

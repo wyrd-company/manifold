@@ -6,6 +6,7 @@
 // ---
 import { openCapacity } from "../capacity/index.ts";
 import type { Capacity } from "../capacity/index.ts";
+import { openTaskMetadata, taskMetadataMigrationSteps } from "../task-metadata/index.ts";
 import { startIntake, intakeMigrationSteps, intakeFailedHandler } from "../intake/index.ts";
 import type { Intake } from "../intake/index.ts";
 import { mkdir } from "node:fs/promises";
@@ -65,6 +66,10 @@ export async function startService(options: StartServiceOptions): Promise<Servic
   let sourceStarted!: (source: T3CodeSource) => void;
   const sourceStarting = new Promise<T3CodeSource>((resolve) => {
     sourceStarted = resolve;
+  });
+  let githubStarted!: (source: GitHubSource) => void;
+  const githubStarting = new Promise<GitHubSource>((resolve) => {
+    githubStarted = resolve;
   });
   let http: HttpHost | undefined;
   let revisions: ReturnType<typeof createRevisions> | undefined;
@@ -128,6 +133,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       path: configuration.store.file,
       ...(options.probes?.delivery ? { probe: options.probes.delivery } : {}),
     });
+    store.connection.migrate("metadata", taskMetadataMigrationSteps);
     store.connection.migrate("ledger", ledgerMigrationSteps);
     store.connection.migrate("portfolio", portfolioMigrationSteps);
     store.connection.migrate("usage", usageMigrationSteps);
@@ -265,10 +271,36 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         error: commandLog("error"),
       },
     });
+    const taskMetadata = openTaskMetadata({
+      connection: store.connection,
+      actorOf: (id) => actorHost?.actorOf(id),
+      invocationOf,
+      bindingOf: (project) =>
+        portfolio
+          .current()
+          .declaration.githubProjects.find(
+            (binding) =>
+              binding.owner.toLowerCase() === project.owner.toLowerCase() &&
+              binding.number === project.number,
+          )?.name,
+      source: (signal) => {
+        if (signal.aborted) return Promise.reject(signal.reason);
+        if (github) return Promise.resolve(github);
+        return new Promise<GitHubSource>((resolve, reject) => {
+          const aborted = () => reject(signal.reason);
+          signal.addEventListener("abort", aborted, { once: true });
+          void githubStarting.then((source) => {
+            signal.removeEventListener("abort", aborted);
+            resolve(source);
+          });
+        });
+      },
+    });
     const blueprints = createBlueprintLoader({
       implementations: serviceImplementations({
         escalations: escalationImplementations(escalations),
         agentThreads: agentThreads.implementations,
+        taskMetadata: taskMetadata.implementations,
       }),
       onStateEntry: recordStateEntry,
       configurationBound: configuration.blueprintLint.configurationBound,
@@ -330,6 +362,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       blueprints,
       portfolio,
       usage,
+      taskMetadata,
       log,
       applied: (revision) => {
         intake?.revisionLoaded();
@@ -402,6 +435,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         branch: configuration.processRepository.branch,
         pull: revisions.pull,
       },
+      ...(options.probes?.cardMove ? { probeMove: options.probes.cardMove } : {}),
       onTracked: (ids) => intake?.discovered(ids),
       onMirrorChanged: () => {
         gates?.inputChanged();
@@ -415,6 +449,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           detail: { kind: error.kind },
         }),
     });
+    githubStarted(github);
     step("github-started", "start");
     intake = startIntake({
       escalations: parts.escalations,

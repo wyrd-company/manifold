@@ -1,0 +1,31 @@
+// ---
+// relationships:
+//   implements: task-metadata
+// ---
+import { lintTaskMetadataDeclaration } from "@wyrd-company/manifold-shared";
+import type { TaskMetadata, TaskMetadataOptions } from "./types.ts";
+import { metadataRecords } from "./records.ts";
+import { metadataImplementations } from "./implementations.ts";
+export function openTaskMetadata(options: TaskMetadataOptions): TaskMetadata {
+  const records = metadataRecords(options.connection);
+  let declaration = records.current();
+  const current = () => declaration;
+  return {
+    current,
+    implementations: metadataImplementations(options, current),
+    async apply(revision) {
+      const [taskMetadata, bindings] = await Promise.all([
+        revision.read("task-metadata.yml"),
+        revision.read("bindings.yml"),
+      ]);
+      const result = lintTaskMetadataDeclaration({ taskMetadata, bindings });
+      if (!result.ok) {
+        records.reject(revision.commit, result.findings);
+        return { status: "rejected", commit: revision.commit, findings: result.findings };
+      }
+      records.accept(revision.commit, result.declaration);
+      declaration = result.declaration;
+      return { status: "applied", commit: revision.commit };
+    },
+  };
+}

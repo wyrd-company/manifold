@@ -2,13 +2,15 @@
 // relationships:
 //   implements: github-event-source
 // ---
+import { moveRecords } from "./move-records.ts";
+import type { CardMove } from "./types.ts";
 import { createGitHubApi } from "./github-api.ts";
 import { createMirror } from "./mirror.ts";
 import type { Pending } from "./mirror.ts";
 import { reconcileIssue, reconcileItem, reconcileProject, isTracked } from "./reconcile.ts";
 import type { MirrorState } from "./reconcile.ts";
 import { validEvent } from "./verify.ts";
-import { GitHubSourceError } from "./types.ts";
+import { GitHubSourceError, GitHubWriteError } from "./types.ts";
 import type { GitHubSourceOptions, GitHubProject, ObservedIssue, ObservedItem } from "./types.ts";
 import type { RouterClock, SourceEvent } from "../router/index.ts";
 
@@ -26,6 +28,14 @@ export function createRunner(
   clock: RouterClock,
 ) {
   const api = createGitHubApi(options, clock);
+  const moves = moveRecords(options.store.connection);
+  const queue: {
+    move: CardMove;
+    signal: AbortSignal | undefined;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+    detach: () => void;
+  }[] = [];
   const bound = new Map<string, GitHubProject>();
   let stopped = false;
   let scanDue = true;
@@ -149,7 +159,27 @@ export function createRunner(
     const changed = options.store.connection.transaction(() => {
       const before = mirror.read();
       const after = structuredClone(before);
-      const events = work(after);
+      const events = work(after).map((event): SourceEvent => {
+        if (event.event.type === "github.project-item.removed")
+          moves.removed((event.event["item"] as { nodeId: string }).nodeId);
+        if (event.event.type === "github.project-item.field-changed") {
+          const item = event.event["item"] as { nodeId: string };
+          const field = event.event["field"] as { nodeId: string };
+          const to = event.event["to"] as { kind: string; optionId?: string } | null;
+          return {
+            ...event,
+            event: {
+              ...event.event,
+              movedBy: moves.attribute(
+                item.nodeId,
+                field.nodeId,
+                to?.kind === "single-select" ? to.optionId : undefined,
+              ),
+            },
+          };
+        }
+        return event;
+      });
       const mirrorChanged = mirror.write(before, after);
       for (const event of events) {
         if (!validEvent(event.event)) throw new TypeError("Invalid normalized GitHub event");
@@ -197,6 +227,10 @@ export function createRunner(
     const seen = new Set<string>();
     let after: string | undefined;
     do {
+      while (queue.length) {
+        if (stopped) return;
+        await moveNext();
+      }
       const page = await api.projectPage(reference, after);
       if (stopped) return;
       const issues = await baselines(page.items);
@@ -226,6 +260,10 @@ export function createRunner(
     const absent = new Set<string>();
     while (true) {
       if (stopped) return;
+      if (queue.length) {
+        await moveNext();
+        continue;
+      }
       const rows = mirror
         .pending()
         .filter((row) => row.kind !== "issue" || !absent.has(row.nodeId));
@@ -301,6 +339,64 @@ export function createRunner(
           return events;
         }, batch);
       }
+    }
+  }
+  async function moveNext() {
+    const queued = queue.shift()!;
+    const { move, signal } = queued;
+    queued.detach();
+    if (signal?.aborted) {
+      queued.reject(signal.reason);
+      return;
+    }
+    try {
+      const state = mirror.read();
+      const project = state.projects.get(move.projectNodeId)?.project;
+      const item = [...state.items.values()].find(
+        (row) =>
+          row.present &&
+          row.projectId === move.projectNodeId &&
+          row.item.contentType === "issue" &&
+          row.item.contentNodeId === move.issueNodeId,
+      );
+      if (!project || !item)
+        throw new GitHubWriteError("item-missing", "Issue item is absent from the Project");
+      const resolved = await api.projectField(
+        project.owner,
+        project.nodeId,
+        move.field,
+        move.option,
+        signal,
+      );
+      if (stopped) return;
+      signal?.throwIfAborted();
+      const inserted = options.store.connection.transaction(() =>
+        moves.sent(move, item.item.nodeId, resolved.field, resolved.option),
+      );
+      try {
+        await api.moveCard(
+          project.owner,
+          project.nodeId,
+          item.item.nodeId,
+          resolved.field,
+          resolved.option,
+          signal,
+        );
+      } catch (error) {
+        if (stopped) return;
+        if (inserted && error instanceof GitHubWriteError && error.kind !== "transport")
+          options.store.connection.transaction(() => moves.refused(move));
+        throw error;
+      }
+      if (stopped) return;
+      options.store.connection.transaction(() => {
+        moves.confirmed(move);
+        mirror.enqueue("item", item.item.nodeId, project.nodeId);
+      });
+      options.probeMove?.(move);
+      queued.resolve();
+    } catch (error) {
+      if (!stopped) queued.reject(signal?.aborted ? signal.reason : error);
     }
   }
   async function scan() {
@@ -400,7 +496,7 @@ export function createRunner(
           await pending();
         } catch (error) {
           report(error);
-          wakeRequested = scanDue || sweepDue;
+          wakeRequested = scanDue || sweepDue || queue.length > 0;
         }
       if (swept && !stopped) {
         cancelSweep?.();
@@ -425,6 +521,30 @@ export function createRunner(
   wake();
   return {
     bound,
+    moveCard(move: CardMove, signal?: AbortSignal): Promise<void> {
+      if (stopped) throw new TypeError("GitHub source is stopped");
+      if (signal?.aborted) return Promise.reject(signal.reason);
+      return new Promise<void>((resolve, reject) => {
+        const aborted = () => {
+          const index = queue.indexOf(queued);
+          if (index >= 0) {
+            queue.splice(index, 1);
+            queued.detach();
+            reject(signal?.reason);
+          }
+        };
+        const queued = {
+          move: { ...move },
+          signal,
+          resolve,
+          reject,
+          detach: () => signal?.removeEventListener("abort", aborted),
+        };
+        queue.push(queued);
+        signal?.addEventListener("abort", aborted, { once: true });
+        wake();
+      });
+    },
     wake,
     pull,
     requestSweep() {
@@ -439,6 +559,7 @@ export function createRunner(
         return;
       }
       stopped = true;
+      for (const queued of queue.splice(0)) queued.detach();
       cancelScan?.();
       cancelSweep?.();
       api.abort();

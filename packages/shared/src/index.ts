@@ -107,3 +107,14 @@ export type {
 } from "./process-manifest.ts";
 export { processManifestSchema } from "./process-manifest-schema.ts";
 export { intakeDecisionModelSchema } from "./intake-decision-model-schema.ts";
+
+export {
+  lintTaskMetadataDeclaration,
+  declaredLifecycleOptions,
+} from "./task-metadata-declaration.ts";
+export type {
+  TaskMetadataDeclaration,
+  TaskMetadataFinding,
+  TaskMetadataLint,
+} from "./task-metadata-declaration.ts";
+export { taskMetadataDeclarationSchema } from "./task-metadata-schema.ts";
