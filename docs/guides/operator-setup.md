@@ -1,0 +1,455 @@
+---
+relationships:
+  references:
+    - service-distribution
+    - service-configuration
+    - service-configuration.example
+    - github-event-source
+    - t3code-environment-source
+    - escalations
+    - host-cli-usage
+    - host-cli-mcp
+    - default-process
+    - accounts-declaration
+    - task-metadata-declaration
+---
+
+# Operator setup
+
+## 1. What you will have
+
+Run a service that takes in an issue from a test GitHub Project. Use one Linux
+service host, one GitHub organization, and a T3 Code environment for agent work.
+Keep the install directory separate from the deployment directory that holds
+configuration, credentials, and state. Run the checks in each section before
+continuing. Commands below use a POSIX shell.
+
+## 2. Prerequisites
+
+- A Linux x64 or arm64 host with glibc and Node 24.11 or later.
+- A build machine with Node, the pnpm version in `package.json`, Task, and a
+  checkout of Manifold at the commit under acceptance.
+- A GitHub organization you administer, a test repository for issues, and an
+  organization Project. Use disposable test data.
+- A stable released T3 Code server on each environment and a checkout of the
+  repository in which agents work.
+- An ntfy account or server if you want notifications.
+- Your own reverse proxy or tunnel for GitHub deliveries and phone answers.
+
+The service host needs Node and the archive. It needs no package manager.
+The host CLI is a Bun binary; its environment needs no Bun installation.
+
+## 3. Build and install
+
+### Pending choice: publication
+
+**Pending user decision.** The proposed setup builds from a checkout and
+publishes nothing. Other choices are GitHub Release assets or a public GHCR
+image. Fill this section with the approved distribution location and first
+publication date if publishing is chosen. The commands below work from a
+checkout without publishing.
+
+In the Manifold checkout, build for your service host:
+
+```sh
+task package:service ARCH=x64
+# For a Linux arm64 host instead:
+# task package:service ARCH=arm64
+task package:smoke
+# Compile host CLI targets for each environment:
+task build:targets
+```
+
+`package:smoke` starts the archive for the build machine's architecture. Run it
+on the matching machine. CI builds and starts both Linux architectures.
+The archive is `dist/packages/manifold-service-<version>-linux-<arch>.tar.gz`;
+`<version>` is the service package's version. Copy it to the service host.
+
+Choose an empty install directory, for example `/opt/example-service`, and a
+separate deployment directory, for example `/srv/example-deployment`. Extract
+into the empty install directory:
+
+```sh
+mkdir -p /opt/example-service
+tar -xzf /path/to/manifold-service-<version>-linux-<arch>.tar.gz -C /opt/example-service
+mkdir -p /srv/example-deployment/credentials /srv/example-deployment/state
+chmod 700 /srv/example-deployment/credentials
+cp docs/specifications/service-configuration.example.yml /srv/example-deployment/service.yml
+```
+
+Check: the install has `manifold-service/package.json`, `dist/`, and
+`node_modules/`. The deployment has `service.yml`, `credentials/`, and `state/`.
+No credential belongs in the install directory. Relative configuration paths
+resolve against `service.yml`, regardless of the service's working directory.
+
+## 4. Create and install the GitHub App
+
+### Pending choice: App permissions
+
+**Pending user decision.** The proposed permission table below lists the grants
+this release uses. The other choice is the full permission set approved for the
+foundation epic. Fill this section with the chosen table before acceptance.
+Contents write must be present for the console to save blueprints.
+
+| Scope                                   | Permission               | Use                                                                      |
+| --------------------------------------- | ------------------------ | ------------------------------------------------------------------------ |
+| Repository                              | Metadata: read           | GitHub includes it with every App.                                       |
+| Repository                              | Contents: read and write | Clone and pull the process repository; save blueprints from the console. |
+| Repository                              | Issues: read             | Read issue state and relationships.                                      |
+| Repository                              | Pull requests: read      | Read pull request content on Projects.                                   |
+| Organization                            | Projects: read and write | Read Projects and move cards in their lifecycle field.                   |
+| Organization                            | Webhooks: read and write | Read organization hook deliveries and request redelivery.                |
+| Repository, only with a repository hook | Webhooks: read and write | Read repository hook deliveries and request redelivery.                  |
+
+In the organization's developer settings, create a GitHub App. Keep its own
+webhook inactive and select no App webhook events. Manifold reads deliveries
+from the separate hook created in section 7.
+
+Install the App on the organization with access to the process repository and
+the repositories whose issues the test Project holds. Record the App id from
+its settings page and the installation id from the installation settings URL.
+The configuration uses these two ids; it does not use the App client id.
+Generate the App private key and save the downloaded file as
+`credentials/github-app.pem` in the deployment directory. Set mode 0600.
+
+Check: the installation includes each test repository. No credential value is
+printed in a terminal, copied into a URL, committed, or placed in a task note.
+
+## 5. Create the process repository
+
+Install the host CLI first. Copy the binary for each machine from
+`packages/host-cli/dist/linux-x64/manifold-host`, `linux-arm64/manifold-host`,
+`darwin-arm64/manifold-host`, or `windows-x64/manifold-host.exe` to its `PATH`.
+The build uses `task build:targets`. Check `manifold-host --help`.
+
+Copy the checkout's `examples/starter/` into a new process repository owned by
+your organization. Keep credentials out of it. Create the test GitHub Project,
+and note its owner and number from the Project URL.
+
+On each environment, run `t3 project add /path/to/task-checkout`. Record the
+T3code project's id from the `Added project <id>` output. For an existing
+project, use its record in the T3 Code client or an authenticated project snapshot. Use the same environment name in every declaration.
+
+Replace the starter's commented placeholders:
+
+- `bindings.yml`: test Project owner and number, environment name, and T3code
+  project id used by intake.
+- `task-metadata.yml`: the Project's lifecycle field and its options. Include
+  `In Progress` and `Done`, which the bundled blueprint uses. A new Project's
+  `Status` field includes `Todo`, `In Progress`, and `Done`.
+- `accounts.yml`: each account's `unit`, `kind` (`api` or `subscription`), and
+  `capacity`. Set `amount` in the account's unit, a UTC `reset` instant, and
+  `every` with exactly one of `hours`, `days`, or `months`. Amounts have at most
+  six decimal places; a monthly reset must be on day 28 or earlier in UTC.
+
+Capacity is declared in the process repository, not service configuration.
+The starter's intake names `blueprints/task.yml`, a bundled blueprint. A file
+committed at that path replaces it, including when that file fails lint.
+
+From the process repository root, run:
+
+```sh
+manifold-host manifest lint
+manifold-host portfolio lint
+manifold-host usage lint
+manifold-host task-metadata lint
+manifold-host comparator lint comparators/estimate.ts
+```
+
+Check: each command exits successfully with no findings. Commit and push the
+process repository. Use its smart HTTP GitHub URL in `service.yml`.
+
+## 6. Expose only the public endpoints
+
+The API has no authentication. Your deployment controls who can reach it.
+The public proxy forwards exactly these endpoints, with `{id}` one path segment:
+
+| Method | Path                       | Use                                                  |
+| ------ | -------------------------- | ---------------------------------------------------- |
+| POST   | `/webhooks/github`         | Signed GitHub hook deliveries.                       |
+| GET    | `/escalations/{id}`        | Answer page, authorized by its escalation key.       |
+| POST   | `/escalations/{id}/answer` | Answer submission, authorized by its escalation key. |
+
+The proxy answers all other paths and methods itself. Do not forward prefixes.
+Keep `/api/`, `/console/`, `/api/usage/push`, and `/api/agent-tools/calls` off the
+public network. A test tunnel follows the same rule and enables only the
+endpoints the test exercises.
+
+A Caddy example for your public hostname:
+
+```caddyfile
+service.example.com {
+    @webhook {
+        method POST
+        path /webhooks/github
+    }
+    @answerPage {
+        method GET
+        path_regexp answerPage ^/escalations/[^/]+$
+    }
+    @answer {
+        method POST
+        path_regexp answer ^/escalations/[^/]+/answer$
+    }
+    route {
+        reverse_proxy @webhook 127.0.0.1:7480
+        reverse_proxy @answerPage 127.0.0.1:7480
+        reverse_proxy @answer 127.0.0.1:7480
+        respond 404
+    }
+}
+```
+
+Check from outside the host: `/console/` and `/api/actors` return the proxy's
+404; a GET to `/webhooks/github` returns 404. The webhook POST reaches Manifold
+and rejects an unsigned request with a 4xx. Set `escalations.publicUrl` to this
+public base URL, with no endpoint suffix.
+
+### Pending choice: remote environments and private paths
+
+**Pending user decision.** The proposed setup binds `http.host` to a private LAN
+or VPN address when an environment is on another machine. Other choices are a
+public proxy limited by source IP, or only environments on the service host.
+Fill this section with the chosen route and whether acceptance environments
+share the service host. Until then, the example binds loopback and the checks
+use a same-host environment. The plugin, usage push, and console need the
+private service URL. Changing the route must also update the proxy's upstream
+address if it differs from loopback.
+
+## 7. Create the organization hook
+
+In organization settings, create a webhook with payload URL
+`<public-base-url>/webhooks/github`, content type `application/json`, and SSL
+verification enabled. Generate its secret into
+`credentials/example-org-hook.secret` with mode 0600. Enter it through a secure
+credential workflow in GitHub; keep the value out of shell history and logs.
+
+Select these hook events: `issues`, `issue_dependencies`, `sub_issues`,
+`projects_v2_item`, `projects_v2`, and `push`. In the GitHub UI their labels are
+Issues, Issue dependencies, Sub-issues, Projects v2 items, Projects v2, and Pushes.
+Record the hook id from its settings URL under `github.owners.<owner>.hooks`.
+
+Check after service start: GitHub's recent delivery log shows accepted signed
+deliveries. A disabled hook, a mismatched secret, or a missing event stops the
+corresponding event stream. Repository hooks use the same payload URL and
+secret-file convention; use one only where the binding requires it.
+
+## 8. Configure T3 Code
+
+The server defaults to port 3773. If it was started with `--port`, use that port.
+For each environment, issue a pairing token on that environment, then exchange
+it for exactly `orchestration:read` and `orchestration:operate`. Do not use
+`t3 auth session issue`: it issues the administrative scope set.
+
+This pipeline requires Node on the environment. Run it from the deployment
+directory, or write to the corresponding credential path on the service host.
+Use the same T3 Code data directory as the running server (`--base-dir` when
+needed). Neither token is printed:
+
+```sh
+umask 077
+t3 auth pairing create --json | node --input-type=module -e '
+import { writeFile } from "node:fs/promises";
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+const pairing = JSON.parse(input);
+const response = await fetch("http://127.0.0.1:3773/oauth/token", {
+  method: "POST",
+  headers: { "content-type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+    subject_token: pairing.credential,
+    subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+    requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+    scope: "orchestration:read orchestration:operate"
+  })
+});
+if (!response.ok) throw new Error(`Token exchange failed (${response.status})`);
+const result = await response.json();
+if (typeof result.access_token !== "string") throw new Error("Missing access token");
+await writeFile("credentials/workstation.token", result.access_token, { mode: 0o600 });
+'
+chmod 600 credentials/workstation.token
+```
+
+Set `environments.workstation.url` to the server URL reachable from the service
+host and its `credential` to `workstation-token`. Check the connection through
+the service's environment status. The default token lifetime is 30 days. Set a
+reminder to renew before expiry by repeating the exchange into the same file.
+The source rereads that file on each connection attempt. Pairing tokens expire
+in five minutes by default; exchange immediately. Tokens must belong to the
+server whose URL you configure.
+
+## 9. Configure ntfy
+
+Choose a destination posture:
+
+| Posture       | Use                                                                                   | Credential                                      |
+| ------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `open`        | A public topic with no access control; anyone who knows it can publish and subscribe. | None.                                           |
+| `reserved`    | A topic reserved to your ntfy account.                                                | `ntfy-token`, allowed to publish to that topic. |
+| `self-hosted` | Your server enforces the topic's access control.                                      | `ntfy-token`, allowed to publish to that topic. |
+
+Write the token to `credentials/ntfy.token`, mode 0600, for the latter two.
+Set the destination's `server`, `topic`, `posture`, and `credential`. Name a
+destination `default` for service escalations. Set `escalations.publicUrl` to
+the public proxy base URL. Subscribe from the device that will answer questions.
+
+Check: a test escalation arrives with an answer link or action buttons. The
+public proxy must allow both escalation endpoints for phone answers.
+
+## 10. Configure and start
+
+Set every commented value in `service.yml`: repository URL and branch, clone
+and store paths, bind address and port, credential paths and App ids, owner and
+hook id, environment URL, destination, and public base URL. `{}` sections use
+schema defaults.
+
+Run the one start command:
+
+```sh
+node /opt/example-service/manifold-service/dist/main.js /srv/example-deployment/service.yml
+```
+
+Check the JSON log's `started` event and bound address. On the private service
+URL, `GET /console/` serves the console. `start-failed` reports configuration
+issues; fix them before continuing.
+
+An optional systemd service runs the same command:
+
+```ini
+[Unit]
+Description=Manifold service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/example-deployment
+ExecStart=/usr/bin/node /opt/example-service/manifold-service/dist/main.js /srv/example-deployment/service.yml
+KillSignal=SIGTERM
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Run it as the operator account that owns the deployment files. Check
+`journalctl -u manifold.service` for `started`. Manifold ships no service manager.
+
+## 11. Push usage from each environment
+
+Install that environment's host CLI binary as in section 5. After each decode
+run, push provider session usage:
+
+```sh
+manifold-host usage push --service http://127.0.0.1:7480 --environment workstation
+```
+
+Use the private service URL chosen in section 6 and the environment's declared
+name. The service attributes actuals to the task's thread. Late pushes delay
+actuals; repeated pushes converge without counting calls twice.
+
+An operator-managed systemd timer can run it every ten minutes. Adapt the
+binary path, provider user's working directory, URL, and environment name:
+
+```ini
+# manifold-usage.service
+[Unit]
+Description=Push provider usage
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/task-checkout
+ExecStart=/usr/local/bin/manifold-host usage push --service http://127.0.0.1:7480 --environment workstation
+```
+
+```ini
+# manifold-usage.timer
+[Unit]
+Description=Push provider usage every ten minutes
+
+[Timer]
+OnCalendar=*:0/10
+Unit=manifold-usage.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Run the service as the provider user so it finds that user's session files.
+Enable the timer with your service manager. Check its journal for a successful
+push and the task's actuals in the console. Manifold installs no scheduler.
+
+## 11a. Register the harness plugin
+
+Register the MCP server `manifold` in each provider used on the environment:
+
+```sh
+manifold-host mcp --service http://127.0.0.1:7480 --environment workstation
+```
+
+Use [the host CLI MCP specification](../specifications/host-cli-mcp.yml) for each
+provider's configuration file and registration snippet. It owns those snippets;
+the guide does not duplicate them. Register in the scope that the task's agent
+will load. Check that the provider lists `handoff` and `escalate`. Tool calls
+reach `/api/agent-tools/calls` on the private service URL.
+
+## 12. Check intake
+
+Create a generic test issue in the test repository and add it to the bound
+Project. Read the issue's GraphQL node id from GitHub. Find its actor,
+`task:<issue-node-id>`, in the console or `GET /api/actors` on the private URL.
+Check that its blueprint is `blueprints/task.yml` and its portfolio item matches
+intake. Keep that actor id as acceptance evidence; do not record credentials.
+
+The assembled foundation integration test uses fake GitHub, T3 Code, Git HTTP,
+and ntfy services to exercise intake and recovery with generic process
+declarations. The archive
+smoke verifies a standalone service and proxy-facing responses; it does not
+claim real GitHub or real T3 Code acceptance. For live acceptance, use the shared
+live test environment with the wave orchestrator's coordination, then repeat
+this section against its Project and record the actor returned by the API.
+
+## 13. When something is wrong
+
+| Observation                      | Check                                                                                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------ |
+| `start-failed`                   | Fix the reported configuration paths; make every credential and hook secret file readable. |
+| `pull-failed`                    | Repository URL, branch, network, and App installation access.                              |
+| `github-error`                   | App grants, Project owner, hook id, and GitHub availability.                               |
+| Hook delivery returns 401 or 404 | Hook secret file, owner and hook declaration, and proxy method/path rule.                  |
+| `portfolio-rejected`             | Lint the process declarations and account capacity.                                        |
+| `blueprint-invalid`              | Lint the local blueprint override; an invalid override still replaces the bundle.          |
+| T3 Code connection fails         | Server URL, token file, token expiry, and the two scopes.                                  |
+| No notification                  | Destination name, ntfy posture and token, and subscription.                                |
+
+## 14. Stop, restart, and upgrade
+
+Send SIGTERM to the service process or stop its systemd unit. Check `stopped`
+and exit 0. Restart with the command from section 10. Keep configuration and
+state on disk.
+
+Upgrade replaces the entire install; never extract over an old install. From
+the install directory, perform these steps in order:
+
+1. Remove `manifold-service.next/`, create it empty, and extract the new archive
+   into it.
+2. Stop the service.
+3. If `manifold-service/` exists, remove `manifold-service.old/`, then rename
+   `manifold-service/` to `manifold-service.old/`. If current is absent, preserve
+   the old directory: an interrupted upgrade can leave it as the recovery copy.
+   Rename `manifold-service.next/manifold-service/` to `manifold-service/`.
+4. Start with the same configuration and check `started`.
+5. Remove `manifold-service.old/` and `manifold-service.next/`.
+
+If interrupted, repeat the five steps. Step 1 reconstructs the fresh tree;
+step 3 accepts an absent current directory. Obsolete files never survive in the
+new install. These operations touch no deployment configuration or state.
+
+Before step 5, rollback is: stop the service; if `manifold-service.old/` exists,
+remove the new `manifold-service/` whole and rename `manifold-service.old/` to
+`manifold-service/`; start and check `started`. Remove the new tree before the
+rename, since a nonempty directory cannot be replaced by rename. If interrupted
+after removal, repeat the rollback. If old is absent, rollback already finished;
+leave the current install in place. The archive smoke checks both interruptions
+and rollback after a new entry point exits with an error.

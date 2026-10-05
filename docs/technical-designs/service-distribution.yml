@@ -115,16 +115,20 @@ proposed-design:
     architecture, and no other platform's binary is present. Each
     workspace package states what it ships with a `files` field, so the
     archive's content is declared in the manifests and not chosen by the
-    packaging script. The archive name carries the service package's
+    packaging script. The packaging script removes test directories and
+    test files that external production dependencies include, and pnpm
+    deployment metadata, from staging. The archive name carries the service package's
     `version` and the architecture, `x64` or `arm64`. Linux with glibc is
     the supported platform; musl, macOS, and Windows have no archive.
   build: >-
     `task package:service` takes `ARCH`, `x64` or `arm64`, defaulting to
-    the build machine's architecture. It runs `pnpm run build`, then
+    the build machine's architecture. It clears the workspace packages' compiled output directories, runs
+    `pnpm run build`, then
     `pnpm deploy --prod` of `@wyrd-company/manifold-service` into a staging
     directory under `dist/packages/`, with pnpm's supported architectures
     set to `os: linux`, `cpu: <ARCH>`, `libc: glibc` for that install
-    alone, so the platform package of the target is fetched on any build
+    alone, in a private build workspace with workspace injection enabled
+    for pnpm deploy, so the platform package of the target is fetched on any build
     machine. It removes the staging directory before it starts and writes
     the archive with `tar` from the staging directory's parent, so the
     archive's only top-level entry is `manifold-service/`. The workspace's
@@ -322,14 +326,18 @@ proposed-design:
     file the new archive does not hold. The guide states the upgrade as
     these steps, in order: (1) remove `manifold-service.next/` if present,
     create it empty, and extract the new archive into it; (2) stop the
-    service; (3) remove `manifold-service.old/` if present, rename
-    `manifold-service/` to `manifold-service.old/` if `manifold-service/`
-    is present, and rename `manifold-service.next/manifold-service/` to
+    service; (3) if `manifold-service/` is present, remove
+    `manifold-service.old/` if present and rename `manifold-service/` to
+    `manifold-service.old/`; if current is absent, preserve old;
+    rename `manifold-service.next/manifold-service/` to
     `manifold-service/`; (4) start the service and check the `started`
     line; (5) remove `manifold-service.old/` and `manifold-service.next/`.
-    Rollback before step 5 is: stop the service; remove
+    Rollback before step 5 is: stop the service; if
+    `manifold-service.old/` exists, remove
     `manifold-service/`, the new install, whole; rename
     `manifold-service.old/` to `manifold-service/`; and start the service.
+    If old is absent, leave current in place:
+    rollback has completed.
     The new install must be removed first, since a directory cannot be
     renamed onto a directory that is not empty. A rollback interrupted
     after the removal converges by running it again: with no
@@ -362,14 +370,14 @@ proposed-design:
     bearer token expires after 30 days by default, and the exchange takes
     no lifetime; the source rereads the file at each connection attempt,
     so renewing is running the same two commands into the same file. The
-    server listens on port 3773 by default. These are the facts of T3 Code
-    0.0.42's CLI and server; the implementer confirms them against the T3
-    Code version the service's development dependency names before the
-    guide states them, without issuing a token outside a test environment.
+    server listens on port 3773 by default. These are the facts of the released T3 Code
+    CLI and server; the guide uses the service's development dependency
+    version, verified without issuing a token outside a test environment.
   github-app-permissions: >-
     The guide's permission table lists what the modules of this release
     use, each with its reason, and nothing more: repository `Metadata:
-    read`, which every App holds; repository `Contents: read`, for the
+    read`, which every App holds; repository `Contents: read and write`, for blueprint save from the
+    console and for the
     process repository's clone and pulls; repository `Issues: read`, for
     each issue's state and relationships; repository `Pull requests: read`,
     so a pull request item on a Project shows its content; organization

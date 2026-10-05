@@ -80,3 +80,12 @@ tasks:
   live:teardown:
     desc: Remove only marked live GitHub test resources
     cmds: [node testing/live-github/src/teardown.ts]
+  package:service:
+    desc: Build a Linux glibc service archive (ARCH=x64 or arm64)
+    cmds:
+      - node packages/service/scripts/package-service.mjs '{{.ARCH | default ""}}'
+
+  package:smoke:
+    desc: Start the native service archive outside the workspace and check upgrades
+    cmds:
+      - node packages/service/scripts/package-smoke.mjs

@@ -4,6 +4,9 @@
   "private": true,
   "description": "Types, JSON Schemas, and utilities shared by the Manifold service and host CLI.",
   "license": "Apache-2.0",
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -11,8 +14,8 @@
       "import": "./dist/index.js"
     },
     "./comparator.d.ts": {
-      "types": "./src/comparator.d.ts",
-      "bun": "./src/comparator.d.ts",
+      "types": "./dist/comparator.d.ts",
+      "bun": "./dist/comparator.d.ts",
       "default": "./dist/comparator.d.ts"
     },
     "./expressions": {

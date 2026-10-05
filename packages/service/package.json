@@ -4,6 +4,9 @@
   "private": true,
   "description": "The Manifold service: engine, store, integrations, and console host.",
   "license": "Apache-2.0",
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "exports": {
     ".": {
