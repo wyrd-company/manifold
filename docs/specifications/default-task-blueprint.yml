@@ -124,7 +124,8 @@ description: |-
   turn takes no transition, since the turn ended to wait for the answer.
   `agent.escalation.answered` enters `active.working.waiting` and
   assigns its `turnId`, the turn the answer started or the running turn
-  it joined, to `context.answerTurn`. It arrives before that turn's
+  it joined, to `context.answerTurn`, and clears `context.turn`, so the
+  turn that asked is no longer the actor's own. It arrives before that turn's
   settlement, so the answer turn is the actor's own turn: its settlement
   with no handoff is a stall, as for the first turn, and a further
   `agent.escalated` in it waits for the next answer. A `null` `turnId`
@@ -358,7 +359,7 @@ description: |-
                     actions:
                       - type: expression.assign
                         params:
-                          expression: '{ "answerTurn": event.turnId }'
+                          expression: '{ "turn": "", "answerTurn": event.turnId }'
           stalled:
             invoke:
               id: ask

@@ -303,7 +303,7 @@ proposed-design:
     stall escalation; an answer whose `turnId` is the running asking turn,
     which it joined, makes that turn's settlement with no handoff a stall
     too; and an answer with a `null` `turnId` leaves the actor waiting
-    after any settlement. A third run deletes the thread while the stall
+    after any settlement, the asking turn's included. A third run deletes the thread while the stall
     escalation is open, answers `retry`, and shows one replacement thread
     created and one turn in it. A fourth shows a card move the fake
     GitHub API refuses holding the actor with a `held-actor` escalation whose `retry` moves
