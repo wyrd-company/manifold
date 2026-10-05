@@ -291,7 +291,8 @@ export const commandTree = {
       subcommands: [
         {
           name: "lint",
-          summary: "Lint `portfolio.yml` and `bindings.yml` in a process repository checkout.",
+          summary:
+            "Lint `portfolio.yml` and `bindings.yml` in a process repository checkout, and the accounts `portfolio.yml` allocates against `accounts.yml`.",
           arguments: [
             {
               name: "repository",
@@ -305,7 +306,7 @@ export const commandTree = {
           exitCodes: [
             {
               code: 0,
-              meaning: "There is no finding.",
+              meaning: "There is no finding; there may be warnings.",
             },
             {
               code: 1,
@@ -411,7 +412,8 @@ export const commandTree = {
         },
         {
           name: "lint",
-          summary: "Lint `accounts.yml` and `prices.yml` in a process repository checkout.",
+          summary:
+            "Lint `accounts.yml` and `prices.yml` in a process repository checkout, and the accounts `portfolio.yml` allocates against `accounts.yml`.",
           arguments: [
             {
               name: "repository",
@@ -425,7 +427,7 @@ export const commandTree = {
           exitCodes: [
             {
               code: 0,
-              meaning: "There is no finding.",
+              meaning: "There is no finding; there may be warnings.",
             },
             {
               code: 1,
