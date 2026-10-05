@@ -1051,15 +1051,17 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
   await expect
     .poll(() => observer.loadSnapshot("task:I_A")?.snapshot, { timeout: 15000 })
     .toMatchObject({ value: { working: "waiting" }, context: { starts: 1 } });
-  expect(observer.loadSnapshot("task:I_A")).toMatchObject({
-    machine: blueprintVersionKey({ commit: revision, path: "blueprints/counter.yml" }),
-    snapshot: {
-      context: {
-        starts: 1,
-        manifold: { issue: "I_A", environment: "env-one", portfolioItem: "alpha" },
+  await expect
+    .poll(() => observer.loadSnapshot("task:I_A"), { timeout: 15000 })
+    .toMatchObject({
+      machine: blueprintVersionKey({ commit: revision, path: "blueprints/counter.yml" }),
+      snapshot: {
+        context: {
+          starts: 1,
+          manifold: { issue: "I_A", environment: "env-one", portfolioItem: "alpha" },
+        },
       },
-    },
-  });
+    });
   expect(f.api.log.some((entry) => entry.operation.includes("Project"))).toBe(true);
   expect(portfolio.ledger.actorUsage("task:I_A")).toMatchObject({
     settled: false,
