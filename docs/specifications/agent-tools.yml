@@ -83,6 +83,7 @@ description: |-
   | `caller-unidentified` | 409 | Neither the call id nor the `thread` argument identifies a running turn of a followed thread. |
   | `not-followed` | 409 | No task actor follows the thread. |
   | `not-accepted` | 409 | The process of every task following the thread takes no handoff. |
+  | `task-held` | 409 | A following task is held by the service and its process cannot be loaded to check the handoff; nothing is published, and the call may be made again. |
   | `invalid-handoff` | 422 | The handoff fails the handoff schema of a following task's process; `issues` names each failing path. |
   | `invalid-escalation` | 422 | The escalate input breaks a rule; `issues` names each. |
   | `environment-unavailable` | 503 | The environment's T3 Code server is not reachable within the identification bound. |
@@ -126,11 +127,13 @@ description: |-
   | `claude` | yes: setting sources user, project, local; no strict MCP configuration | `claudecode/toolUseId`, equal to `toolCallId` | call id | read from source; measured on 0.0.45 with a stdio MCP server registered the same way |
   | `codex` | yes: T3 Code's server layered over the home's `config.toml` | `callId`, equal to `toolCallId` | call id | read from source; measured on 0.0.45 with a stdio MCP server registered the same way |
   | `cursor` | yes: `~/.cursor/mcp.json` | none | `thread` argument | measured on 0.0.45 with a stdio MCP server registered the same way |
-  | `grok` | not established | not established | `thread` argument until a call id is measured | T3 Code records the ACP `toolCallId`, read from source |
+  | `grok` | not measured | not measured | `thread` argument | T3 Code records the ACP `toolCallId`, read from source; not measured, since Grok is disabled in the T3 Code the live test runs against |
   | `opencode` | not established | not established | `thread` argument until a call id is measured | T3 Code records `part.callID` as `toolCallId`, read from source |
 
-  The live test of `agent-tools` measures each row with the plugin itself
-  and replaces this table with what it measured.
+  The live test of `agent-tools` measures with the plugin itself each
+  provider installed and enabled in the T3 Code it runs against, `claude`,
+  `codex`, `cursor`, and `opencode`, and replaces their rows with what it
+  measured.
 
   Event source and topic. The service publishes under the source `agent`.
   A thread's agent topic is
@@ -163,16 +166,22 @@ description: |-
     the call; `handoff`, the tool's `handoff` argument.
   - `agent.escalated`: the agent asked a person. `turnId`;
     `escalationId`; `title`; `question`; `choices`; `freeText`.
-  - `agent.escalation.answered`: a person answered the agent.
-    `escalationId`; `answer`, `{ choice }` or `{ text }`; `channel`,
-    `link` or `api`; `messageId`, the id of the user message that carries
-    the answer to the thread.
+  - `agent.escalation.answered`: a person answered the agent, and the
+    answer is in the thread. `escalationId`; `answer`, `{ choice }` or
+    `{ text }`; `channel`, `link` or `api`; `messageId`, the id of the
+    user message that carries the answer to the thread; `turnId`, the
+    turn that holds the answer: the turn the answer started, or the turn
+    that was running when the answer reached the thread and took it in,
+    or `null` when the service cannot tell which turn holds it or T3 Code
+    rejected the message. An actor takes the event before that turn's
+    `t3.turn.settled`.
 
   A blueprint that takes an agent event declares it under
   `schemas.events` with a schema the event satisfies. The schema it
   declares for `agent.handoff` is the process's handoff schema: the
-  service validates each handoff against it before publishing, and
-  refuses one that fails.
+  service validates each handoff against the schema of every following
+  task's process before publishing, and refuses one that fails any of
+  them.
 
   ```yaml
   schemas:

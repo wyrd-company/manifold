@@ -208,16 +208,21 @@ proposed-design:
     true. A first acceptance with no inbox row is rolled back and refused:
     with `not-followed` when the actor host lists no follower of the
     thread, and with `not-accepted` when followers exist and no follower's
-    blueprint declares `agent.handoff`. Otherwise, for each row's actor
-    whose blueprint version is loaded, the module validates the event
-    against that version's `schemas.events["agent.handoff"]`; a failure
-    rolls the transaction back and refuses the call with `invalid-handoff`
-    and each failing path, rewritten from the event to the tool's
-    arguments, so `/handoff/summary` names the argument the agent gave. A
-    row whose actor is held with its version not loaded is kept without
-    validation, as every event reaches a held actor's inbox. A commit
-    answers `accepted`, and the tool's message tells the agent to end its
-    turn. The router delivers the event as it delivers any event: an actor
+    blueprint declares `agent.handoff`. Otherwise every row's actor is
+    checked before the commit, through the actor host's `eventSchema`,
+    loaded and held actors alike. An actor whose version declares
+    `agent.handoff` has the event validated against that version's
+    `schemas.events["agent.handoff"]`; a failure for any one of them rolls
+    the transaction back and refuses the call with `invalid-handoff` and
+    each failing path, rewritten from the event to the tool's arguments,
+    so `/handoff/summary` names the argument the agent gave. An actor
+    whose version the host cannot load, which happens only to a held
+    actor, has no schema to validate against: the transaction is rolled
+    back and the call refused with `task-held`, so nothing reaches any
+    follower, and the same call in the same turn, or a later turn's call,
+    is a first acceptance once an operator's `retry` restores the actor.
+    A commit answers `accepted`, and the tool's message tells the agent
+    to end its turn. The router delivers the event as it delivers any event: an actor
     killed after the commit and before its save takes the event once at
     resume, and an actor whose state takes no `agent.handoff` consumes it
     with no transition.
@@ -257,30 +262,59 @@ proposed-design:
     The module gives the escalations module the handler of kind
     `agent-question`, which runs inside the transaction that records the
     escalation's handling. For an answered escalation it derives the answer
-    message id from the escalation id; inserts the answer row in
+    message id from the escalation id and inserts the answer row in
     `agenttool_answer` with the environment, the thread, the message id,
-    and the answer text unless the row exists; and publishes
+    and the answer text, unless the row exists. It returns a function that
+    wakes the answer sender after the commit. The sender takes pending
+    answer rows one at a time in the order they were written and sends
+    each through the agent threads module's `startTurn`, which waits until
+    the environment source is ready, reads the thread's current modes, and
+    sends `thread.turn.start` with the row's message id and text under the
+    command id derived from that message id, retrying a lost connection on
+    the environment's reconnect backoff with no limit, as `turn-start`
+    does. The server's answer marks the row `sent` with the command's
+    sequence. A command the server rejects marks the row `failed` with the
+    server's message and logs it; the answer stays on the escalation,
+    through Manifold's API and the Task page. The text is the answer
+    message of `agent-tools`: the escalation's title, the chosen label and
+    choice id or the text, and the line that tells the agent to continue
+    its work with the answer. The sender sends at once, whether or not the
+    thread runs a turn: T3 Code starts a turn for the message when the
+    thread has none running, and adds the message to the running turn when
+    one runs, so the agent receives the answer once either way, in the
+    asking turn itself when the person answers before that turn ends.
+  answer-placement: >-
+    `agent.escalation.answered` carries the turn that holds the answer, and
+    is published when the environment source learns which turn that is.
+    The source applies a thread's events in the server's order, and
+    reports each user message's placement to the module's `messagePlaced`
+    hook inside the transaction that publishes the thread's changes,
+    before it publishes the changes of the item that placed it: `joined`,
+    with the latest turn's id, when the message is applied while that turn
+    is `running`, since T3 Code adds a message sent during a turn to that
+    turn; `started`, with the turn's id, when a turn starts that takes the
+    message as its requesting message, as the source's turn attribution
+    gives it; and `unknown`, with no turn, when the source first sees the
+    message in a snapshot that places it neither way. From a snapshot, a
+    message is `started` when a turn's attribution takes it, `joined` when
+    the snapshot's latest turn was requested before the message's
+    `createdAt` and is running or completed after it, and `unknown`
+    otherwise. The hook acts only on the first placement of a message id
+    that an answer row holds and does not yet place: in that transaction
+    it records the turn on the row and publishes
     `agent.escalation.answered` with the escalation id, the answer, its
-    channel, and the message id under the thread's agent topic. It returns
-    a function that wakes the answer sender after the commit. The sender
-    takes pending answer rows one at a time in the order they were written
-    and sends each through the agent threads module's `startTurn`, which
-    waits until the environment source is ready, reads the thread's current
-    modes, and sends `thread.turn.start` with the row's message id and text
-    under the command id derived from that message id, retrying a lost
-    connection on the environment's reconnect backoff with no limit, as
-    `turn-start` does. The server's answer marks the row `sent` with the
-    command's sequence. A command the server rejects marks the row
-    `failed` with the server's message and logs it; the answer stays on the
-    escalation, through Manifold's API and the Task page. T3 Code starts a
-    turn for the message when the thread has none running, and adds it to
-    the running turn when one runs, so the agent receives the answer once
-    either way. The text is the answer message of `agent-tools`: the
-    escalation's title, the chosen label and choice id or the text, and
-    the line that tells the agent to continue its work with the answer.
-    `agent.escalation.answered` carries the message id, so a blueprint
-    that guards turns on their message id, as `agent-threads` describes,
-    assigns it and takes the answer turn's changes.
+    channel, the message id, and `turnId`, the placed turn or `null`,
+    under the thread's agent topic. A later placement of the same message,
+    such as the next turn's attribution of a message that joined a running
+    turn, changes nothing. A row marked `failed` is never placed, so the
+    module publishes the event with `turnId` `null` in the transaction
+    that marks it failed, and the actor learns the answer without a turn.
+    A placement may arrive before the server's answer to the command marks
+    the row `sent`; it places the row all the same. Since the answered
+    event is written in the transaction that publishes the placing item's
+    changes, and before them, an actor takes it before that turn's
+    `t3.turn.settled`, whether the answer started a turn or joined the
+    asking turn while it ran.
   withdrawal: >-
     The module gives the actor host one save hook. A save whose snapshot
     status is `done` or `stopped` withdraws, in the save's transaction, the
@@ -296,7 +330,12 @@ proposed-design:
     turn's `t3.turn.started`. A blueprint that declares `agent.escalated`
     leaves its waiting state for one that does not count the turn's
     settlement as the end of the agent's work, and returns when it takes
-    `agent.escalation.answered`, assigning the answer turn's message id.
+    `agent.escalation.answered`, assigning its `turnId`, and then takes
+    that turn's `t3.turn.settled` with `event.turnId = context.turnId`, or
+    a handoff. An answer that joined the asking turn carries the asking
+    turn's id, so the same guard takes that turn's settlement. A `null`
+    turn id is an answer whose turn cannot be told, for which the
+    blueprint's deadline or escalation covers the wait.
     A blueprint that declares neither still gets the escalation and the
     answer turn: the agent asks and is answered in its thread whatever the
     process declares.
@@ -314,7 +353,8 @@ proposed-design:
     `405`. A body the request schema rejects answers `400` with each
     failing path. An environment the service configuration does not
     declare answers `404` with `unknown-environment`. A refusal answers
-    `409` for `not-followed`, `not-accepted`, and `caller-unidentified`,
+    `409` for `not-followed`, `not-accepted`, `caller-unidentified`, and
+    `task-held`,
     and `422` for `invalid-handoff` and `invalid-escalation`. An
     environment whose source is not ready within the identification bound
     answers `503` with `environment-unavailable`. An accepted or raised
@@ -362,6 +402,8 @@ proposed-design:
       readonly requestListener: RequestListener;
       /** Given to the escalations module as the `agent-question` handler. */
       readonly questionHandler: ServiceEscalationHandler;
+      /** Given to the environment source; runs inside its transaction. */
+      readonly messagePlaced: (placement: MessagePlacement) => void;
       /** Added to `serviceSaveHooks`. */
       readonly saving: SaveHook;
       /** After the router and the escalations module start: sends pending answers. */
@@ -377,13 +419,20 @@ proposed-design:
     }
     ```
 
-    The actor host gains three reads, answered from the records of the
-    actors it holds loaded: `followers(environment, threadId)`, the ids of
-    the loaded actors whose identity holds the environment and lists the
-    thread, in actor id order; `followedThreads(environment)`, every
-    thread those actors list on the environment; and `eventSchema(actorId,
-    type)`, the compiled validator of `schemas.events[type]` of the actor's
-    loaded version, or `undefined` when the version does not declare it.
+    `MessagePlacement` is exported by the environment source:
+    `{ environment, threadId, messageId, placement: "joined" | "started" |
+    "unknown", turnId: string | null }`.
+
+    The actor host gains three reads over every active actor, loaded or
+    held, from its latest saved snapshot: `followers(environment,
+    threadId)`, the ids of the actors whose identity holds the environment
+    and lists the thread, in actor id order; `followedThreads(environment)`,
+    every thread those actors list on the environment; and
+    `eventSchema(actorId, type)`, which is `{ status: "declared", validate
+    }` with the compiled validator of `schemas.events[type]` of the actor's
+    version, `{ status: "undeclared" }` when that version does not declare
+    the type, and `{ status: "unavailable" }` when the host cannot load the
+    version.
     The agent threads module gains `readThread(environment, threadId,
     signal)`, the thread's session status, active turn id, and tool
     activities with their turn ids and call ids, read with
@@ -393,7 +442,8 @@ proposed-design:
     text, signal })`, the dispatch path of `turn-start` with a given
     message id and literal text and no template. The environment source
     gains `environmentId(environment, signal)`, which resolves after
-    `ready` with the `environmentId` its connection confirmed. The
+    `ready` with the `environmentId` its connection confirmed, and the
+    option `messagePlaced`, the hook `answer-placement` describes. The
     escalations module's `ServiceEscalationKind` gains `agent-question`,
     a service escalation request gains an optional `title` and
     `freeText`, and `raise` joins a transaction its caller holds open.
@@ -435,8 +485,11 @@ proposed-design:
     commits and before the command is sent sends it after the restart. A
     crash after T3 Code accepts the command and before the row is marked
     sent sends the same command id again, which T3 Code answers with its
-    first receipt, so the thread holds one answer message. A withdrawal on
-    the actor's end twice withdraws once.
+    first receipt, so the thread holds one answer message. A placement
+    reported twice, by an item the source handles again after a crash or
+    by a later turn's attribution, publishes the answered event once,
+    since the first places the row and the event id is fixed by the
+    escalation. A withdrawal on the actor's end twice withdraws once.
   failures: >-
     A call refused for an identity, a schema, or a missing follower
     publishes and raises nothing, and its result tells the agent what to
@@ -477,10 +530,24 @@ proposed-design:
     new event; an `escalate` with two choices raises one escalation on the
     `default` destination and publishes `agent.escalated`; a second call in
     the turn returns the same escalation; its answer through the API writes
-    one answer row, publishes `agent.escalation.answered` with the message
-    id, and starts one turn in the fake server's thread with the answer
-    text and that message id; an answer while the thread runs a turn is
-    sent once; an answer after the actor ends is refused; a command the
+    one answer row, starts one turn in the fake server's thread with the
+    answer text and the derived message id, and publishes
+    `agent.escalation.answered` with that message id and the id of the turn
+    it started; an answer given while the asking turn still runs is added
+    to that turn once and published with the asking turn's id; a blueprint
+    that assigns the event's `turnId` and guards `t3.turn.settled` on it
+    completes on that turn's settlement in both cases, and completes the
+    same way when the service is killed after the answer commits and
+    before the command is sent, and after the command is accepted and
+    before the placement is recorded; a snapshot that shows the answer in
+    neither way publishes it with `turnId` `null`, and so does a rejected
+    command; a handoff with one loaded follower and one held follower
+    whose blueprints declare different handoff schemas, which passes the
+    loaded one's and fails the held one's, is refused with
+    `invalid-handoff` and reaches neither inbox; a handoff whose held
+    follower's version cannot be loaded is refused with `task-held` and
+    reaches no inbox, and the same call is accepted once that actor is
+    restored; a held follower is listed by `followers`; an answer after the actor ends is refused; a command the
     fake server rejects marks the row failed; the endpoint answers `413`,
     `400`, `404`, and `405` as stated. The fault tests run the service in a
     child Node process that sends itself `SIGKILL` and whose signal the
@@ -499,10 +566,10 @@ proposed-design:
     package's `test:live` script and not by `task check`, starts the `t3`
     release the environment source targets, pinned as a devDependency, on a
     loopback port with its own data directory, registers the compiled
-    plugin in a temporary configuration of each provider the usage decoder
-    covers, as `host-cli-mcp` gives, and for each provider with credentials
-    on the run starts a thread whose prompt asks the agent to call
-    `handoff`. It records for each provider whether the registration
+    plugin in a temporary configuration of each provider installed and
+    enabled in that T3 Code, `claude`, `codex`, `cursor`, and `opencode`,
+    as `host-cli-mcp` gives, and for each starts a thread whose prompt
+    asks the agent to call `handoff`. It records for each provider whether the registration
     loaded, the `_meta` keys the plugin received, whether the call id
     equals the activity's `toolCallId`, and which rule identified the
     call, and the evidence table in `agent-tools` is updated from that run.

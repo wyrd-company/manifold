@@ -30,9 +30,12 @@ CREATE TABLE agenttool_answer (
   error TEXT,
   written_at INTEGER NOT NULL,
   settled_at INTEGER,
+  turn_id TEXT CHECK (turn_id IS NULL OR length(turn_id) > 0),
+  placed_at INTEGER,
   CHECK ((status = 'sent') = (sequence IS NOT NULL)),
   CHECK ((status = 'failed') = (error IS NOT NULL)),
-  CHECK ((status = 'pending') = (settled_at IS NULL))
+  CHECK ((status = 'pending') = (settled_at IS NULL)),
+  CHECK (turn_id IS NULL OR placed_at IS NOT NULL)
 ) STRICT;
 
 CREATE INDEX agenttool_answer_pending ON agenttool_answer (written_at)

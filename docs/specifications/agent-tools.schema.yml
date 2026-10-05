@@ -109,6 +109,7 @@ $defs:
       - caller-unidentified
       - not-followed
       - not-accepted
+      - task-held
       - invalid-handoff
       - invalid-escalation
       - environment-unavailable
@@ -240,6 +241,7 @@ $defs:
       - answer
       - channel
       - messageId
+      - turnId
     properties:
       type:
         const: agent.escalation.answered
@@ -255,3 +257,10 @@ $defs:
         $ref: https://manifold.wyrd.company/schemas/escalation-contract#/$defs/channel
       messageId:
         type: string
+      turnId:
+        description: >-
+          The turn that holds the answer, started by it or running when it
+          arrived; null when no turn can be told or the message was rejected.
+        type:
+          - string
+          - "null"

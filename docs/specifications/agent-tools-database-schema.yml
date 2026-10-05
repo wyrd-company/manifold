@@ -34,6 +34,11 @@ description: |-
   when the row is `sent`; `error` is the server's message, set exactly
   when the row is `failed`; `settled_at` is set exactly when the row
   leaves `pending`. `written_at` orders the rows the sender takes.
+  `placed_at` is when the answer's turn was settled on, by the
+  environment source's first placement of the message or by the row's
+  failure, and `turn_id` is that turn, absent when the placement named
+  none; a row is placed once, and `agent.escalation.answered` is published
+  in the transaction that places it.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/agent-tools-database-schema.sql` runs without error
@@ -45,4 +50,5 @@ validation-criteria: >-
   are equal. After the module opens, `schema_migration` holds the row
   `('agenttool', n)`, where n is the number of the module's migration
   steps. A second question row for one turn, a sent answer without a
-  sequence, and a failed answer without an error each fail.
+  sequence, a failed answer without an error, and a turn id on an
+  unplaced answer each fail.

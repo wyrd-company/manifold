@@ -81,9 +81,9 @@ description: |-
   }
   ```
 
-  Grok's registration is the one the live test of `agent-tools` measures,
-  and is recorded here from that run. The evidence for each registration
-  is the provider table of `agent-tools`.
+  Grok's registration is not measured; a Grok agent identifies its calls
+  with the `thread` argument once its harness loads the plugin. The
+  evidence for each registration is the provider table of `agent-tools`.
 format: cli
 validation-criteria: >-
   The command surface conforms to

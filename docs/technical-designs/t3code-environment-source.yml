@@ -117,6 +117,23 @@ proposed-design:
     baselines at the origin take their attribution from the read model by
     the same rule. A turn first observed with no attribution has none, and
     its changes carry `null`.
+  message-placement: >-
+    The source reports where each user message of a thread lands, for the
+    agent tools module's answers, through the `messagePlaced` option. An
+    applied `thread.message-sent` event of a user message whose thread
+    state has its latest turn `running` reports `joined` with that turn's
+    id, since T3 Code adds a message sent during a turn to the running
+    turn. A new latest turn that takes a message by turn attribution
+    reports `started` with the turn's id. A user message first seen in a
+    `snapshot` item that no turn takes reports `joined` with the latest
+    turn's id when that turn's `requestedAt` is before the message's
+    `createdAt` and the turn is running or its `completedAt` is after it,
+    and `unknown` with no turn otherwise. The hook runs inside the item's
+    transaction, before the source publishes the item's changes, so a row
+    the hook writes commits with them and precedes them in an actor's
+    inbox. The compact thread keeps no messages, so a placement is reported
+    as the item that places it is applied, and an item applied again after
+    a crash reports it again; the hook is idempotent.
   thread-changes: >-
     `threadChanges(before, after)` is a pure function from two thread
     states, `before` possibly empty, to the thread changes between them, in
@@ -284,7 +301,17 @@ proposed-design:
       readonly environments: EnvironmentsConfiguration;
       /** Resolves a `t3code-token` credential name to its token file path. */
       readonly tokenFile: (credential: string) => string;
+      /** Runs inside the transaction of the item that places a user message, before its changes are published. */
+      readonly messagePlaced?: (placement: MessagePlacement) => void;
       readonly logger?: Logger;
+    }
+
+    export interface MessagePlacement {
+      readonly environment: string;
+      readonly threadId: string;
+      readonly messageId: string;
+      readonly placement: "joined" | "started" | "unknown";
+      readonly turnId: string | null;
     }
 
     export interface T3CodeSource {
@@ -420,4 +447,9 @@ proposed-design:
     Node process against the fake server, kills it with `SIGKILL` mid-stream
     and asserts the signal, starts it again on the same file, and checks the
     published changes against the changes the fake server's log implies: no
-    change missing and none twice.
+    change missing and none twice. A `messagePlaced` hook sees a user message sent
+    while a turn runs as `joined` with that turn, a message that a new turn
+    takes as `started` with that turn, before the turn's started change is
+    published, and, from a snapshot past the replay bound, a message inside
+    the latest turn's span as `joined` and one placed neither way as
+    `unknown`; a hook that throws rolls back the item.
