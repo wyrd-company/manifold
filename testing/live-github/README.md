@@ -44,8 +44,10 @@ when starting the supervisor directly with `node testing/live-github/src/start.t
 It starts that entry with one configuration argument and keeps the same tunnel,
 child cleanup, and smoke checks.
 
-Run start in one terminal and smoke in another. Do not run teardown until the PAT
-repository deletion permission is confirmed. Stop may report shutdown pending;
+Run start in one terminal and smoke in another. Run teardown after stop: it
+removes the marked hook and Project, and deletes the marked repositories with
+the PAT's repository deletion permission; a second run reports each resource
+absent. Stop may report shutdown pending;
 leave the supervisor to finish and run stop again. It owns child cleanup while
 its control socket is held.
 
