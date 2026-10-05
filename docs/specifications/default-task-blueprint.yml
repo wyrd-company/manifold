@@ -61,15 +61,13 @@ description: |-
   - `comparators/estimate.ts`: the comparator of the `todo` gate, of
     `comparator-contract`.
   - `templates/task.njk`: the prompt of the turn, a Nunjucks template
-    rendered against `{ issue, fields }`, the task's issue reference and
-    its current field values.
-  - `schemas/handoff.yml`: the handoff schema, a JSON Schema in YAML that
-    the agent's `handoff` argument validates against before it reaches the
-    actor as `agent.handoff`. The blueprint names it as the harness
-    plugin's handoff schema declaration specifies.
+    rendered against `{ issue, fields, thread }`, the task's issue
+    reference, its current field values, and the thread id, which an
+    agent whose provider gives no tool call id passes to `handoff` as
+    `thread`.
 
   A process that runs the blueprint holds these files; the starter process
-  repository holds all three. A missing comparator stops the gate, as
+  repository holds both. A missing comparator stops the gate, as
   `gate-runtime` states. A missing template fails the turn with
   `template`, which the blueprint escalates.
 
@@ -79,6 +77,13 @@ description: |-
   GitHub Project's Status field, after `Todo`. A Project whose lifecycle
   field names them otherwise runs a copy of this blueprint, as `blueprint`
   states under Bundled blueprints.
+
+  Handoff. The handoff schema is the blueprint's `agent.handoff` event
+  schema, whose `handoff` is an object with a required `summary`, a
+  non-empty string, and no other property. The agent's `handoff`
+  argument validates against it before it reaches the actor, so a
+  process that wants another handoff runs a copy of this blueprint with
+  its own schema.
 
   Gate. `todo` carries the gate `blueprints/task.yml#todo` with
   `comparator: comparators/estimate.ts`, `reservation: true`, and
@@ -103,6 +108,18 @@ description: |-
   - `t3.session.failed` of its thread;
   - `t3.thread.archived` or `t3.thread.deleted` of its thread, which also
     clears `context.thread`, so a `retry` creates a new thread.
+
+  Agent escalations. An agent that escalates ends its turn, and the
+  service raises the escalation and answers it back to the thread as a new
+  turn, so the actor hears `agent.escalated` and then
+  `agent.escalation.answered` of its thread. `agent.escalated` is taken in
+  `active.working` and in `active.stalled` and enters
+  `active.working.escalated`, where the settlement of the actor's own
+  turn takes no transition, since the turn ended to wait for the answer.
+  `agent.escalation.answered` enters `active.working.waiting`. A turn
+  that the answer starts carries a message id the actor does not hold,
+  so the actor waits on that turn for its handoff, a failed session, or a
+  removed thread.
 
   `active.stalled` invokes `escalate` with the title `Agent thread
   stopped`, a question naming the issue and the stall, and the choices
@@ -185,6 +202,12 @@ description: |-
               - type: expression.assign
                 params:
                   expression: '{ "handoff": event.handoff }'
+          agent.escalated:
+            target: "#task.active.working.escalated"
+            guard:
+              type: expression.guard
+              params:
+                expression: event.threadId = context.thread
         states:
           working:
             initial: opening
@@ -275,7 +298,8 @@ description: |-
                       expression: >-
                         { "threadId": context.thread, "messageId": context.turn,
                           "prompt": "templates/task.njk",
-                          "values": { "issue": context.task.issue, "fields": context.fields } }
+                          "values": { "issue": context.task.issue, "fields": context.fields,
+                                      "thread": context.thread } }
                   onDone: waiting
                   onError:
                     target: "#task.active.stalled"
@@ -284,6 +308,19 @@ description: |-
                         params:
                           expression: '{ "stall": { "kind": event.error.kind, "message": event.error.message } }'
               waiting: {}
+              escalated:
+                on:
+                  t3.turn.settled:
+                    guard:
+                      type: expression.guard
+                      params:
+                        expression: event.threadId = context.thread and event.messageId = context.turn
+                  agent.escalation.answered:
+                    target: waiting
+                    guard:
+                      type: expression.guard
+                      params:
+                        expression: event.threadId = context.thread
           stalled:
             invoke:
               id: ask
@@ -350,11 +387,11 @@ description: |-
 
   Schemas. `schemas.events` declares `token`,
   `github.project-item.field-changed`, `github.issue.closed`,
-  `agent.handoff`, `t3.turn.settled`, `t3.session.failed`,
-  `t3.thread.archived`, `t3.thread.deleted`, and `escalation.answered`,
-  each with a schema that the event its owner publishes satisfies;
-  `agent.handoff` takes any `handoff` value, since the handoff schema has
-  validated it. `schemas.actors` declares `github-card-move`,
+  `agent.handoff`, `agent.escalated`, `agent.escalation.answered`,
+  `t3.turn.settled`, `t3.session.failed`, `t3.thread.archived`,
+  `t3.thread.deleted`, and `escalation.answered`, each with a schema that
+  the event its owner publishes satisfies; the `agent.handoff` schema's
+  `handoff` is the handoff schema above. `schemas.actors` declares `github-card-move`,
   `thread-create`, `turn-prepare`, `turn-start`, and `escalate` with
   schemas their contracts satisfy. `schemas.context` holds the context
   above with `manifold`, and `schemas.output` requires `outcome`, one of
