@@ -42,9 +42,12 @@ test("canvas edits, dragged transition, expression findings, YAML toggle, layout
     expect(await page.locator(".blueprint-source").count()).toBe(0);
 
     await page.getByLabel("Add state", { exact: true }).selectOption("atomic");
+    await page
+      .getByText("Click to place a atomic state. Escape cancels.", { exact: true })
+      .waitFor();
     const surface = await page.locator(".canvas-surface").boundingBox();
     await page.mouse.move(surface!.x + surface!.width - 100, surface!.y + surface!.height - 100);
-    await expect.poll(() => page.locator(".canvas-placement-ghost").count()).toBe(1);
+    await page.locator(".canvas-placement-ghost").waitFor();
     await page.mouse.click(surface!.x + surface!.width - 100, surface!.y + surface!.height - 100);
     await page.locator(".canvas-state").getByText("state", { exact: true }).waitFor();
 
