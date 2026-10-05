@@ -110,10 +110,15 @@ description: |-
   `github.project-item.added` is the content issue's reference, or `null`
   for a pull request or draft issue. `fields` lists the item's custom
   field values when it was added; `field-changed` carries one field's value
-  before and after. `movedBy` is `{ "actorId": "<actor id>" }` when the
-  value is the option a card move of that actor set, as
-  `github-event-source` attributes it, and `null` for a change Manifold
-  did not make: a person, a Project workflow, or another integration. A
+  before and after. `movedBy` names the card move whose option the new
+  value is, as `github-event-source` attributes it:
+  `{ "actorId": "<actor id>", "confirmed": true }` when GitHub confirmed
+  that actor's write and no change Manifold did not make has followed it;
+  `{ "actorId": "<actor id>", "confirmed": false }` when that actor
+  attempted the value and the source cannot show that its write set it,
+  as after a write whose fate is unknown; and `null` when no write
+  Manifold recorded or attempted set the value: a person, a Project
+  workflow, or another integration. A
   card move reaches the actors of its item's issue through the same read,
   comparison, topics, and event id as any other change. A field is a custom field of data type `TEXT`,
   `NUMBER`, `DATE`, `SINGLE_SELECT`, or `ITERATION`, named by `nodeId` and

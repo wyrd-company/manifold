@@ -1,0 +1,43 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables these are.
+  realizes:
+    - task-metadata
+  references:
+    - store-database-schema
+    - task-metadata-declaration
+description: >-
+  Defines the tables the task metadata module holds in Manifold's store
+  database. `docs/specifications/task-metadata-tables.sql` is the
+  machine-readable definition: the schema that the module's migration
+  steps produce. The module's owner name is `metadata`, and every table and
+  trigger it creates is named `metadata_<name>`. Its steps are applied by
+  the store's `migrate("metadata", steps)`; the module never runs DDL
+  itself. Step 1 is this file's script. Steps are append-only: a change to
+  a table is a new step, and this file is rewritten to the schema all steps
+  produce.
+
+  `metadata_declarations` holds one row per accepted task metadata
+  declaration whose content differs from the declaration in force.
+  `commit_id` is the full commit id of the process repository revision it
+  was read from. `declaration` is the canonical JSON, keys sorted, of the
+  declaration that `lintTaskMetadataDeclaration` returns. `accepted_at` is
+  the time it was written, in epoch milliseconds. The row with the greatest
+  `seq` is the declaration in force; with no row, no declaration is in
+  force. No row is updated or deleted; a trigger aborts every `UPDATE` and
+  `DELETE`.
+
+  `metadata_rejections` holds one row per commit whose declaration had
+  findings: `findings`, the JSON array of the lint's findings, and
+  `rejected_at`. A second rejection of the same commit writes nothing.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/task-metadata-tables.sql` runs without error on an
+  empty SQLite database. A test applies the module's exported migration
+  steps in order to an empty database and compares the `type`, `name`,
+  `tbl_name`, and `sql` of every `sqlite_schema` row whose name starts with
+  `metadata_` with the rows this file produces on a second empty database,
+  with each run of whitespace in `sql` read as one space; they are equal.
+  An `UPDATE` or `DELETE` on `metadata_declarations` fails with its
+  append-only message.

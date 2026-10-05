@@ -231,8 +231,8 @@ proposed-design:
     the file, then `configureBlueprintExpressions` with its `expressions`
     section. (2) `store-opened`: creates the directory of `store.file`
     when absent, calls `openStore` with the file and the `delivery` probe,
-    and applies `ledgerMigrationSteps` and `portfolioMigrationSteps` with
-    the store's `migrate`; the router and each source migrate their own
+    and applies `ledgerMigrationSteps`, `portfolioMigrationSteps`, and
+    `taskMetadataMigrationSteps` with the store's `migrate`; the router and each source migrate their own
     owners when they start. (3) `portfolio-opened`: `openPortfolio` with
     the store's connection. (4) `process-repository-opened`:
     `openProcessRepository` with the `processRepository` section, the

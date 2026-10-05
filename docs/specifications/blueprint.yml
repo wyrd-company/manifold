@@ -280,9 +280,12 @@ description: |-
 
   Each move reaches the actor again as `github.project-item.field-changed`
   when the GitHub event source reads it, with `movedBy` naming the actor,
-  as `github-events` states. A change Manifold did not make carries
-  `movedBy` `null`, so a blueprint takes a person's move apart from its
-  own:
+  as `github-events` states. `movedBy.confirmed` is true when GitHub
+  confirmed the actor's write, and false when the source cannot show that
+  the actor's write, and not someone else's, set the value, as after a
+  move that failed with `transport`. A change no write of Manifold's set
+  carries `movedBy` `null`, so a blueprint takes a person's move apart
+  from its own, and decides for itself how to take an unconfirmed one:
 
   ```yaml
   on:

@@ -10,6 +10,7 @@ relationships:
   # specifications a design builds on; `references` is the best fit.
   references:
     - task-metadata-declaration
+    - task-metadata-tables
     - host-cli-task-metadata-lint
     - blueprint
     - github-events
@@ -84,6 +85,7 @@ proposed-design:
     import type { ActorHost, Invocation } from "../actor-host/index.ts";
     import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
     import type { GitHubProject, GitHubSource } from "../github-source/index.ts";
+    import type { StoreConnection } from "../store/index.ts";
 
     export function openTaskMetadata(options: TaskMetadataOptions): TaskMetadata;
 
@@ -96,6 +98,8 @@ proposed-design:
       readonly source: (signal: AbortSignal) => Promise<Pick<GitHubSource, "project" | "moveCard">>;
       /** The name of the GitHub Project binding of a Project, at the current revision. */
       readonly bindingOf: (project: GitHubProject) => string | undefined;
+      /** The store's connection; the module's tables are migrated before it opens. */
+      readonly connection: StoreConnection;
     }
 
     export interface TaskMetadata {
@@ -115,13 +119,17 @@ proposed-design:
           readonly findings: readonly TaskMetadataFinding[];
         };
 
+    /** The migration steps of `task-metadata-tables`, applied with `migrate("metadata", steps)`. */
+    export const taskMetadataMigrationSteps: readonly string[];
+
     export type { CardMoveError, CardMoveErrorKind } from "./types.ts";
     ```
 
     `CardMoveError` is `#/$defs/card-move-error` of `blueprint`.
   module-layout: >-
     `index.ts` re-exports the public names. `declaration.ts` holds the
-    declaration in force and `apply`. `card-move.ts` holds the pure function
+    declaration in force and `apply`. `records.ts` holds every SQL read and
+    write of the module's tables, and `migrations.ts` their steps. `card-move.ts` holds the pure function
     from an actor's identity, its binding, the declaration in force, and an
     input to a `CardMove` or a card move error, and the mapping from a
     `GitHubWriteError` to a card move error. `implementations.ts` builds
@@ -134,13 +142,18 @@ proposed-design:
   declaration-in-force: >-
     `apply(revision)` reads `task-metadata.yml` and `bindings.yml` through
     the revision's `read`, and lints them with
-    `lintTaskMetadataDeclaration`. A clean declaration replaces the one in
-    force and returns `applied`. A declaration with findings returns
-    `rejected` with them and leaves the one in force as it was. The
-    declaration in force is held in memory: the service applies the current
-    revision at every start before any actor is restored, so a restart puts
-    the current commit's declaration in force, or none when it has
-    findings. A move reads the declaration in force when it runs, never the
+    `lintTaskMetadataDeclaration`. A clean declaration that differs from the
+    one in force, as canonical JSON, is written to the store as a new row
+    of `metadata_declarations` and returns `applied`; one equal to it
+    writes nothing and returns `applied`. A declaration with findings
+    writes the commit and its findings to `metadata_rejections`, returns
+    `rejected` with them, and leaves the one in force as it was. The
+    declaration in force is the row of `metadata_declarations` with the
+    greatest `seq`, as `task-metadata-tables` defines, read when the
+    module opens, before the router restores any actor. A restart on a
+    revision whose declaration has findings therefore keeps the last clean
+    declaration in force, and the rejection stays in the store for
+    diagnosis. A move reads the declaration in force when it runs, never the
     one of the actor's blueprint version, since it describes the Project as
     it is on GitHub now.
   card-move: >-
@@ -176,10 +189,15 @@ proposed-design:
   own-moves: >-
     Each move reaches the actor as `github.project-item.field-changed`,
     published by the GitHub event source's read of the item, with
-    `movedBy` `{ actorId }`. A change the source cannot attribute to a
-    recorded move carries `movedBy` `null`. A blueprint takes a person's
-    move with a guard on `event.movedBy = null`, and its own with a guard
-    on `event.movedBy.actorId`, or lets its own pass with no transition. A
+    `movedBy` `{ actorId, confirmed: true }` once GitHub has confirmed the
+    write. A change no write of Manifold's set carries `movedBy` `null`. A
+    value the actor attempted whose write the source cannot confirm as the
+    one that set it, such as a move that failed with `transport` followed by
+    a person choosing the same option, carries `{ actorId, confirmed: false
+    }`, so a person's change is never claimed as the actor's. A blueprint
+    takes a person's move with a guard on `event.movedBy = null`, its own
+    with a guard on `event.movedBy.confirmed`, and decides how to take an
+    unconfirmed one, or lets its own pass with no transition. A
     move's promise resolves when GitHub has taken the write, before the
     change is read, so a blueprint never waits on its own move's event.
   lint: >-
@@ -192,7 +210,7 @@ proposed-design:
     statuses against that checkout's declaration.
   wiring: >-
     The service opens the module before it creates the blueprint loader,
-    with the actor host's `actorOf` read through the host once it opens,
+    with the store's connection, the actor host's `actorOf` read through the host once it opens,
     `invocationOf`, a `source` that resolves with the GitHub event source
     once `startGitHubSource` returns and rejects when its signal aborts
     first, and a `bindingOf` that finds the GitHub Project binding of the
@@ -204,7 +222,10 @@ proposed-design:
     and logs `task-metadata-rejected` with the findings of a rejected
     result.
   convergence: >-
-    `apply` twice with one revision gives the same declaration in force. A
+    `apply` twice with one revision gives the same declaration in force and
+    writes one row. A crash before `apply` commits leaves the earlier
+    declaration in force, and the follower applies the commit again at the
+    next start. A
     move run twice for one invocation leaves GitHub holding one value, one
     card move row, and one published change, as `github-event-source`
     states. A crash before GitHub takes the write leaves the actor in the
@@ -215,14 +236,17 @@ proposed-design:
     GitHub's value unknown; the blueprint that enters the state again sends
     a new move, which sets the option whatever the first did.
   tests: >-
-    Tests run through a real store, router, actor host, blueprint loader,
+    Tests run through a real store file in a temporary directory, router, actor host, blueprint loader,
     and GitHub event source, against the GitHub fake of the source's test
     suite, with blueprints and a task metadata declaration in a process
     repository fixture. Behaviours proved, each red before green: a
     blueprint that invokes `github-card-move` with a literal status moves
     the fake item's field to that option and takes `onDone`; the actor then
     takes `github.project-item.field-changed` with `movedBy` its own actor
-    id; a person's change of the field in the fake, delivered by webhook,
+    id, confirmed; a move that fails with `transport` before the fake
+    applies it, followed by a person selecting the same option in the fake,
+    reaches the actor unconfirmed, and a blueprint guarded on
+    `event.movedBy.confirmed` does not take it; a person's change of the field in the fake, delivered by webhook,
     reaches the actor with `movedBy` `null`, and a blueprint guarded on
     `event.movedBy = null` takes only the person's change; a move whose
     status comes from a mapping moves the card; an input with no `status`
@@ -236,7 +260,11 @@ proposed-design:
     past `requestTimeoutMs` fail with `transport`; and another GraphQL
     error fails with `rejected`. A revision whose declaration has a finding
     returns `rejected` and leaves the earlier declaration in force, and a
-    move before the first clean apply fails with `undeclared`. A move on a
+    move before the first clean apply fails with `undeclared`. A service
+    that applies a clean revision A, then rejects revision B, and restarts
+    on B keeps A's declaration in force, holds B's rejection in
+    `metadata_rejections`, and completes a card move with A's lifecycle
+    field. A move on a
     restored actor whose invoke runs during the router's resume waits for
     the source to start and then moves the card. The fault test runs the
     service in a child Node process, which kills itself with `SIGKILL` from
@@ -245,5 +273,5 @@ proposed-design:
     store file, and checks that the fake's item holds the option, that each
     mutation in the fake's log set that same option, that one
     `field-changed` for the item and field was published, with `movedBy`
-    the actor, and that the actor's snapshot is in the state its `onDone`
+    the actor, confirmed, and that the actor's snapshot is in the state its `onDone`
     enters. Values are generic and never drawn from Manifold's own domain.

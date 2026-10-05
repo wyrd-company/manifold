@@ -347,17 +347,21 @@ $defs:
         $ref: "#/$defs/field-value"
       movedBy:
         description: >-
-          The actor whose card move set `to`, or null for a change Manifold
-          did not make.
+          The card move whose option `to` is: confirmed when GitHub
+          confirmed the actor's write, unconfirmed when the source cannot
+          show that the write set it; null when no write Manifold recorded
+          or attempted set the value.
         oneOf:
           - type: "null"
           - type: object
-            required: [actorId]
+            required: [actorId, confirmed]
             additionalProperties: false
             properties:
               actorId:
                 type: string
                 minLength: 1
+              confirmed:
+                type: boolean
   project-event:
     type: object
     required: [type, project]

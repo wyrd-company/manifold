@@ -110,6 +110,7 @@ CREATE TABLE github_card_move (
   item_node_id TEXT NOT NULL CHECK (length(item_node_id) > 0),
   field_node_id TEXT NOT NULL CHECK (length(field_node_id) > 0),
   option_id TEXT NOT NULL CHECK (length(option_id) > 0),
+  state TEXT NOT NULL CHECK (state IN ('sent', 'confirmed', 'doubtful')),
   sequence INTEGER NOT NULL CHECK (sequence > 0),
   PRIMARY KEY (actor_id, invoke_id, entry_id)
 ) STRICT, WITHOUT ROWID;

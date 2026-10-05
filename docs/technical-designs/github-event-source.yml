@@ -377,11 +377,18 @@ proposed-design:
     due, a sweep is due, and pending rows exist. On waking it runs every
     queued card move first, then a due scan, then a due sweep, then the
     pending reconciles, and sleeps when the queue is empty and all three
-    flags are clear. It takes queued card moves again before each later
-    request of a scan, a sweep, or a pending reconcile, so a move waits at
-    most for the one request in hand. A card move is never sent while a
-    read is in flight, so every read that starts after a move's write
-    returns starts after GitHub took the write.
+    flags are clear. The runner's mirror work is a series of observations.
+    An observation is every request whose answers one transaction applies:
+    a batch of pending issues or items, or one page of a Project's items,
+    with every later page of each connection it reads and every content
+    issue an item addition in it reads, from its first request to the
+    commit or the abandonment of its transaction. The runner takes queued
+    card moves again after each observation and before each request of a
+    redelivery scan, and never inside an observation, so a move waits at
+    most for the observation in hand. No observation holds an answer read
+    before a move's write and an answer read after it, and every
+    observation that starts after a move's write returns starts after
+    GitHub took the write.
     `startGitHubSource` sets the scan and the sweep due and wakes it. After
     each scan it arms one timer for `redeliveryIntervalMs`, and after each
     sweep one for `sweepIntervalMs`, through the clock; a timer sets its
@@ -433,32 +440,47 @@ proposed-design:
     and an owner that `owners` does not name are `forbidden`; a request
     that fails before GitHub answers, runs past `requestTimeoutMs`, or is
     answered with a `5xx` or a rate limit is `transport`; any other GraphQL
-    error is `rejected`, with GitHub's message. A mutation that GitHub
-    refuses deletes the move's row in its own transaction; a `transport`
-    failure keeps it, since GitHub may have taken the write. A move's
-    failure is not sent to `onError`: its caller takes it.
+    error is `rejected`, with GitHub's message. The row is written with
+    state `sent` in step 3, and set to `confirmed` in the transaction of
+    step 5, since a mutation that returns its item is GitHub's evidence that
+    it took the write. A mutation that GitHub refuses deletes the move's row
+    in its own transaction. A `transport` failure, and a crash between
+    steps 3 and 5, leave the row `sent`: GitHub may have taken the write or
+    not. A move's failure is not sent to `onError`: its caller takes it.
   attribution: >-
     The card move rows decide `movedBy` on each
     `github.project-item.field-changed` a reconcile publishes, inside the
     reconcile's transaction, from the rows of the change's item and field.
-    When the new value is a single-select option that one or more rows set,
-    the change is attributed to the actor of the row with the largest
-    `sequence` among them, and that row and every row of the item and field
-    with a smaller `sequence` are deleted. Otherwise `movedBy` is `null`
-    and every row of the item and field is deleted, since GitHub holds a
-    value that no recorded move set, so a later change made them stale. A
-    change of the item's other fields reads no row. Removing an item
-    deletes its rows. The runner never sends a move while a read is in
-    flight, so a row a read can find belongs to a write sent before the
-    read began. A read that lags a move and shows the field's earlier value
-    finds no difference and publishes nothing, and the delivery's read or
-    the sweep that reads the move publishes it, attributed. A row whose
-    value never shows as a change, such as a move to the option the card
-    already held, stays until the next change of that field attributes or
-    deletes it. One case attributes a move to no actor: a person changes
-    the field between two moves of one actor, and a read that lags shows
-    the person's value; the second move is then published with `movedBy`
-    `null`.
+    A row's state is `sent`, a write whose fate is unknown; `confirmed`, a
+    write GitHub took; or `doubtful`, a write that a change no move made
+    has since followed in the mirror, so GitHub's value may be that change
+    or a later one. Take the row with the largest `sequence` whose option
+    is the new value. When it is `confirmed`, `movedBy` is `{ actorId,
+    confirmed: true }`. When it is `sent` or `doubtful`, `movedBy` is `{
+    actorId, confirmed: false }`: the actor attempted this value and the
+    source cannot show that its write, and not someone else's, set it.
+    Either way that row and every row of the item and field with a smaller
+    `sequence` are deleted, since GitHub applied those writes before the
+    value read. When no row's option is the new value, `movedBy` is `null`,
+    which is true whatever the timing, since no write Manifold recorded or
+    attempted set that value; every row of the item and field becomes
+    `doubtful`. A change of the item's other fields reads no row. Removing
+    an item deletes its rows. Because no observation spans a move's write,
+    every row an observation finds was written before the observation
+    began, so a read that lags shows a value from before the row or after
+    it, never a mix. A read that lags a move and shows the field's earlier
+    value finds no difference and publishes nothing, and the delivery's
+    read or the sweep that reads the move publishes it, attributed. A row
+    whose value never shows as a change, such as a move to the option the
+    card already held, stays until a later change deletes it or makes it
+    `doubtful`; a `doubtful` row is never claimed as confirmed. A `null`
+    `movedBy` is therefore never a Manifold write, and a `confirmed` one is
+    the actor's write, with one exception: a person who changes the field
+    away and back to the value a confirmed move set, both before the source
+    reads it, is reported as that move, since the mirror sees one change to
+    the value both chose. The cases the source cannot decide, a write whose
+    fate is unknown and a write a change no move made has followed, are
+    reported unconfirmed rather than as a person's or as Manifold's.
   credentials-per-entity: >-
     A Project, its fields, and its items are read, and a card move
     written, with the credential of the Project's owner. A tracked issue is read with the credential of its repository's
@@ -709,11 +731,11 @@ proposed-design:
     and the mirror publishing one change. A crash before the row commits
     leaves nothing, and the restored actor's invoke sends the move as the
     first time. A crash after the row commits and before the write leaves a
-    row that GitHub's value never matches; the restored invoke writes it
-    again with the same key. A crash after GitHub takes the write and
+    `sent` row; the restored invoke writes it again with the same key and
+    confirms it. A crash after GitHub takes the write and
     before the pending row commits leaves the row; the restored invoke
-    writes again, and the read that follows publishes one change,
-    attributed.
+    writes again and confirms the row, and the read that follows publishes
+    one change, confirmed.
   errors: >-
     A delivery that fails verification is a `rejected` outcome, never a
     throw, since GitHub and anyone who can reach the endpoint send it.
@@ -800,9 +822,21 @@ proposed-design:
     A person's change in the fake publishes `movedBy` `null`, and so does a
     change to another option after a move whose value never showed. Two
     moves of one actor whose first read shows only the first value publish
-    two changes, each attributed. A move to the option the card holds
-    resolves and publishes nothing. While a sweep's read is held open by the
-    fake, a queued move waits, and is sent before the sweep's next request.
+    two changes, each confirmed. A move to the option the card holds
+    resolves and publishes nothing. With an item whose field values span
+    two pages and the lifecycle field on the first, a person's change read
+    on the first page and a move queued while the fake holds the second
+    page's answer: the move waits until the observation commits, the
+    person's change publishes with `movedBy` `null`, and the next read
+    publishes the move confirmed. A mutation that fails with `transport`
+    before the fake applies it, followed by a person selecting the same
+    option, publishes `movedBy` unconfirmed for that actor, never
+    confirmed. A person's change between two moves of one actor, read by a
+    lagging read, publishes `null`, and the second move then publishes
+    unconfirmed. A replayed move after its change was attributed, followed
+    by a person's change away and back, publishes `null` and then
+    unconfirmed. While a sweep's observation is held open by the fake, a
+    queued move waits, and is sent after that observation commits.
     A field the Project lacks, a text field of that name, an option the
     field lacks, an issue with no item on the Project, a `NOT_FOUND` at the
     item, a `FORBIDDEN` error, a `403`, a `502`, a rate limit answer, a
