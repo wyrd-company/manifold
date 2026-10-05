@@ -37,12 +37,13 @@ export async function bindChildren(
   version: BlueprintVersion,
   revision: ProcessRepositoryRevision,
   load: (version: BlueprintVersion, revision: ProcessRepositoryRevision) => Promise<VersionLoad>,
+  bundledFiles?: ReadonlyMap<string, string>,
 ) {
   async function reaches(path: string, visited: Set<string>): Promise<boolean> {
     if (path === version.path) return true;
     if (visited.has(path)) return false;
     visited.add(path);
-    const text = await revision.read(path);
+    const text = bundledFiles ? bundledFiles.get(path) : await revision.read(path);
     if (text === undefined) return false;
     let machine;
     try {
@@ -58,7 +59,10 @@ export async function bindChildren(
     let error: Record<string, unknown> | undefined;
     if (await reaches(path, new Set())) error = { type: "child-blueprint", path, reason: "cycle" };
     else {
-      const result = await load({ commit: version.commit, path }, revision);
+      const result = await load(
+        { commit: version.commit, path, ...(version.bundle ? { bundle: version.bundle } : {}) },
+        revision,
+      );
       if (result.status !== "loaded")
         error = {
           type: "child-blueprint",

@@ -104,6 +104,32 @@ export const intakeDecisionModelSchema = {
         },
       },
     },
+    "binding-facts": {
+      description: "The GitHub Project binding intake chose.",
+      type: "object",
+      required: ["name", "item", "environment", "t3codeProjects"],
+      additionalProperties: false,
+      properties: {
+        name: {
+          $ref: "https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name",
+        },
+        item: {
+          $ref: "#/$defs/item-id",
+        },
+        environment: {
+          $ref: "https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name",
+        },
+        t3codeProjects: {
+          description:
+            "The ids of the T3code projects on the binding's environment associated with the Project, in declaration order.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     "decision-input": {
       description: "The object the intake decision model evaluates over.",
       type: "object",
@@ -114,20 +140,7 @@ export const intakeDecisionModelSchema = {
           $ref: "#/$defs/task-facts",
         },
         binding: {
-          type: "object",
-          required: ["name", "item", "environment"],
-          additionalProperties: false,
-          properties: {
-            name: {
-              $ref: "https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name",
-            },
-            item: {
-              $ref: "#/$defs/item-id",
-            },
-            environment: {
-              $ref: "https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name",
-            },
-          },
+          $ref: "#/$defs/binding-facts",
         },
         portfolio: {
           type: "object",
@@ -190,7 +203,7 @@ export const intakeDecisionModelSchema = {
     "task-input": {
       description: "The input a task actor starts with.",
       type: "object",
-      required: ["manifold", "task", "intake"],
+      required: ["manifold", "task", "binding", "intake"],
       additionalProperties: false,
       properties: {
         manifold: {
@@ -218,6 +231,9 @@ export const intakeDecisionModelSchema = {
         },
         task: {
           $ref: "#/$defs/task-facts",
+        },
+        binding: {
+          $ref: "#/$defs/binding-facts",
         },
         intake: {
           type: "object",

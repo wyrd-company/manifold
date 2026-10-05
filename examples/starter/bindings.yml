@@ -1,0 +1,13 @@
+# ---
+# relationships:
+#   implements: default-process
+# ---
+# Set your GitHub owner, Project number, environment name, and T3 Code project id.
+githubProjects:
+  work-board:
+    owner: example-org
+    number: 1
+    environment: workstation
+    item: work
+    t3codeProjects:
+      - example-project-id

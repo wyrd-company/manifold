@@ -1,0 +1,9 @@
+# ---
+# relationships:
+#   implements: default-process
+# ---
+items:
+  work:
+    allocations:
+      agents:
+        guarantee: 100

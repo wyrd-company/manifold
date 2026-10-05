@@ -8,6 +8,7 @@ import { openCapacity } from "../capacity/index.ts";
 import type { Capacity } from "../capacity/index.ts";
 import { openTaskMetadata, taskMetadataMigrationSteps } from "../task-metadata/index.ts";
 import { startIntake, intakeMigrationSteps, intakeFailedHandler } from "../intake/index.ts";
+import { openBundles, bundleMigrationSteps } from "../bundle/index.ts";
 import type { Intake } from "../intake/index.ts";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -144,6 +145,8 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     store.connection.migrate("usage", usageMigrationSteps);
     store.connection.migrate("intake", intakeMigrationSteps);
     store.connection.migrate("gates", gatesMigrationSteps);
+    store.connection.migrate("bundle", bundleMigrationSteps);
+    const bundles = openBundles({ store });
     step("store-opened", "start");
     const basePortfolio = openPortfolio({ connection: store.connection });
     capacity = openCapacity({
@@ -315,6 +318,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     });
     step("escalations-opened", "start");
     const blueprints = createBlueprintLoader({
+      bundles,
       implementations: serviceImplementations({
         escalations: escalationImplementations(escalations),
         agentThreads: agentThreads.implementations,

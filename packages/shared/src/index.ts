@@ -43,7 +43,11 @@ export type {
   BlueprintLint,
   BlueprintLintOptions,
 } from "./blueprint-lint.ts";
-export { blueprintVersionKey, parseBlueprintVersionKey } from "./blueprint-version.ts";
+export {
+  bundleDigest,
+  blueprintVersionKey,
+  parseBlueprintVersionKey,
+} from "./blueprint-version.ts";
 export type { BlueprintVersion } from "./blueprint-version.ts";
 export { manifoldImplementationNames } from "./implementation-names.ts";
 export type { ImplementationNames } from "./implementation-names.ts";

@@ -29,6 +29,8 @@ import type { ServiceConfiguration } from "../service-configuration/index.ts";
 export interface StartServiceOptions {
   /** Path of the service configuration file. */
   readonly configurationFile: string;
+  /** Structural card-move seam, removed when its owner merges. */
+  readonly defaultProcessSeams?: import("../blueprint-loader/index.ts").ImplementationRegistry;
   /** Aborting it stops the start at the next step boundary. */
   readonly signal?: AbortSignal;
   /** Builds the router's actor host from the parts started before the router. */

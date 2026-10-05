@@ -77,7 +77,7 @@ test("starts in order, awaits the actor host, follows revisions, and stops once"
   expect(steps).toEqual(startSteps);
   expect(service.portfolio.current().commit).toBe(f.first);
   expect([...service.revisions.latest()!.failures]).toEqual([]);
-  expect(service.revisions.latest()?.blueprints.size).toBe(1);
+  expect(service.revisions.latest()?.blueprints.size).toBe(2);
   const endpoint = url(service);
   expect((await fetch(endpoint + "/")).status).toBe(404);
   const stopping = service.stop();
@@ -788,7 +788,7 @@ test("wires gates into revision following, router resume, and shutdown", async (
       load: { blueprints: ReadonlyMap<string, unknown> },
       revision: { commit: string },
     ) => {
-      expect(load.blueprints.size).toBe(1);
+      expect(load.blueprints.size).toBe(2);
       events.push(`gate-revision:${revision.commit}`);
     },
     prepare: async () => {

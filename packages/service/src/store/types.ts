@@ -14,6 +14,8 @@ export interface StoreOptions {
 }
 
 export interface Store {
+  /** The clock supplied at open, in milliseconds since the Unix epoch. */
+  readonly now: () => number;
   readonly connection: StoreConnection;
 
   saveSnapshot(write: SnapshotWrite): SaveOutcome;

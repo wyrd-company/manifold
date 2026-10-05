@@ -819,11 +819,15 @@ it("uses an existing snapshot without reading an unavailable recorded version", 
   await intake.stop();
 });
 
-it("starts exactly one actor when a strict schema accepts only task and intake", async () => {
+it("starts exactly one actor when a strict schema accepts only task, binding and intake", async () => {
   const s = await fixture(
     files(undefined, {
       type: "object",
-      properties: { task: { type: "object" }, intake: { type: "object" } },
+      properties: {
+        task: { type: "object" },
+        binding: { type: "object" },
+        intake: { type: "object" },
+      },
       required: ["task", "intake"],
       additionalProperties: false,
     }),
@@ -842,6 +846,7 @@ it("records input-invalid when a strict machine schema requires manifold", async
       type: "object",
       properties: {
         manifold: { type: "object" },
+        binding: { type: "object" },
         task: { type: "object" },
         intake: { type: "object" },
       },

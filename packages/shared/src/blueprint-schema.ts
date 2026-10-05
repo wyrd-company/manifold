@@ -599,7 +599,8 @@ export const blueprintSchema = {
       additionalProperties: false,
       properties: {
         commit: {
-          description: "The full id of the process repository commit the file was read at.",
+          description:
+            "The full id of the process repository commit the file was read at, or that a bundled blueprint runs against.",
           type: "string",
           pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$",
         },
@@ -608,12 +609,19 @@ export const blueprintSchema = {
           type: "string",
           pattern: "^blueprints/.+\\.ya?ml$",
         },
+        bundle: {
+          description:
+            "The digest of the bundle a bundled blueprint's text came from; absent for a repository blueprint.",
+          type: "string",
+          pattern: "^[0-9a-f]{64}$",
+        },
       },
     },
     "blueprint-version-key": {
-      description: "A blueprint version as one string, `<commit>:<path>`.",
+      description:
+        "A blueprint version as one string, `<commit>:<path>`, or `<commit>:<path>@<bundle>` for a bundled blueprint.",
       type: "string",
-      pattern: "^([0-9a-f]{40}|[0-9a-f]{64}):blueprints/.+\\.ya?ml$",
+      pattern: "^([0-9a-f]{40}|[0-9a-f]{64}):blueprints/.+\\.ya?ml(@[0-9a-f]{64})?$",
     },
     "blueprint-finding": {
       description: "One failure the blueprint lint reports for one file.",

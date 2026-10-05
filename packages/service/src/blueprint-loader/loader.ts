@@ -48,7 +48,16 @@ export interface StateEntry {
   readonly actor: AnyActorRef;
   readonly statePath: string;
 }
+export interface Bundle {
+  readonly digest: string;
+  readonly files: ReadonlyMap<string, string>;
+}
+export interface BundleSource {
+  readonly current: Bundle;
+  at(digest: string): Bundle | undefined;
+}
 export interface BlueprintLoaderOptions {
+  readonly bundles?: BundleSource;
   readonly onStateEntry?: (entry: StateEntry) => void;
   readonly implementations: ImplementationRegistry;
   readonly configurationBound?: number;
@@ -67,7 +76,7 @@ export interface LoadedBlueprint {
 export type VersionLoad =
   | { readonly status: "loaded"; readonly blueprint: LoadedBlueprint }
   | { readonly status: "invalid"; readonly findings: readonly BlueprintFinding[] }
-  | { readonly status: "missing"; readonly reason: "commit" | "file" };
+  | { readonly status: "missing"; readonly reason: "commit" | "file" | "bundle" };
 export interface RevisionLoad {
   readonly commit: string;
   readonly blueprints: ReadonlyMap<string, LoadedBlueprint>;
@@ -117,7 +126,9 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
   ): Promise<VersionLoad> {
     const source = revision ?? (await options.revisionAt(version.commit));
     if (!source) return { status: "missing", reason: "commit" };
-    const text = await source.read(version.path);
+    const bundle = version.bundle === undefined ? undefined : options.bundles?.at(version.bundle);
+    if (version.bundle !== undefined && !bundle) return { status: "missing", reason: "bundle" };
+    const text = bundle ? bundle.files.get(version.path) : await source.read(version.path);
     if (text === undefined) return { status: "missing", reason: "file" };
     const metadata = lintTaskMetadataDeclaration({
       taskMetadata: await source.read("task-metadata.yml"),
@@ -134,7 +145,7 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
       const expressions = createBlueprintExpressions(lint.blueprint, {
         onError: (error) => options.onExpressionError(error, version),
       });
-      const children = await bindChildren(lint.blueprint, version, source, load);
+      const children = await bindChildren(lint.blueprint, version, source, load, bundle?.files);
       function observe(node: Record<string, unknown>, statePath: string) {
         const own =
           node["entry"] === undefined
@@ -222,11 +233,23 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
     async loadRevision(revision) {
       const blueprints = new Map<string, LoadedBlueprint>(),
         failures = new Map<string, readonly BlueprintFinding[]>();
-      const paths = [...new Set(await revision.list("blueprints"))]
+      const repositoryPaths = new Set(await revision.list("blueprints"));
+      const paths = [
+        ...new Set([...repositoryPaths, ...(options.bundles?.current.files.keys() ?? [])]),
+      ]
         .filter((path) => /\.ya?ml$/.test(path))
         .sort(compareBlueprintPaths);
       for (const path of paths) {
-        const result = await load({ commit: revision.commit, path }, revision);
+        const result = await load(
+          {
+            commit: revision.commit,
+            path,
+            ...(!repositoryPaths.has(path) && options.bundles
+              ? { bundle: options.bundles.current.digest }
+              : {}),
+          },
+          revision,
+        );
         if (result.status === "loaded") blueprints.set(path, result.blueprint);
         else if (result.status === "invalid") failures.set(path, result.findings);
       }

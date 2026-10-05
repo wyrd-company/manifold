@@ -106,6 +106,9 @@ proposed-design:
     /** The bundle of this build: the files of `packages/service/bundle/`, by path. */
     export const shippedBundle: Bundle;
 
+    /** The console reads the build’s bundled blueprints through this seam. */
+    export const bundle: { readonly digest: string; readonly blueprints: ReadonlyMap<string, string> };
+
     /** Records `current` in the store unless it holds its digest, and reads every bundle it holds. */
     export function openBundles(options: { readonly store: Store; readonly current?: Bundle }): BundleSource;
     ```

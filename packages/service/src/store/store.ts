@@ -57,6 +57,7 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
     throw error;
   }
   const store: Store = {
+    now,
     connection,
     saveSnapshot(write) {
       return connection.transaction(() => {

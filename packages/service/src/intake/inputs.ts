@@ -42,7 +42,12 @@ export function decisionInput(
 ) {
   return {
     task: facts(issue, projectId),
-    binding: { name: binding.name, item: binding.item, environment: binding.environment },
+    binding: {
+      name: binding.name,
+      item: binding.item,
+      environment: binding.environment,
+      t3codeProjects: [...binding.t3codeProjects],
+    },
     portfolio: {
       items: declaration.items
         .filter((i) => !i.archived && descendant(declaration.items, i.id, binding.item))
@@ -52,7 +57,10 @@ export function decisionInput(
 }
 export function taskInput(
   issue: TrackedIssue,
-  record: Pick<IntakeRecord, "project" | "environment" | "portfolioItem" | "blueprintPath">,
+  record: Pick<
+    IntakeRecord,
+    "project" | "environment" | "portfolioItem" | "blueprintPath" | "evaluation"
+  >,
   data: unknown,
 ): { readonly [key: string]: JsonValue } {
   return json({
@@ -64,6 +72,7 @@ export function taskInput(
       blueprintPath: record.blueprintPath,
     },
     task: facts(issue, record.project!.nodeId),
+    binding: (record.evaluation as { input: { binding: unknown } }).input.binding,
     intake: data ?? {},
   }) as { readonly [key: string]: JsonValue };
 }

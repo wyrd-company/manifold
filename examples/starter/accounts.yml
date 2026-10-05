@@ -1,0 +1,17 @@
+# ---
+# relationships:
+#   implements: default-process
+# ---
+# Set your capacity, reset instant, environment, and provider.
+accounts:
+  agents:
+    unit: usd
+    kind: api
+    capacity:
+      amount: 100
+      reset: 2026-01-01T00:00:00Z
+      every:
+        months: 1
+    usage:
+      - environment: workstation
+        provider: codex

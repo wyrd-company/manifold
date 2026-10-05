@@ -1,0 +1,37 @@
+# ---
+# relationships:
+#   implements: default-process
+# ---
+# blueprints/task.yml is bundled. Commit a file there to replace it.
+# Set the provider instance and model your environment runs.
+nodes:
+  - id: in
+    type: inputNode
+  - id: choose
+    type: customNode
+    content:
+      kind: jsonataDecisionTable
+      config:
+        hitPolicy: first
+        inputs: []
+        outputs:
+          - id: blueprint
+            field: blueprint
+          - id: instance
+            field: data.model.instanceId
+          - id: model
+            field: data.model.model
+        rules:
+          - _id: default
+            blueprint: '"blueprints/task.yml"'
+            instance: '"codex"'
+            model: '"gpt-5.4"'
+  - id: out
+    type: outputNode
+edges:
+  - id: a
+    sourceId: in
+    targetId: choose
+  - id: b
+    sourceId: choose
+    targetId: out
