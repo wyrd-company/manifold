@@ -172,7 +172,7 @@ proposed-design:
       discovered(issueNodeIds: readonly string[]): void;
       /** Reconciles every tracked issue against the revision `current` now answers. */
       revisionLoaded(): void;
-      /** Queues each `failed` record whose tracked issue changed since its decision. */
+      /** Runs a record check: queues changed `failed` records, withdraws for untracked issues. */
       mirrorChanged(): void;
       record(issueNodeId: string): IntakeRecord | undefined;
       /** Resolves when nothing is queued or running. */
@@ -271,9 +271,12 @@ proposed-design:
     A reconcile queues every issue that needs intake: each id of
     `tracked.trackedIssueIds()` with no record, or with a `failed` record
     whose `commit` is not the commit `current()` answers, and each
-    `recorded` record. A `failed` record at the current commit whose
-    `issueDigest` is null is queued too. `startIntake` runs a reconcile,
-    and so does `revisionLoaded`. Before the first revision, `current()` answers
+    `recorded` record. It then checks every record, as `issue-changes`
+    states, so a `failed` record at the current commit whose issue changed
+    is queued, and the open escalation of an issue no longer tracked is
+    withdrawn, even when the callback that would have done so was lost to
+    a crash. `startIntake` runs a reconcile, and so does
+    `revisionLoaded`. Before the first revision, `current()` answers
     `undefined`, the runner takes nothing, and the reconcile after the
     first load queues every tracked issue. Intake adds no timer: its only
     wakes are `discovered`, `revisionLoaded`, `mirrorChanged`, and
@@ -358,17 +361,41 @@ proposed-design:
     the task input read from the issue, so a change to a field, to an item,
     or to a relationship each counts, and a mirror change that leaves the
     issue as it was does not. A failed decision records the digest of the
-    tracked issue it captured in its basis. `mirrorChanged()` reads every
-    `failed` record at the current commit and queues each whose issue
-    `trackedIssue` answers with another digest; an issue it does not answer
-    is left. The service calls it from the GitHub event source's
+    tracked issue it captured in its basis.
+
+    A record check reads every `failed` and `recorded` record and the
+    issue `trackedIssue` answers for each now. A record whose issue it does
+    not answer has left tracking: the check withdraws the issue's open
+    `intake-failed` escalation, and changes no record, so a `recorded`
+    decision stays as it is and starts when the issue is tracked again. A
+    `failed` record at the current commit whose `issueDigest` is null or
+    differs from the issue's digest now is queued. `mirrorChanged()` runs a
+    record check. The service calls it from the GitHub event source's
     `onMirrorChanged`, after the transaction that changed the mirror has
-    committed, so the runner reads the changed issue. A change during an
-    evaluation queues the issue, and its turn finds the digest the failure
-    recorded differs from the issue now, so the change is taken once.
+    committed, so the check reads the changed issue. A reconcile runs one
+    too, so a change committed to the mirror before a crash, whose
+    `mirrorChanged` never ran, is found at the next start: the stored
+    digest is the one before the change.
+
+    A change that commits while an attempt awaits its evaluation may come
+    before the attempt has any record, so no record check can see it. The
+    failure's own transaction therefore checks its issue, with no `await`
+    between that read and the write. When `trackedIssue` no longer answers
+    for the issue, the transaction writes the failure, withdraws the
+    issue's open escalation, and raises nothing. When the issue's digest
+    now differs from the captured one, it writes the failure with the
+    captured digest, raises nothing, and the runner queues the issue again
+    after the commit, so the attempt on the changed issue decides, and
+    raises when it fails. Otherwise it writes the failure and raises, as
+    `escalations` states. Every change after that commit runs a record
+    check that sees the failure, so each change is taken once. A crash
+    after the commit and before the issue is queued leaves the captured
+    digest, which the reconcile at the next start finds differs.
   escalations: >-
-    Every failure raises or keeps the issue's `intake-failed` escalation
-    through `escalations.raise`, in the transaction that writes the failure,
+    A failure whose issue is still tracked and unchanged since its capture,
+    as `issue-changes` states, raises or keeps the issue's `intake-failed`
+    escalation through `escalations.raise`, in the transaction that writes
+    the failure,
     with subject `{ issue: <issueNodeId> }`, the title `Intake failed`, the
     choices `retry` (`Retry`) and `dismiss` (`Dismiss`), and a question in
     Markdown: the issue's repository and number, the commit, whether the
@@ -385,7 +412,9 @@ proposed-design:
     issue's open escalation in the transaction that writes them, so a
     successful intake, by retry or otherwise, closes it, and a start failure
     after a decision failure raises a new occurrence that names the start.
-    An `IntakeError` raises nothing: the runner recovers from it by itself.
+    An issue that leaves tracking has its open escalation withdrawn by the
+    record check that finds it untracked. An `IntakeError` raises nothing:
+    the runner recovers from it by itself.
   retry: >-
     `intakeFailedHandler(store, requeue)` is the `intake-failed` handler.
     For `retry`, inside the transaction that records the handling, it sets
@@ -504,8 +533,14 @@ proposed-design:
     leaves both, and a restart at the same commit and digest decides
     nothing and leaves one open escalation. `mirrorChanged` twice for one
     change queues the issue once, and its second turn finds the digest
-    recorded and does nothing. A `retry` handled twice sets the same null
-    digest. `stop` twice does nothing more.
+    recorded and does nothing. A record check twice withdraws once and
+    queues an issue once while it is queued. A crash after the mirror
+    commits a change and before `mirrorChanged` runs leaves the old digest,
+    which the reconcile at the next start compares with the issue and
+    queues; a crash after the issue leaves tracking and before the check
+    leaves the escalation open until that reconcile withdraws it. A
+    `retry` handled twice sets the same null digest. `stop` twice does
+    nothing more.
   errors: >-
     A process repository's faults are intake failures, recorded as data
     and never thrown. A failed read of the revision, and a throw from the
@@ -599,7 +634,17 @@ proposed-design:
     a `dismiss` answer changes no record; a start failure after a decision
     failure withdraws the decision's escalation and raises one that names
     the start; a question whose detail would pass 8,000 characters is cut
-    and says so;
+    and says so; with the first evaluation of an issue that has no record
+    held open, a field change committed through the fake to a value the
+    model accepts, and then the evaluation released into a failure for the
+    old value, the failure raises no escalation, and with no other event,
+    `mirrorChanged`, or revision the issue gets one `started` record and
+    one actor; a failed issue whose last bound item the fake removes,
+    through `mirrorChanged`, has its escalation withdrawn and its record
+    unchanged, and so has a `recorded` issue with a start failure, which
+    starts on its recorded version when the fake adds it back; the same
+    removal made while intake is stopped is withdrawn by the reconcile of
+    the next `startIntake`;
     a reconcile at start takes every tracked issue with no record; an
     issue event the fake publishes in the turn after `actors.start` reaches
     the actor, and a change committed before the start step is in its
@@ -636,4 +681,8 @@ proposed-design:
     commit and before the next save; after a restart on the same file the
     issue has one `failed` record and one open `intake-failed` escalation.
     A kill after a `retry` answer's handling commits and before `requeue`
-    runs; after a restart the issue is decided again once.
+    runs; after a restart the issue is decided again once. A kill after
+    the fake commits a field change on a failed issue, to a value the model
+    accepts, and before `mirrorChanged` runs; after a restart at the same
+    revision the issue has one `started` record, one actor, and no open
+    escalation.
