@@ -84,6 +84,7 @@ function Canvas({
   const [tool, setTool] = useState<"select" | "move" | "transition">("select");
   const [space, setSpace] = useState(false);
   const [placing, setPlacing] = useState<StateType>();
+  const [pointerPosition, setPointerPosition] = useState<{ x: number; y: number }>();
   const [connect, setConnect] = useState<{ source: string; target: string; basis: string }>();
   const [connectionSource, setConnectionSource] = useState<string>();
   const [event, setEvent] = useState("");
@@ -169,6 +170,37 @@ function Canvas({
     setTool("select");
     setConnectionSource(undefined);
   };
+  const placeAt = (screen: { x: number; y: number }) => {
+    if (!placing || locked) return;
+    const point = flow.screenToFlowPosition(screen);
+    const groups = flow
+      .getNodes()
+      .filter((row) => ["compound", "parallel"].includes(row.data.state.type))
+      .filter((row) => {
+        const p = flow.getInternalNode(row.id)?.internals.positionAbsolute ?? row.position;
+        return (
+          point.x >= p.x &&
+          point.y >= p.y &&
+          point.x <= p.x + Number(row.style?.width) &&
+          point.y <= p.y + Number(row.style?.height)
+        );
+      })
+      .sort((a, b) => b.id.split(".").length - a.id.split(".").length);
+    const parent = groups[0];
+    const offset = parent
+      ? (flow.getInternalNode(parent.id)?.internals.positionAbsolute ?? parent.position)
+      : { x: 0, y: 0 };
+    commit({
+      kind: "add-state",
+      parent: parent?.id ?? "",
+      type: placing,
+      position: {
+        x: Math.round((point.x - offset.x) / 8) * 8,
+        y: Math.round((point.y - offset.y) / 8) * 8,
+      },
+    });
+    setPlacing(undefined);
+  };
   const displayed = graph ?? lastGraph;
   const problem = (pointer: string) =>
     findings.some((f) => f.location === pointer || f.location.startsWith(pointer + "/"))
@@ -218,6 +250,12 @@ function Canvas({
           if (e.key === " ") setSpace(false);
         }}
         onBlur={() => setSpace(false)}
+        onMouseMove={(event) => {
+          if (!placing) return;
+          const rect = event.currentTarget.getBoundingClientRect();
+          setPointerPosition({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+        }}
+        onMouseLeave={() => setPointerPosition(undefined)}
       >
         <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
           <Button
@@ -455,7 +493,11 @@ function Canvas({
             if (target && !target.startsWith("@initial:"))
               openConnection(pending.source, target, pending.basis);
           }}
-          onNodeClick={(_, node) => {
+          onNodeClick={(event, node) => {
+            if (placing) {
+              placeAt({ x: event.clientX, y: event.clientY });
+              return;
+            }
             if (pan) return;
             if (tool === "transition" && !node.id.startsWith("@initial:")) {
               if (connectionSource) openConnection(connectionSource, node.id);
@@ -471,38 +513,20 @@ function Canvas({
               return;
             }
             if (locked) return;
-            const point = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-            const groups = flow
-              .getNodes()
-              .filter((row) => ["compound", "parallel"].includes(row.data.state.type))
-              .filter((row) => {
-                const p = flow.getInternalNode(row.id)?.internals.positionAbsolute ?? row.position;
-                return (
-                  point.x >= p.x &&
-                  point.y >= p.y &&
-                  point.x <= p.x + Number(row.style?.width) &&
-                  point.y <= p.y + Number(row.style?.height)
-                );
-              })
-              .sort((a, b) => b.id.split(".").length - a.id.split(".").length);
-            const parent = groups[0];
-            const offset = parent
-              ? (flow.getInternalNode(parent.id)?.internals.positionAbsolute ?? parent.position)
-              : { x: 0, y: 0 };
-            commit({
-              kind: "add-state",
-              parent: parent?.id ?? "",
-              type: placing,
-              position: {
-                x: Math.round((point.x - offset.x) / 8) * 8,
-                y: Math.round((point.y - offset.y) / 8) * 8,
-              },
-            });
-            setPlacing(undefined);
+            placeAt({ x: e.clientX, y: e.clientY });
           }}
         >
           <Background color="var(--grid)" gap={16} />
         </ReactFlow>
+        {placing && pointerPosition && !locked ? (
+          <div
+            className={`canvas-placement-ghost ${placing}`}
+            style={{ left: pointerPosition.x, top: pointerPosition.y }}
+            aria-hidden="true"
+          >
+            {placing}
+          </div>
+        ) : null}
         {connect ? (
           <div className="canvas-event-picker">
             <h3>New transition</h3>
@@ -603,6 +627,12 @@ function Canvas({
             ...warnings.map((f) => ({ ...f, severity: "warning" as const })),
           ]}
           disabled={locked}
+          onAddTransition={(source) =>
+            openConnection(
+              source,
+              graph?.states.find((state) => state.path !== source)?.path ?? source,
+            )
+          }
           onEdit={commit}
           onSelect={select}
           onClose={() => setShowInspector(false)}

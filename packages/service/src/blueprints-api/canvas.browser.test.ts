@@ -43,12 +43,24 @@ test("canvas edits, dragged transition, expression findings, YAML toggle, layout
 
     await page.getByLabel("Add state", { exact: true }).selectOption("atomic");
     const surface = await page.locator(".canvas-surface").boundingBox();
+    await page.mouse.move(surface!.x + surface!.width - 100, surface!.y + surface!.height - 100);
+    await expect.poll(() => page.locator(".canvas-placement-ghost").count()).toBe(1);
     await page.mouse.click(surface!.x + surface!.width - 100, surface!.y + surface!.height - 100);
     await page.locator(".canvas-state").getByText("state", { exact: true }).waitFor();
 
     await page.getByRole("button", { name: "Fit", exact: true }).click();
     const source = page.locator('.react-flow__node[data-id="waiting"]');
     const target = page.locator('.react-flow__node[data-id="state"]');
+    await source.click();
+    await page
+      .locator(".canvas-inspector")
+      .getByRole("button", { name: "Add transition", exact: true })
+      .click();
+    await page.locator(".canvas-event-picker").waitFor();
+    await page
+      .locator(".canvas-event-picker")
+      .getByRole("button", { name: "Cancel", exact: true })
+      .click();
     await source.hover();
     const handle = await source.locator(".react-flow__handle-bottom").boundingBox();
     const end = await target.boundingBox();
