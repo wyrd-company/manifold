@@ -8,9 +8,14 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
 import { serviceFixture } from "../service/test-fixtures/repository.ts";
-test.each([false, true])(
-  "SIGKILL restores the invoke; refused replay=%s preserves attribution",
-  async (refusedReplay) => {
+test.each([
+  { refusedReplay: false, recreate: "none" },
+  { refusedReplay: true, recreate: "none" },
+  { refusedReplay: false, recreate: "option" },
+  { refusedReplay: false, recreate: "field" },
+])(
+  "SIGKILL restores the invoke; $recreate recreation, refused replay=$refusedReplay preserves attribution",
+  async ({ refusedReplay, recreate }) => {
     const f = await serviceFixture();
     const children: ReturnType<typeof fork>[] = [];
     try {
@@ -66,14 +71,19 @@ test.each([false, true])(
                     {
                       guard: {
                         type: "expression.guard",
-                        params: { expression: "event.movedBy.confirmed = true" },
+                        params: {
+                          expression: "event.lifecycle = true and event.movedBy.confirmed = true",
+                        },
                       },
                       target: "own",
                     },
                     {
                       guard: {
                         type: "expression.guard",
-                        params: { expression: "event.movedBy = null" },
+                        params: {
+                          expression:
+                            'event.lifecycle = true and event.movedBy = null and event.to.kind = "single-select"',
+                        },
                       },
                       target: "person",
                     },
@@ -85,7 +95,10 @@ test.each([false, true])(
                   "github.project-item.field-changed": {
                     guard: {
                       type: "expression.guard",
-                      params: { expression: "event.movedBy = null" },
+                      params: {
+                        expression:
+                          'event.lifecycle = true and event.movedBy = null and event.to.kind = "single-select"',
+                      },
                     },
                     target: "person",
                   },
@@ -97,7 +110,9 @@ test.each([false, true])(
                   "github.project-item.field-changed": {
                     guard: {
                       type: "expression.guard",
-                      params: { expression: "event.movedBy.confirmed = true" },
+                      params: {
+                        expression: "event.lifecycle = true and event.movedBy.confirmed = true",
+                      },
                     },
                     target: "own",
                   },
@@ -177,6 +192,13 @@ test.each([false, true])(
         f.api.items.set("IT_A", current);
         f.api.failWrite("FORBIDDEN");
       }
+      if (recreate !== "none") {
+        const field = f.api.fields.find((field) => field.name === "Stage")!;
+        if (recreate === "field") field.id = "F_recreated";
+        field.options.find((option) => option.name === "Packed")!.id = "O_recreated";
+        // Recreating the selected option or field clears the item's value.
+        f.api.items.get("IT_A")!.fieldValues.nodes = [];
+      }
       const second = worker(false);
       await second.ready();
       if (refusedReplay) {
@@ -216,10 +238,14 @@ test.each([false, true])(
         f.api.log
           .filter((row) => row.operation === "GitHubCardMove")
           .map((row) => row.variables["option"]),
-      ).toEqual(["O_packed", "O_packed"]);
-      expect(read("SELECT * FROM router_source_event WHERE event_id LIKE 'field:%'")).toHaveLength(
-        1,
-      );
+      ).toEqual(["O_packed", recreate === "none" ? "O_packed" : "O_recreated"]);
+      expect(
+        read("SELECT * FROM router_source_event WHERE event_id LIKE 'field:%'").length,
+      ).toBeGreaterThanOrEqual(1);
+      if (recreate === "none")
+        expect(
+          read("SELECT * FROM router_source_event WHERE event_id LIKE 'field:%'"),
+        ).toHaveLength(1);
       f.api.items.get("IT_A")!.fieldValues.nodes[0]!["name"] = "Shipped";
       f.api.items.get("IT_A")!.fieldValues.nodes[0]!["optionId"] = "O_shipped";
       second.child.send("stop");

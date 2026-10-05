@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, test } from "vite-plus/test";
+import { childProcessLimit } from "../../../../test-support/limits.ts";
 import { openStore } from "../store/index.ts";
 import { startRouter } from "../router/index.ts";
 import { SecretValue } from "../service-configuration/index.ts";
@@ -90,7 +91,9 @@ async function setup(withScan = false) {
     store.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  await expect.poll(() => source.trackedIssue("I_A")?.items.length).toBe(1);
+  await expect
+    .poll(() => source.trackedIssue("I_A")?.items.length, { timeout: childProcessLimit })
+    .toBe(1);
   const events = () =>
     store.connection.database
       .prepare(

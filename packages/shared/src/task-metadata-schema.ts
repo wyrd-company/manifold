@@ -8,7 +8,7 @@ export const taskMetadataDeclarationSchema = {
   $id: "https://manifold.wyrd.company/schemas/task-metadata-declaration",
   title: "Task metadata declaration",
   description:
-    "The document in `task-metadata.yml` at the root of the process repository, the task metadata schema, and the finding its lint reports. An empty document declares no lifecycle field.",
+    "The document in `task-metadata.yml` at the root of the process repository, the task metadata schema, and the finding its lint reports. An empty document declares no Project.",
   $defs: {
     declaration: {
       description: "The task metadata declaration.",
@@ -37,6 +37,17 @@ export const taskMetadataDeclarationSchema = {
         lifecycle: {
           $ref: "#/$defs/lifecycle-field",
         },
+        fields: {
+          description:
+            "The Project's task fields, keyed by field name, each stored as a custom field of the Project.",
+          type: "object",
+          propertyNames: {
+            $ref: "#/$defs/name",
+          },
+          additionalProperties: {
+            $ref: "#/$defs/task-field",
+          },
+        },
       },
     },
     "lifecycle-field": {
@@ -61,6 +72,103 @@ export const taskMetadataDeclarationSchema = {
         },
       },
     },
+    "task-field": {
+      description:
+        "A task field: a custom field of the Project that Manifold owns, of one data type.",
+      type: "object",
+      required: ["type"],
+      properties: {
+        type: {
+          enum: ["text", "number", "date", "single-select"],
+        },
+        whenChanged: {
+          description:
+            "What an Apply does with drift in this field: `revert` sets GitHub back to the declaration; `accept` writes GitHub's field into the declaration.",
+          enum: ["revert", "accept"],
+          default: "revert",
+        },
+        storage: {
+          $ref: "#/$defs/storage",
+        },
+      },
+      oneOf: [
+        {
+          additionalProperties: false,
+          properties: {
+            type: {
+              enum: ["text", "number", "date"],
+            },
+            whenChanged: true,
+            storage: true,
+          },
+        },
+        {
+          additionalProperties: false,
+          required: ["options"],
+          properties: {
+            type: {
+              const: "single-select",
+            },
+            whenChanged: true,
+            storage: true,
+            options: {
+              description: "The field's options in the order the Project shows them.",
+              type: "array",
+              minItems: 1,
+              items: {
+                $ref: "#/$defs/option",
+              },
+            },
+          },
+        },
+      ],
+    },
+    storage: {
+      description:
+        "Where GitHub stores a task field: a storage kind and its settings. Absent is `{ kind: project-field }`.",
+      type: "object",
+      additionalProperties: false,
+      required: ["kind"],
+      properties: {
+        kind: {
+          description: "A custom field of the Project.",
+          const: "project-field",
+        },
+        name: {
+          description: "The Project field's name; the task field's name when absent.",
+          $ref: "#/$defs/name",
+        },
+      },
+    },
+    option: {
+      description:
+        "An option of a single-select task field: its name, or its name with the properties Manifold owns.",
+      oneOf: [
+        {
+          $ref: "#/$defs/name",
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["name"],
+          properties: {
+            name: {
+              $ref: "#/$defs/name",
+            },
+            color: {
+              $ref: "#/$defs/option-color",
+            },
+            description: {
+              type: "string",
+            },
+          },
+        },
+      ],
+    },
+    "option-color": {
+      description: "A single-select option color, GitHub's color in lower case.",
+      enum: ["gray", "blue", "green", "yellow", "orange", "red", "pink", "purple"],
+    },
     name: {
       description:
         "A field or option name as GitHub shows it: not empty, with no leading or trailing white space.",
@@ -74,7 +182,7 @@ export const taskMetadataDeclarationSchema = {
       additionalProperties: false,
       properties: {
         kind: {
-          enum: ["syntax", "schema", "unknown-binding"],
+          enum: ["syntax", "schema", "unknown-binding", "duplicate-field", "duplicate-option"],
         },
         location: {
           description: "The RFC 6901 JSON Pointer of the failing value in the document.",

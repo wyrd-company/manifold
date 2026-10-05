@@ -9,25 +9,82 @@ import { serviceConfigurationSchemas } from "./service-configuration-schemas.ts"
 import { bindingsDeclarationSchema } from "./portfolio-declaration-schema.ts";
 import type { BindingsDocument } from "./portfolio-declaration-types.ts";
 import { taskMetadataDeclarationSchema } from "./task-metadata-schema.ts";
+export type OptionColor =
+  | "gray"
+  | "blue"
+  | "green"
+  | "yellow"
+  | "orange"
+  | "red"
+  | "pink"
+  | "purple";
+export type TaskFieldType = "text" | "number" | "date" | "single-select";
+export type TaskFieldStorage = { readonly kind: "project-field"; readonly name: string };
+export interface TaskFieldStorageKind {
+  readonly kind: TaskFieldStorage["kind"];
+  readonly types: readonly TaskFieldType[];
+  readonly settings: readonly string[];
+}
+export interface TaskFieldOption {
+  readonly name: string;
+  readonly color?: OptionColor;
+  readonly description?: string;
+}
+export type TaskField =
+  | {
+      readonly type: "text" | "number" | "date";
+      readonly storage: TaskFieldStorage;
+      readonly whenChanged: "revert" | "accept";
+    }
+  | {
+      readonly type: "single-select";
+      readonly storage: TaskFieldStorage;
+      readonly options: readonly TaskFieldOption[];
+      readonly whenChanged: "revert" | "accept";
+    };
+export interface LifecycleField {
+  readonly field: string;
+  readonly options: readonly string[];
+}
+export interface ProjectMetadata {
+  readonly lifecycle: LifecycleField;
+  /** Keyed by task field name, in document order; empty when the document has no `fields`. */
+  readonly fields: Readonly<Record<string, TaskField>>;
+}
 export type TaskMetadataDeclaration = {
-  readonly projects: Readonly<
-    Record<
-      string,
-      { readonly lifecycle: { readonly field: string; readonly options: readonly string[] } }
-    >
-  >;
+  /** Keyed by GitHub Project binding name. */
+  readonly projects: Readonly<Record<string, ProjectMetadata>>;
 };
+/** The storage kinds table: offered to the console from one source. */
+export const taskFieldStorageKinds: readonly TaskFieldStorageKind[] = [
+  { kind: "project-field", types: ["text", "number", "date", "single-select"], settings: ["name"] },
+];
 export type TaskMetadataFinding = {
-  readonly kind: "syntax" | "schema" | "unknown-binding";
+  readonly kind: "syntax" | "schema" | "unknown-binding" | "duplicate-field" | "duplicate-option";
   readonly location: string;
   readonly message: string;
 };
 export type TaskMetadataLint =
   | { readonly ok: true; readonly declaration: TaskMetadataDeclaration }
   | { readonly ok: false; readonly findings: readonly TaskMetadataFinding[] };
+/** The validated document before defaults are applied. */
+type RawOption =
+  | string
+  | { readonly name: string; readonly color?: OptionColor; readonly description?: string };
+type RawField = {
+  readonly type: TaskFieldType;
+  readonly whenChanged?: "revert" | "accept";
+  readonly storage?: { readonly kind: "project-field"; readonly name?: string };
+  readonly options?: readonly RawOption[];
+};
+type RawProject = {
+  readonly lifecycle: LifecycleField;
+  readonly fields?: Readonly<Record<string, RawField>>;
+};
+type RawDocument = { readonly projects?: Readonly<Record<string, RawProject>> };
 let validators:
   | {
-      metadata: ValidateFunction<{ projects?: TaskMetadataDeclaration["projects"] }>;
+      metadata: ValidateFunction<RawDocument>;
       bindings: ValidateFunction<BindingsDocument>;
     }
   | undefined;
@@ -104,6 +161,25 @@ function read<T>(
     });
   }
 }
+function buildOption(raw: RawOption): TaskFieldOption {
+  if (typeof raw === "string") return { name: raw };
+  const option: { name: string; color?: OptionColor; description?: string } = { name: raw.name };
+  if ("color" in raw && raw.color !== undefined) option.color = raw.color;
+  if ("description" in raw && raw.description !== undefined) option.description = raw.description;
+  return option;
+}
+function buildField(name: string, raw: RawField): TaskField {
+  const storage: TaskFieldStorage = { kind: "project-field", name: raw.storage?.name ?? name };
+  const whenChanged = raw.whenChanged ?? "revert";
+  if (raw.type === "single-select")
+    return {
+      type: "single-select",
+      storage,
+      whenChanged,
+      options: (raw.options ?? []).map(buildOption),
+    };
+  return { type: raw.type, storage, whenChanged };
+}
 export function lintTaskMetadataDeclaration(files: {
   readonly taskMetadata: string | undefined;
   readonly bindings: string | undefined;
@@ -111,18 +187,46 @@ export function lintTaskMetadataDeclaration(files: {
   const findings: TaskMetadataFinding[] = [];
   const validate = declarationValidators();
   const metadata = read(files.taskMetadata, validate.metadata, findings);
+  if (!metadata) return { ok: false, findings };
   const bindings = read(files.bindings, validate.bindings, []);
-  if (metadata && bindings)
-    for (const name of Object.keys(metadata.projects ?? {}))
-      if (!Object.hasOwn(bindings.githubProjects ?? {}, name))
+  const projects: Record<string, ProjectMetadata> = {};
+  for (const [name, rawProject] of Object.entries(metadata.projects ?? {})) {
+    const at = `/projects/${pointer(name)}`;
+    if (bindings && !Object.hasOwn(bindings.githubProjects ?? {}, name))
+      findings.push({
+        kind: "unknown-binding",
+        location: at,
+        message: `GitHub Project binding is not declared: ${name}`,
+      });
+    const fields: Record<string, TaskField> = {};
+    const occupied = new Set<string>([rawProject.lifecycle.field]);
+    for (const [fieldName, rawField] of Object.entries(rawProject.fields ?? {})) {
+      const field = buildField(fieldName, rawField);
+      const fieldAt = `${at}/fields/${pointer(fieldName)}`;
+      if (occupied.has(field.storage.name))
         findings.push({
-          kind: "unknown-binding",
-          location: `/projects/${pointer(name)}`,
-          message: `GitHub Project binding is not declared: ${name}`,
+          kind: "duplicate-field",
+          location: fieldAt,
+          message: `Task field is stored in a Project field another field already uses: ${field.storage.name}`,
         });
-  return findings.length
-    ? { ok: false, findings }
-    : { ok: true, declaration: { projects: metadata!.projects ?? {} } };
+      else occupied.add(field.storage.name);
+      if (field.type === "single-select") {
+        const seen = new Set<string>();
+        field.options.forEach((option, index) => {
+          if (seen.has(option.name))
+            findings.push({
+              kind: "duplicate-option",
+              location: `${fieldAt}/options/${index}`,
+              message: `Option name is declared twice: ${option.name}`,
+            });
+          else seen.add(option.name);
+        });
+      }
+      fields[fieldName] = field;
+    }
+    projects[name] = { lifecycle: rawProject.lifecycle, fields };
+  }
+  return findings.length ? { ok: false, findings } : { ok: true, declaration: { projects } };
 }
 export function declaredLifecycleOptions(
   declaration: TaskMetadataDeclaration,

@@ -8,12 +8,43 @@ import { expect, test } from "vite-plus/test";
 import {
   lintTaskMetadataDeclaration,
   declaredLifecycleOptions,
+  taskFieldStorageKinds,
   taskMetadataDeclarationSchema,
 } from "./index.ts";
 import { lintBlueprint } from "./blueprint-lint.ts";
 import { manifoldImplementationNames } from "./implementation-names.ts";
 const bindings = `githubProjects:\n  parcels: { owner: sample, number: 1, environment: local, item: shipments }`;
+const twoBindings = `githubProjects:
+  parcels: { owner: sample, number: 1, environment: local, item: shipments }
+  returns: { owner: sample, number: 2, environment: local, item: refunds }`;
 const metadata = `projects:\n  parcels:\n    lifecycle: { field: Stage, options: [Sorting, Packed] }`;
+/** Wrap a parcels Project body, each line already indented four spaces. */
+const project = (body: string) => `projects:\n  parcels:\n${body}`;
+const example = `projects:
+  parcels:
+    lifecycle:
+      field: Stage
+      options: [Sorting, Packed, Shipped]
+    fields:
+      Priority:
+        type: single-select
+        storage:
+          kind: project-field
+          name: Urgency
+        options:
+          - name: Urgent
+            color: red
+            description: Leaves today
+          - Routine
+      Weight:
+        type: number
+      Courier notes:
+        type: text
+        whenChanged: accept
+  returns:
+    lifecycle:
+      field: Stage
+      options: [Received, Inspected]`;
 test("metadata schema agrees with the declaration asset", () => {
   expect(taskMetadataDeclarationSchema).toEqual(
     parse(
@@ -27,8 +58,21 @@ test("metadata schema agrees with the declaration asset", () => {
     ),
   );
 });
-test("absent metadata declares no lifecycle and archived bindings still declare options", () => {
+test("the storage kinds table is exported from one source", () => {
+  expect(taskFieldStorageKinds).toEqual([
+    {
+      kind: "project-field",
+      types: ["text", "number", "date", "single-select"],
+      settings: ["name"],
+    },
+  ]);
+});
+test("absent metadata declares no Project and archived bindings still declare options", () => {
   expect(lintTaskMetadataDeclaration({ taskMetadata: undefined, bindings: undefined })).toEqual({
+    ok: true,
+    declaration: { projects: {} },
+  });
+  expect(lintTaskMetadataDeclaration({ taskMetadata: "", bindings: undefined })).toEqual({
     ok: true,
     declaration: { projects: {} },
   });
@@ -40,17 +84,180 @@ test("absent metadata declares no lifecycle and archived bindings still declare 
   if (result.ok)
     expect([...declaredLifecycleOptions(result.declaration)]).toEqual(["Packed", "Sorting"]);
 });
+test("the specification example lints clean with defaults applied", () => {
+  const result = lintTaskMetadataDeclaration({ taskMetadata: example, bindings: twoBindings });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect([...declaredLifecycleOptions(result.declaration)]).toEqual([
+    "Inspected",
+    "Packed",
+    "Received",
+    "Shipped",
+    "Sorting",
+  ]);
+  const parcels = result.declaration.projects["parcels"]!;
+  expect(Object.keys(parcels.fields)).toEqual(["Priority", "Weight", "Courier notes"]);
+  const priority = parcels.fields["Priority"]!;
+  expect(priority).toEqual({
+    type: "single-select",
+    storage: { kind: "project-field", name: "Urgency" },
+    whenChanged: "revert",
+    options: [{ name: "Urgent", color: "red", description: "Leaves today" }, { name: "Routine" }],
+  });
+  expect(parcels.fields["Weight"]).toEqual({
+    type: "number",
+    storage: { kind: "project-field", name: "Weight" },
+    whenChanged: "revert",
+  });
+  expect(parcels.fields["Courier notes"]!.whenChanged).toBe("accept");
+});
+test("the same texts give the same result", () => {
+  const files = { taskMetadata: example, bindings: twoBindings };
+  expect(lintTaskMetadataDeclaration(files)).toEqual(lintTaskMetadataDeclaration(files));
+});
 test.each([
-  [metadata.replace("parcels:", "returns:"), "unknown-binding"],
-  [metadata.replace("[Sorting, Packed]", "[Packed, Packed]"), "schema"],
-  [metadata.replace("Stage", '" Stage"'), "schema"],
+  // lifecycle
+  [project(`    fields: { Weight: { type: number } }`), "schema"],
+  [project(`    lifecycle: { field: Stage, options: [] }`), "schema"],
+  [project(`    lifecycle: { field: Stage, options: [Packed, Packed] }`), "schema"],
+  [project(`    lifecycle: { field: Stage, options: [" Packed"] }`), "schema"],
+  // unknown keys at each level
+  [`extra: true\n${project(`    lifecycle: { field: Stage, options: [Packed] }`)}`, "schema"],
+  [project(`    lifecycle: { field: Stage, options: [Packed], extra: true }`), "schema"],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Weight: { type: number, extra: true } }`,
+    ),
+    "schema",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Weight: { type: number, storage: { kind: project-field, extra: true } } }`,
+    ),
+    "schema",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Priority: { type: single-select, options: [ { name: Urgent, extra: true } ] } }`,
+    ),
+    "schema",
+  ],
+  // task field shape
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Weight: { type: number, storage: { kind: label } } }`,
+    ),
+    "schema",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Weight: { type: slider } }`,
+    ),
+    "schema",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Priority: { type: single-select } }`,
+    ),
+    "schema",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Priority: { type: single-select, options: [] } }`,
+    ),
+    "schema",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Note: { type: text, options: [A] } }`,
+    ),
+    "schema",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Priority: { type: single-select, options: [ { name: Urgent, color: teal } ] } }`,
+    ),
+    "schema",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Weight: { type: number, whenChanged: ignore } }`,
+    ),
+    "schema",
+  ],
+  // syntax
   [metadata + "\nprojects: {}", "syntax"],
   ["%YAML 1.1\n---\nprojects: {}", "syntax"],
   ["projects: &loop { parcels: *loop }", "schema"],
-])("rejects invalid metadata %s", (text, kind) => {
+])("rejects invalid metadata %#", (text, kind) => {
   const result = lintTaskMetadataDeclaration({ taskMetadata: text, bindings });
   expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.findings.some((f) => f.kind === kind)).toBe(true);
+    // A document with a schema or syntax finding reports nothing else.
+    if (kind === "schema") expect(result.findings.every((f) => f.kind === "schema")).toBe(true);
+  }
+});
+test.each([
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Stage: { type: number } }`,
+    ),
+    "/projects/parcels/fields/Stage",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Priority: { type: number, storage: { kind: project-field, name: Stage } } }`,
+    ),
+    "/projects/parcels/fields/Priority",
+  ],
+  [
+    project(
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields:\n      Weight: { type: number }\n      Mass: { type: number, storage: { kind: project-field, name: Weight } }`,
+    ),
+    "/projects/parcels/fields/Mass",
+  ],
+])("reports a duplicate project field at %s", (text, location) => {
+  const result = lintTaskMetadataDeclaration({ taskMetadata: text, bindings });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ kind: "duplicate-field", location }),
+    );
+});
+test("reports a duplicate option at the later option", () => {
+  const text = project(
+    `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Priority: { type: single-select, options: [ Routine, { name: Routine, color: gray } ] } }`,
+  );
+  const result = lintTaskMetadataDeclaration({ taskMetadata: text, bindings });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        kind: "duplicate-option",
+        location: "/projects/parcels/fields/Priority/options/1",
+      }),
+    );
+});
+test.each([
+  [metadata.replace("parcels:", "returns:"), bindings, "unknown-binding"],
+  [
+    metadata,
+    `t3codeProjects:\n  parcels: { environment: local, project: project-1, item: shipments }`,
+    "unknown-binding",
+  ],
+])("names an unknown binding %#", (text, bindingsText, kind) => {
+  const result = lintTaskMetadataDeclaration({ taskMetadata: text, bindings: bindingsText });
+  expect(result.ok).toBe(false);
   if (!result.ok) expect(result.findings.some((f) => f.kind === kind)).toBe(true);
+});
+test("does not report an unknown binding when the binding document does not parse", () => {
+  expect(
+    lintTaskMetadataDeclaration({
+      taskMetadata: metadata.replace("parcels:", "returns:"),
+      bindings: "[",
+    }).ok,
+  ).toBe(true);
 });
 test("metadata lint only requires the binding document's shape, not portfolio resolution", () => {
   expect(lintTaskMetadataDeclaration({ taskMetadata: metadata, bindings }).ok).toBe(true);

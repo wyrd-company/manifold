@@ -115,11 +115,20 @@ export { intakeDecisionModelSchema } from "./intake-decision-model-schema.ts";
 export {
   lintTaskMetadataDeclaration,
   declaredLifecycleOptions,
+  taskFieldStorageKinds,
 } from "./task-metadata-declaration.ts";
 export type {
   TaskMetadataDeclaration,
   TaskMetadataFinding,
   TaskMetadataLint,
+  ProjectMetadata,
+  LifecycleField,
+  TaskField,
+  TaskFieldOption,
+  TaskFieldStorage,
+  TaskFieldStorageKind,
+  TaskFieldType,
+  OptionColor,
 } from "./task-metadata-declaration.ts";
 export { taskMetadataDeclarationSchema } from "./task-metadata-schema.ts";
 export { agentToolsSchema } from "./agent-tools-schema.ts";

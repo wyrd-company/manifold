@@ -123,4 +123,39 @@ CREATE INDEX github_card_move_field ON github_card_move (item_node_id, field_nod
 `,
   `ALTER TABLE github_issue ADD COLUMN title TEXT;
 ALTER TABLE github_issue ADD COLUMN url TEXT;`,
+  String.raw`CREATE TABLE github_project_field (
+  project_node_id TEXT NOT NULL CHECK (length(project_node_id) > 0),
+  field_node_id TEXT NOT NULL CHECK (length(field_node_id) > 0),
+  position INTEGER NOT NULL CHECK (position >= 0),
+  name TEXT NOT NULL CHECK (length(name) > 0),
+  data_type TEXT NOT NULL
+    CHECK (data_type IN ('text', 'number', 'date', 'single-select', 'multi-select', 'iteration')),
+  options TEXT NOT NULL CHECK (json_valid(options)),
+  PRIMARY KEY (project_node_id, field_node_id)
+) STRICT, WITHOUT ROWID;
+
+ALTER TABLE github_project ADD COLUMN fields_read_at INTEGER;
+
+CREATE TABLE github_card_move_next (
+  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+  invoke_id TEXT NOT NULL CHECK (length(invoke_id) > 0),
+  entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
+  item_node_id TEXT NOT NULL CHECK (length(item_node_id) > 0),
+  field_node_id TEXT NOT NULL CHECK (length(field_node_id) > 0),
+  option_id TEXT NOT NULL CHECK (length(option_id) > 0),
+  state TEXT NOT NULL CHECK (state IN ('sent', 'confirmed', 'doubtful')),
+  sequence INTEGER NOT NULL CHECK (sequence > 0),
+  PRIMARY KEY (actor_id, invoke_id, entry_id, field_node_id, option_id)
+) STRICT, WITHOUT ROWID;
+
+INSERT INTO github_card_move_next
+  SELECT actor_id, invoke_id, entry_id, item_node_id, field_node_id, option_id, state, sequence
+  FROM github_card_move;
+
+DROP TABLE github_card_move;
+
+ALTER TABLE github_card_move_next RENAME TO github_card_move;
+
+CREATE INDEX github_card_move_field ON github_card_move (item_node_id, field_node_id, sequence);
+`,
 ];

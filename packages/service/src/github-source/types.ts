@@ -46,10 +46,21 @@ export interface GitHubSourceOptions {
   readonly onTracked?: (issueNodeIds: readonly string[]) => void;
   /** Runs after a transaction commits changed mirror rows, including silent changes. */
   readonly onMirrorChanged?: () => void;
+  /** Called after each field write returns from GitHub, before its promise resolves. */
+  readonly probeFieldWrite?: (write: ProjectFieldWrite) => void;
+  /** The name of the lifecycle field the declaration in force declares for a Project, by node id. */
+  readonly lifecycleField?: (projectNodeId: string) => string | undefined;
 }
 export interface GitHubSource {
   project(nodeId: string): GitHubProject | undefined;
+  projectByNumber(owner: string, number: number): GitHubProject | undefined;
   moveCard(move: CardMove, signal?: AbortSignal): Promise<void>;
+  projectFields(projectNodeId: string): ProjectFields | undefined;
+  observeProjectFields(projectNodeId: string, signal?: AbortSignal): Promise<ProjectFields>;
+  writeProjectField(
+    write: ProjectFieldWrite,
+    signal?: AbortSignal,
+  ): Promise<ProjectField | undefined>;
   receive(delivery: WebhookDelivery): DeliveryOutcome;
   readonly requestListener: (request: IncomingMessage, response: ServerResponse) => void;
   requestSweep(): void;
@@ -57,6 +68,60 @@ export interface GitHubSource {
   trackedIssueIds(): readonly string[];
   stop(): Promise<void>;
 }
+export interface ProjectFields {
+  readonly projectNodeId: string;
+  /** When the mirror last read them, in epoch milliseconds. */
+  readonly readAt: number;
+  /** In the order GitHub lists them. */
+  readonly fields: readonly ProjectField[];
+}
+export interface ProjectField {
+  readonly nodeId: string;
+  readonly name: string;
+  readonly type: "text" | "number" | "date" | "single-select" | "multi-select" | "iteration";
+  /** A single-select field's options in order; empty for another type. */
+  readonly options: readonly ProjectFieldOption[];
+}
+export interface ProjectFieldOption {
+  readonly id: string;
+  readonly name: string;
+  readonly color: ProjectFieldOptionColor;
+  readonly description: string;
+}
+export type ProjectFieldOptionColor =
+  | "gray"
+  | "blue"
+  | "green"
+  | "yellow"
+  | "orange"
+  | "red"
+  | "pink"
+  | "purple";
+/** An option to write: `id` keeps an existing option, and with it every item value that holds it. */
+export interface ProjectFieldOptionWrite {
+  readonly id?: string;
+  readonly name: string;
+  readonly color: ProjectFieldOptionColor;
+  readonly description: string;
+}
+export type ProjectFieldWrite =
+  | {
+      readonly kind: "create";
+      readonly projectNodeId: string;
+      readonly name: string;
+      readonly type: "text" | "number" | "date" | "single-select";
+      /** Required for `single-select`, absent otherwise. */
+      readonly options?: readonly ProjectFieldOptionWrite[];
+    }
+  | {
+      readonly kind: "update";
+      readonly projectNodeId: string;
+      readonly fieldNodeId: string;
+      readonly name?: string;
+      /** The field's whole option list, in order. */
+      readonly options?: readonly ProjectFieldOptionWrite[];
+    }
+  | { readonly kind: "delete"; readonly projectNodeId: string; readonly fieldNodeId: string };
 export interface WebhookDelivery {
   readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
   readonly body: Uint8Array;

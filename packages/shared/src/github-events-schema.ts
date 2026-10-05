@@ -420,7 +420,7 @@ export const githubEventsSchema = {
     },
     "field-changed-event": {
       type: "object",
-      required: ["type", "project", "item", "field", "from", "to", "movedBy"],
+      required: ["type", "project", "item", "field", "from", "to", "movedBy", "lifecycle"],
       additionalProperties: false,
       properties: {
         type: {
@@ -463,6 +463,11 @@ export const githubEventsSchema = {
               },
             },
           ],
+        },
+        lifecycle: {
+          description:
+            "True when the changed field is the lifecycle field the task metadata declaration in force declares for the item's Project, compared by the field's name as read.",
+          type: "boolean",
         },
       },
     },

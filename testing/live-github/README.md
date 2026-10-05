@@ -29,16 +29,17 @@ Override paths with `PAT_FILE`, `PINGGY_TOKEN_FILE`, `APP_ENV_FILE`, and
 `APP_PRIVATE_KEY_FILE`. Never put credential values in command arguments or
 configuration overlays. Scripts read them at run time and report no values.
 
-| Target                                                   | Operation                                                                              |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `task live:provision`                                    | Converge repositories, seed issues, Project, inactive hook, content, and configuration |
-| `task live:provision CONTENT=/path/to/content`           | Use other process content; point all GitHub Project bindings at the test Project       |
-| `task live:start`                                        | Build and run service plus restricted tunnel in the foreground                         |
-| `task live:start ANSWERS=1 OVERLAY=/path/to/overlay.yml` | Also pass escalation answers; merge extra service sections                             |
-| `task live:start SERVICE_PORT=<port>`                    | Listen on that loopback port on every start, so clients keep one service URL           |
-| `task live:smoke`                                        | Verify delivery, intake, sweep, tunnel paths, and credential scan                      |
-| `task live:stop`                                         | Ask the supervisor to stop; recover recorded children after supervisor failure         |
-| `task live:teardown`                                     | Remove marked resources; refuse while a supervisor answers                             |
+| Target                                                   | Operation                                                                                                                                 |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `task live:provision`                                    | Converge repositories, seed issues, Project, inactive hook, content, and configuration                                                    |
+| `task live:provision CONTENT=/path/to/content`           | Use other process content; point all GitHub Project bindings at the test Project                                                          |
+| `task live:start`                                        | Build and run service plus restricted tunnel in the foreground                                                                            |
+| `task live:start ANSWERS=1 OVERLAY=/path/to/overlay.yml` | Also pass escalation answers; merge extra service sections                                                                                |
+| `task live:start SERVICE_PORT=<port>`                    | Listen on that loopback port on every start, so clients keep one service URL                                                              |
+| `task live:smoke`                                        | Verify delivery, intake, sweep, tunnel paths, and credential scan                                                                         |
+| `task live:project-config`                               | Apply to a fresh Project, rename an option with the PAT, observe drift, revert, and probe duplicate field names; delete the fresh Project |
+| `task live:stop`                                         | Ask the supervisor to stop; recover recorded children after supervisor failure                                                            |
+| `task live:teardown`                                     | Remove marked resources; refuse while a supervisor answers                                                                                |
 
 To check an extracted service archive, set `SERVICE_ENTRY=/path/to/manifold-service/dist/main.js`
 when starting the supervisor directly with `node testing/live-github/src/start.ts`.

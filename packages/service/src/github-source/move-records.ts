@@ -10,23 +10,25 @@ export function moveRecords(connection: StoreConnection) {
   return {
     sent(move: CardMove, item: string, field: string, option: string) {
       const existing = db
-        .prepare("SELECT 1 FROM github_card_move WHERE actor_id=? AND invoke_id=? AND entry_id=?")
-        .get(...keys(move));
+        .prepare(
+          "SELECT 1 FROM github_card_move WHERE actor_id=? AND invoke_id=? AND entry_id=? AND field_node_id=? AND option_id=?",
+        )
+        .get(...keys(move), field, option);
       if (existing) return false;
       db.prepare(
         "INSERT INTO github_card_move (actor_id, invoke_id, entry_id, item_node_id, field_node_id, option_id, state, sequence) VALUES (?, ?, ?, ?, ?, ?, 'sent', (SELECT coalesce(max(sequence), 0)+1 FROM github_card_move))",
       ).run(...keys(move), item, field, option);
       return true;
     },
-    confirmed(move: CardMove) {
+    confirmed(move: CardMove, field: string, option: string) {
       db.prepare(
-        "UPDATE github_card_move SET state='confirmed' WHERE actor_id=? AND invoke_id=? AND entry_id=?",
-      ).run(...keys(move));
+        "UPDATE github_card_move SET state='confirmed' WHERE actor_id=? AND invoke_id=? AND entry_id=? AND field_node_id=? AND option_id=?",
+      ).run(...keys(move), field, option);
     },
-    refused(move: CardMove) {
+    refused(move: CardMove, field: string, option: string) {
       db.prepare(
-        "DELETE FROM github_card_move WHERE actor_id=? AND invoke_id=? AND entry_id=?",
-      ).run(...keys(move));
+        "DELETE FROM github_card_move WHERE actor_id=? AND invoke_id=? AND entry_id=? AND field_node_id=? AND option_id=?",
+      ).run(...keys(move), field, option);
     },
     removed(item: string) {
       db.prepare("DELETE FROM github_card_move WHERE item_node_id=?").run(item);

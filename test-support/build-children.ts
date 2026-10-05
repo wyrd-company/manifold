@@ -54,6 +54,7 @@ export default async function setup(project: TestProject) {
             "test-fixtures/foundation-worker.ts",
             "test-fixtures/default-process-worker.ts",
             "task-metadata/test-fixtures/card-move-worker.ts",
+            "task-metadata/test-fixtures/project-config-worker.ts",
             "capacity/test-fixtures/recovery-worker.ts",
             "service/test-fixtures/crash-worker.ts",
           ].map((file) => join(service, "src", file)),

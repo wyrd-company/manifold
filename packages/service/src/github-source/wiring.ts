@@ -10,6 +10,7 @@ import { startGitHubSource } from "./index.ts";
 import { githubWebhookPath } from "../service/types.ts";
 import type { HttpHost } from "../http-host/index.ts";
 import type { GitHubSource } from "./index.ts";
+import { taskMetadata as taskMetadataPart } from "../task-metadata/wiring.ts";
 import { intake as intakePart } from "../intake/wiring.ts";
 export const githubMirror = wiringPart({
   name: "github-mirror",
@@ -29,12 +30,21 @@ export const githubSource = wiringPart({
     members: Required<
       Pick<
         Service,
-        "configuration" | "store" | "router" | "portfolio" | "revisions" | "gates" | "log"
+        | "configuration"
+        | "store"
+        | "router"
+        | "portfolio"
+        | "revisions"
+        | "gates"
+        | "log"
+        | "githubMirror"
       >
     > & { http: HttpHost },
     context,
   ): { github: GitHubSource } => {
-    const { configuration, store, router, portfolio, revisions, gates, http, log } = members;
+    const { configuration, store, router, portfolio, revisions, gates, http, log, githubMirror } =
+      members;
+    const taskMetadata = context.later(taskMetadataPart);
     const { options } = context;
     const intake = context.later(intakePart);
     const github = startGitHubSource({
@@ -51,6 +61,16 @@ export const githubSource = wiringPart({
         branch: configuration.processRepository.branch,
         pull: revisions.pull,
       },
+      lifecycleField: (projectId) => {
+        const project = githubMirror.read().projects.get(projectId)?.project;
+        const binding = project ? portfolio.githubProject(project)?.binding : undefined;
+        return binding
+          ? taskMetadata.get().taskMetadata.current()?.projects[binding]?.lifecycle.field
+          : undefined;
+      },
+      ...(options.probes?.projectFieldWrite
+        ? { probeFieldWrite: options.probes.projectFieldWrite }
+        : {}),
       ...(options.probes?.cardMove ? { probeMove: options.probes.cardMove } : {}),
       onTracked: (ids) => intake.current()?.intake.discovered(ids),
       onMirrorChanged: () => {

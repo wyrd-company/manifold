@@ -11,11 +11,23 @@ import type {
 import type { ActorHost, Invocation } from "../actor-host/index.ts";
 import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
 import type { GitHubProject, GitHubSource } from "../github-source/index.ts";
+import type {
+  ProjectConfiguration,
+  ProjectConfigurationOptions,
+  ConfigurationSource,
+} from "./project-types.ts";
+import type { HttpListener } from "../http-host/index.ts";
 import type { StoreConnection } from "../store/index.ts";
 export interface TaskMetadataOptions {
   readonly actorOf: ActorHost["actorOf"];
   readonly invocationOf: (args: Parameters<Parameters<typeof fromPromise>[0]>[0]) => Invocation;
-  readonly source: (signal: AbortSignal) => Promise<Pick<GitHubSource, "project" | "moveCard">>;
+  readonly source: (
+    signal: AbortSignal,
+  ) => Promise<Pick<GitHubSource, "project" | "moveCard"> & Partial<ConfigurationSource>>;
+  readonly bindings?: ProjectConfigurationOptions["bindings"];
+  readonly revisions?: ProjectConfigurationOptions["revisions"];
+  readonly now?: () => number;
+  readonly revisionAt?: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
   readonly bindingOf: (project: GitHubProject) => string | undefined;
   readonly connection: StoreConnection;
 }
@@ -30,6 +42,9 @@ export interface TaskMetadata {
   readonly implementations: ImplementationRegistry;
   apply(revision: ProcessRepositoryRevision): Promise<TaskMetadataApplied>;
   current(): TaskMetadataDeclaration | undefined;
+  readonly projects: ProjectConfiguration;
+  readonly requestListener: HttpListener;
+  close(): Promise<void>;
 }
 export type CardMoveErrorKind =
   | "input"

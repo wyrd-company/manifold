@@ -150,6 +150,8 @@ proposed-design:
       readonly bindings: () => readonly BoundProject[];
       /** The service's revisions, for the save that takes GitHub's fields into the declaration. */
       readonly revisions: Pick<Revisions, "save">;
+      /** Reads the saved declaration commit after restart, including when the current revision is rejected. */
+      readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
       /** The store's connection; the module's tables are migrated before it opens. */
       readonly connection: StoreConnection;
       /** Defaults to Date.now. */
@@ -526,7 +528,10 @@ proposed-design:
   accept: >-
     The declaration changes of an Apply are one save of
     `task-metadata.yml` through `Revisions.save`, on the commit of the
-    declaration in force. `accept.ts` edits the file's text with the
+    declaration in force. The text and bindings come from that immutable
+    revision; after a restart, `revisionAt` reads the commit recorded with
+    the declaration in the store, including when the current revision is
+    rejected. `accept.ts` edits the file's text with the
     `yaml` package's document model, so comments and the order of other
     keys survive: for each accepted field it writes the observed field
     under the task field's key in the binding's `fields`, writing GitHub's
@@ -534,7 +539,9 @@ proposed-design:
     name is the task field's own, writing `type`, keeping
     `whenChanged: accept`, and writing each option as its name, or as a
     mapping with GitHub's color and description when the declaration
-    declared them for that option; and it deletes the key of an accepted
+    declared them for that option, matched by the applied option id and
+    then by name, so an added option gains no property ownership from its
+    position; and it deletes the key of an accepted
     field GitHub no longer holds. The message is `Accept GitHub changes to
     the task fields of <binding>`, and the save id is the first 32
     hexadecimal characters of the SHA-256 of the binding, the base commit,
@@ -613,7 +620,7 @@ proposed-design:
     first; `invocationOf`; a `bindingOf` and a `bindings` that read the
     portfolio's declaration in force through `portfolio.githubProject` and
     its GitHub Project bindings that are not archived; and the service's
-    `Revisions`. It adds `taskMetadata.implementations` with
+    `Revisions` and the process repository's `revisionAt`. It adds `taskMetadata.implementations` with
     `context.addImplementations`, mounts `requestListener` at
     `/api/projects` with `members.http.mount`, and calls
     `context.onStop("requests", () => taskMetadata.close())` right after it

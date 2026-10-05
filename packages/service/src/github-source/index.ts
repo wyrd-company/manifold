@@ -20,4 +20,10 @@ export type {
   TrackedIssue,
   TrackedItem,
   GitHubFieldValue,
+  ProjectFields,
+  ProjectField,
+  ProjectFieldOption,
+  ProjectFieldOptionColor,
+  ProjectFieldOptionWrite,
+  ProjectFieldWrite,
 } from "./types.ts";

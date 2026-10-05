@@ -2,6 +2,9 @@
 // relationships:
 //   implements: task-metadata
 // ---
+import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
+import { createProjects } from "./projects.ts";
+import { projectsEndpoint } from "./endpoint.ts";
 import { lintTaskMetadataDeclaration } from "@wyrd-company/manifold-shared";
 import type { TaskMetadata, TaskMetadataOptions } from "./types.ts";
 import { metadataRecords } from "./records.ts";
@@ -9,9 +12,14 @@ import { metadataImplementations } from "./implementations.ts";
 export function openTaskMetadata(options: TaskMetadataOptions): TaskMetadata {
   const records = metadataRecords(options.connection);
   let declaration = records.current();
+  let acceptedRevision: ProcessRepositoryRevision | undefined;
   const current = () => declaration;
+  const configuration = createProjects(options, records, current, () => acceptedRevision);
   return {
     current,
+    projects: configuration.projects,
+    requestListener: projectsEndpoint(configuration.projects),
+    close: configuration.close,
     implementations: metadataImplementations(options, current),
     async apply(revision) {
       const [taskMetadata, bindings] = await Promise.all([
@@ -25,6 +33,7 @@ export function openTaskMetadata(options: TaskMetadataOptions): TaskMetadata {
       }
       records.accept(revision.commit, result.declaration);
       declaration = result.declaration;
+      acceptedRevision = revision;
       return { status: "applied", commit: revision.commit };
     },
   };

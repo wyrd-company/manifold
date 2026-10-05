@@ -15,8 +15,60 @@ import type {
   ObservedItem,
   ObservedField,
   GitHubHookConfiguration,
+  ProjectField,
+  ProjectFieldOption,
+  ProjectFieldOptionColor,
+  ProjectFieldWrite,
 } from "./types.ts";
+import { fieldOptionColors, fieldWriteMutation } from "./fields.ts";
 import type { RouterClock } from "../router/index.ts";
+
+const fieldConfigurationRef =
+  "fragment GitHubFieldConfiguration on ProjectV2FieldConfiguration { ... on ProjectV2FieldCommon { id name dataType isIssueField } ... on ProjectV2SingleSelectField { options { id name color description } } }";
+const fieldTypes: Readonly<Record<string, ProjectField["type"]>> = {
+  TEXT: "text",
+  NUMBER: "number",
+  DATE: "date",
+  SINGLE_SELECT: "single-select",
+  MULTI_SELECT: "multi-select",
+  ITERATION: "iteration",
+};
+interface RawFieldConfiguration {
+  id: string;
+  name: string;
+  dataType: string;
+  isIssueField: boolean;
+  options?: { id: string; name: string; color: string; description: string | null }[];
+}
+function fieldOption(raw: {
+  id: string;
+  name: string;
+  color: string;
+  description: string | null;
+}): ProjectFieldOption {
+  const color = raw.color?.toLowerCase() as ProjectFieldOptionColor;
+  if (!fieldOptionColors.includes(color) || typeof raw.name !== "string")
+    throw new GitHubSourceError("api", "Invalid GitHub field option");
+  return {
+    id: nodeId(raw.id),
+    name: raw.name,
+    color,
+    description: typeof raw.description === "string" ? raw.description : "",
+  };
+}
+function projectField(raw: RawFieldConfiguration): ProjectField | undefined {
+  const type = fieldTypes[raw.dataType];
+  if (!type || raw.isIssueField) return undefined;
+  if (typeof raw.name !== "string")
+    throw new GitHubSourceError("api", "Invalid GitHub field configuration");
+  return {
+    nodeId: nodeId(raw.id),
+    name: raw.name,
+    type,
+    options:
+      type === "single-select" && Array.isArray(raw.options) ? raw.options.map(fieldOption) : [],
+  };
+}
 
 const issueRef =
   "fragment GitHubIssueRef on Issue { id number title url state stateReason repository { nameWithOwner } }";
@@ -352,6 +404,65 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
       if (data.updateProjectV2ItemFieldValue?.projectV2Item?.id !== item)
         throw new GitHubWriteError("rejected", "GitHub did not confirm the card move");
     },
+    async projectFields(project: GitHubProject, signal?: AbortSignal): Promise<ProjectField[]> {
+      const fields: ProjectField[] = [];
+      let after: string | undefined;
+      const seen = new Set<string>();
+      do {
+        const data = await query<{
+          node: {
+            fields: Connection<RawFieldConfiguration>;
+          } | null;
+        }>(
+          project.owner,
+          `query GitHubProjectFields($id: ID!, $after: String) { node(id: $id) { ... on ProjectV2 { id fields(first: 100, after: $after) { ${pageInfo} nodes { ...GitHubFieldConfiguration } } } } } ${fieldConfigurationRef}`,
+          { id: project.nodeId, after: after ?? null },
+          signal,
+        );
+        if (!data.node || !Array.isArray(data.node.fields.nodes))
+          throw new GitHubSourceError("api", "Invalid GitHub Project fields");
+        for (const raw of data.node.fields.nodes) {
+          const field = projectField(raw);
+          if (field) fields.push(field);
+        }
+        const info = data.node.fields.pageInfo;
+        if (info.hasNextPage) {
+          if (!info.endCursor || seen.has(info.endCursor))
+            throw new GitHubSourceError("api", "GitHub Project field pagination did not advance");
+          seen.add(info.endCursor);
+          after = info.endCursor;
+        } else after = undefined;
+      } while (after);
+      return fields;
+    },
+    async writeField(
+      owner: string,
+      write: ProjectFieldWrite,
+      signal?: AbortSignal,
+    ): Promise<ProjectField | undefined> {
+      const { operation, variables } = fieldWriteMutation(write);
+      const text = {
+        create: `mutation GitHubCreateProjectField($project: ID!, $type: ProjectV2CustomFieldType!, $name: String!, $options: [ProjectV2SingleSelectFieldOptionInput!]) { createProjectV2Field(input: { projectId: $project, dataType: $type, name: $name, singleSelectOptions: $options }) { projectV2Field { ...GitHubFieldConfiguration } } } ${fieldConfigurationRef}`,
+        update: `mutation GitHubUpdateProjectField($field: ID!, $name: String, $options: [ProjectV2SingleSelectFieldOptionInput!]) { updateProjectV2Field(input: { fieldId: $field, name: $name, singleSelectOptions: $options }) { projectV2Field { ...GitHubFieldConfiguration } } } ${fieldConfigurationRef}`,
+        delete: `mutation GitHubDeleteProjectField($field: ID!) { deleteProjectV2Field(input: { fieldId: $field }) { projectV2Field { ... on ProjectV2FieldCommon { id } } } }`,
+      }[operation];
+      const data = await writeQuery<{
+        createProjectV2Field?: { projectV2Field: RawFieldConfiguration | null } | null;
+        updateProjectV2Field?: { projectV2Field: RawFieldConfiguration | null } | null;
+        deleteProjectV2Field?: { projectV2Field: { id: string } | null } | null;
+      }>(owner, text, variables, "field-missing", signal);
+      if (operation === "delete") {
+        if (!data.deleteProjectV2Field?.projectV2Field?.id)
+          throw new GitHubWriteError("rejected", "GitHub did not confirm the field delete");
+        return undefined;
+      }
+      const raw = (operation === "create" ? data.createProjectV2Field : data.updateProjectV2Field)
+        ?.projectV2Field;
+      if (!raw?.id) throw new GitHubWriteError("rejected", "GitHub did not return the field");
+      const field = projectField(raw);
+      if (!field) throw new GitHubWriteError("rejected", "GitHub returned an unsupported field");
+      return field;
+    },
     async resolveProject(owner: string, number: number) {
       const data = await query<{ repositoryOwner: { projectV2: RawProject | null } | null }>(
         owner,
@@ -515,6 +626,9 @@ function hookAttempts(value: unknown): HookAttempt[] {
   });
 }
 
+export function classifyWriteError(error: unknown): GitHubWriteError {
+  return writeError(error, "field-missing");
+}
 function writeError(error: unknown, missing: "field-missing" | "item-missing"): GitHubWriteError {
   if (error instanceof GitHubWriteError) return error;
   const source = error instanceof GitHubSourceError ? error : undefined;

@@ -828,7 +828,7 @@ test("the issue-presence migration preserves populated mirrors from version one"
     prior.connection.database
       .prepare("SELECT version FROM schema_migration WHERE owner='github'")
       .get()?.["version"],
-  ).toBe(4);
+  ).toBe(5);
 });
 
 test("uses the loaded GitHub section and named installation credential for fetched state", async () => {
@@ -928,7 +928,9 @@ test("exports flat item facts in the same order as the issue's Projects", async 
   await s.idle();
   await s.source.stop();
   const db = s.store.connection.database;
-  db.prepare("INSERT INTO github_project VALUES (?, ?, ?, ?, ?)").run("P_two", "sample", 2, 0, 1);
+  db.prepare(
+    "INSERT INTO github_project (project_node_id,owner,number,closed,revision) VALUES (?, ?, ?, ?, ?)",
+  ).run("P_two", "sample", 2, 0, 1);
   db.prepare("INSERT INTO github_item VALUES (?, ?, ?, ?, ?, ?, ?)").run(
     "IT_A",
     "P_two",

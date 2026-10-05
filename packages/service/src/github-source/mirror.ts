@@ -4,9 +4,19 @@
 //   references: github-event-source
 // ---
 import type { Store } from "../store/index.ts";
-import type { GitHubProject, GitHubIssue, TrackedIssue, ObservedField } from "./types.ts";
+import type {
+  GitHubProject,
+  GitHubIssue,
+  TrackedIssue,
+  ObservedField,
+  ProjectField,
+  ProjectFieldOption,
+  ProjectFields,
+} from "./types.ts";
 import { edgeKey, isTracked } from "./reconcile.ts";
 import type { MirrorState } from "./reconcile.ts";
+import { fieldChanges, rowsToFields } from "./fields.ts";
+import type { ProjectFieldRow } from "./fields.ts";
 export interface Pending {
   kind: "issue" | "item" | "project";
   nodeId: string;
@@ -146,7 +156,7 @@ export function createMirror(store: Store, now: () => number) {
     for (const [id, row] of after.projects)
       if (JSON.stringify(before.projects.get(id)) !== JSON.stringify(row))
         db.prepare(
-          "INSERT INTO github_project VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_node_id) DO UPDATE SET owner=excluded.owner,number=excluded.number,closed=excluded.closed,revision=excluded.revision",
+          "INSERT INTO github_project (project_node_id,owner,number,closed,revision) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_node_id) DO UPDATE SET owner=excluded.owner,number=excluded.number,closed=excluded.closed,revision=excluded.revision",
         ).run(id, row.project.owner, row.project.number, Number(row.closed), row.revision);
     for (const [id, row] of after.items)
       if (JSON.stringify(before.items.get(id)) !== JSON.stringify(row))
@@ -195,9 +205,109 @@ export function createMirror(store: Store, now: () => number) {
           ).run(row.from, row.to, Number(row.present), row.revision);
     return count() !== previousCount;
   }
+  const fieldRows = (projectId: string): ProjectFieldRow[] =>
+    db
+      .prepare("SELECT * FROM github_project_field WHERE project_node_id=? ORDER BY position")
+      .all(projectId)
+      .map((row) => ({
+        projectNodeId: row["project_node_id"] as string,
+        fieldNodeId: row["field_node_id"] as string,
+        position: row["position"] as number,
+        name: row["name"] as string,
+        type: row["data_type"] as ProjectField["type"],
+        options: JSON.parse(row["options"] as string) as ProjectFieldOption[],
+      }));
   return {
     read,
     write,
+    projectByNumber(owner: string, number: number): GitHubProject | undefined {
+      const row = db
+        .prepare("SELECT * FROM github_project WHERE owner=? COLLATE NOCASE AND number=?")
+        .get(owner, number);
+      if (!row) return undefined;
+      return {
+        nodeId: row["project_node_id"] as string,
+        owner: row["owner"] as string,
+        number: row["number"] as number,
+      };
+    },
+    projectFields(projectId: string): ProjectFields | undefined {
+      const project = db
+        .prepare("SELECT fields_read_at FROM github_project WHERE project_node_id=?")
+        .get(projectId);
+      const readAt = project?.["fields_read_at"];
+      if (readAt === undefined || readAt === null) return undefined;
+      return {
+        projectNodeId: projectId,
+        readAt: readAt as number,
+        fields: rowsToFields(fieldRows(projectId)),
+      };
+    },
+    /** Writes a field observation; returns whether any field row changed. */
+    observeFields(projectId: string, fields: readonly ProjectField[], readAt: number): boolean {
+      const existing = fieldRows(projectId);
+      const previous = new Map(existing.map((row) => [row.fieldNodeId, row]));
+      const { rows, deletes } = fieldChanges(projectId, fields, existing);
+      let changed = false;
+      for (const row of rows)
+        if (JSON.stringify(previous.get(row.fieldNodeId)) !== JSON.stringify(row)) {
+          changed = true;
+          db.prepare(
+            "INSERT INTO github_project_field VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_node_id,field_node_id) DO UPDATE SET position=excluded.position,name=excluded.name,data_type=excluded.data_type,options=excluded.options",
+          ).run(
+            projectId,
+            row.fieldNodeId,
+            row.position,
+            row.name,
+            row.type,
+            JSON.stringify(row.options),
+          );
+        }
+      for (const fieldId of deletes) {
+        changed = true;
+        db.prepare(
+          "DELETE FROM github_project_field WHERE project_node_id=? AND field_node_id=?",
+        ).run(projectId, fieldId);
+      }
+      db.prepare("UPDATE github_project SET fields_read_at=? WHERE project_node_id=?").run(
+        readAt,
+        projectId,
+      );
+      return changed;
+    },
+    /** Writes a single field's row from a write's answer; returns whether a row changed. */
+    writeFieldRow(projectId: string, field: ProjectField): boolean {
+      const count = () => db.prepare("SELECT total_changes() AS count").get()!["count"];
+      const before = count();
+      const position =
+        (db
+          .prepare(
+            "SELECT position FROM github_project_field WHERE project_node_id=? AND field_node_id=?",
+          )
+          .get(projectId, field.nodeId)?.["position"] as number | undefined) ??
+        ((db
+          .prepare("SELECT max(position) AS max FROM github_project_field WHERE project_node_id=?")
+          .get(projectId)?.["max"] as number | null) ?? -1) + 1;
+      db.prepare(
+        "INSERT INTO github_project_field VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_node_id,field_node_id) DO UPDATE SET position=excluded.position,name=excluded.name,data_type=excluded.data_type,options=excluded.options",
+      ).run(
+        projectId,
+        field.nodeId,
+        position,
+        field.name,
+        field.type,
+        JSON.stringify(field.options),
+      );
+      return count() !== before;
+    },
+    /** Deletes a single field's row; returns whether a row changed. */
+    deleteFieldRow(projectId: string, fieldId: string): boolean {
+      return (
+        db
+          .prepare("DELETE FROM github_project_field WHERE project_node_id=? AND field_node_id=?")
+          .run(projectId, fieldId).changes !== 0
+      );
+    },
     accept(id: string, hookId: number, event: string) {
       return (
         db

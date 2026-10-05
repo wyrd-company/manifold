@@ -37,6 +37,8 @@ const children = [
   "src/store/store.test.ts",
   "src/t3code-source/source.test.ts",
   "src/task-metadata/card-move-recovery.test.ts",
+  "src/task-metadata/project-config-recovery.test.ts",
+  "src/task-metadata/projects-api.test.ts",
   "src/tasks/service-wiring.test.ts",
   "src/usage/declaration-cli.test.ts",
   "src/portfolio/declaration-cli.test.ts",

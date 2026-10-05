@@ -87,7 +87,11 @@ export function startGitHubSource(options: GitHubSourceOptions): GitHubSource {
       });
     },
     project: (id) => mirror.read().projects.get(id)?.project,
+    projectByNumber: (owner, number) => mirror.projectByNumber(owner, number),
     moveCard: runner.moveCard,
+    projectFields: (id) => mirror.projectFields(id),
+    observeProjectFields: runner.observeProjectFields,
+    writeProjectField: runner.writeProjectField,
     requestSweep: runner.requestSweep,
     trackedIssue: (id) => mirror.trackedIssue(id, runner.bound),
     trackedIssueIds: () => mirror.trackedIssueIds(runner.bound),

@@ -4,14 +4,22 @@
 // ---
 import { moveRecords } from "./move-records.ts";
 import type { CardMove } from "./types.ts";
-import { createGitHubApi } from "./github-api.ts";
+import { createGitHubApi, classifyWriteError } from "./github-api.ts";
 import { createMirror } from "./mirror.ts";
 import type { Pending } from "./mirror.ts";
 import { reconcileIssue, reconcileItem, reconcileProject, isTracked } from "./reconcile.ts";
 import type { MirrorState } from "./reconcile.ts";
 import { validEvent } from "./verify.ts";
 import { GitHubSourceError, GitHubWriteError } from "./types.ts";
-import type { GitHubSourceOptions, GitHubProject, ObservedIssue, ObservedItem } from "./types.ts";
+import type {
+  GitHubSourceOptions,
+  GitHubProject,
+  ObservedIssue,
+  ObservedItem,
+  ProjectField,
+  ProjectFields,
+  ProjectFieldWrite,
+} from "./types.ts";
 import type { RouterClock, SourceEvent } from "../router/index.ts";
 
 export const systemClock: RouterClock = {
@@ -29,13 +37,32 @@ export function createRunner(
 ) {
   const api = createGitHubApi(options, clock);
   const moves = moveRecords(options.store.connection);
-  const queue: {
-    move: CardMove;
-    signal: AbortSignal | undefined;
-    resolve: () => void;
-    reject: (error: unknown) => void;
-    detach: () => void;
-  }[] = [];
+  type Job =
+    | {
+        kind: "move";
+        move: CardMove;
+        signal: AbortSignal | undefined;
+        resolve: () => void;
+        reject: (error: unknown) => void;
+        detach: () => void;
+      }
+    | {
+        kind: "observe";
+        projectNodeId: string;
+        signal: AbortSignal | undefined;
+        resolve: (fields: ProjectFields) => void;
+        reject: (error: unknown) => void;
+        detach: () => void;
+      }
+    | {
+        kind: "write";
+        write: ProjectFieldWrite;
+        signal: AbortSignal | undefined;
+        resolve: (field: ProjectField | undefined) => void;
+        reject: (error: unknown) => void;
+        detach: () => void;
+      };
+  const queue: Job[] = [];
   const bound = new Map<string, GitHubProject>();
   let stopped = false;
   let scanDue = true;
@@ -71,16 +98,30 @@ export function createRunner(
         reference.number === row.project.number
       )
         bound.set(row.project.nodeId, row.project);
-  async function drainMoves() {
+  async function drainJobs() {
     while (queue.length) {
       if (stopped) return;
-      await moveNext();
+      await jobNext();
     }
+  }
+  async function observeFields(
+    project: GitHubProject,
+    signal?: AbortSignal,
+  ): Promise<ProjectFields> {
+    const fields = await api.projectFields(project, signal);
+    if (!stopped) {
+      let changed = false;
+      options.store.connection.transaction(() => {
+        changed = mirror.observeFields(project.nodeId, fields, clock.now());
+      });
+      if (changed) options.onMirrorChanged?.();
+    }
+    return mirror.projectFields(project.nodeId)!;
   }
   async function rebuild() {
     const next = new Map<string, GitHubProject>();
     for (const reference of options.boundProjects()) {
-      await drainMoves();
+      await drainJobs();
       if (stopped) return;
       try {
         const owner = Object.keys(options.configuration.owners).find(
@@ -108,7 +149,7 @@ export function createRunner(
           if (changed) options.onMirrorChanged?.();
         }
         next.set(project.nodeId, project);
-        await drainMoves();
+        await drainJobs();
       } catch (error) {
         report(error);
       }
@@ -172,7 +213,8 @@ export function createRunner(
           moves.removed((event.event["item"] as { nodeId: string }).nodeId);
         if (event.event.type === "github.project-item.field-changed") {
           const item = event.event["item"] as { nodeId: string };
-          const field = event.event["field"] as { nodeId: string };
+          const field = event.event["field"] as { nodeId: string; name: string };
+          const project = event.event["project"] as { nodeId: string };
           const to = event.event["to"] as { kind: string; optionId?: string } | null;
           return {
             ...event,
@@ -183,6 +225,7 @@ export function createRunner(
                 field.nodeId,
                 to?.kind === "single-select" ? to.optionId : undefined,
               ),
+              lifecycle: options.lifecycleField?.(project.nodeId) === field.name,
             },
           };
         }
@@ -234,10 +277,17 @@ export function createRunner(
     }
     const seen = new Set<string>();
     let after: string | undefined;
+    // The Project's comparison first observes its fields, as one observation of its own.
+    while (queue.length) {
+      if (stopped) return;
+      await jobNext();
+    }
+    await observeFields(reference);
+    if (stopped) return;
     do {
       while (queue.length) {
         if (stopped) return;
-        await moveNext();
+        await jobNext();
       }
       const page = await api.projectPage(reference, after);
       if (stopped) return;
@@ -269,7 +319,7 @@ export function createRunner(
     while (true) {
       if (stopped) return;
       if (queue.length) {
-        await moveNext();
+        await jobNext();
         continue;
       }
       const rows = mirror
@@ -349,14 +399,20 @@ export function createRunner(
       }
     }
   }
-  async function moveNext() {
+  async function jobNext() {
     const queued = queue.shift()!;
-    const { move, signal } = queued;
+    const { signal } = queued;
     queued.detach();
     if (signal?.aborted) {
       queued.reject(signal.reason);
       return;
     }
+    if (queued.kind === "move") return moveJob(queued);
+    if (queued.kind === "observe") return observeJob(queued);
+    return writeJob(queued);
+  }
+  async function moveJob(queued: Extract<Job, { kind: "move" }>) {
+    const { move, signal } = queued;
     try {
       const state = mirror.read();
       const project = state.projects.get(move.projectNodeId)?.project;
@@ -393,18 +449,57 @@ export function createRunner(
       } catch (error) {
         if (stopped) return;
         if (inserted && error instanceof GitHubWriteError && error.kind !== "transport")
-          options.store.connection.transaction(() => moves.refused(move));
+          options.store.connection.transaction(() =>
+            moves.refused(move, resolved.field, resolved.option),
+          );
         throw error;
       }
       if (stopped) return;
       options.store.connection.transaction(() => {
-        moves.confirmed(move);
+        moves.confirmed(move, resolved.field, resolved.option);
         mirror.enqueue("item", item.item.nodeId, project.nodeId);
       });
       options.probeMove?.(move);
       queued.resolve();
     } catch (error) {
       if (!stopped) queued.reject(signal?.aborted ? signal.reason : error);
+    }
+  }
+  async function observeJob(queued: Extract<Job, { kind: "observe" }>) {
+    const { projectNodeId, signal } = queued;
+    try {
+      const project =
+        mirror.read().projects.get(projectNodeId)?.project ?? bound.get(projectNodeId);
+      if (!project)
+        throw new GitHubWriteError("field-missing", "Project is absent from the mirror");
+      const fields = await observeFields(project, signal);
+      if (stopped) return;
+      queued.resolve(fields);
+    } catch (error) {
+      if (!stopped) queued.reject(signal?.aborted ? signal.reason : classifyWriteError(error));
+    }
+  }
+  async function writeJob(queued: Extract<Job, { kind: "write" }>) {
+    const { write, signal } = queued;
+    try {
+      const project =
+        mirror.read().projects.get(write.projectNodeId)?.project ?? bound.get(write.projectNodeId);
+      if (!project)
+        throw new GitHubWriteError("field-missing", "Project is absent from the mirror");
+      const field = await api.writeField(project.owner, write, signal);
+      if (stopped) return;
+      signal?.throwIfAborted();
+      options.probeFieldWrite?.(write);
+      let changed = false;
+      options.store.connection.transaction(() => {
+        if (field) changed = mirror.writeFieldRow(write.projectNodeId, field);
+        else if (write.kind === "delete")
+          changed = mirror.deleteFieldRow(write.projectNodeId, write.fieldNodeId);
+      });
+      if (changed) options.onMirrorChanged?.();
+      queued.resolve(field);
+    } catch (error) {
+      if (!stopped) queued.reject(signal?.aborted ? signal.reason : classifyWriteError(error));
     }
   }
   async function scan() {
@@ -422,7 +517,7 @@ export function createRunner(
         let newest = cursor;
         while (true) {
           if (stopped) return;
-          await drainMoves();
+          await drainJobs();
           if (stopped) return;
           const page = await api.deliveries(owner, hook, nextCursor);
           const deliveries = page.attempts;
@@ -458,7 +553,7 @@ export function createRunner(
             const latest = values.reduce((a, b) =>
               Date.parse(a.delivered_at) >= Date.parse(b.delivered_at) ? a : b,
             );
-            await drainMoves();
+            await drainJobs();
             if (stopped) return;
             await api.redeliver(owner, hook, latest.id);
             if (stopped) return;
@@ -471,7 +566,7 @@ export function createRunner(
     while (wakeRequested) {
       if (stopped) return;
       wakeRequested = false;
-      await drainMoves();
+      await drainJobs();
       if (stopped) return;
       if (scanDue) {
         scanDue = false;
@@ -547,8 +642,62 @@ export function createRunner(
             reject(signal?.reason);
           }
         };
-        const queued = {
+        const queued: Job = {
+          kind: "move",
           move: { ...move },
+          signal,
+          resolve,
+          reject,
+          detach: () => signal?.removeEventListener("abort", aborted),
+        };
+        queue.push(queued);
+        signal?.addEventListener("abort", aborted, { once: true });
+        wake();
+      });
+    },
+    observeProjectFields(projectNodeId: string, signal?: AbortSignal): Promise<ProjectFields> {
+      if (stopped) throw new TypeError("GitHub source is stopped");
+      if (signal?.aborted) return Promise.reject(signal.reason);
+      return new Promise<ProjectFields>((resolve, reject) => {
+        const aborted = () => {
+          const index = queue.indexOf(queued);
+          if (index >= 0) {
+            queue.splice(index, 1);
+            queued.detach();
+            reject(signal?.reason);
+          }
+        };
+        const queued: Job = {
+          kind: "observe",
+          projectNodeId,
+          signal,
+          resolve,
+          reject,
+          detach: () => signal?.removeEventListener("abort", aborted),
+        };
+        queue.push(queued);
+        signal?.addEventListener("abort", aborted, { once: true });
+        wake();
+      });
+    },
+    writeProjectField(
+      write: ProjectFieldWrite,
+      signal?: AbortSignal,
+    ): Promise<ProjectField | undefined> {
+      if (stopped) throw new TypeError("GitHub source is stopped");
+      if (signal?.aborted) return Promise.reject(signal.reason);
+      return new Promise<ProjectField | undefined>((resolve, reject) => {
+        const aborted = () => {
+          const index = queue.indexOf(queued);
+          if (index >= 0) {
+            queue.splice(index, 1);
+            queued.detach();
+            reject(signal?.reason);
+          }
+        };
+        const queued: Job = {
+          kind: "write",
+          write: structuredClone(write),
           signal,
           resolve,
           reject,
@@ -573,7 +722,11 @@ export function createRunner(
         return;
       }
       stopped = true;
-      for (const queued of queue.splice(0)) queued.detach();
+      for (const queued of queue.splice(0)) {
+        queued.detach();
+        if (queued.kind !== "move")
+          queued.reject(new GitHubWriteError("transport", "GitHub source is stopped"));
+      }
       cancelScan?.();
       cancelSweep?.();
       api.abort();

@@ -36,4 +36,26 @@ CREATE TABLE metadata_rejections (
   rejected_at INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
 `,
+  String.raw`-- The applied configuration of each binding on each Project: the Project's
+-- custom fields as the observation that ended its last Apply read them.
+-- Each completed Apply replaces its row.
+CREATE TABLE metadata_project_applies (
+  binding TEXT NOT NULL CHECK (length(binding) > 0),
+  project_node_id TEXT NOT NULL CHECK (length(project_node_id) > 0),
+  commit_id TEXT NOT NULL CHECK (length(commit_id) > 0),
+  fields TEXT NOT NULL CHECK (json_valid(fields)),
+  owned TEXT NOT NULL CHECK (json_valid(owned)),
+  applied_at INTEGER NOT NULL,
+  PRIMARY KEY (binding, project_node_id)
+) STRICT, WITHOUT ROWID;
+
+-- Per binding, the accept save an Apply pushed whose commit was not yet in
+-- force, so a retry whose save rejects reports the commit without pushing.
+CREATE TABLE metadata_pending_saves (
+  binding TEXT PRIMARY KEY CHECK (length(binding) > 0),
+  save_id TEXT NOT NULL CHECK (length(save_id) = 32),
+  commit_id TEXT NOT NULL CHECK (length(commit_id) > 0),
+  saved_at INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+`,
 ];

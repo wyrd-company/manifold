@@ -100,7 +100,9 @@ test.each(["../blueprints/a.yml", "blueprints//a.yml", "blueprints/a\\b.yml", ""
   "rejects malformed path %s",
   async (path) => {
     const { repository, request } = await setup();
-    await expect(repository.save({ ...request, path })).rejects.toThrow(TypeError);
+    await expect(repository.save({ ...request, path })).rejects.toThrow(
+      "Invalid save path or saveId",
+    );
   },
 );
 test.each(["task-metadata.yml", "other/a.yml", "blueprints/a.json"])(

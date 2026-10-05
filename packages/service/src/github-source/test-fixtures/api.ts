@@ -98,17 +98,64 @@ export async function githubFake() {
   let writeFailure: { type: string; status?: number } | undefined;
   let queryFailure: { operation: string; type: string } | undefined;
   const laggingItems = new Map<string, ModelItem>();
-  const fields = [
+  interface ModelOption {
+    id: string;
+    name: string;
+    color?: string;
+    description?: string;
+  }
+  interface ModelField {
+    id: string;
+    name: string;
+    dataType?: string;
+    isIssueField?: boolean;
+    options: ModelOption[];
+  }
+  const fields: ModelField[] = [
     {
       id: "F_stage",
       name: "Stage",
+      dataType: "SINGLE_SELECT",
+      isIssueField: false,
       options: [
-        { id: "O_sorting", name: "Sorting" },
-        { id: "O_packed", name: "Packed" },
-        { id: "O_shipped", name: "Shipped" },
+        { id: "O_sorting", name: "Sorting", color: "GRAY", description: "" },
+        { id: "O_packed", name: "Packed", color: "BLUE", description: "" },
+        { id: "O_shipped", name: "Shipped", color: "GREEN", description: "" },
       ],
     },
+    { id: "F_title", name: "Title", dataType: "TITLE", isIssueField: true, options: [] },
+    { id: "F_labels", name: "Labels", dataType: "LABELS", isIssueField: true, options: [] },
   ];
+  let fieldSeq = 0;
+  let optionSeq = 0;
+  const dataTypeOf = (f: ModelField) => f.dataType ?? (f.options.length ? "SINGLE_SELECT" : "TEXT");
+  const fieldConfig = (f: ModelField) => {
+    const dataType = dataTypeOf(f);
+    return {
+      id: f.id,
+      name: f.name,
+      dataType,
+      isIssueField: f.isIssueField ?? false,
+      ...(dataType === "SINGLE_SELECT"
+        ? {
+            options: f.options.map((o) => ({
+              id: o.id,
+              name: o.name,
+              color: o.color ?? "GRAY",
+              description: o.description ?? "",
+            })),
+          }
+        : {}),
+    };
+  };
+  const clearOptionValues = (fieldId: string, keptOptions: Set<string>) => {
+    for (const item of items.values())
+      item.fieldValues.nodes = item.fieldValues.nodes.filter(
+        (v) =>
+          (v["field"] as { id: string } | undefined)?.id !== fieldId ||
+          keptOptions.has(v["optionId"] as string),
+      );
+  };
   let paginateItem: string | undefined;
   let held: { operation: string; entered: () => void; released: Promise<void> } | undefined;
   let paginate: string | undefined;
@@ -193,6 +240,109 @@ export async function githubFake() {
             node: { field: fields.find((f) => f.name === input.variables["name"]) ?? null },
           };
           break;
+        case "GitHubProjectFields":
+          data = {
+            node: {
+              id: project.id,
+              fields: connection(fields.map(fieldConfig)),
+            },
+          };
+          break;
+        case "GitHubCreateProjectField": {
+          const name = input.variables["name"] as string;
+          if (fields.some((f) => f.name === name)) {
+            res.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                data: { createProjectV2Field: null },
+                errors: [
+                  {
+                    type: "UNPROCESSABLE",
+                    path: ["createProjectV2Field"],
+                    message: "name already exists",
+                  },
+                ],
+              }),
+            );
+            return;
+          }
+          const dataType = input.variables["type"] as string;
+          const options = (
+            (input.variables["options"] as
+              | { id?: string; name: string; color: string; description: string }[]
+              | null) ?? []
+          ).map((o) => ({
+            id: o.id ?? `O_new${++optionSeq}`,
+            name: o.name,
+            color: o.color,
+            description: o.description,
+          }));
+          const field: ModelField = {
+            id: `F_new${++fieldSeq}`,
+            name,
+            dataType,
+            isIssueField: false,
+            options: dataType === "SINGLE_SELECT" ? options : [],
+          };
+          fields.push(field);
+          data = { createProjectV2Field: { projectV2Field: fieldConfig(field) } };
+          break;
+        }
+        case "GitHubUpdateProjectField": {
+          const field = fields.find((f) => f.id === input.variables["field"]);
+          if (!field) {
+            res.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                data: { updateProjectV2Field: null },
+                errors: [
+                  {
+                    type: "NOT_FOUND",
+                    path: ["updateProjectV2Field"],
+                    message: "field not found",
+                  },
+                ],
+              }),
+            );
+            return;
+          }
+          if (typeof input.variables["name"] === "string")
+            field.name = input.variables["name"] as string;
+          const incoming = input.variables["options"] as
+            | { id?: string; name: string; color: string; description: string }[]
+            | null;
+          if (incoming) {
+            field.options = incoming.map((o) => ({
+              id: o.id ?? `O_new${++optionSeq}`,
+              name: o.name,
+              color: o.color,
+              description: o.description,
+            }));
+            clearOptionValues(field.id, new Set(field.options.map((o) => o.id)));
+          }
+          data = { updateProjectV2Field: { projectV2Field: fieldConfig(field) } };
+          break;
+        }
+        case "GitHubDeleteProjectField": {
+          const index = fields.findIndex((f) => f.id === input.variables["field"]);
+          if (index < 0) {
+            res.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                data: { deleteProjectV2Field: null },
+                errors: [
+                  {
+                    type: "NOT_FOUND",
+                    path: ["deleteProjectV2Field"],
+                    message: "field not found",
+                  },
+                ],
+              }),
+            );
+            return;
+          }
+          const [removed] = fields.splice(index, 1);
+          clearOptionValues(removed!.id, new Set());
+          data = { deleteProjectV2Field: { projectV2Field: { id: removed!.id } } };
+          break;
+        }
         case "GitHubCardMove": {
           if (writeFailure) {
             const failure = writeFailure;
