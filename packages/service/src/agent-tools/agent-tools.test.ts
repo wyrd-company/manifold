@@ -33,7 +33,7 @@ async function fixture(
   });
   closing.push(ntfy.close);
   let issue: { repository: string; number: number; title?: string } | undefined;
-  const reads: string[] = [];
+  const issueReads: string[] = [];
   const store = openStore({ path: ":memory:" });
   let schema: "declared" | "unavailable" | "undeclared" = "declared";
   const validate = new Ajv2020({ allErrors: true }).compile({
@@ -133,7 +133,7 @@ async function fixture(
     },
     sourceReady: () => ready,
     trackedIssue: (nodeId: string) => {
-      reads.push(nodeId);
+      issueReads.push(nodeId);
       return issue;
     },
     environmentId: async () => {
@@ -184,7 +184,7 @@ async function fixture(
   };
   return {
     notifications,
-    reads,
+    issueReads,
     issue(value: typeof issue, nodeId: string | undefined = "I_PARCEL") {
       issue = value;
       store.saveSnapshot({
@@ -613,7 +613,7 @@ test.each([undefined, "Paint colour"])(
       escalationId: id,
       replay: true,
     });
-    expect(f.reads).toEqual(["I_PARCEL"]);
+    expect(f.issueReads).toEqual(["I_PARCEL"]);
     expect(f.escalations.get(id)?.title).toBe(expected);
     f.escalations.answer(
       id,
@@ -638,7 +638,7 @@ test.each(["missing identity", "untracked issue"])(
     expect(f.escalations.get((result.body as { escalationId: string }).escalationId)?.title).toBe(
       "Question",
     );
-    expect(f.reads).toEqual(kind === "untracked issue" ? ["I_PARCEL"] : []);
+    expect(f.issueReads).toEqual(kind === "untracked issue" ? ["I_PARCEL"] : []);
   },
 );
 
@@ -658,6 +658,6 @@ test.each(["held-actor", "stranded-token", "intake-failed", "comparator-failed"]
     expect(question.title).toBe("Delivery needs attention");
     await eventually(() => expect(f.notifications).toHaveLength(1));
     expect(f.notifications[0]!.title).toBe("Delivery needs attention");
-    expect(f.reads).toEqual([]);
+    expect(f.issueReads).toEqual([]);
   },
 );

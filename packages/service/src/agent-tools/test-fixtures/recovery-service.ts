@@ -151,8 +151,7 @@ export async function recoveryService(config: RecoveryConfiguration) {
     environmentId: (name, signal) => source.environmentId(name, signal),
     escalations: () => escalations,
     probe(call) {
-      if (config.crash === call.tool)
-        process.kill(process.pid, "SIGKILL");
+      if (config.crash === call.tool) process.kill(process.pid, "SIGKILL");
     },
     log: () => {},
   });
