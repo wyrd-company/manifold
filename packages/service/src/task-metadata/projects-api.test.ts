@@ -237,3 +237,40 @@ test("push succeeds, follow fails: retries and restart keep one accept commit an
     await f.close();
   }
 });
+
+test("pull fails before the first accept save: no accept commit reaches the remote", async () => {
+  const f = await serviceFixture();
+  let service: Awaited<ReturnType<typeof startService>> | undefined;
+  try {
+    f.api.fields.splice(0);
+    await git.setConfig({ fs, gitdir: f.remote.gitdir, path: "http.receivepack", value: "true" });
+    const initial = await f.commit(60, { bindings, taskMetadata: declaration });
+    service = await startService({ configurationFile: f.file, log: () => {} });
+    await expect
+      .poll(() => service!.github.projectByNumber("sample", 1), { timeout: childProcessLimit })
+      .toBeDefined();
+    const address = service.http.address();
+    const apply = () =>
+      fetch(`http://${address.host}:${address.port}/api/projects/parcels/apply`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"removeUndeclared":false}',
+      });
+    expect((await apply()).status).toBe(200);
+    f.api.fields.find((field) => field.name === "Mass")!.name = "Weight";
+    f.remote.state.refuseNextFetch = true;
+    const response = await apply();
+    const body = await response.json();
+    agrees("ApplyFailedResponse", body);
+    expect(response.status).toBe(502);
+    expect(body).toMatchObject({ error: { kind: "declaration-unsaved" }, writes: 0 });
+    const commits = await git.log({ fs, gitdir: f.remote.gitdir, ref: "main" });
+    expect(commits[0]!.oid).toBe(initial);
+    expect(
+      commits.filter((commit) => commit.commit.message.startsWith("Accept GitHub changes")),
+    ).toHaveLength(0);
+  } finally {
+    await service?.stop();
+    await f.close();
+  }
+});
