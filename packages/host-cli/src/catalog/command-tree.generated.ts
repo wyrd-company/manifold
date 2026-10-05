@@ -503,12 +503,12 @@ export const commandTree = {
           exitCodes: [
             {
               code: 0,
-              meaning: "Every batch was acknowledged by the service.",
+              meaning: "Every mapping request and every batch was acknowledged by the service.",
             },
             {
               code: 1,
               meaning:
-                "The run ended before every batch was acknowledged: a request did not answer 200, the connection failed, or T3 Code's database could not be read. The push state holds the batches acknowledged before the failure, and standard error names it.",
+                "The run ended before every mapping request and batch was acknowledged: a request did not answer 200, the connection failed, or T3 Code's database could not be read. The push state holds the mappings and batches acknowledged before the failure, and standard error names it.",
             },
             {
               code: 2,
