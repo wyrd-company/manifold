@@ -117,7 +117,7 @@ export function taskDetail(
   projects: readonly TasksBoundProject[],
   snapshot: StoredSnapshot | undefined,
   escalations: readonly TasksEscalation[],
-  reads: Pick<TasksOptions, "held" | "thread" | "tokenHolder" | "actorUsage">,
+  reads: Pick<TasksOptions, "held" | "thread" | "tokenHolder" | "actorUsage" | "accountUnit">,
 ): Task | undefined {
   const memberships = projects.flatMap((p) => {
     const value = status(p, tracked);
@@ -161,10 +161,10 @@ export function taskDetail(
     })),
     usage: {
       settled: usage.settled,
-      accounts: usage.accounts.map(({ outstanding, ...account }) => ({
-        ...account,
-        reserved: outstanding,
-      })),
+      accounts: usage.accounts.map(({ outstanding, ...account }) => {
+        const unit = reads.accountUnit?.(account.account);
+        return { ...account, reserved: outstanding, ...(unit ? { unit } : {}) };
+      }),
     },
     escalations: {
       open: associated

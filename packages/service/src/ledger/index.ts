@@ -8,6 +8,7 @@ export type { LedgerPortfolio } from "./portfolio.js";
 export { ledgerMigrationSteps } from "./migrations.js";
 export { LedgerError } from "./types.js";
 export type {
+  LedgerTotals,
   LedgerWindow,
   LedgerWindows,
   Ledger,

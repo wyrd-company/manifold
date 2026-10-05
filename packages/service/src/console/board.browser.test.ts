@@ -9,7 +9,7 @@ import { mountConsole } from "./index.ts";
 import { mountEscalations } from "../escalations/index.ts";
 import { consoleHost } from "./test-fixtures/host.ts";
 test("built Board reads settled usage and records panel answers once, including a competing channel", async () => {
-  const f = boardWorld(),
+  const f = boardWorld(true),
     server = await consoleHost(),
     browser = await chromium.launch({ headless: true });
   try {
@@ -46,8 +46,8 @@ test("built Board reads settled usage and records panel answers once, including 
     await usage.getByText("Settled", { exact: true }).waitFor();
     expect(await usage.getByRole("row").allTextContents()).toEqual([
       "AccountEstimateActualVarianceReserved",
-      "sample101220",
-      "second101220",
+      "sample$1.00$0.0177−$0.9823$0.00",
+      "second$1.00$0.0177−$0.9823$0.00",
     ]);
     await page.getByRole("button", { name: "Leave at door", exact: true }).click();
     await page.getByText("Answered: Leave at door", { exact: true }).waitFor();

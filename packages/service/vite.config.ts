@@ -9,6 +9,7 @@ import { childProcessLimit } from "../../test-support/limits.ts";
 const children = [
   "src/declarations-api/api.test.ts",
   "src/declarations-api/projects.browser.test.ts",
+  "src/portfolio-api/portfolio.browser.test.ts",
   "src/blueprints-api/api.test.ts",
   "src/blueprints-api/blueprints.browser.test.ts",
   "src/process-repository/save.test.ts",

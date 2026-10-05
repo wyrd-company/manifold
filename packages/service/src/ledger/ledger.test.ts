@@ -798,3 +798,27 @@ describe("portfolio and operation boundaries", () => {
     expect(s.database.prepare("SELECT count(*) AS n FROM ledger_operations").get()).toEqual(before);
   });
 });
+
+it("totals include current actuals, all outstanding holds, historical and removed items", () => {
+  const f = setup();
+  f.reserve(30);
+  f.actual(10);
+  f.credit("second", "w2", 1000);
+  f.time(1500);
+  f.actual(5);
+  f.actual(4, "beta", "actor-2");
+  expect(f.ledger.totals({ account: "acct" })).toEqual({
+    window: { window: "w2", opensAt: 1000, closesAt: 2000, capacity: 100 },
+    used: 24,
+    items: [
+      { item: "alpha", lifetime: 15 },
+      { item: "beta", lifetime: 4 },
+    ],
+  });
+  f.ledger.setPortfolio(
+    parseLedgerPortfolio({ items: [{ id: "alpha", parent: null }], allocations: [] }),
+  );
+  expect(f.ledger.totals({ account: "acct" }).used).toBe(24);
+  f.ledger.settle({ actor: "actor-1" });
+  expect(f.ledger.totals({ account: "acct" }).used).toBe(9);
+});

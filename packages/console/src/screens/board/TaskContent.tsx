@@ -5,6 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { LockKeyhole, SearchX, RefreshCw, ExternalLink } from "lucide-react";
+import { formatAmount, formatAmountExact } from "@wyrd-company/manifold-shared/amounts";
 import { fetchTask } from "../../api/tasks.ts";
 import { Button } from "../../ui/button.tsx";
 import { EmptyState } from "../EmptyContent.tsx";
@@ -236,12 +237,21 @@ export function TaskContent() {
                     {task.usage.accounts.map((account) => (
                       <tr key={account.account}>
                         <td>{account.account}</td>
-                        <td>{account.estimate}</td>
-                        <td>{account.actual}</td>
-                        <td className={account.variance > 0 ? "warning-text" : ""}>
-                          {account.variance}
+                        <td title={formatAmountExact(account.estimate, account.unit)}>
+                          {formatAmount(account.estimate, account.unit)}
                         </td>
-                        <td>{account.reserved}</td>
+                        <td title={formatAmountExact(account.actual, account.unit)}>
+                          {formatAmount(account.actual, account.unit)}
+                        </td>
+                        <td
+                          title={formatAmountExact(account.variance, account.unit)}
+                          className={account.variance > 0 ? "warning-text" : ""}
+                        >
+                          {formatAmount(account.variance, account.unit, { signed: true })}
+                        </td>
+                        <td title={formatAmountExact(account.reserved, account.unit)}>
+                          {formatAmount(account.reserved, account.unit)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

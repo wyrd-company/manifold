@@ -41,6 +41,14 @@
     "./declarations-api": {
       "types": "./dist/declarations-api.d.ts",
       "import": "./dist/declarations-api.js"
+    },
+    "./amounts": {
+      "types": "./dist/amounts.d.ts",
+      "import": "./dist/amounts.js"
+    },
+    "./portfolio-api": {
+      "types": "./dist/portfolio-api.d.ts",
+      "import": "./dist/portfolio-api.js"
     }
   },
   "scripts": {

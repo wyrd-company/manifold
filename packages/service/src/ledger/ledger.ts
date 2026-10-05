@@ -217,6 +217,26 @@ export function createLedger(options: {
     };
   }
   return {
+    totals({ account }) {
+      text(account, "account");
+      const current = window(account, now());
+      const entries = load(accountEntries.all(account));
+      const lifetime = new Map<string, bigint>();
+      let used = 0n;
+      for (const entry of entries) {
+        if (entry.kind !== "actual") continue;
+        lifetime.set(entry.item!, (lifetime.get(entry.item!) ?? 0n) + BigInt(entry.amount));
+        if (current && entry.window_key === current.window_key) used += BigInt(entry.amount);
+      }
+      for (const hold of foldHolds(entries)) used += hold.outstanding;
+      return {
+        window: describeWindow(account, current),
+        used: Number(used),
+        items: [...lifetime]
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([item, amount]) => ({ item, lifetime: Number(amount) })),
+      };
+    },
     windowAt({ account, at }) {
       text(account, "account");
       integer(at, "at");

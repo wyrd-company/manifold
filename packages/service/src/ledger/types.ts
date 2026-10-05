@@ -42,7 +42,13 @@ export type LedgerActorUsage = {
 };
 export type LedgerWindow = { window: string; opensAt: number; closesAt: number; capacity: number };
 export type LedgerWindows = { current: LedgerWindow | null; next: LedgerWindow | null };
+export type LedgerTotals = {
+  window: LedgerWindow | null;
+  used: number;
+  items: { item: string; lifetime: number }[];
+};
 export interface Ledger {
+  totals(query: { account: string }): LedgerTotals;
   windowAt(query: { account: string; at: number }): LedgerWindows;
   setPortfolio(portfolio: import("./portfolio.js").LedgerPortfolio): void;
   credit(request: {

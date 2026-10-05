@@ -9,7 +9,7 @@ import { createMirror } from "../../github-source/mirror.ts";
 import { githubSteps } from "../../github-source/migrations.ts";
 import { openTasks } from "../index.ts";
 import type { TasksBoundProject } from "../index.ts";
-export function boardWorld() {
+export function boardWorld(usd = false) {
   let entry = 0;
   let raisedTime = 100;
   const f = fixture({
@@ -40,21 +40,21 @@ export function boardWorld() {
       window: "period",
       opensAt: 0,
       closesAt: 1000,
-      amount: 100,
+      amount: usd ? 10000000 : 100,
     });
     ledger.reserve({
       key: `reserve:${account}`,
       actor: "task:parcel",
       item: "deliveries",
       account,
-      amount: 10,
+      amount: usd ? 1000000 : 10,
     });
     ledger.postActual({
       key: `actual:${account}`,
       actor: "task:parcel",
       item: "deliveries",
       account,
-      amount: 12,
+      amount: usd ? 17700 : 12,
       usedAt: 100,
     });
   }
@@ -177,6 +177,7 @@ export function boardWorld() {
       trackedIssue: (id) => mirror.trackedIssue(id, references),
     },
     actorUsage: ledger.actorUsage,
+    accountUnit: () => (usd ? "usd" : undefined),
     listEscalations: f.module.list,
     thread: (_environment, id) =>
       id === "thread-1"

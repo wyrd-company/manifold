@@ -23,6 +23,7 @@ import { intake } from "../intake/wiring.ts";
 import { t3codeSource } from "../t3code-source/wiring.ts";
 import { console } from "../console/wiring.ts";
 import { blueprintsApi } from "../blueprints-api/wiring.ts";
+import { portfolioApiPart } from "../portfolio-api/wiring.ts";
 import { declarationsApiPart } from "../declarations-api/wiring.ts";
 import { tasks } from "../tasks/wiring.ts";
 import { assembleService } from "./wiring.ts";
@@ -69,6 +70,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     .part(console)
     .part(blueprintsApi)
     .part(declarationsApiPart)
+    .part(portfolioApiPart)
     .part(tasks)
     .part(listen)
     .step("listening")

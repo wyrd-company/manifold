@@ -50,6 +50,7 @@ export interface TasksOptions {
   boundProjects(): readonly TasksBoundProject[];
   readonly github: TasksGitHub;
   actorUsage(actorId: string): TasksActorUsage;
+  accountUnit?(account: string): "usd" | undefined;
   listEscalations(filter: {
     readonly status?: "open" | "answered" | "withdrawn";
   }): readonly TasksEscalation[];

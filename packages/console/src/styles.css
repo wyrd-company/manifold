@@ -1210,4 +1210,167 @@ select:focus-visible {
 }
 .task-fields-editor .blueprint-tabs {
   display: flex;
+/* Portfolio — implements operator-console */
+.portfolio-screen {
+  position: relative;
+}
+.portfolio-title-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 24px;
+}
+.portfolio-budget-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 280px));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.portfolio-budget-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  background: var(--card);
+}
+.portfolio-budget-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.portfolio-budget-card p {
+  margin-top: 8px;
+}
+.portfolio-meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  margin: 8px 0;
+}
+.portfolio-meter span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+.portfolio-meter.warning span {
+  background: var(--warning);
+}
+.portfolio-reset {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.portfolio-account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.portfolio-table-wrap {
+  overflow-x: auto;
+}
+.portfolio-table {
+  min-width: 820px;
+}
+.portfolio-table td {
+  vertical-align: top;
+  padding: 16px;
+}
+.portfolio-table small,
+.portfolio-current-usage small {
+  display: block;
+  margin-top: 4px;
+}
+.portfolio-table th {
+  padding: 12px 16px;
+}
+.portfolio-child {
+  background: var(--lane);
+}
+.portfolio-expand {
+  display: inline-flex;
+  cursor: pointer;
+  margin-right: 8px;
+}
+.portfolio-projects {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.portfolio-number {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.portfolio-number > span {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.portfolio-number input,
+.portfolio-item-fields input,
+.portfolio-account select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+}
+.portfolio-number input {
+  width: 110px;
+}
+.portfolio-number input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+.portfolio-item-fields {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.portfolio-item-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.portfolio-archived > div {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 0;
+}
+.portfolio-problems {
+  font-size: 12px;
+  margin: 12px 0;
+}
+.portfolio-sub-item {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.portfolio-discard {
+  position: fixed;
+  z-index: 50;
+  top: 30%;
+  left: calc(50% - 200px);
+  width: 400px;
+  padding: 24px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 50px #0004;
+}
+.portfolio-item-fields {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.portfolio-confirm-archive {
+  background: var(--error);
+  color: white;
 }

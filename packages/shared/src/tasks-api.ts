@@ -68,6 +68,7 @@ export interface TaskUsage {
   readonly settled: boolean;
   readonly accounts: readonly {
     readonly account: string;
+    readonly unit?: "usd";
     readonly estimate: number;
     readonly actual: number;
     readonly variance: number;
@@ -157,13 +158,17 @@ export function isTaskResponse(v: unknown): v is TaskResponse {
             shape(v, {
               settled: boolean,
               accounts: array((v) =>
-                shape(v, {
-                  account: nonempty,
-                  estimate: natural,
-                  actual: natural,
-                  variance: integer,
-                  reserved: natural,
-                }),
+                shape(
+                  v,
+                  {
+                    account: nonempty,
+                    estimate: natural,
+                    actual: natural,
+                    variance: integer,
+                    reserved: natural,
+                  },
+                  { unit: oneOf("usd") },
+                ),
               ),
             }),
           escalations: (v) =>
