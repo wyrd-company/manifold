@@ -100,6 +100,22 @@ test("invalid portfolio does not hide valid bindings", async () => {
   expect(result.t3codeProjects).toHaveLength(1);
   expect(result.items).toEqual([]);
 });
+test("invalid portfolio does not hide clean task metadata impact", async () => {
+  const broken = memoryRevision("b".repeat(40), {
+    ...files,
+    "portfolio.yml": "items: [",
+    "bindings.yml": files["bindings.yml"].replace(
+      "t3codeProjects:",
+      "  archived:\n    owner: example\n    number: 3\n    environment: local\n    item: garden\n    archived: true\nt3codeProjects:",
+    ),
+  });
+  const result = await lintAnswer(options, broken, "task-metadata.yml", files["task-metadata.yml"]);
+  expect(result.findings).toEqual([]);
+  expect(result.impact).toEqual([
+    { binding: "garden", creates: 1, changes: 1, removes: 1 },
+    { binding: "unobserved" },
+  ]);
+});
 test("portfolio warnings point to undeclared accounts, even when bindings fail", async () => {
   const text = "items:\n  garden:\n    allocations:\n      missing:\n        guarantee: 20\n";
   const result = await lintAnswer(options, revision, "portfolio.yml", text);

@@ -41,28 +41,24 @@ export async function lintAnswer(
     const lint = lintTaskMetadata({ taskMetadata: text, bindings });
     const fields = taskFieldRows(text);
     const plans = lint.ok ? options.planDeclaration(lint.declaration) : [];
-    const portfolio = lintPortfolioDeclaration({
-      portfolio: await revision.read("portfolio.yml"),
-      bindings,
-    });
-    const impact =
-      lint.ok && portfolio.ok
-        ? portfolio.declaration.githubProjects
-            .filter((binding) => !binding.archived)
-            .map((binding) => {
-              const plan = plans.find((plan) => plan.binding === binding.name);
-              return {
-                binding: binding.name,
-                ...(plan
-                  ? {
-                      creates: plan.changes.filter((change) => change.action === "create").length,
-                      changes: plan.changes.filter((change) => change.action === "change").length,
-                      removes: plan.changes.filter((change) => change.action === "remove").length,
-                    }
-                  : {}),
-              };
-            })
-        : undefined;
+    const bound = lint.ok ? await bindingsAnswer(options, revision) : undefined;
+    const impact = bound
+      ? bound.githubProjects
+          .filter((binding) => !binding.archived)
+          .map((binding) => {
+            const plan = plans.find((plan) => plan.binding === binding.name);
+            return {
+              binding: binding.name,
+              ...(plan
+                ? {
+                    creates: plan.changes.filter((change) => change.action === "create").length,
+                    changes: plan.changes.filter((change) => change.action === "change").length,
+                    removes: plan.changes.filter((change) => change.action === "remove").length,
+                  }
+                : {}),
+            };
+          })
+      : undefined;
     return {
       findings: findingRanges(text, lint.ok ? [] : lint.findings),
       warnings: [],

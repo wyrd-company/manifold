@@ -26,7 +26,10 @@ function TextSetting({
 }) {
   const [text, setText] = useState(value);
   const commit = () => {
-    if (text !== value) onCommit(text);
+    if (text !== value) {
+      onCommit(text);
+      setText(value);
+    }
   };
   return (
     <label>

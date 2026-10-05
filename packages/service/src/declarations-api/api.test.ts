@@ -257,6 +257,38 @@ test("shows non-string Project keys as written and adds a field by that key", as
   expect(edit.status).toBe(200);
   expect(await edit.json()).toMatchObject({
     location: "/projects/1/fields/field-1",
-    fields: [{ binding: "1" }, { binding: "1" }, { binding: "1", name: "field-1" }],
+    text: expect.stringContaining("  001:\n"),
+    fields: [
+      { binding: "001" },
+      { binding: "001", name: "002" },
+      { binding: "001", name: "field-1" },
+    ],
+  });
+});
+
+test("an empty portfolio item gives a binding finding instead of a malformed request", async () => {
+  const { url, fixture } = await setup();
+  const response = await fetch(url + "/bindings/save", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      edit: {
+        kind: "github-project",
+        mode: "add",
+        name: "sample",
+        owner: "example",
+        number: 1,
+        environment: "local",
+        item: "",
+        t3codeProjects: [],
+      },
+      base: fixture.first,
+      message: "Example binding",
+      saveId: "1".repeat(32),
+    }),
+  });
+  expect(response.status).toBe(422);
+  expect(await response.json()).toMatchObject({
+    findings: [expect.objectContaining({ location: "/githubProjects/sample/item" })],
   });
 });

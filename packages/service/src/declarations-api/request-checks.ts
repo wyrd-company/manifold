@@ -39,8 +39,7 @@ export function bindingEdit(value: unknown): value is BindingEdit {
     !["add", "replace"].includes(value["mode"]) ||
     !name(value["name"]) ||
     !name(value["environment"]) ||
-    typeof value["item"] !== "string" ||
-    !value["item"].length
+    typeof value["item"] !== "string"
   )
     return false;
   if (value["kind"] === "github-project")

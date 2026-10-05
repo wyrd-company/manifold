@@ -123,6 +123,7 @@ function Editor({ source: initialSource }: { source: DeclarationSourceResponse }
   const [fields, setFields] = useState<readonly TaskField[]>(initialSource.fields ?? []);
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState(false);
+  const [editFindings, setEditFindings] = useState<readonly DeclarationFinding[]>([]);
   const lastEdit = useRef<{ text: string; edit: TaskFieldEdit } | undefined>(undefined);
   const acceptLint = (text: string, body: DeclarationFindings) => {
     setLint({ text, body });
@@ -234,6 +235,7 @@ function Editor({ source: initialSource }: { source: DeclarationSourceResponse }
   };
   const change = (text: string) => {
     if (text === current.current.text) return;
+    setEditFindings([]);
     update(changeDraft(current.current, text));
     setLater(undefined);
   };
@@ -243,18 +245,14 @@ function Editor({ source: initialSource }: { source: DeclarationSourceResponse }
     lastEdit.current = request;
     setEditing(true);
     setEditError(false);
+    setEditFindings([]);
     const answer = await editTaskFields(request);
     if (current.current.text === request.text) {
       if (answer.kind === "ok") {
         change(answer.body.text);
         acceptLint(answer.body.text, answer.body);
         setSelected(answer.body.location);
-      } else if (answer.kind === "invalid")
-        acceptLint(request.text, {
-          ...lint.body,
-          findings: answer.body.findings,
-          warnings: answer.body.warnings,
-        });
+      } else if (answer.kind === "invalid") setEditFindings(answer.body.findings);
       else setEditError(true);
     }
     setEditing(false);
@@ -430,6 +428,11 @@ function Editor({ source: initialSource }: { source: DeclarationSourceResponse }
           />
         </div>
       )}
+      {editFindings.map((finding) => (
+        <p role="alert" className="error-alert" key={finding.location + finding.kind}>
+          {finding.message}
+        </p>
+      ))}
       {editError ? (
         <p role="alert" className="error-alert">
           Cannot apply this change. Try again.{" "}

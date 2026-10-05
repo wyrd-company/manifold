@@ -180,6 +180,13 @@ test("binding conflicts retain operator values and preserve another channel's co
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Project", { exact: true }).fill("example/3");
     await dialog.getByLabel("Name", { exact: true }).fill("example-3");
+    await dialog.getByLabel("I understand", { exact: true }).check();
+    const missingItem = page.waitForResponse(
+      (r) => r.url().endsWith("/bindings/save") && r.status() === 422,
+    );
+    await dialog.getByRole("button", { name: "Bind and review changes", exact: true }).click();
+    await missingItem;
+    await dialog.locator("fieldset").getByRole("alert").first().waitFor();
     await dialog.getByRole("combobox", { name: /Portfolio item/ }).selectOption("alpha");
     await dialog.getByLabel("Parcel workspace", { exact: false }).check();
     await dialog.getByLabel("I understand", { exact: true }).check();
@@ -408,6 +415,48 @@ test("Project removal confirmation keeps the reviewed digest during a background
     await page.getByRole("dialog").getByText("Legacy", { exact: false }).waitFor();
     await page.getByRole("button", { name: "Apply and remove", exact: true }).click();
     await page.getByText("In sync", { exact: true }).first().waitFor();
+  } finally {
+    await browser.close();
+    await fixture.close();
+  }
+}, 30_000);
+
+test("Task fields rejects a duplicate name without changing draft lint or the panel value", async () => {
+  const fixture = await projectsHost();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+    await page.goto(fixture.url + "/console/settings/task-fields");
+    await page.getByRole("button", { name: "Add field", exact: true }).first().click();
+    await page.getByLabel("Field name", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Add field", exact: true }).first().click();
+    const name = page.getByLabel("Field name", { exact: true });
+    await page.waitForFunction(
+      () => document.querySelector<HTMLInputElement>(".field-panel input")?.value === "field-2",
+    );
+    const rejected = page.waitForResponse(
+      (r) => r.url().endsWith("/task-fields/edit") && r.status() === 422,
+    );
+    await name.fill("field-1");
+    await name.press("Enter");
+    await rejected;
+    await page.waitForFunction(
+      () => !document.querySelector<HTMLInputElement>(".field-panel input")?.disabled,
+    );
+    expect(await name.inputValue()).toBe("field-2");
+    await page.getByText("Field name is already used.", { exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: "Publish", exact: true }).isDisabled()).toBe(
+      false,
+    );
+    await page.getByRole("tab", { name: "YAML", exact: true }).click();
+    expect(await page.locator(".cm-content").innerText()).toContain("field-2:");
+    await page.getByRole("tab", { name: "Visual", exact: true }).click();
+    await name.fill("Notes");
+    await name.press("Enter");
+    await page.waitForFunction(
+      () => document.querySelector<HTMLInputElement>(".field-panel input")?.value === "Notes",
+    );
+    expect(await page.getByText("Field name is already used.", { exact: true }).count()).toBe(0);
   } finally {
     await browser.close();
     await fixture.close();

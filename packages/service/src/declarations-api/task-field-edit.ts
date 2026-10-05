@@ -2,7 +2,7 @@
 // relationships:
 //   implements: declarations-api
 // ---
-import { parseDocument, isMap, isScalar, isSeq } from "yaml";
+import { parseDocument, isMap, isScalar, isSeq, visit } from "yaml";
 import type { TaskFieldEdit } from "@wyrd-company/manifold-shared/declarations-api";
 const pointer = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
 export function editTaskFields(text: string, edit: TaskFieldEdit) {
@@ -12,6 +12,32 @@ export function editTaskFields(text: string, edit: TaskFieldEdit) {
     findings: [{ kind, location, message }],
   });
   if (doc.errors.length) return fail("syntax", "", doc.errors[0]!.message);
+  // YAML's serializer normalizes non-string scalars, including numeric keys.
+  // Keep their written form when this edit did not change their value.
+  const original = new WeakMap<object, unknown>();
+  visit(doc, {
+    Scalar: (_key, node) => {
+      original.set(node, node.value);
+    },
+  });
+  doc.schema.tags = doc.schema.tags.map((tag) => {
+    const stringify = tag.stringify;
+    if (!stringify) return tag;
+    return {
+      ...tag,
+      stringify(node, ...args) {
+        if (
+          isScalar(node) &&
+          typeof node.value !== "string" &&
+          node.source !== undefined &&
+          original.has(node) &&
+          Object.is(original.get(node), node.value)
+        )
+          return node.source;
+        return stringify(node, ...args);
+      },
+    };
+  });
   if (edit.kind === "add-field") {
     const projects = doc.get("projects", true);
     const project = isMap(projects)
@@ -29,11 +55,15 @@ export function editTaskFields(text: string, edit: TaskFieldEdit) {
       (edit.binding.length > 64 || !/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(edit.binding))
     )
       return fail("bad-binding", "/projects", "Expected a Project binding.");
-    const path = ["projects", binding, "fields"];
-    if (!doc.hasIn(path)) doc.setIn(path, doc.createNode({}));
+    if (!project) doc.setIn(["projects", binding], doc.createNode({}));
+    const target = project?.value ?? doc.getIn(["projects", binding], true);
+    if (!isMap(target)) return fail("schema", "/projects", "Expected a Project mapping.");
+    if (!target.has("fields")) target.set("fields", doc.createNode({}));
+    const fields = target.get("fields", true);
+    if (!isMap(fields)) return fail("schema", "/projects", "Expected a fields mapping.");
     let n = 1;
-    while (doc.hasIn([...path, `field-${n}`])) n++;
-    doc.setIn([...path, `field-${n}`], doc.createNode({ type: "text" }));
+    while (fields.has(`field-${n}`)) n++;
+    fields.set(`field-${n}`, doc.createNode({ type: "text" }));
     return {
       ok: true as const,
       text: doc.toString({ lineWidth: 0 }),
