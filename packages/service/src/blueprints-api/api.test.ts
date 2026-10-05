@@ -306,6 +306,10 @@ test("save shape rejects malformed identities and messages before touching the r
     { path: "blueprints/../a.yml" },
     { path: "blueprints//a.yml" },
     { path: "blueprints/a\\b.yml" },
+    // Safe process repository paths `save` itself accepts, but the API refuses outside `blueprints/`.
+    { path: "other/a.yml" },
+    { path: "blueprints/a.json" },
+    { path: "task-metadata.yml" },
     { base: "bad" },
     { saveId: "bad" },
     { message: " " },

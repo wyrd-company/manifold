@@ -96,16 +96,20 @@ test("save accepts unrelated branch changes and conflicts when the edited file c
     await repository.save({ ...request, base: "f".repeat(40), saveId: "c".repeat(32) }),
   ).toMatchObject({ kind: "conflict" });
 });
-test.each([
-  "../blueprints/a.yml",
-  "blueprints//a.yml",
-  "blueprints/a.json",
-  "other/a.yml",
-  "blueprints/a\\b.yml",
-])("rejects malformed path %s", async (path) => {
-  const { repository, request } = await setup();
-  await expect(repository.save({ ...request, path })).rejects.toThrow(TypeError);
-});
+test.each(["../blueprints/a.yml", "blueprints//a.yml", "blueprints/a\\b.yml", ""])(
+  "rejects malformed path %s",
+  async (path) => {
+    const { repository, request } = await setup();
+    await expect(repository.save({ ...request, path })).rejects.toThrow(TypeError);
+  },
+);
+test.each(["task-metadata.yml", "other/a.yml", "blueprints/a.json"])(
+  "save accepts any safe process repository path %s",
+  async (path) => {
+    const { repository, request } = await setup();
+    expect(await repository.save({ ...request, path })).toMatchObject({ kind: "pushed" });
+  },
+);
 test("rejects malformed save identity and a remote branch which moved before push", async () => {
   const { remote, repository, options, request } = await setup();
   await expect(repository.save({ ...request, saveId: "bad" })).rejects.toThrow(TypeError);

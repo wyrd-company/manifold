@@ -62,8 +62,11 @@ export async function saveRevision(
   request: SaveRequest,
 ): Promise<SaveOutcome> {
   if (
-    !/^blueprints\/(?:[^/\\]+\/)*[^/\\]+\.ya?ml$/.test(request.path) ||
-    request.path.split("/").some((segment) => segment === "." || segment === "..") ||
+    request.path === "" ||
+    request.path.includes("\\") ||
+    request.path
+      .split("/")
+      .some((segment) => segment === "" || segment === "." || segment === "..") ||
     !/^[a-f0-9]{32}$/.test(request.saveId)
   )
     throw new TypeError("Invalid save path or saveId");
