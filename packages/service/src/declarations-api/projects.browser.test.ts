@@ -21,7 +21,6 @@ test("Projects reviews drift, reconfirms stale removals, and recognizes another 
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    page.setDefaultTimeout(4000);
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(fixture.url + "/console/projects");
@@ -76,7 +75,6 @@ test("Task fields preserves invalid drafts, fixes YAML, and publishes through th
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    page.setDefaultTimeout(4000);
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(fixture.url + "/console/settings/task-fields");
@@ -135,7 +133,6 @@ test("Visual task fields locks lifecycle controls and selects a new field with s
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    page.setDefaultTimeout(4000);
     await page.goto(fixture.url + "/console/settings/task-fields");
     const lifecycle = page.getByRole("row").filter({ hasText: "Stage" }).first();
     await lifecycle.waitFor();
@@ -178,7 +175,6 @@ test("binding conflicts retain operator values and preserve another channel's co
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    page.setDefaultTimeout(4000);
     await page.goto(fixture.url + "/console/projects");
     await page.getByRole("button", { name: "Bind a Project", exact: true }).click();
     const dialog = page.getByRole("dialog");
@@ -215,7 +211,6 @@ test("Task fields drops a late lint result after the draft changes", async () =>
   });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    page.setDefaultTimeout(4000);
     await page.addInitScript(() => {
       const original = window.fetch;
       window.fetch = (input, init) =>
@@ -293,7 +288,6 @@ test("Task fields keeps a pending save through reload and retries without anothe
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    page.setDefaultTimeout(4000);
     await page.goto(fixture.url + "/console/settings/task-fields");
     await page.getByRole("tab", { name: "YAML", exact: true }).click();
     await page.locator(".cm-content").waitFor();
@@ -341,7 +335,6 @@ test("Task fields conflict comparison and latest base preserve the operator draf
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    page.setDefaultTimeout(4000);
     await page.goto(fixture.url + "/console/settings/task-fields");
     await page.getByRole("tab", { name: "YAML", exact: true }).click();
     await page.locator(".cm-content").waitFor();
@@ -386,7 +379,6 @@ test("Project removal confirmation keeps the reviewed digest during a background
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    page.setDefaultTimeout(4000);
     await page.goto(fixture.url + "/console/projects/delivery");
     await page
       .getByRole("switch", { name: "Also remove what the task fields do not define" })
