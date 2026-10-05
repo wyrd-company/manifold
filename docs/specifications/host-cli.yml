@@ -51,8 +51,6 @@ description: >-
 
   2. When the command reached is the root or a group and no argument
   remains, it answers with its help on standard output and exit code 0.
-  `manifold-host`, `manifold-host --help`, and `manifold-host help` answer
-  the same text.
 
   3. When the command reached is the root or a group and its first
   remaining argument is not a flag, that argument is an unknown command.
@@ -67,15 +65,29 @@ description: >-
   the flag as written before any `=`, followed by ` for '<path>'` below
   the root, then its usage, and exits with code 2.
 
-  5. Otherwise the runnable command runs with its remaining arguments, and
+  5. When the command reached is `help`, its remaining arguments are the
+  target, a command path, and no command runs. The target is read from
+  the left, starting at the root: each argument that names a subcommand
+  of the command reached so far moves to it. When every argument has
+  moved, the command reached answers with its help on standard output and
+  exit code 0. When an argument does not name a subcommand of the command
+  reached, including any argument after a runnable command, that argument
+  is an unknown command: the command reached answers on standard error as
+  rule 3 states, with its path and that argument, and exits with code 2.
+  So `manifold-host help` answers what `manifold-host` and
+  `manifold-host --help` answer, `manifold-host help usage push` answers
+  what `manifold-host usage push --help` answers, and
+  `manifold-host help usage nothing` and
+  `manifold-host help usage push extra` are refused by `usage` and by
+  `usage push`. A flag in the target is decided by rules 1 and 4 for
+  `help`, which declares no flag but `-h` and `--help`:
+  `manifold-host help usage push --service` is refused as an unknown flag
+  for `help`, and `manifold-host help usage --help` answers the help of
+  `help`.
+
+  6. Otherwise the runnable command runs with its remaining arguments, and
   its own specification defines what it does with them, including each
   other refusal of its command line.
-
-
-  `manifold-host help` runs the resolution on its arguments followed by
-  `--help`, so `manifold-host help usage push` answers what
-  `manifold-host usage push --help` answers, and
-  `manifold-host help usage nothing` answers as an unknown command.
 
 
   **Help.** Help is plain text in sections, each a heading line ending in
@@ -142,13 +154,23 @@ validation-criteria: >-
   above, `--help` beside an unknown flag answering help, a `--help` that
   is the value of an option not answering help, `<flag>=<value>`, and the
   refusal text and exit code 2 of an unknown command at the root and in a
-  group and of an unknown flag. A test compiles the host CLI for the
+  group and of an unknown flag. For `help`, it observes the help of the
+  root, a group, and a runnable command as targets; the refusal by the
+  root, by a group, and by a runnable command of a target argument that
+  names none of their subcommands; the refusal of a target that ends in an
+  option's flag as an unknown flag for `help`; and that no target resolves
+  to a run. A test compiles the host CLI for the
   current platform and runs it from a directory with no `node_modules`. It
   observes that `manifold-host`, `manifold-host --help`, and
   `manifold-host help` print the same text on standard output, with an
   entry for every runnable command, and exit 0; that every runnable
   command and every group answers `--help` and `-h` with exit 0 and its
   help on standard output, equal to the help rendered from the assets; and
-  that an unknown command at the root, an unknown command in a group, an
-  unknown flag at the root, and an unknown flag of a runnable command each print their refusal and usage
-  on standard error, nothing on standard output, and exit 2.
+  that `manifold-host help <path>` prints the same text as
+  `manifold-host <path> --help` for every group and runnable command, the
+  `help` command's own help included; and that an unknown command at the
+  root, an unknown command in a group, an unknown flag at the root, an
+  unknown flag of a runnable command, `manifold-host help` with an unknown
+  target in a group, and `manifold-host help` with a target that ends in
+  an option's flag each print their refusal and usage on standard error,
+  nothing on standard output, and exit 2.

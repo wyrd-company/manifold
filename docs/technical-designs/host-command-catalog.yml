@@ -99,7 +99,10 @@ proposed-design:
     `resolve(tree, args)` and `renderHelp(node)` and `renderUsage(node)`.
     `resolve` answers one of `{ kind: "help", text }`,
     `{ kind: "refusal", text }`, and `{ kind: "run", path, args }`, as the
-    resolution of `host-cli` states, with `help` resolved to help. The
+    resolution of `host-cli` states. `help` is resolved inside `resolve`
+    by walking its target through the tree, as `host-cli` states for the
+    `help` command, and answers
+    only help or a refusal, never a run, so it has no handler. The
     catalog imports no command module and nothing from
     `@wyrd-company/manifold-shared`.
   handlers: >-
@@ -129,8 +132,10 @@ proposed-design:
     criteria list. The compiled-binary test, `src/help.test.ts`, joins the
     `host-children` project in `vite.config.ts`. It runs the binary for the
     root forms, for `--help` and `-h` on every group and runnable command
-    of the generated tree, comparing standard output with `renderHelp` of
-    that node, and for each refusal. `index.test.ts`, which tests the
+    of the generated tree, `help` included, comparing standard output with
+    `renderHelp` of that node; for `help <path>` on the same nodes,
+    comparing it with the `--help` output; and for each refusal, an unknown
+    `help` target and a target ending in an option's flag included. `index.test.ts`, which tests the
     placeholder, is removed.
   convergence: >-
     Nothing in this design changes state. Help and refusals write text and

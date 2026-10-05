@@ -22,8 +22,9 @@ commands:
     positional-arguments:
       - name: command
         description: >-
-          The path of a command, such as `usage push`. Without it, the help
-          of the host CLI is shown.
+          The path of a command or group, such as `usage push`, read from
+          the root one name at a time. Without it, the help of the host CLI
+          is shown. No command runs.
         position: 0
         greedy: true
         required: false
@@ -44,8 +45,9 @@ commands:
           meaning: The help was shown.
         - code: 2
           meaning: >-
-            The path names no command. The usage of the nearest command is
-            on standard error.
+            A name of the path is not a subcommand of the command before it,
+            or a flag other than `-h` or `--help` is given. The usage of the
+            command reached is on standard error.
     examples:
       - manifold-host help
       - manifold-host help usage push
