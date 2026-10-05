@@ -9,6 +9,7 @@ relationships:
   mitigated-by:
     - serve-the-api-without-authentication
     - http-host-configuration
+    - service-distribution
   related-to:
     - escalation-links-exposed
     - service-assembly

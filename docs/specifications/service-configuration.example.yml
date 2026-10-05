@@ -1,0 +1,97 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this example belongs to.
+#   asset-of: service-configuration
+# ---
+# An example service configuration: one GitHub organization, one T3 Code
+# environment, and one ntfy destination. Every relative path resolves
+# against the directory of this file, so one directory holds the whole
+# deployment: this file, `credentials/` with one secret in each file, and
+# `state/` for the clone and the store. Values here are placeholders; set
+# each commented value to your own.
+
+processRepository:
+  # The smart HTTP URL of your process repository, with no user name or token in it.
+  url: https://github.com/example-org/example-process.git
+  # The branch the service follows.
+  branch: main
+  # The credential that reads the repository: a name under `credentials`.
+  credential: github-app
+  # Where the service keeps its clone. Created when absent.
+  directory: state/process-repository
+
+store:
+  # The store's SQLite database file. Created, with its directory, when absent.
+  file: state/manifold.sqlite
+
+http:
+  # The address the service listens on. Keep loopback; expose paths through your proxy.
+  host: 127.0.0.1
+  # The port the service listens on.
+  port: 7480
+
+credentials:
+  github-app:
+    # A GitHub App installation.
+    kind: github-app
+    # The App id, from the App's settings page.
+    appId: 1001
+    # The installation id on your organization, from the installation's settings URL.
+    installationId: 2002
+    # The App's private key file, generated on the App's settings page. Mode 0600.
+    privateKeyFile: credentials/github-app.pem
+  workstation-token:
+    # A T3 Code access token.
+    kind: t3code-token
+    # The file holding the token from `t3 auth session issue`. Mode 0600.
+    tokenFile: credentials/workstation.token
+  ntfy-token:
+    # An ntfy access token that may publish to the destination's topic.
+    kind: ntfy-token
+    # The file holding the ntfy token. Mode 0600.
+    tokenFile: credentials/ntfy.token
+
+github:
+  owners:
+    # Your organization's login.
+    example-org:
+      # The `github-app` credential installed on this organization.
+      credential: github-app
+      hooks:
+        # The organization hook's id, from its settings URL.
+        - id: 3003
+          # The file holding the secret you gave the hook. Mode 0600.
+          secretFile: credentials/example-org-hook.secret
+
+environments:
+  # The environment's name; bindings in the process repository use it.
+  workstation:
+    # The T3 Code server's base URL.
+    url: http://127.0.0.1:3773
+    # The `t3code-token` credential for this server.
+    credential: workstation-token
+
+escalations:
+  # The public base URL your proxy serves `/escalations/` at.
+  publicUrl: https://service.example.com
+  destinations:
+    # `default` receives the service's own escalations.
+    default:
+      # The ntfy server.
+      server: https://ntfy.sh
+      # The topic reserved to your ntfy account.
+      topic: example-alerts
+      # `open`, `reserved`, or `self-hosted`; `reserved` and `self-hosted` need a credential.
+      posture: reserved
+      # The `ntfy-token` credential that publishes to the topic.
+      credential: ntfy-token
+
+# Defaults apply; see expressions-configuration.schema.yml.
+expressions: {}
+
+# Defaults apply; see comparator-sandbox-configuration.schema.yml.
+comparatorSandbox: {}
+
+# Defaults apply; see blueprint-lint-configuration.schema.yml.
+blueprintLint: {}

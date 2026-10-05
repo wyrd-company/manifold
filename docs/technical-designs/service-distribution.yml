@@ -1,0 +1,317 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - service-assembly
+    - service-configuration
+    - github-event-source
+    - t3code-environment-source
+    - escalations
+    - usage-intake
+  mitigates:
+    - api-reachable-without-authentication
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications that define its contracts; `references` is the best fit.
+  references:
+    - service-configuration
+    - host-cli-usage
+    - host-cli-manifest-lint
+    - bindings-declaration
+  # GAP-EDGE: the decision record is context, not a contract; the schema
+  # declares no edge for it, and `contextualized-by` is its inverse.
+  contextualized-by:
+    - serve-the-api-without-authentication
+objective: >-
+  Let an operator go from nothing to a running Manifold service that has
+  taken in an issue on a GitHub Project of their own: a service archive
+  they start with one command from one service configuration file on Linux
+  x64 or arm64, a configuration example that is valid against the service
+  configuration schema, and an operator setup guide that walks every step
+  outside Manifold, so that acceptance runs on the operator's machine and
+  not only inside the test suite.
+background:
+  current-design: >-
+    The service package's `build` emits `dist/main.js`, and
+    `node dist/main.js <configuration-file>` starts the assembled service
+    from a checkout whose `node_modules` pnpm installed for the workspace.
+    The host CLI compiles to one Bun binary per target with
+    `task build:targets`. Every module runs inside the test suite against
+    fakes of GitHub and T3 Code. The service configuration specification
+    holds a short inline example of three sections.
+  problems:
+    - >-
+      The service runs only from a developer's checkout. It reads
+      `node:sqlite`, a native decision engine whose binary differs per
+      platform, a WebAssembly file, a worker file, and the console's static
+      files by module resolution, so no single file can be copied to
+      another machine and started.
+    - >-
+      No document tells an operator how to create the GitHub App, the
+      organization hook and its events, the T3 Code token, the ntfy
+      destinations, the process repository, or the proxy that admits
+      GitHub, and an operator who guesses exposes the whole API.
+    - >-
+      The inline example covers three of ten sections, and no test shows
+      that it loads.
+design-challenges:
+  native-binaries: >-
+    The decision engine ships one optional package per platform. An archive
+    for a platform must hold that platform's binary whatever machine built
+    it, and must hold no workspace source.
+  one-command: >-
+    Start must be one command an operator can type and a service manager
+    can run, with no build step and no package manager on the operator's
+    machine, while every credential stays in a file the configuration
+    names.
+  example-drift: >-
+    Sections join the configuration root as modules land. The example must
+    fail a test, not go stale, when a section joins or a value changes
+    shape.
+  exposure: >-
+    GitHub must reach the webhook path and a person's phone must reach the
+    answer page, while the API, the console, and the usage push stay off
+    the public network, as `api-reachable-without-authentication` states.
+  guide-truth: >-
+    A guide is prose. It is true only while someone follows it against
+    real services, and the external steps (GitHub settings pages, T3 Code
+    commands) change outside Manifold's releases.
+proposed-design:
+  high-level-overview: >-
+    `task package:service` builds the workspace and writes one service
+    archive for one Linux architecture,
+    `dist/packages/manifold-service-<version>-linux-<arch>.tar.gz`, whose
+    single top-level directory `manifold-service/` holds the service's
+    compiled `dist/`, its `package.json`, and a production `node_modules`
+    that holds the console's static files, the shared package, and the
+    decision engine binary for that architecture. The operator extracts it
+    anywhere and runs `node manifold-service/dist/main.js <configuration-file>`,
+    the entry point `service-assembly` specifies, on Node 24.11 or later.
+    `task package:smoke` proves an archive outside the workspace. A `package`
+    job in CI runs both on an x64 and an arm64 runner. The configuration
+    example is `docs/specifications/service-configuration.example.yml`, an
+    asset of `service-configuration`, whose test loads it through
+    `loadServiceConfiguration` and checks that it names every root section
+    and comments every value. The operator setup guide is
+    `docs/guides/operator-setup.md`, structured below, and `README.md`
+    points to it. The archive is built from a checkout; publishing it is a
+    decision reserved to the user.
+  service-archive: >-
+    The archive's root directory is `manifold-service/` and holds exactly:
+    `package.json`, the service package's manifest; `dist/`, the output of
+    the service package's `build`, with `main.js` and the worker files; and
+    `node_modules/`, the production dependency tree, in which
+    `@wyrd-company/manifold-console` holds only its built `dist/` and
+    `@wyrd-company/manifold-shared` only its built `dist/` and the files
+    its exports name. It holds no `src/`, no test file, no fixture, no
+    development dependency, and no credential. The decision engine's
+    platform package in the tree is `linux-<arch>-gnu` for the archive's
+    architecture, and no other platform's binary is present. Each
+    workspace package states what it ships with a `files` field, so the
+    archive's content is declared in the manifests and not chosen by the
+    packaging script. The archive name carries the service package's
+    `version` and the architecture, `x64` or `arm64`. Linux with glibc is
+    the supported platform; musl, macOS, and Windows have no archive.
+  build: >-
+    `task package:service` takes `ARCH`, `x64` or `arm64`, defaulting to
+    the build machine's architecture. It runs `pnpm run build`, then
+    `pnpm deploy --prod` of `@wyrd-company/manifold-service` into a staging
+    directory under `dist/packages/`, with pnpm's supported architectures
+    set to `os: linux`, `cpu: <ARCH>`, `libc: glibc` for that install
+    alone, so the platform package of the target is fetched on any build
+    machine. It removes the staging directory before it starts and writes
+    the archive with `tar` from the staging directory's parent, so the
+    archive's only top-level entry is `manifold-service/`. The workspace's
+    own `node_modules` and `pnpm-workspace.yaml` are unchanged by a
+    package build. The commands live in `Taskfile.yml`, and any logic
+    beyond a command line in `packages/service/scripts/`. These are build
+    tools, so they may run `pnpm` and `tar`; no service code runs a
+    process.
+  start-command: >-
+    `node manifold-service/dist/main.js <configuration-file>` is the one
+    documented start command, run from the directory the archive was
+    extracted into, or with absolute paths. Its exit codes, signals, and
+    log are the entry point's in `service-assembly`. The archive adds no
+    launcher script and no check of the Node version: a Node older than
+    the package's `engines` range fails at the import of `node:sqlite` or
+    of a module syntax it lacks, and the guide's prerequisites name the
+    range. The guide shows one systemd unit that runs the same command,
+    with `KillSignal=SIGTERM` and no stop timeout of its own beyond
+    systemd's default, as an example of a service manager, not as a part
+    Manifold ships.
+  smoke: >-
+    `task package:smoke` takes the archive of the build machine's
+    architecture, extracts it into a new temporary directory outside the
+    workspace, and, with no `NODE_PATH` and no workspace on any parent
+    path, checks: the archive's only top-level entry is
+    `manifold-service/`, and no path in it is under a `src/` directory of
+    a workspace package, ends in `.test.ts` or `.test.js`, or is a
+    `test-fixtures` directory; `node manifold-service/dist/main.js` with no
+    argument exits 2; the decision engine's binding loads with a dynamic `import`
+    from inside `manifold-service/`; and a configuration written by the
+    smoke into the temporary directory (a process repository URL on a
+    closed loopback port, a relative store file, `http.port` 0, no owners,
+    no environments, no destinations) starts: the log has `pull-failed`
+    and then `started` with the bound address, `GET /console/` on that
+    address answers 200 with HTML, `POST /webhooks/github` with no
+    signature answers a 4xx, and `SIGTERM` logs `stopped` and exits 0.
+    The smoke removes its temporary directory when it ends. It is a
+    Node script in `packages/service/scripts/` and is not part of
+    `task check`, so `task check` stays free of a package build.
+  ci: >-
+    `.github/workflows/check.yml` gains a `package` job with a matrix of
+    `ubuntu-24.04` and `ubuntu-24.04-arm`. Each runs `pnpm install
+    --frozen-lockfile`, `task package:service`, and `task package:smoke`
+    for the runner's architecture, so each archive is built and started
+    on its own architecture at every push. The job uploads nothing: a
+    workflow artifact of a public repository is downloadable by others,
+    which is publishing.
+  distribution: >-
+    The operator builds the archive from a checkout of the repository at
+    the commit under acceptance, on a machine with Node, pnpm, and Task,
+    and copies the archive to the service host; the service host needs
+    only Node. The host CLI is built the same way with
+    `task build:targets`, and the guide copies
+    `packages/host-cli/dist/linux-<arch>/manifold-host` (or the macOS
+    or Windows target) onto each environment's `PATH`. Neither artifact is
+    published to a registry, a release, or a workflow artifact until the
+    user decides where; the guide's install steps name only the archive
+    file and the binary, so a published location replaces the build step
+    and nothing else.
+  configuration-example: >-
+    `docs/specifications/service-configuration.example.yml` is a complete
+    service configuration for one organization, one environment, and one
+    notification destination, with generic values: owner `example-org`,
+    process repository `example-process`, environment `workstation`, and
+    destination `default`, the name service escalations use. Every path in
+    it is relative, so it resolves against the configuration file's
+    directory and a whole deployment is one directory the operator
+    chooses: the configuration file, a `credentials/` directory of files
+    that hold one secret each, and a `state/` directory for the clone and
+    the store. Every section the root schema names is a key of the
+    example. A section the operator leaves at its defaults is `{}` with a
+    comment naming the section's schema file, so no default is restated
+    in a second place. Every value the operator sets carries a comment
+    that says what it is and where the operator gets it. A section that
+    joins the root in a later task joins the example in the same change,
+    and the test below fails until it does. The specification's own inline
+    example is replaced by a reference to this asset.
+  example-test: >-
+    A test in `packages/service/src/service-configuration/` copies the
+    example into a temporary directory, creates an empty file at each
+    `privateKeyFile` it names (the only files the loader reads), and calls
+    `loadServiceConfiguration`, which must resolve; so the example is valid
+    against the schema and against the cross-checks the loader adds. The
+    same test parses the example with the `yaml` package's document model
+    and checks that the set of its top-level keys equals the set of the
+    root schema's `properties`, read from `serviceConfigurationSchemas`,
+    and that every pair whose value is a scalar has a comment on its own
+    line before it or at the end of its line. A section added to the root
+    without the example, a key renamed in a section, and a value left
+    uncommented each fail it.
+  guide: >-
+    `docs/guides/operator-setup.md` is Markdown with a front-matter
+    `relationships` block (`references` this design, the configuration
+    example, and the specifications it names). It addresses the operator,
+    states each step as an action and its check, and names every
+    credential by the file that holds it, never a value. Its sections, in
+    order: (1) What you will have: a service that has taken in an issue
+    on a test Project, and the scope of the guide (one host, one
+    organization, environments on that host or on its private network).
+    (2) Prerequisites: a Linux x64 or arm64 host with glibc and Node 24.11
+    or later; a build machine with Node, pnpm, Task, and a checkout; a
+    GitHub organization the operator owns; a T3 Code server on each
+    environment; optionally an ntfy account or server; and, for webhooks
+    and phone answers, a reverse proxy or tunnel the operator runs.
+    (3) Build and install: `task package:service`, copy, extract, and the
+    deployment directory layout of the example. (4) The GitHub App: create
+    it on the organization with its webhook inactive (Manifold reads
+    deliveries from an organization hook, not the App's webhook); the
+    permission table, each permission with the module that uses it and
+    why; install it on the organization for the process repository and
+    the task repositories; record the App id and installation id; generate
+    the private key into `credentials/` with mode 0600. (5) The process
+    repository: create it from the starter repository; run its first lint
+    with the host CLI; declare the test Project's binding and the accounts'
+    capacity; push. (6) Exposure: the proxy rule below, and the public base
+    URL it gives. (7) The organization hook: payload URL
+    `<public base URL>/webhooks/github`, content type `application/json`,
+    a secret generated into `credentials/` and never typed, SSL
+    verification on, and the events `issues`, `issue_dependencies`,
+    `sub_issues`, `projects_v2_item`, `projects_v2`, and `push`, as
+    `github-event-source` lists; record its id. (8) T3 Code: issue a token
+    on each environment with `t3 auth session issue` and the scopes
+    `orchestration:read` and `orchestration:operate`, write it to
+    `credentials/<environment>.token`, and add the environment. (9) ntfy:
+    the three postures, when to choose each, the token for `reserved` and
+    `self-hosted`, and `escalations.publicUrl` set to the public base URL.
+    (10) Configure and start: copy the example, set each commented value,
+    start with the one command, and read the `started` line; the optional
+    systemd unit. (11) The host CLI on each environment: install the
+    binary and run `manifold-host usage push --service <url> --environment
+    <name>` after agent work, from a scheduler the operator chooses, with
+    one timer example. (12) Check: add an issue to the test Project and
+    find its `task:<issue node id>` actor in the console or through
+    `GET /api/actors`. (13) When something is wrong: the log events an
+    operator meets first (`start-failed` with its issues, `pull-failed`,
+    `github-error`, a hook delivery answered 401 or 404 in GitHub's
+    delivery log, `portfolio-rejected`, `blueprint-invalid`). (14) Stop,
+    restart, and upgrade: `SIGTERM`, then replace `manifold-service/`
+    and start again; the deployment directory carries all state.
+  github-app-permissions: >-
+    The guide's permission table lists what the modules of this release
+    use, each with its reason, and nothing more: repository `Metadata:
+    read`, which every App holds; repository `Contents: read`, for the
+    process repository's clone and pulls; repository `Issues: read`, for
+    each issue's state and relationships; repository `Pull requests: read`,
+    so a pull request item on a Project shows its content; organization
+    `Projects: read and write`, to read Projects and to move a card's
+    lifecycle field; and organization `Webhooks: read and write`, to list
+    the organization hook's deliveries and ask for redelivery. Repository
+    `Webhooks: read and write` is listed for an operator who uses a
+    repository hook instead, such as for a repository a user account owns.
+    The App's own webhook stays inactive, and the App subscribes to no
+    event. Each grant is within the holdings the user approved for the
+    Manifold App.
+  exposure: >-
+    The guide's exposure section states one rule: the public network
+    reaches the service only through a proxy that forwards `POST` under
+    `/webhooks/github`, and `GET` and `POST` under `/escalations/`, and
+    answers every other path itself without forwarding it; the service
+    listens on `127.0.0.1`. The webhook path verifies each delivery by its
+    hook's secret, and the escalation paths need the escalation's key, so
+    these are the paths that are safe to expose; `/api/`, `/console/`,
+    and `/api/usage/push` are not. The section gives the rule as a table
+    of path, methods, and reason, then one example in a widely used proxy
+    (Caddy), and states that a tunnel for testing follows the same rule
+    and may admit only `POST /escalations/{id}/answer` when no person
+    opens the answer page. How environments on another machine reach
+    `/api/usage/push` is a decision reserved to the user.
+  verification: >-
+    The executor follows the guide on a clean machine or container, step
+    by step, once against real GitHub through the test environment of the
+    live-checks tooling (the test organization, its App installation, and
+    its tunnel) and real T3 Code where an environment is available, and
+    against the fakes of `foundation.integration.test.ts` for any step
+    that has no real counterpart. The execution log of the task records,
+    per guide section, which ran against real services, which against
+    fakes, what was corrected in the guide, and the final check: the
+    `task:<issue node id>` actor read through the API. Credential values
+    appear in no record.
+  convergence: >-
+    `task package:service` removes its staging directory first and
+    overwrites the archive, so a second run, or a run after one killed
+    halfway, gives the same archive content. `task package:smoke` works
+    in a new temporary directory each run and removes it at the end; one
+    killed halfway leaves only that directory, under the system temporary
+    directory. Extracting the archive over an earlier extraction replaces
+    `manifold-service/` and touches no file of the deployment directory,
+    since state lives only in the paths the configuration names. Starting
+    the service twice on the same configuration converges as
+    `service-assembly` states.
+  tests: >-
+    Red before green. The example test fails first against the current
+    inline example (it is not a file) and against a copy with one section
+    removed and with one comment removed. The smoke fails first against an
+    archive packed without `files` fields (it finds `src/` and test
+    files), and against one built for the other architecture (the engine
+    binding fails to load). `task check` runs the example test; CI's
+    `package` job runs the build and the smoke on both architectures.

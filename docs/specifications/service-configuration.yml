@@ -70,24 +70,10 @@ description: |-
   without a restart. `apiUrl` is the base URL of the GitHub REST API that
   mints the tokens. Default `https://api.github.com`.
 
-  An example configuration:
-
-  ```yaml
-  processRepository:
-    url: https://github.com/example-org/example-process.git
-    credential: example-app
-    directory: /var/lib/example/process-repository
-  store:
-    file: /var/lib/example/manifold.sqlite
-  credentials:
-    example-app:
-      kind: github-app
-      appId: 1001
-      installationId: 2002
-      privateKeyFile: example-app.private-key.pem
-  comparatorSandbox:
-    timeoutMs: 250
-  ```
+  `docs/specifications/service-configuration.example.yml` is a complete
+  example: every section the root names, with a comment on each value an
+  operator sets, and the sections left at their defaults written `{}`. A
+  section that joins the root joins the example in the same change.
 
   Beyond the schema, the file is valid only when every credential name a
   section uses is a key of `credentials`, and every `privateKeyFile` names a
@@ -111,3 +97,7 @@ validation-criteria: >-
   with no optional sections returns every section with its defaults,
   including `comparatorSandboxDefaults`. A credential name that `credentials`
   does not define fails with an issue at the property that uses it.
+  `docs/specifications/service-configuration.example.yml` loads with no
+  issue once each `privateKeyFile` it names exists, its top-level keys are
+  the root's `properties`, and each of its scalar values has a comment,
+  checked by a test.
