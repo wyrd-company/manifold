@@ -76,9 +76,10 @@ description: |-
   section that joins the root joins the example in the same change.
 
   Beyond the schema, the file is valid only when every credential name a
-  section uses is a key of `credentials`, and every `privateKeyFile` names a
-  readable file. A failure of either is an issue at the path of the property
-  that holds the name or the file path.
+  section uses is a key of `credentials`, and every credential file it names
+  is a readable file: each credential's `privateKeyFile` or `tokenFile`, and
+  each GitHub hook's `secretFile`. A failure of either is an issue at the
+  path of the property that holds the name or the file path.
 
   The schemas are bundled once, in `packages/shared`, which exports one
   constant per schema file, `serviceConfigurationSchemas`, the list of

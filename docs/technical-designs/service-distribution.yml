@@ -9,6 +9,7 @@ relationships:
     - usage-intake
   mitigates:
     - api-reachable-without-authentication
+    - t3code-token-expires
   # GAP-EDGE: the technical-design schema declares no edge to the
   # specifications that define its contracts; `references` is the best fit.
   references:
@@ -16,6 +17,8 @@ relationships:
     - host-cli-usage
     - host-cli-manifest-lint
     - bindings-declaration
+    - accounts-declaration
+    - t3code-environments-configuration
   # GAP-EDGE: the decision record is context, not a contract; the schema
   # declares no edge for it, and `contextualized-by` is its inverse.
   contextualized-by:
@@ -199,8 +202,10 @@ proposed-design:
     in a second place. Every value the operator sets carries a comment
     that says what it is and where the operator gets it. A section that
     joins the root in a later task joins the example in the same change,
-    and the test below fails until it does. The specification's own inline
-    example is replaced by a reference to this asset.
+    and the test below fails until it does. Account capacity is declared in
+    the process repository's `accounts.yml`, not here, so it adds no
+    section. The specification's own inline example is replaced by a
+    reference to this asset.
   example-test: >-
     A test in `packages/service/src/service-configuration/` copies the
     example into a temporary directory, creates an empty placeholder file
@@ -237,20 +242,25 @@ proposed-design:
     deliveries from an organization hook, not the App's webhook); the
     permission table, each permission with the module that uses it and
     why; install it on the organization for the process repository and
-    the task repositories; record the App id and installation id; generate
-    the private key into `credentials/` with mode 0600. (5) The process
+    the task repositories; record the App id and the installation id, the
+    two ids the `github-app` credential takes (the App's client id is not
+    used); generate the private key into `credentials/` with mode 0600. (5) The process
     repository: create it from the starter repository; run its first lint
-    with the host CLI; declare the test Project's binding and the accounts'
-    capacity; push. (6) Exposure: the proxy rule below, and the public base
+    with the host CLI; declare the test Project's binding; declare each
+    account in `accounts.yml` with its `unit`, `kind`, and `capacity`
+    (`amount`, `reset`, `every`), as `accounts-declaration` specifies;
+    check the declarations with `manifold-host usage lint`; push. (6) Exposure: the proxy rule below, and the public base
     URL it gives. (7) The organization hook: payload URL
     `<public base URL>/webhooks/github`, content type `application/json`,
     a secret generated into `credentials/` and never typed, SSL
     verification on, and the events `issues`, `issue_dependencies`,
     `sub_issues`, `projects_v2_item`, `projects_v2`, and `push`, as
-    `github-event-source` lists; record its id. (8) T3 Code: issue a token
-    on each environment with `t3 auth session issue` and the scopes
-    `orchestration:read` and `orchestration:operate`, write it to
-    `credentials/<environment>.token`, and add the environment. (9) ntfy:
+    `github-event-source` lists; record its id. (8) T3 Code: obtain a token
+    for each environment as `t3code-token` below states, write it to
+    `credentials/<environment>.token` without printing it, add the
+    environment with the server's base URL (port 3773 unless the server
+    was started with `--port`), and set a reminder to renew the token
+    before it expires. (9) ntfy:
     the three postures, when to choose each, the token for `reserved` and
     `self-hosted`, and `escalations.publicUrl` set to the public base URL.
     (10) Configure and start: copy the example, set each commented value,
@@ -292,6 +302,31 @@ proposed-design:
     is already in `manifold-service.old/` and the new one is moved in. At
     no point is a `manifold-service/` present that mixes files of two
     archives.
+  t3code-token: >-
+    The scopes approved for Manifold 0.1.0's T3 Code token are
+    `orchestration:read` and `orchestration:operate`, the whole set. The T3 Code CLI and server of version
+    0.0.42 define two ways to get a bearer token. `t3 auth session issue`
+    takes no scope flag and issues the administrative scope set:
+    `orchestration:read`, `orchestration:operate`, `terminal:operate`,
+    `review:write`, `relay:read`, `access:read`, `access:write`, and
+    `relay:write`. `t3 auth pairing create` issues a one-time pairing token
+    (default lifetime 5 minutes) whose grant holds the standard client
+    scopes, and `POST /oauth/token` on the server exchanges it, with
+    `grant_type` `urn:ietf:params:oauth:grant-type:token-exchange`,
+    `subject_token_type` `urn:t3:params:oauth:token-type:environment-bootstrap`,
+    `requested_token_type` `urn:ietf:params:oauth:token-type:access_token`,
+    and `scope` `orchestration:read orchestration:operate`, for a bearer
+    token that holds exactly the scopes requested; the server refuses a
+    scope the grant does not hold. A bearer token from either way expires
+    after 30 days by default; `session issue` accepts `--ttl`, and the
+    exchange takes no lifetime. The server listens on port 3773 by
+    default. Which way the guide gives is a decision reserved to the user;
+    the guide pipes the token from the command's JSON output into its file
+    with a mode of 0600 so that it is never shown. The source rereads the
+    file at each connection attempt, so renewing is replacing the file.
+    The implementer confirms these facts against the T3 Code version the
+    service's development dependency names before the guide states them,
+    without issuing a token outside a test environment.
   github-app-permissions: >-
     The guide's permission table lists what the modules of this release
     use, each with its reason, and nothing more: repository `Metadata:
@@ -332,7 +367,11 @@ proposed-design:
     live-checks tooling (the test organization, its App installation, and
     its tunnel) and real T3 Code where an environment is available, and
     against the fakes of `foundation.integration.test.ts` for any step
-    that has no real counterpart. The execution log of the task records,
+    that has no real counterpart. The test environment runs one live
+    environment per organization at a time, so the walkthrough does not
+    run while another task's live check holds it, and its tunnel admits
+    `GET /escalations/{id}` and `POST /escalations/{id}/answer` only when
+    answers are enabled for the walkthrough. The execution log of the task records,
     per guide section, which ran against real services, which against
     fakes, what was corrected in the guide, and the final check: the
     `task:<issue node id>` actor read through the API. Credential values

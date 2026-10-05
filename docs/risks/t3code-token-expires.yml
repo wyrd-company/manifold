@@ -1,0 +1,36 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: A T3 Code token expires and the service loses its environment
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the design whose guide tells the operator to renew the token.
+relationships:
+  mitigated-by:
+    - service-distribution
+  related-to:
+    - t3code-environment-source
+    - t3code-environments-configuration
+
+description: >-
+  A bearer token a T3 Code server issues expires, after 30 days by default,
+  and the token Manifold reads from a `t3code-token` credential's file is
+  one such token. Once it expires, every connection attempt to that
+  environment is refused: the environment source publishes no thread
+  change, and thread and turn commands wait on the reconnect backoff, so
+  tasks on that environment stop moving until the operator replaces the
+  file.
+
+categories:
+  - operational
+
+likelihood: 4
+impact: 3
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: the operator setup guide tells the operator the token's
+# lifetime and to renew it before it ends; the source rereads the file at
+# each connection attempt, so a replaced file applies without a restart.
