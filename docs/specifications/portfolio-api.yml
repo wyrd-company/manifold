@@ -82,11 +82,12 @@ description: >-
   - `unallocated`: the top level's unallocated remainder, one entry per
     account in `accounts`.
 
-  - `warnings`: the warnings of the declaration in force,
-    `lintAllocatedAccounts` over `portfolio.yml` and `accounts.yml` at
-    the commit of the declaration in force, the revision whose apply
-    accepted it, so they are the warnings that apply reported, such as
-    `account-undeclared` at an allocation's account name. Each holds
+  - `warnings`: the warnings of the declarations in force: the
+    `lintAllocatedAccounts` warnings of `portfolio.yml` at the commit of
+    the portfolio declaration in force, for each allocation whose account
+    the accounts declaration in force does not declare, such as
+    `account-undeclared` at the allocation's account name. A revision
+    that changes only `accounts.yml` changes them. Each holds
     `file`, `kind`, `location`, the RFC 6901 JSON Pointer in the file's
     document, `severity`, `message`, and `details`, as the lint gives
     them. Empty before the first accepted declaration.
@@ -151,4 +152,8 @@ validation-criteria: >-
   percentage and amount; that `activeTasks` counts an active snapshot on
   `gamma` under `alpha`; that after a commit that changes `alpha`'s
   guarantee is applied, the read answers its commit and the new guarantee;
-  and the `404`, `405`, and `500` answers.
+  that a revision that declares `acct-c` in `accounts.yml` and leaves
+  `portfolio.yml` unchanged removes the warning and lists `acct-c` as
+  declared, a later revision that removes it adds the warning back, and
+  a service restarted on the same store after each revision answers the
+  same; and the `404`, `405`, and `500` answers.

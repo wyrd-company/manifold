@@ -1679,9 +1679,13 @@ proposed-design:
     item has no allocations, so it starts at 0% for every account. Its id
     is the name in lower case with each run of characters other than
     letters and digits replaced by `-`, leading and trailing `-` removed,
-    `item-` put before it when it does not start with a letter, cut to 64
-    characters, and `-2`, `-3`, and so on added while it equals an id in
-    the tree or `other`; the dialog shows it under the name in muted mono.
+    and `item-` put before it when it does not start with a letter. The
+    first candidate is that slug cut to 64 characters; while a candidate
+    equals an id in the tree or `other`, the next is the slug cut to 64
+    less the length of the suffix, with trailing `-` removed, followed by
+    `-2`, `-3`, and so on, so every candidate is a declared name of at
+    most 64 characters. The pure `itemId(name, ids)` in `edits.ts` makes
+    it, and the dialog shows it under the name in muted mono.
   archive-and-restore: >-
     The dialog's footer has "Archive item" on the left (error text,
     outline) with the muted note "Its allocation returns to <parent>."
@@ -1855,12 +1859,20 @@ proposed-design:
     balances through the portfolio whose ledger is the capacity module's,
     so the first `balance` of a declared account credits its current
     window as a gate's read does; it then reads the window with
-    `windowAt` and the totals with `totals`. The warnings are
-    `lintAllocatedAccounts` over `portfolio.yml` and `accounts.yml` read
-    through `processRepository.revisionAt` at the commit of the
-    declaration in force; the listener keeps them for that one commit
-    until the declaration in force changes, so a read reads the files
-    once per commit. A read that throws answers `500`, and the error goes
+    `windowAt` and the totals with `totals`. The warnings join the two
+    declarations in force, each of which changes on its own revision: the
+    portfolio declaration, whose commit names its text, and the accounts
+    declaration, `accounts()`, which usage intake keeps in its store and
+    restores at start. For the portfolio side the listener reads
+    `portfolio.yml` through `processRepository.revisionAt` at the commit
+    of the portfolio declaration in force and runs `lintAllocatedAccounts`
+    with `accounts` undefined, which warns on every allocation; it keeps
+    that list for that one commit. For each read it keeps the warnings
+    whose `details.account` is not a name of `accounts()`. A revision that
+    adds or removes an account and leaves `portfolio.yml` unchanged
+    changes `accounts()` and not the portfolio commit, so the next read
+    drops or adds the warning with no cache to clear, and the same holds
+    after a restart. A read that throws answers `500`, and the error goes
     to `log` with the path.
   portfolio-public-interface: |-
     `packages/service/src/portfolio-api/index.ts` exports exactly these
@@ -1873,7 +1885,6 @@ proposed-design:
     import type { PortfolioInForce } from "../portfolio/index.ts";
     import type { ProcessRepository } from "../process-repository/index.ts";
     import type { UsageAccount } from "@wyrd-company/manifold-shared";
-    import type { ServiceWiringPart } from "../service/index.ts";
 
     export interface PortfolioApiOptions {
       /** The portfolio whose ledger is the capacity module's. */
@@ -1890,12 +1901,13 @@ proposed-design:
       readonly log: (entry: { level: "error"; path: string; error: string }) => void;
     }
 
-    /** Mounts the portfolio endpoints at `/api/portfolio`. */
+    /** Mounts the portfolio endpoint at `/api/portfolio`. */
     export function mountPortfolioApi(host: HttpHost, options: PortfolioApiOptions): void;
-
-    /** The service wiring part that mounts the portfolio endpoints. */
-    export const portfolioApiPart: ServiceWiringPart;
     ```
+
+    The wiring part is not part of this surface: it lives in `wiring.ts`,
+    which `service/start.ts` imports directly, as the service wiring part
+    states for every module.
 
     `@wyrd-company/manifold-shared` adds the subpath export
     `./portfolio-api`, which holds no lint and no YAML parser: the path
@@ -1905,7 +1917,8 @@ proposed-design:
     pass and fail. It adds the subpath export `./amounts` of `amounts`. In
     `packages/service/src/portfolio-api/`, `index.ts` re-exports the public
     names, `listener.ts` holds the routing and the warnings kept per
-    commit, `read.ts` the pure read, and `wiring.ts` the part. In
+    commit, `read.ts` the pure read, and `wiring.ts` the part, which no
+    index file exports. In
     `packages/console`, `src/screens/portfolio/` holds `PortfolioContent.tsx`,
     `BudgetSourceCards.tsx`, `PortfolioTable.tsx`, `CurrentUsageCell.tsx`,
     `StatusBar.tsx`, `ProblemsList.tsx`, `EditItemDialog.tsx`,
@@ -1915,8 +1928,8 @@ proposed-design:
   portfolio-wiring: >-
     `portfolioApiPart` is the service wiring part `{ name: "portfolio-api",
     start(members, context) }` in
-    `packages/service/src/portfolio-api/wiring.ts`, listed once in
-    `start.ts` after the declarations API's part. Its `start` calls
+    `packages/service/src/portfolio-api/wiring.ts`, which `start.ts`
+    imports directly and chains once after the declarations API's part. Its `start` calls
     `mountPortfolioApi(members.http, options)` with the portfolio member,
     whose ledger is the capacity module's that the portfolio part wires,
     usage intake's `accounts`, the process repository, the store, the
@@ -1950,7 +1963,11 @@ proposed-design:
     `applyEdits` on a text with comments, which stay, for each edit kind,
     an Other's allocation, an add under a leaf, a restore setting
     guarantees to 0, an edit dropped for a missing item, and a text that
-    does not parse; the draft functions as `tests` states them for the
+    does not parse; `itemId` for a name with punctuation, a digit-leading
+    name, `other`, and a 70-character name given twice and three times,
+    whose ids are its first 64 characters, then its first 62 followed by
+    `-2`, then its first 62 followed by `-3`, each a declared name of 64
+    characters and unique; the draft functions as `tests` states them for the
     blueprint draft, and a draft's edits applied again to a later text;
     `rows.ts` on a nested read with an archived item; and `findings.ts`
     for a `guarantee-limit` at the top level and under an item. The
