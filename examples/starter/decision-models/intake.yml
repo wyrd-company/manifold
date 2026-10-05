@@ -1,7 +1,3 @@
-# ---
-# relationships:
-#   implements: default-process
-# ---
 # blueprints/task.yml is bundled. Commit a file there to replace it.
 # Set the provider instance and model your environment runs.
 nodes:

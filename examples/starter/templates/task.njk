@@ -1,4 +1,3 @@
-{# relationships: { implements: default-process } #}
 Read {{ issue.repository }}#{{ issue.number }} and do the work it requests.
 {% if fields.Estimate %}The estimate is {{ fields.Estimate.number }} US dollars.
 {% endif %}When done, call the handoff tool with a summary of the result.

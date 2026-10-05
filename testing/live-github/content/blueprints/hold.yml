@@ -1,5 +1,3 @@
-# relationships:
-#   implements: live-github-environment
 machine:
   id: hold
   initial: waiting

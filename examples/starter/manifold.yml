@@ -1,6 +1,2 @@
-# ---
-# relationships:
-#   implements: default-process
-# ---
 intake:
   decisionModel: decision-models/intake.yml

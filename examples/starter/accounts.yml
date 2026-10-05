@@ -1,7 +1,3 @@
-# ---
-# relationships:
-#   implements: default-process
-# ---
 # Set your capacity, reset instant, environment, and provider.
 accounts:
   agents:

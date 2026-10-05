@@ -1,5 +1,3 @@
-# relationships:
-#   implements: live-github-environment
 githubProjects:
   board:
     owner: example-org

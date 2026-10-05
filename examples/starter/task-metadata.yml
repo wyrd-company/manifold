@@ -1,7 +1,3 @@
-# ---
-# relationships:
-#   implements: default-process
-# ---
 projects:
   work-board:
     lifecycle:

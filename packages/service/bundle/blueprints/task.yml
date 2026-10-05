@@ -1,7 +1,3 @@
-# ---
-# relationships:
-#   implements: default-task-blueprint
-# ---
 description: Release a task on budget, run an agent thread, and finish on handoff.
 machine:
   id: task

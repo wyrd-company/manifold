@@ -1,7 +1,3 @@
-// ---
-// relationships:
-//   implements: [default-process, comparator-contract]
-// ---
 import type { Comparator } from "manifold:comparator";
 const account = "agents";
 const defaultEstimate = 1;
