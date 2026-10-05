@@ -257,8 +257,8 @@ description: |-
 
   - `input`: the input does not validate against
     `#/$defs/card-move-input`.
-  - `identity`: the actor has no `project` or no `issue` in
-    `context.manifold`, as a child blueprint has none.
+  - `identity`: the root task actor has no `project` or no `issue` in
+    `context.manifold`. A child blueprint's move uses its root task's identity.
   - `undeclared`: the actor's Project has no GitHub Project binding, the
     task metadata declaration in force declares no lifecycle field for
     that binding, or its `options` do not list `status`.

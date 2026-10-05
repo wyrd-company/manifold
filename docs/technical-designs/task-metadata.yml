@@ -259,7 +259,7 @@ proposed-design:
     `event.movedBy = null` takes only the person's change; a move whose
     status comes from a mapping moves the card; an input with no `status`
     and with a status of `7` fail with `input`; a child blueprint's move
-    fails with `identity`; a Project with no binding, a binding the
+    uses its root task's identity; a Project with no binding, a binding the
     declaration does not name, and a status the binding's options do not
     list each fail with `undeclared`; a field and an option the fake's
     Project lacks fail with `field-missing` and `option-missing`; an issue
