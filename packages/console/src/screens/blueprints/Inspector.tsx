@@ -31,8 +31,10 @@ function TextField({
   onChange: (value: string) => void;
   options?: readonly string[];
 }) {
-  const [text, setText] = useState(String(value ?? ""));
-  useEffect(() => setText(String(value ?? "")), [value]);
+  const source = String(value ?? "");
+  const [draft, setDraft] = useState({ source, text: source });
+  const text = draft.source === source ? draft.text : source;
+  const setText = (next: string) => setDraft({ source, text: next });
   const commit = () => {
     if (text !== String(value ?? "")) onChange(text);
   };
@@ -129,7 +131,7 @@ export function Inspector({
       host.current
         ?.querySelector(`[data-pointer="${CSS.escape(focusField)}"]`)
         ?.scrollIntoView({ block: "nearest" });
-  }, [focusField]);
+  }, [focusField, host]);
   const hidden = (key: string) =>
     !(key in value) &&
     !more.includes(key) &&
@@ -142,48 +144,50 @@ export function Inspector({
     const source = graph.transitions.find((row) => row.location === pointer)?.source ?? path;
     return (
       <div>
-        {rows.map((target, index) => (
-          <label className="inspector-field" key={at + "/" + index}>
-            Target
-            <select
-              aria-label={"Target " + (index + 1)}
-              disabled={disabled}
-              value={String(target)}
-              onChange={(event) => {
-                const next = [...rows];
-                next[index] = event.target.value;
-                set(at, next.length === 1 ? next[0] : next);
-              }}
-            >
-              <option value={String(target)}>{String(target)}</option>
-              {graph.states.map((state) => {
-                const reference = shortestTarget(
-                  source,
-                  state.path,
-                  String(atPointer(document, "/machine/id") ?? "(machine)"),
-                );
-                return (
-                  <option key={state.path} value={reference}>
-                    {state.path}
-                  </option>
-                );
-              })}
-            </select>
-            <Button
-              variant="ghost"
-              disabled={disabled}
-              onClick={() => {
-                const next = rows.filter((_, i) => i !== index);
-                if (next.length) set(at, next.length === 1 ? next[0] : next);
-                else if (typeof raw === "string" && edge)
-                  onEdit({ kind: "set", pointer, value: {} });
-                else onEdit({ kind: "remove", pointer: at });
-              }}
-            >
-              No target
-            </Button>
-          </label>
-        ))}
+        {rows
+          .map((target, index) => ({ target, index, location: at + "/" + index }))
+          .map(({ target, index, location }) => (
+            <label className="inspector-field" key={location}>
+              Target
+              <select
+                aria-label={"Target " + (index + 1)}
+                disabled={disabled}
+                value={String(target)}
+                onChange={(event) => {
+                  const next = [...rows];
+                  next[index] = event.target.value;
+                  set(at, next.length === 1 ? next[0] : next);
+                }}
+              >
+                <option value={String(target)}>{String(target)}</option>
+                {graph.states.map((state) => {
+                  const reference = shortestTarget(
+                    source,
+                    state.path,
+                    String(atPointer(document, "/machine/id") ?? "(machine)"),
+                  );
+                  return (
+                    <option key={state.path} value={reference}>
+                      {state.path}
+                    </option>
+                  );
+                })}
+              </select>
+              <Button
+                variant="ghost"
+                disabled={disabled}
+                onClick={() => {
+                  const next = rows.filter((_, i) => i !== index);
+                  if (next.length) set(at, next.length === 1 ? next[0] : next);
+                  else if (typeof raw === "string" && edge)
+                    onEdit({ kind: "set", pointer, value: {} });
+                  else onEdit({ kind: "remove", pointer: at });
+                }}
+              >
+                No target
+              </Button>
+            </label>
+          ))}
         <Button
           variant="outline"
           disabled={disabled}
