@@ -29,6 +29,10 @@ describe("compiled portfolio lint", () => {
       join(directory, "bindings.yml"),
       "githubProjects: { first: { owner: example-org, number: 1, environment: env-one, item: alpha } }",
     );
+    writeFileSync(
+      join(directory, "accounts.yml"),
+      "accounts: { acct: { unit: usd, kind: api, capacity: { amount: 10, reset: '2026-01-01T00:00:00Z', every: { days: 1 } } } }",
+    );
     const result = run(directory);
     expect([result.status, result.stdout, result.stderr]).toEqual([0, "", ""]);
   });
@@ -45,10 +49,14 @@ describe("compiled portfolio lint", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toBe("");
     const lines = result.stdout.trim().split("\n");
-    expect(lines).toHaveLength(2);
+    expect(lines).toHaveLength(4);
     expect(lines[0]).toMatch(
       /^portfolio.yml:\/items\/alpha\/items guarantee-limit .*"alpha".*110%/,
     );
+    expect(lines.slice(2)).toEqual([
+      'portfolio.yml:/items/alpha/items/beta/allocations/acct account-undeclared Account "acct" is not declared in accounts.yml. (warning)',
+      'portfolio.yml:/items/alpha/items/gamma/allocations/acct account-undeclared Account "acct" is not declared in accounts.yml. (warning)',
+    ]);
     expect(lines[1]).toMatch(/^bindings.yml:\/githubProjects\/first\/item unknown-item /);
   });
   it("refuses digit-leading names and malformed YAML", () => {

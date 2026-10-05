@@ -4,7 +4,7 @@
 // ---
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
+import { lintAllocatedAccounts, lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
 
 export async function portfolioLintCommand(args: readonly string[]): Promise<number> {
   if (args.length > 1) {
@@ -15,6 +15,7 @@ export async function portfolioLintCommand(args: readonly string[]): Promise<num
   let file = directory;
   let portfolio: string | undefined;
   let bindings: string | undefined;
+  let accounts: string | undefined;
   async function read(name: string) {
     file = name;
     try {
@@ -29,15 +30,19 @@ export async function portfolioLintCommand(args: readonly string[]): Promise<num
     await readdir(directory);
     portfolio = await read("portfolio.yml");
     bindings = await read("bindings.yml");
+    accounts = await read("accounts.yml");
   } catch (error) {
     process.stderr.write(`${file}: ${error instanceof Error ? error.message : String(error)}\n`);
     return 2;
   }
   const result = lintPortfolioDeclaration({ portfolio, bindings });
-  if (result.ok) return 0;
-  for (const finding of result.findings) {
+  for (const finding of result.ok ? [] : result.findings) {
     const message = finding.message.replace(/\s*\r?\n\s*/g, " ");
     process.stdout.write(`${finding.file}.yml:${finding.location} ${finding.kind} ${message}\n`);
   }
-  return 1;
+  for (const warning of lintAllocatedAccounts({ portfolio, accounts }))
+    process.stdout.write(
+      `${warning.file}.yml:${warning.location} ${warning.kind} ${warning.message} (warning)\n`,
+    );
+  return result.ok ? 0 : 1;
 }

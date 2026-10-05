@@ -3,7 +3,11 @@
 //   implements: portfolio
 //   references: [portfolio-declarations-table, portfolio-ledger]
 // ---
-import { lintPortfolioDeclaration, parseLedgerPortfolio } from "@wyrd-company/manifold-shared";
+import {
+  lintAllocatedAccounts,
+  lintPortfolioDeclaration,
+  parseLedgerPortfolio,
+} from "@wyrd-company/manifold-shared";
 import type {
   PortfolioDeclaration,
   ProcessRepositoryRevision,
@@ -57,22 +61,24 @@ export function openPortfolio(options: {
   let pending: Promise<unknown> = Promise.resolve();
 
   async function apply(revision: ProcessRepositoryRevision): Promise<PortfolioApplyResult> {
-    const [portfolio, bindings] = await Promise.all([
+    const [portfolio, bindings, accounts] = await Promise.all([
       revision.read("portfolio.yml"),
       revision.read("bindings.yml"),
+      revision.read("accounts.yml"),
     ]);
+    const warnings = lintAllocatedAccounts({ portfolio, accounts });
     const result = lintPortfolioDeclaration({ portfolio, bindings });
     if (!result.ok)
-      return { status: "rejected", commit: revision.commit, findings: result.findings };
+      return { status: "rejected", commit: revision.commit, findings: result.findings, warnings };
     const next = canonical(result.declaration);
-    if (next === serialized) return { status: "unchanged", commit: revision.commit };
+    if (next === serialized) return { status: "unchanged", commit: revision.commit, warnings };
     const nextResolution = resolvePortfolio(result.declaration);
     connection.transaction(() => insert.run(revision.commit, next, now()));
     ledger.setPortfolio(result.ledgerPortfolio);
     resolution = nextResolution;
     current = { commit: revision.commit, declaration: result.declaration };
     serialized = next;
-    return { status: "applied", commit: revision.commit };
+    return { status: "applied", commit: revision.commit, warnings };
   }
   return {
     ledger,

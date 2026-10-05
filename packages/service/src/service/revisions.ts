@@ -68,6 +68,16 @@ export function createRevisions(options: {
           })),
         },
       });
+    if (result.warnings.length)
+      options.log({
+        level: "warn",
+        event: "portfolio-warnings",
+        message: "Portfolio declaration warnings",
+        detail: {
+          commit: revision.commit,
+          warnings: result.warnings.map((warning) => ({ ...warning })),
+        },
+      });
     const metadataResult = await options.taskMetadata?.apply(revision);
     if (metadataResult?.status === "rejected")
       options.log({

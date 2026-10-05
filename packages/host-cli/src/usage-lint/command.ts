@@ -5,7 +5,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
-import { lintUsageDeclaration } from "@wyrd-company/manifold-shared";
+import { lintAllocatedAccounts, lintUsageDeclaration } from "@wyrd-company/manifold-shared";
 export async function usageLintCommand(
   args: readonly string[],
   io: { stdout: Writable; stderr: Writable } = process,
@@ -30,16 +30,20 @@ export async function usageLintCommand(
     await readdir(directory);
     const accounts = await read("accounts.yml");
     const prices = await read("prices.yml");
+    const portfolio = await read("portfolio.yml");
     const result = lintUsageDeclaration({ accounts, prices });
-    if (result.ok) return 0;
     const findings = ["accounts", "prices"].flatMap((name) =>
-      result.findings.filter((finding) => finding.file === name),
+      (result.ok ? [] : result.findings).filter((finding) => finding.file === name),
     );
     for (const finding of findings)
       io.stdout.write(
         `${finding.file}.yml:${finding.location} ${finding.kind} ${finding.message.replace(/\s*\r?\n\s*/g, " ")}\n`,
       );
-    return 1;
+    for (const warning of lintAllocatedAccounts({ portfolio, accounts }))
+      io.stdout.write(
+        `${warning.file}.yml:${warning.location} ${warning.kind} ${warning.message} (warning)\n`,
+      );
+    return result.ok ? 0 : 1;
   } catch (error) {
     io.stderr.write(`${file}: ${error instanceof Error ? error.message : String(error)}\n`);
     return 2;

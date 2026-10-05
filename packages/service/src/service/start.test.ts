@@ -8,7 +8,7 @@ import { stringify } from "yaml";
 import { model } from "../intake/test-fixtures/fixture.ts";
 import { afterEach, expect, test } from "vite-plus/test";
 import { startService, githubWebhookPath } from "./index.ts";
-import type { Service, ServiceStep } from "./index.ts";
+import type { Service, ServiceStep, ServiceLogEntry } from "./index.ts";
 import { serviceFixture } from "./test-fixtures/repository.ts";
 import { signedDelivery } from "../github-source/test-fixtures/api.ts";
 const cleanup: (() => Promise<void>)[] = [];
@@ -950,4 +950,78 @@ test("retries failed intake through a committed GitHub mirror change on the same
   expect(service.intake.record("I_A")).toMatchObject({ commit, attempts: 3 });
   expect(service.store.activeSnapshots()).toHaveLength(1);
   expect(service.escalations.list({ status: "open" })).toEqual([]);
+});
+
+test("logs portfolio warnings once per applied revision for applied, unchanged and rejected portfolios", async () => {
+  const f = await fixture();
+  const logs: ServiceLogEntry[] = [];
+  const service = await startService({
+    configurationFile: f.file,
+    log: (entry) => logs.push(entry),
+  });
+  cleanup.push(service.stop);
+  const warnings = () => logs.filter((entry) => entry.event === "portfolio-warnings");
+  expect(warnings()).toHaveLength(1);
+  expect(warnings()[0]).toMatchObject({
+    level: "warn",
+    detail: {
+      commit: f.first,
+      warnings: [
+        {
+          file: "portfolio",
+          location: "/items/alpha/allocations/acct",
+          kind: "account-undeclared",
+          severity: "warning",
+          details: { item: "alpha", account: "acct" },
+        },
+        {
+          file: "portfolio",
+          location: "/items/beta/allocations/acct",
+          kind: "account-undeclared",
+          severity: "warning",
+          details: { item: "beta", account: "acct" },
+        },
+      ],
+    },
+  });
+  await service.revisions.follow();
+  expect(warnings()).toHaveLength(1);
+  const unchanged = await f.commit(60);
+  await service.revisions.pull();
+  expect(warnings()).toHaveLength(2);
+  expect(warnings()[1]?.detail?.["commit"]).toBe(unchanged);
+  expect(
+    logs.find(
+      (entry) => entry.event === "revision-applied" && entry.detail?.["commit"] === unchanged,
+    )?.detail?.["portfolio"],
+  ).toBe("unchanged");
+  const rejected = await f.commit(40, {
+    bindings: {
+      t3codeProjects: {
+        first: { environment: "env-one", project: "workspace-one", item: "absent" },
+      },
+    },
+  });
+  await service.revisions.pull();
+  expect(warnings()).toHaveLength(3);
+  expect(warnings()[2]?.detail?.["commit"]).toBe(rejected);
+  expect(
+    logs.find(
+      (entry) => entry.event === "portfolio-rejected" && entry.detail?.["commit"] === rejected,
+    ),
+  ).toBeDefined();
+  const declared = await f.commit(40, {
+    accounts: {
+      accounts: {
+        acct: {
+          unit: "usd",
+          kind: "api",
+          capacity: { amount: 10, reset: "2026-01-01T00:00:00Z", every: { days: 1 } },
+        },
+      },
+    },
+  });
+  await service.revisions.pull();
+  expect(service.revisions.latest()?.commit).toBe(declared);
+  expect(warnings()).toHaveLength(3);
 });

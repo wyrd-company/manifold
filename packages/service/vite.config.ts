@@ -39,6 +39,7 @@ const children = [
   "src/task-metadata/card-move-recovery.test.ts",
   "src/tasks/service-wiring.test.ts",
   "src/usage/declaration-cli.test.ts",
+  "src/portfolio/declaration-cli.test.ts",
   "src/usage/recovery.test.ts",
 ];
 

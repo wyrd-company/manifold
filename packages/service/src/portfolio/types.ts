@@ -5,13 +5,15 @@
 import type {
   PortfolioDeclaration,
   PortfolioFinding,
+  PortfolioWarning,
   ProcessRepositoryRevision,
 } from "@wyrd-company/manifold-shared";
 import type { Ledger } from "../ledger/index.ts";
-export type PortfolioApplyResult =
+export type PortfolioApplyResult = { warnings: readonly PortfolioWarning[] } & (
   | { status: "applied"; commit: string }
   | { status: "unchanged"; commit: string }
-  | { status: "rejected"; commit: string; findings: readonly PortfolioFinding[] };
+  | { status: "rejected"; commit: string; findings: readonly PortfolioFinding[] }
+);
 export type PortfolioInForce = { commit: string | null; declaration: PortfolioDeclaration };
 export type GitHubProjectResolution = {
   binding: string;
