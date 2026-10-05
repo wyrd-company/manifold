@@ -31,6 +31,7 @@ const pause = (message: string) => {
 const usage = openUsage({
   connection: store.connection,
   ledger: {
+    actorUsage: ledger.actorUsage,
     settle: ledger.settle,
     postActual: (request) => {
       const result = ledger.postActual(request);

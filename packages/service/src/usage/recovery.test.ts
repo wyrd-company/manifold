@@ -159,7 +159,7 @@ it.each(["inside", "committed", "host-checkpoint"])(
     const intermediate = new DatabaseSync(path, { readOnly: true });
     try {
       expect(intermediate.prepare("SELECT count(*) n FROM usage_calls").get()).toMatchObject({
-        n: mode === "inside" ? 1000 : 1100,
+        n: mode === "inside" ? 0 : 1000,
       });
     } finally {
       intermediate.close();

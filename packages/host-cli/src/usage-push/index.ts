@@ -5,6 +5,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
+import type { UsageMapping, UsagePushRequest } from "@wyrd-company/manifold-shared";
 import type { Writable } from "node:stream";
 import { isUsagePushResult } from "@wyrd-company/manifold-shared";
 import { decodeUsageBatches, defaultUsageRoots } from "../usage/index.ts";
@@ -82,6 +83,29 @@ export async function runUsagePush(
   } catch {
     /* Missing or corrupt state only costs a replay. */
   }
+  const mappingsPath = statePath.replace(/\.json$/, ".mappings.json");
+  const acknowledgements: Record<string, { threadId: string; providerInstance?: string }> = {};
+  const mappingKey = (mapping: UsageMapping) =>
+    JSON.stringify([mapping.provider, mapping.providerSessionId]);
+  const mappingValue = (mapping: UsageMapping) => ({
+    threadId: mapping.threadId,
+    ...(mapping.providerInstance === undefined
+      ? {}
+      : { providerInstance: mapping.providerInstance }),
+  });
+  try {
+    const parsed: unknown = JSON.parse(await readFile(mappingsPath, "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+      Object.assign(acknowledgements, parsed);
+  } catch {
+    /* Missing or corrupt acknowledgements only cost a replay. */
+  }
+  const checkpoint = async (path: string, value: unknown) => {
+    await mkdir(join(stateDir, "usage-push"), { recursive: true });
+    const temporary = path + "." + randomUUID() + ".tmp";
+    await writeFile(temporary, JSON.stringify(value));
+    await rename(temporary, path);
+  };
   const result = {
     batches: 0,
     requests: 0,
@@ -89,10 +113,37 @@ export async function runUsagePush(
     calls: { accepted: 0, pending: 0, replayed: 0 },
     threads: { accepted: 0, replayed: 0, conflicting: 0 },
   };
+  const send = async (threads: UsageMapping[], records: UsagePushRequest["records"]) => {
+    const response = await fetch(service + "/api/usage/push", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ environment, threads, records }),
+      redirect: "error",
+    });
+    if (response.status !== 200) throw Error(`Service answered ${response.status}`);
+    const counts: unknown = await response.json();
+    if (!isUsagePushResult(counts)) throw new Error("Invalid usage acknowledgement");
+    for (const key of ["accepted", "pending", "replayed"] as const)
+      result.calls[key] += counts.calls[key];
+    for (const key of ["accepted", "replayed", "conflicting"] as const)
+      result.threads[key] += counts.threads[key];
+    result.requests++;
+    if (threads.length) {
+      for (const mapping of threads) acknowledgements[mappingKey(mapping)] = mappingValue(mapping);
+      await checkpoint(mappingsPath, acknowledgements);
+    }
+  };
   const transientSources = new Set<string>();
   const outputError = () => {};
   io.stdout.on("error", outputError);
   try {
+    const mappings = readSessionMappings(databasePath).filter(
+      (mapping) =>
+        JSON.stringify(acknowledgements[mappingKey(mapping)]) !==
+        JSON.stringify(mappingValue(mapping)),
+    );
+    for (let start = 0; start < mappings.length; start += 1000)
+      await send(mappings.slice(start, start + 1000), []);
     for await (const batch of decodeUsageBatches(
       roots.length ? roots : defaultUsageRoots(io.env, io.home),
       {
@@ -119,20 +170,7 @@ export async function runUsagePush(
         const threads = readSessionMappings(databasePath).filter((mapping) =>
           sessions.has(JSON.stringify([mapping.provider, mapping.providerSessionId])),
         );
-        const response = await fetch(service + "/api/usage/push", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ environment, threads, records }),
-          redirect: "error",
-        });
-        if (response.status !== 200) throw Error(`Service answered ${response.status}`);
-        const counts: unknown = await response.json();
-        if (!isUsagePushResult(counts)) throw new Error("Invalid usage acknowledgement");
-        for (const key of ["accepted", "pending", "replayed"] as const)
-          result.calls[key] += counts.calls[key];
-        for (const key of ["accepted", "replayed", "conflicting"] as const)
-          result.threads[key] += counts.threads[key];
-        result.requests++;
+        await send(threads, records);
       }
       for (const stamp of batch.sources) {
         if (
@@ -143,10 +181,7 @@ export async function runUsagePush(
           continue;
         state[sourceKey(stamp)] = stamp;
       }
-      await mkdir(join(stateDir, "usage-push"), { recursive: true });
-      const temporary = statePath + "." + randomUUID() + ".tmp";
-      await writeFile(temporary, JSON.stringify(state));
-      await rename(temporary, statePath);
+      await checkpoint(statePath, state);
       result.batches++;
     }
     await new Promise<void>((resolve, reject) =>

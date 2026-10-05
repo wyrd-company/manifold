@@ -6,6 +6,7 @@ import { lintUsageDeclaration } from "@wyrd-company/manifold-shared";
 import type { UsageDeclaration } from "@wyrd-company/manifold-shared";
 import { canonical } from "./types.ts";
 import type { Usage, UsageApplyResult, UsageOptions, UsageRevision } from "./types.ts";
+import { actorUsage } from "./actor-usage.ts";
 import { saveActor } from "./hooks.ts";
 import { pushUsage, retryPostings } from "./push.ts";
 import { usageListener } from "./listener.ts";
@@ -41,6 +42,7 @@ export function openUsage(options: UsageOptions): Usage {
     return { status: "applied", commit: revision.commit };
   };
   return {
+    actorUsage: (actor) => actorUsage(options, actor),
     accounts: () => structuredClone(declaration.accounts),
     push,
     retryPending,

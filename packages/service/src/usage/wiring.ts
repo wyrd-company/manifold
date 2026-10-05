@@ -23,6 +23,7 @@ export const usage = wiringPart({
     const usage = openUsage({
       connection: usageConnection,
       ledger: {
+        actorUsage: portfolio.ledger.actorUsage,
         postActual: (request) => {
           const result = portfolio.ledger.postActual(request);
           gates.current()?.gates.inputChanged();

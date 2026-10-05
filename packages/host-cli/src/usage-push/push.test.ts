@@ -271,3 +271,66 @@ it("pushes without credentials or Authorization headers", async () => {
   expect(s.requests.length).toBeGreaterThan(0);
   expect(s.authorization.every((value) => value === undefined)).toBe(true);
 });
+
+it("pushes a newly recorded mapping with unchanged sources, acknowledges it, and retries failures", async () => {
+  const s = await setup();
+  expect(await runUsagePush(s.args, s.io)).toBe(0);
+  const count = s.requests.length;
+  await mkdir(join(s.home, "userdata"), { recursive: true });
+  const db = new DatabaseSync(join(s.home, "userdata", "state.sqlite"));
+  db.exec(
+    "CREATE TABLE provider_session_runtime (thread_id TEXT, provider_name TEXT, provider_instance_id TEXT, resume_cursor_json TEXT)",
+  );
+  db.prepare("INSERT INTO provider_session_runtime VALUES (?,?,?,?)").run(
+    "thread-1",
+    "codex",
+    "instance-1",
+    JSON.stringify({ threadId: "session-1" }),
+  );
+  db.close();
+  s.status(500);
+  expect(await runUsagePush(s.args, s.io)).toBe(1);
+  expect(s.requests.at(-1)).toMatchObject({ records: [], threads: [{ threadId: "thread-1" }] });
+  s.status(200);
+  expect(await runUsagePush(s.args, s.io)).toBe(0);
+  expect(s.requests).toHaveLength(count + 2);
+  expect(s.requests.at(-1)).toMatchObject({ records: [], threads: [{ threadId: "thread-1" }] });
+  expect(await runUsagePush(s.args, s.io)).toBe(0);
+  expect(s.requests).toHaveLength(count + 2);
+});
+
+it("sends all unacknowledged mappings in batches before decoding and retries changed mappings", async () => {
+  const s = await setup();
+  await mkdir(join(s.home, "userdata"), { recursive: true });
+  const db = new DatabaseSync(join(s.home, "userdata", "state.sqlite"));
+  db.exec(
+    "CREATE TABLE provider_session_runtime (thread_id TEXT, provider_name TEXT, provider_instance_id TEXT, resume_cursor_json TEXT)",
+  );
+  const insert = db.prepare("INSERT INTO provider_session_runtime VALUES (?,?,?,?)");
+  for (let i = 0; i < 1001; i++)
+    insert.run(`thread-${i}`, "codex", "instance-1", JSON.stringify({ threadId: `session-${i}` }));
+  expect(await runUsagePush(s.args, s.io)).toBe(0);
+  expect(s.requests.slice(0, 2).map((r) => [r.threads.length, r.records.length])).toEqual([
+    [1000, 0],
+    [1, 0],
+  ]);
+  expect(
+    s.requests
+      .slice(0, 2)
+      .flatMap((r) => r.threads)
+      .map((m) => m.providerSessionId),
+  ).toEqual(Array.from({ length: 1001 }, (_, i) => `session-${i}`));
+  const count = s.requests.length;
+  expect(await runUsagePush(s.args, s.io)).toBe(0);
+  expect(s.requests).toHaveLength(count);
+  db.exec(
+    "UPDATE provider_session_runtime SET provider_instance_id='instance-2' WHERE thread_id='thread-0'",
+  );
+  expect(await runUsagePush(s.args, s.io)).toBe(0);
+  expect(s.requests).toHaveLength(count + 1);
+  expect(s.requests.at(-1)).toMatchObject({
+    records: [],
+    threads: [{ threadId: "thread-0", providerInstance: "instance-2" }],
+  });
+  db.close();
+});

@@ -111,6 +111,53 @@ export function retryPostings(
     return result;
   });
 }
+function postingAttribution(
+  options: UsageOptions,
+  environment: string,
+  provider: string,
+  sessionId: string,
+  usedAt: number,
+) {
+  const db = options.connection.database;
+  const session = db
+    .prepare(
+      "SELECT thread_id FROM usage_sessions WHERE environment=? AND provider=? AND provider_session_id=?",
+    )
+    .get(environment, provider, sessionId) as { thread_id: string } | undefined;
+  const actor = session
+    ? (db
+        .prepare(
+          "SELECT a.actor_id,a.item FROM usage_threads t JOIN usage_actors a USING(actor_id) WHERE t.environment=? AND t.thread_id=?",
+        )
+        .get(environment, session.thread_id) as
+        | { actor_id: string; item: string | null }
+        | undefined)
+    : undefined;
+  const visit = actor
+    ? (db
+        .prepare(
+          "SELECT visit FROM usage_visits WHERE actor_id=? ORDER BY (entered_at<=?) DESC, CASE WHEN entered_at<=? THEN entered_at END DESC,CASE WHEN entered_at<=? THEN visit END DESC,entered_at ASC,visit ASC LIMIT 1",
+        )
+        .get(actor.actor_id, usedAt, usedAt, usedAt) as { visit: number } | undefined)
+    : undefined;
+  const project = session ? options.threadProject(environment, session.thread_id) : undefined;
+  return attribute({
+    environment,
+    provider,
+    session: sessionId,
+    ...(session ? { thread: session.thread_id } : {}),
+    ...(actor ? { actor: actor.actor_id, ...(actor.item ? { actorItem: actor.item } : {}) } : {}),
+    ...(project
+      ? {
+          projectItem: options.portfolio.t3codeProject({
+            environment,
+            id: project,
+          }).item,
+        }
+      : {}),
+    ...(visit ? { visit: visit.visit } : {}),
+  });
+}
 export function pushUsage(
   options: UsageOptions,
   declaration: UsageDeclaration,
@@ -144,6 +191,45 @@ export function pushUsage(
           now(),
         );
         result.threads.accepted++;
+      }
+    }
+    for (const mapping of request.threads) {
+      const sessionActor = `session:${request.environment}:${mapping.provider}:${mapping.providerSessionId}`;
+      const postings = db
+        .prepare(
+          "SELECT p.* FROM usage_postings p JOIN usage_calls c USING(environment,call_key) LEFT JOIN usage_late_attributions l ON l.seq=p.seq WHERE p.environment=? AND p.provider=? AND json_extract(c.record,'$.providerSessionId')=? AND p.actor=? AND l.seq IS NULL ORDER BY p.seq",
+        )
+        .all(
+          request.environment,
+          mapping.provider,
+          mapping.providerSessionId,
+          sessionActor,
+        ) as Posting[];
+      for (const posting of postings) {
+        const attribution = postingAttribution(
+          options,
+          request.environment,
+          mapping.provider,
+          mapping.providerSessionId,
+          posting.used_at,
+        );
+        if (posting.status === "pending") {
+          db.prepare("UPDATE usage_postings SET actor=?,item=?,visit=? WHERE seq=?").run(
+            attribution.actor,
+            attribution.item,
+            attribution.visit,
+            posting.seq,
+          );
+          resolvePosting(options, declaration, now, { ...posting, ...attribution });
+        } else {
+          db.prepare("INSERT INTO usage_late_attributions VALUES (?,?,?,?,?)").run(
+            posting.seq,
+            attribution.actor,
+            attribution.item,
+            attribution.visit,
+            now(),
+          );
+        }
       }
     }
     for (const record of request.records) {
@@ -194,51 +280,14 @@ export function pushUsage(
       db.prepare(
         "INSERT INTO usage_calls VALUES (?,?,?,?,?,?) ON CONFLICT(environment,call_key) DO UPDATE SET record=excluded.record,charged=excluded.charged,revision=excluded.revision",
       ).run(request.environment, record.key, display, JSON.stringify(charged), revision, now());
-      const session = db
-        .prepare(
-          "SELECT thread_id FROM usage_sessions WHERE environment=? AND provider=? AND provider_session_id=?",
-        )
-        .get(request.environment, record.provider, record.providerSessionId) as
-        | { thread_id: string }
-        | undefined;
-      const actor = session
-        ? (db
-            .prepare(
-              "SELECT a.actor_id,a.item FROM usage_threads t JOIN usage_actors a USING(actor_id) WHERE t.environment=? AND t.thread_id=?",
-            )
-            .get(request.environment, session.thread_id) as
-            | { actor_id: string; item: string | null }
-            | undefined)
-        : undefined;
       const usedAt = Date.parse(record.timestamp);
-      const visit = actor
-        ? (db
-            .prepare(
-              "SELECT visit FROM usage_visits WHERE actor_id=? ORDER BY (entered_at<=?) DESC, CASE WHEN entered_at<=? THEN entered_at END DESC,CASE WHEN entered_at<=? THEN visit END DESC,entered_at ASC,visit ASC LIMIT 1",
-            )
-            .get(actor.actor_id, usedAt, usedAt, usedAt) as { visit: number } | undefined)
-        : undefined;
-      const project = session
-        ? options.threadProject(request.environment, session.thread_id)
-        : undefined;
-      const attribution = attribute({
-        environment: request.environment,
-        provider: record.provider,
-        session: record.providerSessionId,
-        ...(session ? { thread: session.thread_id } : {}),
-        ...(actor
-          ? { actor: actor.actor_id, ...(actor.item ? { actorItem: actor.item } : {}) }
-          : {}),
-        ...(project
-          ? {
-              projectItem: options.portfolio.t3codeProject({
-                environment: request.environment,
-                id: project,
-              }).item,
-            }
-          : {}),
-        ...(visit ? { visit: visit.visit } : {}),
-      });
+      const attribution = postingAttribution(
+        options,
+        request.environment,
+        record.provider,
+        record.providerSessionId,
+        usedAt,
+      );
       db.prepare(
         "INSERT INTO usage_postings (environment,call_key,revision,used_at,provider,model,speed,base_tokens,tokens,actor,item,visit,status,reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending','unaccounted')",
       ).run(

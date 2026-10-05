@@ -279,13 +279,32 @@ it("rejects invalid declarations, keeps the last good declaration and serializes
   s.push([call()]);
   expect(s.ledger.actorUsage("actor-1").accounts[0]?.actual).toBe(6000000);
 });
-it("migration equals the SQL specification", async () => {
-  expect(usageMigrationSteps[0]).toBe(
-    readFileSync(
-      new URL("../../../../docs/specifications/usage-tables.sql", import.meta.url),
-      "utf8",
-    ),
-  );
+it("migration equals the SQL specification", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(
+      readFileSync(
+        new URL("../../../../docs/specifications/usage-tables.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    const schema = (database: DatabaseSync) =>
+      database
+        .prepare(
+          "SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name LIKE 'usage_%' ORDER BY name",
+        )
+        .all();
+    const s = schema(db);
+    const migrated = new DatabaseSync(":memory:");
+    try {
+      for (const step of usageMigrationSteps) migrated.exec(step);
+      expect(schema(migrated)).toEqual(s);
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    db.close();
+  }
 });
 it("listener validates requests before writing and returns protocol status codes", async () => {
   const s = await setup();
@@ -459,6 +478,7 @@ it("rolls back the entire request when a ledger write fails, and contains listen
     connection: s.connection,
     onError: (error) => errors.push(error),
     ledger: {
+      actorUsage: s.ledger.actorUsage,
       settle: s.ledger.settle,
       postActual: (request) => {
         s.ledger.postActual(request);
@@ -544,6 +564,7 @@ it("a failed settlement rolls back ownership and visits with the actor save", as
   const usage = openUsage({
     connection: s.connection,
     ledger: {
+      actorUsage: s.ledger.actorUsage,
       postActual: s.ledger.postActual,
       settle: () => {
         throw Error("settlement failed");
@@ -588,6 +609,7 @@ it("the save hook itself rolls back when settlement fails", async () => {
   const usage = openUsage({
     connection: s.connection,
     ledger: {
+      actorUsage: s.ledger.actorUsage,
       postActual: s.ledger.postActual,
       settle: () => {
         throw Error("settlement failed");
@@ -724,4 +746,118 @@ it("replays the same thread with a changed instance while retaining its first in
   expect(
     s.connection.database.prepare("SELECT provider_instance FROM usage_sessions").get(),
   ).toMatchObject({ provider_instance: "instance-one" });
+});
+
+it.each([false, true])(
+  "attributes posted calls on mapping-only pushes without moving the charge (settled=%s)",
+  async (settled) => {
+    const s = await setup();
+    s.save();
+    s.ledger.reserve({ key: "r1", actor: "actor-1", item: "alpha", account: "acct", amount: 10 });
+    s.push([call("late", 1, 1)], false);
+    if (settled) s.save("done", "finished");
+    const before = s.connection.database.prepare("SELECT * FROM ledger_entries").all();
+    expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(0);
+    s.push([]);
+    expect(s.usage.actorUsage("actor-1")).toEqual({
+      settled,
+      accounts: [
+        { account: "acct", estimate: 10, actual: 10, variance: 0, outstanding: settled ? 0 : 10 },
+      ],
+    });
+    expect(s.usage.actorUsage("session:env-one:codex:session-1").accounts[0]?.actual).toBe(0);
+    expect(s.connection.database.prepare("SELECT * FROM ledger_entries").all()).toEqual(before);
+    s.push([]);
+    expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(10);
+    s.restart();
+    expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(10);
+  },
+);
+it("reattributes pending calls before posting through the mapping's provider instance", async () => {
+  const s = await setup();
+  s.save();
+  await s.apply(accounts.replace("provider: codex }", "provider: codex, instance: instance-1 }"));
+  s.ledger.reserve({ key: "r1", actor: "actor-1", item: "alpha", account: "acct", amount: 10 });
+  expect(s.push([call("late", 1, 1)], false).calls.pending).toBe(1);
+  s.push([]);
+  expect(s.ledger.actorUsage("actor-1").accounts[0]).toMatchObject({ actual: 10, outstanding: 0 });
+  expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(10);
+});
+it("attributes held calls to an unowned thread and adds its account to the usage read", async () => {
+  const s = await setup();
+  s.push([call("late", 1, 1)], false);
+  s.push([]);
+  expect(s.usage.actorUsage("thread:env-one:thread-1")).toEqual({
+    settled: false,
+    accounts: [{ account: "acct", estimate: 0, actual: 10, variance: 10, outstanding: 0 }],
+  });
+  expect(s.usage.actorUsage("session:env-one:codex:session-1").accounts[0]?.actual).toBe(0);
+});
+
+it("rolls back late attribution and mapping when a later call fails, then replays once", async () => {
+  const s = await setup();
+  s.save();
+  s.push([call("held", 1, 1)], false);
+  const broken = openUsage({
+    connection: s.connection,
+    ledger: {
+      ...s.ledger,
+      postActual: () => {
+        throw Error("write failure");
+      },
+    },
+    portfolio: { t3codeProject: () => ({ item: "other", via: "unbound" }) },
+    threadProject: () => undefined,
+    environments: new Set(["env-one"]),
+  });
+  const request = {
+    environment: "env-one",
+    threads: [{ provider: "codex" as const, providerSessionId: "session-1", threadId: "thread-1" }],
+    records: [call("new", 1, 1)],
+  };
+  expect(() => broken.push(request)).toThrow("write failure");
+  expect(s.usage.actorUsage("actor-1").accounts).toEqual([]);
+  expect(s.usage.actorUsage("session:env-one:codex:session-1").accounts[0]?.actual).toBe(10);
+  expect(s.push([call("new", 1, 1)]).threads.accepted).toBe(1);
+  expect(s.push([]).threads.replayed).toBe(1);
+  expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(20);
+});
+it("repairs pre-upgrade posted growths using the stored mapping despite a conflicting push", async () => {
+  const s = await setup();
+  s.save();
+  s.now(200);
+  s.save("active", "checking");
+  s.push([{ ...call("total", 1, 1), granularity: "session-total" }], false);
+  s.push(
+    [
+      {
+        ...call("total", 2, 2),
+        timestamp: new Date(200).toISOString(),
+        granularity: "session-total",
+      },
+    ],
+    false,
+  );
+  s.connection.database
+    .prepare("INSERT INTO usage_sessions VALUES (?,?,?,?,?,?)")
+    .run("env-one", "codex", "session-1", "thread-1", null, 200);
+  const request = {
+    environment: "env-one",
+    threads: [{ provider: "codex" as const, providerSessionId: "session-1", threadId: "thread-2" }],
+    records: [],
+  };
+  expect(s.usage.push(request).threads.conflicting).toBe(1);
+  expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(20);
+  expect(s.usage.actorUsage("thread:env-one:thread-2").accounts).toEqual([]);
+  expect(
+    s.connection.database.prepare("SELECT visit FROM usage_late_attributions ORDER BY seq").all(),
+  ).toMatchObject([{ visit: 1 }, { visit: 2 }]);
+  expect(() =>
+    s.connection.database.exec("UPDATE usage_late_attributions SET item='beta'"),
+  ).toThrow("append-only");
+  expect(() => s.connection.database.exec("DELETE FROM usage_late_attributions")).toThrow(
+    "append-only",
+  );
+  s.usage.push(request);
+  expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(20);
 });

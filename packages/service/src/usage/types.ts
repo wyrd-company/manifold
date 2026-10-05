@@ -39,10 +39,11 @@ export interface Usage {
   apply(revision: UsageRevision): Promise<UsageApplyResult>;
   retryPending(): UsageRetryResult;
   accounts(): Readonly<Record<string, UsageAccount>>;
+  actorUsage: Ledger["actorUsage"];
 }
 export type UsageOptions = {
   connection: LedgerConnection;
-  ledger: Pick<Ledger, "postActual" | "settle">;
+  ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage">;
   portfolio: Pick<Portfolio, "t3codeProject">;
   threadProject(environment: string, threadId: string): string | undefined;
   environments: ReadonlySet<string>;
@@ -63,6 +64,7 @@ export type Posting = {
   actor: string;
   item: string;
   visit: number | null;
+  status: "pending" | "posted";
 };
 export const zeroTokens = (): UsageTokens => ({
   input: 0,

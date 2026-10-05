@@ -13,7 +13,15 @@ export const tasks = wiringPart({
     members: Required<
       Pick<
         Service,
-        "store" | "router" | "portfolio" | "github" | "escalations" | "t3code" | "gates" | "log"
+        | "store"
+        | "router"
+        | "portfolio"
+        | "github"
+        | "escalations"
+        | "t3code"
+        | "gates"
+        | "usage"
+        | "log"
       >
     > & { taskMetadata: ReturnType<typeof openTaskMetadata>; http: HttpHost },
   ): Record<never, never> => {
@@ -26,6 +34,7 @@ export const tasks = wiringPart({
       escalations,
       t3code,
       gates,
+      usage,
       http,
       log,
     } = members;
@@ -47,7 +56,7 @@ export const tasks = wiringPart({
             };
           }),
       github,
-      actorUsage: portfolio.ledger.actorUsage,
+      actorUsage: usage.actorUsage,
       listEscalations: escalations.list,
       thread: t3code.thread,
       tokenHolder: gates.tokenHolder,
