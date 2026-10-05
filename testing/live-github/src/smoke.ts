@@ -15,7 +15,12 @@ import { smokeSteps } from "./smoke-check.ts";
 import { GitHub, installationAccess } from "./github.ts";
 import { controlRequest, processStartTime } from "./supervisor.ts";
 import type { Resources } from "./provisioning.ts";
-type DeliverySummary = { id: number; guid: string; event: string; status_code: number };
+type DeliverySummary = {
+  id: number;
+  guid: string;
+  event: string;
+  status_code: number;
+};
 type DeliveryDetail = { request: { payload: unknown } };
 async function main() {
   const settings = await loadSettings(),
@@ -42,16 +47,7 @@ async function main() {
   const runId = randomUUID();
   const hook = resources.hook.id;
   async function deliveries(issue: string) {
-    const summaries: DeliverySummary[] = [];
-    for (let page = 1; ; page++) {
-      const rows = await github.rest<DeliverySummary[]>(
-        "read hook deliveries",
-        "GET /orgs/{org}/hooks/{hook_id}/deliveries",
-        { org: settings.organization, hook_id: hook, per_page: 100, page },
-      );
-      summaries.push(...rows);
-      if (rows.length < 100) break;
-    }
+    const summaries = await github.deliveries<DeliverySummary>(hook);
     for (const summary of summaries.filter((row) => row.event === "projects_v2_item")) {
       const detail = await github.rest<DeliveryDetail>(
         "read hook delivery",
@@ -143,7 +139,9 @@ async function main() {
             ...(method === "POST"
               ? {
                   body: "key=unknown&choice=1",
-                  headers: { "content-type": "application/x-www-form-urlencoded" },
+                  headers: {
+                    "content-type": "application/x-www-form-urlencoded",
+                  },
                 }
               : {}),
             redirect: "manual",

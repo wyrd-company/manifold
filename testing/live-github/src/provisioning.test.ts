@@ -50,6 +50,44 @@ async function fixture() {
   };
 }
 describe("provisioning convergence", () => {
+  it("seeds an empty process repository before Git Data reads and repeats without writes", async () => {
+    const f = await fixture();
+    const github = recordedGitHub({ emptyOnCreate: true });
+    try {
+      await provision({ settings, directory: f.directory, github, files });
+      expect(github.calls.some((c) => c.op === "initialize process repository" && c.write)).toBe(
+        true,
+      );
+      github.calls.length = 0;
+      await provision({ settings, directory: f.directory, github, files });
+      expect(github.writes()).toEqual([]);
+    } finally {
+      await f.dispose();
+    }
+  });
+
+  it("resumes after the Contents API first commit without creating another commit", async () => {
+    const f = await fixture();
+    const github = recordedGitHub({ emptyOnCreate: true });
+    try {
+      await expect(
+        provision({
+          settings,
+          directory: f.directory,
+          github,
+          files,
+          afterWrite: async (name) => {
+            if (name === "github:process.initialize") throw Error("interrupted");
+          },
+        }),
+      ).rejects.toThrow("interrupted");
+      github.calls.length = 0;
+      await provision({ settings, directory: f.directory, github, files });
+      expect(github.calls.some((c) => c.op === "initialize process repository")).toBe(false);
+    } finally {
+      await f.dispose();
+    }
+  });
   it("creates owned resources and repeats without any write", async () => {
     const f = await fixture();
     try {
@@ -109,7 +147,12 @@ describe("provisioning convergence", () => {
             },
           }),
         ).rejects.toThrow("interrupted");
-        await provision({ settings, directory: f.directory, github: f.github, files });
+        await provision({
+          settings,
+          directory: f.directory,
+          github: f.github,
+          files,
+        });
         expect(f.github.unmarked()).toEqual([]);
         expect(f.github.repositories.size).toBe(2);
         expect(f.github.issues.size).toBe(2);
@@ -127,7 +170,12 @@ describe("provisioning convergence", () => {
     for (const stage of ["hook.secret.pending", "github:hook.update"]) {
       const f = await fixture();
       try {
-        await provision({ settings, directory: f.directory, github: f.github, files });
+        await provision({
+          settings,
+          directory: f.directory,
+          github: f.github,
+          files,
+        });
         await rm(join(f.directory, "hook.secret"));
         await expect(
           provision({
@@ -140,7 +188,12 @@ describe("provisioning convergence", () => {
             },
           }),
         ).rejects.toThrow("interrupted");
-        await provision({ settings, directory: f.directory, github: f.github, files });
+        await provision({
+          settings,
+          directory: f.directory,
+          github: f.github,
+          files,
+        });
         expect([...f.github.hooks.values()][0]?.config.secret).toBe(
           (await readFile(join(f.directory, "hook.secret"), "utf8")).trim(),
         );
@@ -154,7 +207,12 @@ describe("provisioning convergence", () => {
     try {
       f.github.foreignRepository(settings.repository);
       await expect(
-        provision({ settings, directory: f.directory, github: f.github, files }),
+        provision({
+          settings,
+          directory: f.directory,
+          github: f.github,
+          files,
+        }),
       ).rejects.toThrow("foreign");
       await teardown({ settings, directory: f.directory, github: f.github });
       expect(f.github.repositories.size).toBe(1);
@@ -166,7 +224,12 @@ describe("provisioning convergence", () => {
     for (let failure = 0; failure <= 12; failure++) {
       const f = await fixture();
       try {
-        await provision({ settings, directory: f.directory, github: f.github, files });
+        await provision({
+          settings,
+          directory: f.directory,
+          github: f.github,
+          files,
+        });
         for (const name of ["service", "tunnel", "smoke"])
           await mkdir(join(f.directory, name), { mode: 0o700 });
         for (const name of [
@@ -176,7 +239,9 @@ describe("provisioning convergence", () => {
           "hook.secret.pending",
           "smoke/example.log",
         ])
-          await writeFile(join(f.directory, name), "synthetic test state", { mode: 0o600 });
+          await writeFile(join(f.directory, name), "synthetic test state", {
+            mode: 0o600,
+          });
         let n = 0;
         try {
           await teardown({
@@ -201,7 +266,9 @@ describe("provisioning convergence", () => {
           "children.json",
           "resources.json",
         ])
-          await expect(stat(join(f.directory, name))).rejects.toMatchObject({ code: "ENOENT" });
+          await expect(stat(join(f.directory, name))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
         expect(await readFile(join(f.directory, "smoke/example.log"), "utf8")).toBe(
           "synthetic test state",
         );
@@ -216,7 +283,11 @@ describe("provisioning convergence", () => {
   it("refuses a foreign Project and preserves foreign hooks on teardown", async () => {
     const f = await fixture();
     try {
-      f.github.projects.set("FOREIGN", { id: "FOREIGN", title: settings.project, number: 8 });
+      f.github.projects.set("FOREIGN", {
+        id: "FOREIGN",
+        title: settings.project,
+        number: 8,
+      });
       f.github.hooks.set(99, {
         id: 99,
         active: true,
@@ -224,7 +295,12 @@ describe("provisioning convergence", () => {
         config: { url: "https://example.invalid/webhooks/github" },
       });
       await expect(
-        provision({ settings, directory: f.directory, github: f.github, files }),
+        provision({
+          settings,
+          directory: f.directory,
+          github: f.github,
+          files,
+        }),
       ).rejects.toThrow("foreign project");
       await teardown({ settings, directory: f.directory, github: f.github });
       expect(f.github.projects.has("FOREIGN")).toBe(true);
@@ -236,11 +312,21 @@ describe("provisioning convergence", () => {
   it("refuses a foreign issue with the seed title", async () => {
     const f = await fixture();
     try {
-      await provision({ settings, directory: f.directory, github: f.github, files });
+      await provision({
+        settings,
+        directory: f.directory,
+        github: f.github,
+        files,
+      });
       const issue = [...f.github.issues.values()][0]!;
       issue.body = "An unrelated issue";
       await expect(
-        provision({ settings, directory: f.directory, github: f.github, files }),
+        provision({
+          settings,
+          directory: f.directory,
+          github: f.github,
+          files,
+        }),
       ).rejects.toThrow("foreign issue");
       expect(f.github.issues.get(issue.node_id)?.body).toBe("An unrelated issue");
     } finally {
@@ -250,13 +336,23 @@ describe("provisioning convergence", () => {
   it("keeps an active hook URL while correcting its events", async () => {
     const f = await fixture();
     try {
-      await provision({ settings, directory: f.directory, github: f.github, files });
+      await provision({
+        settings,
+        directory: f.directory,
+        github: f.github,
+        files,
+      });
       const hook = [...f.github.hooks.values()][0]!;
       const secret = hook.config.secret;
       hook.active = true;
       hook.config.url = "https://example.invalid/webhooks/github?owner-marker=test-owned";
       hook.events = ["issues"];
-      await provision({ settings, directory: f.directory, github: f.github, files });
+      await provision({
+        settings,
+        directory: f.directory,
+        github: f.github,
+        files,
+      });
       expect(hook.active).toBe(true);
       expect(hook.config.url).toBe(
         "https://example.invalid/webhooks/github?owner-marker=test-owned",
@@ -271,7 +367,12 @@ describe("provisioning convergence", () => {
 it("a second teardown reports every resource absent", async () => {
   const f = await fixture();
   try {
-    await provision({ settings, directory: f.directory, github: f.github, files });
+    await provision({
+      settings,
+      directory: f.directory,
+      github: f.github,
+      files,
+    });
     await teardown({ settings, directory: f.directory, github: f.github });
     const reported: string[] = [];
     await teardown({

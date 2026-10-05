@@ -4,7 +4,7 @@
 // ---
 import { createHash } from "node:crypto";
 import type { GitHubPort, Hook, Repository, Issue, Project } from "./github.ts";
-export function recordedGitHub() {
+export function recordedGitHub(options: { emptyOnCreate?: boolean } = {}) {
   const repositories = new Map<string, Repository>(),
     issues = new Map<string, Issue>(),
     projects = new Map<string, Project>(),
@@ -42,10 +42,15 @@ export function recordedGitHub() {
           };
           repositories.set(repo.name, repo);
           trees.set("initial", [
-            { path: "README.md", mode: "100644", type: "blob", sha: blob("initial") },
+            {
+              path: "README.md",
+              mode: "100644",
+              type: "blob",
+              sha: blob("initial"),
+            },
           ]);
           commits.set("initial-commit", { tree: { sha: "initial" } });
-          heads.set(repo.name, "initial-commit");
+          if (!options.emptyOnCreate) heads.set(repo.name, "initial-commit");
           result = repo;
           break;
         }
@@ -64,7 +69,15 @@ export function recordedGitHub() {
           result = issue;
           break;
         }
+        case "GET /repos/{owner}/{repo}/branches":
+          result = heads.has(String(params["repo"])) ? [{ name: "main" }] : [];
+          break;
+        case "PUT /repos/{owner}/{repo}/contents/{path}":
+          heads.set(String(params["repo"]), "initial-commit");
+          result = {};
+          break;
         case "GET /repos/{owner}/{repo}/git/ref/{ref}":
+          if (!heads.has(String(params["repo"]))) throw Error("read process branch failed (409)");
           result = { object: { sha: heads.get(String(params["repo"])) } };
           break;
         case "GET /repos/{owner}/{repo}/git/commits/{commit_sha}":
@@ -75,8 +88,18 @@ export function recordedGitHub() {
           break;
         case "POST /repos/{owner}/{repo}/git/trees": {
           const entries = (
-            params["tree"] as { path: string; content: string; mode: string; type: string }[]
-          ).map((e) => ({ path: e.path, mode: e.mode, type: e.type, sha: blob(e.content) }));
+            params["tree"] as {
+              path: string;
+              content: string;
+              mode: string;
+              type: string;
+            }[]
+          ).map((e) => ({
+            path: e.path,
+            mode: e.mode,
+            type: e.type,
+            sha: blob(e.content),
+          }));
           const sha = digest(JSON.stringify(entries));
           trees.set(sha, entries);
           result = { sha };
@@ -130,6 +153,7 @@ export function recordedGitHub() {
           break;
         case "DELETE /repos/{owner}/{repo}":
           repositories.delete(String(params["repo"]));
+          heads.delete(String(params["repo"]));
           if (params["repo"] === "fixture-app") issues.clear();
           result = {};
           break;
@@ -154,7 +178,11 @@ export function recordedGitHub() {
           };
           break;
         case "create project": {
-          const p: Project = { id: `P${id++}`, title: String(vars["title"]), number: 1 };
+          const p: Project = {
+            id: `P${id++}`,
+            title: String(vars["title"]),
+            number: 1,
+          };
           projects.set(p.id, p);
           result = { createProjectV2: { projectV2: p } };
           break;
@@ -166,7 +194,9 @@ export function recordedGitHub() {
                 nodes: [
                   {
                     name: "Status",
-                    options: ["Todo", "In Progress", "Done"].map((name) => ({ name })),
+                    options: ["Todo", "In Progress", "Done"].map((name) => ({
+                      name,
+                    })),
                   },
                 ],
               },
@@ -188,6 +218,8 @@ export function recordedGitHub() {
           result = { addProjectV2ItemById: { item: { id: `ITEM${id++}` } } };
           break;
         case "delete project":
+          if (query.includes("deletedProjectV2Id"))
+            throw Error("Unknown DeleteProjectV2Payload field");
           projects.delete(String(vars["id"]));
           result = {};
           break;

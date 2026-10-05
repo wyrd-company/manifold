@@ -59,7 +59,9 @@ it("requires installation access to both repositories and reports no token", asy
     processRepository: "fixture-settings",
     credentials: { appPrivateKeyFile: "synthetic-file" },
   } as import("./settings.ts").Settings;
-  rest.mockResolvedValue({ data: { repositories: [{ full_name: "example-org/fixture-app" }] } });
+  rest.mockResolvedValue({
+    data: { repositories: [{ full_name: "example-org/fixture-app" }] },
+  });
   await expect(installationAccess(settings)).rejects.toThrow(
     /^App installation missing repository access: example-org\/fixture-settings$/,
   );
@@ -72,4 +74,45 @@ it("requires installation access to both repositories and reports no token", asy
     },
   });
   await expect(installationAccess(settings)).resolves.toBeUndefined();
+});
+it("reads recorded delivery pages using the Link cursor and never page", async () => {
+  rest.mockImplementation(async (_route, params) => {
+    if ("page" in params) throw Object.assign(Error("invalid page"), { status: 422 });
+    if (!params.cursor)
+      return {
+        data: [{ id: 1 }],
+        headers: {
+          link: '<https://api.github.com/orgs/example-org/hooks/7/deliveries?cursor=next%2Fpage>; rel="next"',
+        },
+      };
+    expect(params.cursor).toBe("next/page");
+    return { data: [{ id: 2 }], headers: {} };
+  });
+  await expect(new GitHub("example-org", "synthetic").deliveries(7)).resolves.toEqual([
+    { id: 1 },
+    { id: 2 },
+  ]);
+  expect(rest).toHaveBeenCalledTimes(2);
+});
+it("sends only route-bound organization and owner parameters", async () => {
+  rest.mockResolvedValue({ data: {} });
+  const github = new GitHub("example-org", "synthetic");
+  await github.rest("detail", "GET /orgs/{org}/hooks/{hook_id}/deliveries/{delivery_id}", {
+    hook_id: 7,
+    delivery_id: 8,
+  });
+  expect(rest.mock.calls[0]?.[1]).toEqual({
+    org: "example-org",
+    hook_id: 7,
+    delivery_id: 8,
+  });
+  await github.rest("ref", "GET /repos/{owner}/{repo}/git/ref/{ref}", {
+    repo: "fixture",
+    ref: "heads/main",
+  });
+  expect(rest.mock.calls[1]?.[1]).toEqual({
+    owner: "example-org",
+    repo: "fixture",
+    ref: "heads/main",
+  });
 });

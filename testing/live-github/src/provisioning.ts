@@ -10,7 +10,12 @@ import { parse, stringify } from "yaml";
 import { ensureState, writeIfChanged } from "./settings.ts";
 import type { Settings } from "./settings.ts";
 import type { GitHubPort, Repository, Issue, Hook, Project } from "./github.ts";
-export type Resource = { id: number; nodeId: string; name: string; number?: number };
+export type Resource = {
+  id: number;
+  nodeId: string;
+  name: string;
+  number?: number;
+};
 export type Resources = {
   repository: Resource;
   processRepository: Resource & { head: string };
@@ -41,7 +46,9 @@ export async function readResources(directory: string): Promise<Resources> {
 export async function contentFiles(directory: string) {
   const files: Record<string, string> = {};
   async function visit(prefix: string) {
-    for (const entry of await readdir(join(directory, prefix), { withFileTypes: true })) {
+    for (const entry of await readdir(join(directory, prefix), {
+      withFileTypes: true,
+    })) {
       const path = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isSymbolicLink()) throw Error(`Content contains a symbolic link: ${path}`);
       if (entry.isDirectory()) await visit(path);
@@ -82,7 +89,11 @@ async function allRest<T>(
 ) {
   const all: T[] = [];
   for (let page = 1; ; page++) {
-    const rows = await github.rest<T[]>(op, route, { ...parameters, per_page: 100, page });
+    const rows = await github.rest<T[]>(op, route, {
+      ...parameters,
+      per_page: 100,
+      page,
+    });
     all.push(...rows);
     if (rows.length < 100) return all;
   }
@@ -193,7 +204,9 @@ export async function provision(
     report(s.project, "created");
   } else report(s.project, "present");
   const fields = await g.graph<{
-    node: { fields: { nodes: { name: string; options?: { name: string }[] }[] } };
+    node: {
+      fields: { nodes: { name: string; options?: { name: string }[] }[] };
+    };
   }>(
     "read project Status",
     "query($id:ID!){node(id:$id){... on ProjectV2{fields(first:100){nodes{... on ProjectV2SingleSelectField{name options{name}}}}}}}",
@@ -239,6 +252,23 @@ export async function provision(
     report(`Project item ${issue.number}`, "created");
   }
   const process = await repository(s.processRepository);
+  const branches = await allRest<{ name: string }>(
+    g,
+    "list process branches",
+    "GET /repos/{owner}/{repo}/branches",
+    { repo: process.name },
+  );
+  if (branches.length === 0) {
+    await write("process.initialize", () =>
+      g.rest("initialize process repository", "PUT /repos/{owner}/{repo}/contents/{path}", {
+        repo: process.name,
+        path: "README.md",
+        message: "Initialize test fixture",
+        content: Buffer.from("Test fixture\n").toString("base64"),
+      }),
+    );
+    report("Process repository first commit", "created");
+  }
   const branch = await g.rest<{ object: { sha: string } }>(
     "read process branch",
     "GET /repos/{owner}/{repo}/git/ref/{ref}",
@@ -343,12 +373,26 @@ export async function provision(
     await after("hook.secret.rename");
     secret = pending;
   }
-  const resource = (r: Repository): Resource => ({ id: r.id, nodeId: r.node_id, name: r.name });
+  const resource = (r: Repository): Resource => ({
+    id: r.id,
+    nodeId: r.node_id,
+    name: r.name,
+  });
   const resources: Resources = {
     repository: resource(repo),
     processRepository: { ...resource(process), head },
-    issues: issues.map((i) => ({ id: i.id, nodeId: i.node_id, name: i.title, number: i.number })),
-    project: { id: project.id, nodeId: project.id, name: project.title, number: project.number },
+    issues: issues.map((i) => ({
+      id: i.id,
+      nodeId: i.node_id,
+      name: i.title,
+      number: i.number,
+    })),
+    project: {
+      id: project.id,
+      nodeId: project.id,
+      name: project.title,
+      number: project.number,
+    },
     hook: { id: hook.id, name: "web" },
   };
   await file("resources.json", JSON.stringify(resources, null, 2) + "\n");
@@ -372,7 +416,7 @@ export async function teardown(options: Options) {
     if (p.title === `${s.project} (${s.marker})`) {
       await g.graph(
         "delete project",
-        "mutation($id:ID!){deleteProjectV2(input:{projectId:$id}){deletedProjectV2Id}}",
+        "mutation($id:ID!){deleteProjectV2(input:{projectId:$id}){projectV2{id}}}",
         { id: p.id },
       );
       await after("project.remove");
@@ -395,7 +439,9 @@ export async function teardown(options: Options) {
       report(name, "foreign");
       continue;
     }
-    await g.rest("delete repository", "DELETE /repos/{owner}/{repo}", { repo: name });
+    await g.rest("delete repository", "DELETE /repos/{owner}/{repo}", {
+      repo: name,
+    });
     await after(`${name}.remove`);
     report(name, "removed");
   }

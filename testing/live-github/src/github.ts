@@ -27,7 +27,12 @@ export type Hook = {
   id: number;
   active: boolean;
   events: string[];
-  config: { url: string; content_type?: string; insecure_ssl?: string; secret?: string };
+  config: {
+    url: string;
+    content_type?: string;
+    insecure_ssl?: string;
+    secret?: string;
+  };
 };
 export type Project = { id: string; title: string; number: number };
 export type GitHubPort = Pick<GitHub, "rest" | "graph" | "listHooks" | "hook" | "updateHook">;
@@ -48,9 +53,14 @@ export class GitHub {
   constructor(organization: string, pat: string) {
     this.organization = organization;
     this.requestClient = request.defaults({
-      headers: { authorization: `token ${pat}`, "X-GitHub-Api-Version": "2022-11-28" },
+      headers: {
+        authorization: `token ${pat}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
     });
-    this.graphClient = graphql.defaults({ headers: { authorization: `token ${pat}` } });
+    this.graphClient = graphql.defaults({
+      headers: { authorization: `token ${pat}` },
+    });
   }
   async rest<T>(
     operation: string,
@@ -60,8 +70,8 @@ export class GitHub {
     try {
       return (
         await this.requestClient(route, {
-          org: this.organization,
-          owner: this.organization,
+          ...(route.includes("{org}") ? { org: this.organization } : {}),
+          ...(route.includes("{owner}") ? { owner: this.organization } : {}),
           ...parameters,
         })
       ).data as T;
@@ -103,6 +113,26 @@ export class GitHub {
         if (!actual.has(required)) throw Error(`PAT missing scope ${required}`);
     }
     await this.rest("organization lookup", "GET /orgs/{org}");
+  }
+  async deliveries<T>(id: number): Promise<T[]> {
+    const all: T[] = [];
+    let cursor: string | undefined;
+    try {
+      do {
+        const response = await this.requestClient("GET /orgs/{org}/hooks/{hook_id}/deliveries", {
+          org: this.organization,
+          hook_id: id,
+          per_page: 100,
+          ...(cursor ? { cursor } : {}),
+        });
+        all.push(...(response.data as T[]));
+        const next = /<([^>]+)>;\s*rel="next"/.exec(String(response.headers.link ?? ""));
+        cursor = next ? (new URL(next[1]!).searchParams.get("cursor") ?? undefined) : undefined;
+      } while (cursor);
+      return all;
+    } catch (error) {
+      throw failure("read hook deliveries", error);
+    }
   }
   async listHooks() {
     const all: Hook[] = [];
@@ -155,11 +185,16 @@ export async function installationAccess(settings: Settings) {
   } catch (error) {
     throw failure("App installation authentication", error);
   }
-  const client = request.defaults({ headers: { authorization: `token ${token}` } });
+  const client = request.defaults({
+    headers: { authorization: `token ${token}` },
+  });
   const names = new Set<string>();
   try {
     for (let page = 1; ; page++) {
-      const { data } = await client("GET /installation/repositories", { per_page: 100, page });
+      const { data } = await client("GET /installation/repositories", {
+        per_page: 100,
+        page,
+      });
       for (const repo of data.repositories) names.add(repo.full_name.toLowerCase());
       if (data.repositories.length < 100) break;
     }
