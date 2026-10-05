@@ -557,6 +557,8 @@ components:
                 - unresolved-project
                 - undeclared
                 - declaration-conflict
+                - declaration-invalid
+                - declaration-pending
                 - invalid-request
                 - plan-stale
                 - unobserved

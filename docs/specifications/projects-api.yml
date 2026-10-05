@@ -71,7 +71,9 @@ description: |-
     the Project the answer names by `owner` and `number`, and
     `declaration` for a change Apply makes to `task-metadata.yml`, which
     takes GitHub's field into the declaration for a task field whose
-    `whenChanged` is `accept`.
+    `whenChanged` is `accept`, when the declaration can hold that field;
+    drift in a field it cannot hold, such as one recreated as an iteration
+    field, stays a `github` change.
   - `drift`: true when the change undoes drift, or takes it into the
     declaration: GitHub's field or option differs from the applied
     configuration in what the change sets.
@@ -189,8 +191,14 @@ description: |-
   write's error kind, `field-missing`, `option-missing`, `forbidden`,
   `transport`, or `rejected`, and each change's `outcome` is `applied`,
   `kept`, `failed` for the one that failed, and `not-run` for the rest; it
-  records no applied configuration. A save that conflicts answers `409`
-  with kind `declaration-conflict` after the GitHub changes are made. A
+  records no applied configuration. Before any write, the Apply lints the
+  declaration text its `declaration` changes give; a finding answers
+  `409` with kind `declaration-invalid` and writes nothing. A save that
+  conflicts answers `409` with kind `declaration-conflict` after the
+  GitHub changes are made. A save whose commit is pushed and not yet in
+  force answers `409` with kind `declaration-pending`, naming the commit;
+  the same Apply run again pushes nothing new and completes once the
+  commit is in force. Neither records an applied configuration. A
   binding the declaration in force does not name answers `409` with kind
   `undeclared`, and an unresolved Project `409` with kind
   `unresolved-project`.

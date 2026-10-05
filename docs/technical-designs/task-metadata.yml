@@ -427,9 +427,18 @@ proposed-design:
     applied configuration did not hold, and an order the applied
     configuration did not have. With no applied configuration no change is
     drift. (6) For a task field whose `whenChanged` is `accept`, when any
-    of its changes is drift, the plan holds one change in their place:
-    side `declaration`, action `change` with the observed field as `to`,
-    or `remove` when the field has no match, and `drift` true. The
+    of its changes is drift and the declaration can hold GitHub's field,
+    the plan holds one change in their place: side `declaration`, action
+    `change` with the observed field as `to`, or `remove` when the field
+    has no match, and `drift` true. The declaration can hold an observed
+    field whose data type is `text`, `number`, `date`, or `single-select`,
+    whose name and option names are names as `task-metadata-declaration`
+    defines them, whose options are named once each, and whose name no
+    other owned field is stored in. A field the declaration cannot hold,
+    such as a field recreated under the same name as an iteration field,
+    keeps its revert changes, each still drift, so the Apply that removes
+    it puts back the declared field and no save writes a type the
+    declaration refuses. The
     lifecycle field's drift is always reverted. The plan orders changes as
     an Apply makes them: removes of fields, creates of fields, changes of
     fields with their options' creates, changes, and removes, then
@@ -483,14 +492,28 @@ proposed-design:
     observed properties. A change whose `requiresRemoval` is true is left
     out unless `removeUndeclared` is true: a kept field is not deleted, a
     kept option stays in the list with its id, and a kept rename or type
-    replacement is not made. (5) It sends the writes one at a time with
+    replacement is not made. It also builds the declaration text the
+    plan's declaration changes give, as accept states, and lints the
+    complete text with `lintTaskMetadataDeclaration` against `bindings.yml`
+    of the declaration's commit; a finding answers `409` with kind
+    `declaration-invalid` and the findings' messages, and the Apply writes
+    nothing to GitHub or the repository and records nothing, so the drift
+    stays. (5) It sends the writes one at a time with
     `writeProjectField`, in plan order; a failure stops it, answers `502`
     with the error and each change's outcome, and records nothing, so the
     next Apply plans from what GitHub then holds. (6) It saves the
-    declaration changes, as accept states. (7) It observes the fields
-    again, and in one transaction replaces the binding's applied
-    configuration with the observed fields, the id each owned field
-    matched, and the declaration's commit.
+    declaration text, as accept states, when the plan has declaration
+    changes. (7) It observes the fields again. (8) When the plan had
+    declaration changes, it re-plans against the declaration in force at
+    that moment; while any accepted field still plans a declaration change,
+    the save is not in force, and the Apply records nothing and answers
+    `409` with kind `declaration-pending` and the saved commit. (9) In one
+    transaction it replaces the binding's applied configuration with the
+    observed fields, the id each owned field matched, and the commit of the
+    declaration in force. The applied configuration is therefore replaced
+    only when the declaration in force holds every field the Apply
+    accepted, so no later plan reads an accepted change as a declaration
+    edit to revert.
     It answers with the outcome, each change's outcome, the number of
     GitHub writes it made, the state after, and the save's commit. An Apply
     whose plan has nothing to make writes nothing to GitHub and still
@@ -514,12 +537,24 @@ proposed-design:
     field GitHub no longer holds. The message is `Accept GitHub changes to
     the task fields of <binding>`, and the save id is the first 32
     hexadecimal characters of the SHA-256 of the binding, the base commit,
-    and the new text, so a retried Apply that reaches the same text after
-    a crash finds its save and pushes nothing twice. `Revisions.save`
-    resolves when the saved commit is applied, so the declaration in force
-    already holds the accepted fields when the Apply records its applied
-    configuration and answers. A `conflict` answers `409` with kind
-    `declaration-conflict` after the GitHub writes are made and recorded.
+    and the new text, so a retried Apply that reaches the same text finds
+    its save and pushes nothing twice. `Revisions.save` resolves `saved`
+    with no load when its push succeeds and the pull that follows fails, as
+    `service-assembly` states, so the save's outcome does not show that
+    the commit is in force; step 8 of the Apply does. While the saved
+    commit is not in force the applied configuration is the earlier one,
+    so the accepted fields stay drift in every plan, each plan holds the
+    same declaration change, and an Apply run again builds the same text on
+    the same base commit with the same save id: `Revisions.save` answers
+    `already-saved` and pushes nothing, and its pull puts the commit in
+    force when the remote answers. The next pull of the follower, at a
+    sweep, a push delivery, or a restart, does the same. Once the commit is
+    in force, the accepted fields equal GitHub's, so the plan has no change
+    for them, and the next Apply records the applied configuration. A
+    `conflict` answers `409` with kind `declaration-conflict`, after the
+    GitHub writes and with nothing recorded, and the next Apply plans from
+    the moved declaration. The lint in step 4 runs on the text the save
+    would write, so no commit holds a declaration the service rejects.
   plan-declaration: >-
     `planDeclaration(declaration)` plans a declaration that is not in
     force, such as a console draft before it is published, against every
@@ -603,7 +638,10 @@ proposed-design:
     record leaves the saved commit, which the follower applies at the next
     start; the next Apply plans against it, finds the accepted fields in
     the declaration, and plans no declaration change, and a retried Apply
-    that reaches the same text finds its save by its id. A plan writes
+    that reaches the same text finds its save by its id. A save that
+    pushed while its pull failed leaves the commit on the branch and out of
+    force: the Apply records nothing, and every Apply until the commit is
+    in force saves the same text with the same id and pushes nothing. A plan writes
     only the mirror's fields, as an observation does, and twice gives the
     same changes and digest.
   tests: >-
@@ -692,6 +730,23 @@ proposed-design:
     the process dies, the fake deletes and recreates the move's option with
     the same name, and after the restart the actor takes `onDone` and its
     `field-changed` for the new value carries `movedBy` the actor,
-    confirmed, and `lifecycle` true. A blueprint guarded on
+    confirmed, and `lifecycle` true. Acceptance regressions: an applied
+    `number` task field whose `whenChanged` is `accept`, deleted in the
+    fake and recreated under the same name as an iteration field, plans
+    revert changes with `drift`, and an Apply with `removeUndeclared` true
+    replaces it with the declared `number` field, makes no commit, and
+    answers `in-sync`; `accept.ts` given an observed option whose name the
+    declaration refuses yields a text whose lint has a finding, and an
+    Apply that would save it answers `409` `declaration-invalid` with no
+    GitHub write, no commit, no record, and the drift still counted. With
+    the process repository fixture's remote taking the push and the pull
+    after it failing, an Apply that accepts a field renamed in the fake
+    answers `409` `declaration-pending` with the saved commit, the applied
+    configuration is unchanged, and the plan still shows the declaration
+    change with `drift`; a second Apply while the pull still fails answers
+    the same and the remote holds one accept commit; after a restart whose
+    pull succeeds, the declaration in force holds the new name, an Apply
+    records the applied configuration and answers `in-sync`, and the
+    remote still holds one accept commit. A blueprint guarded on
     `event.lifecycle` takes a person's move of a lifecycle field named
     `Phase` and not a change of another single-select field.

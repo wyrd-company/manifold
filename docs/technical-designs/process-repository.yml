@@ -149,7 +149,7 @@ proposed-design:
     }
 
     export interface SaveRequest {
-      /** A repository path under `blueprints/` ending in `.yml` or `.yaml`. */
+      /** A process repository path: `/`-separated segments, none empty, `.`, or `..`, and no `\`. */
       readonly path: string;
       /** The commit the edit started from. */
       readonly base: string;
@@ -397,7 +397,13 @@ proposed-design:
     `remote`; each carries H as `head`. The follower decides what a
     refused push means, as `service-assembly` states. `path` and `saveId`
     are checked against the shapes of `SaveRequest`, and `save` throws a
-    `TypeError` for any other value, since the API checks them first.
+    `TypeError` for any other value, since each caller checks them first.
+    Which paths may be saved is each caller's policy, and `save` takes any
+    process repository path a caller passes: the blueprints API saves only
+    blueprint paths under `blueprints/`, as `blueprints-api` states, and
+    the task metadata module saves only `task-metadata.yml`, as
+    `task-metadata` states. Every save keeps the same commit author, typed
+    conflict, and convergence by `saveId`, whatever its path.
   save-identity: >-
     The commit's author and committer are both `commitAuthor` from the
     `processRepository` section: `name` default `Manifold`, and `email`
