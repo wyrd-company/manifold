@@ -69,6 +69,7 @@ export interface Gates {
   comparatorFailed(escalation: GateStrandedEscalation): (() => void) | undefined;
   inputChanged(): void;
   replay(evaluationId: number): Promise<GateReplay>;
+  tokenHolder(tokenId: string): string | undefined;
   stop(): void;
 }
 export type GateSave = ActorSave;

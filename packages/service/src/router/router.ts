@@ -7,7 +7,7 @@ import type { DeliveryTarget, InboxRow, SnapshotWrite } from "../store/index.ts"
 import { deadlineLoop, systemClock } from "./deadline-loop.ts";
 import { routerSteps } from "./migrations.ts";
 import { subscriptionIndex } from "./topics.ts";
-import type { Router, RouterOptions } from "./types.ts";
+import type { Router, RouterOptions, HeldActor } from "./types.ts";
 import { validateSourceEvent } from "./validate.ts";
 
 export class ActorNotLoadedError extends TypeError {
@@ -29,7 +29,7 @@ export function startRouter({
   );
   const index = subscriptionIndex();
   const targets = new Map<string, DeliveryTarget>();
-  const held = new Set<string>();
+  const held = new Map<string, HeldActor>();
   const scheduled = new Set<string>();
   const delivering = new Set<string>();
   let immediate: ReturnType<typeof setImmediate> | undefined;
@@ -50,8 +50,9 @@ export function startRouter({
   }
   function hold(actorId: string, reason: string, row?: InboxRow) {
     targets.delete(actorId);
-    held.add(actorId);
-    onHeld?.({ actorId, reason, row });
+    const entry = { actorId, reason, row };
+    held.set(actorId, entry);
+    onHeld?.(entry);
   }
   function schedule(actorId: string) {
     if (stopped || !targets.has(actorId)) return;
@@ -104,6 +105,7 @@ export function startRouter({
   }
   const router: Router = {
     schedule,
+    held: (actorId) => held.get(actorId),
     publish(event) {
       requireRunning();
       const issues = validateSourceEvent(event);

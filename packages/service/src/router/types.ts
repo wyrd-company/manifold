@@ -28,6 +28,7 @@ export interface Router {
   attach(target: DeliveryTarget): void;
   persist(actorId: string): void;
   release(actorId: string): void;
+  held(actorId: string): HeldActor | undefined;
   schedule(actorId: string): void;
   stop(): void;
 }

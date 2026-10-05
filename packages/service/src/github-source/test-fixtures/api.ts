@@ -47,6 +47,8 @@ const connection = <T>(nodes: T[]) => ({
   pageInfo: { hasNextPage: false, endCursor: null as string | null },
 });
 export interface ModelIssue {
+  title?: string;
+  url?: string;
   id: string;
   number: number;
   state: string;
@@ -79,6 +81,7 @@ export async function githubFake() {
   const project = { id: "P_one", number: 1, owner: { login: "sample" }, closed: false };
   const authorizations: (string | undefined)[] = [];
   const log: { operation: string; variables: Record<string, unknown> }[] = [];
+  const queryLog: string[] = [];
   const deliveries: {
     id: number;
     guid: string;
@@ -156,6 +159,7 @@ export async function githubFake() {
         res.writeHead(400).end();
         return;
       }
+      queryLog.push(input.query);
       const operation = /(?:query|mutation)\s+(\w+)/.exec(input.query)![1]!;
       log.push({ operation, variables: input.variables });
       if (held?.operation === operation) {
@@ -388,6 +392,7 @@ export async function githubFake() {
     repeatDeliveryCursor() {
       deliveryPagination = "repeated";
     },
+    queryLog,
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     addItem(id: string, issueId: string) {
       items.set(id, {

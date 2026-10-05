@@ -1103,3 +1103,14 @@ it("rolls evaluation back when raising its comparator escalation fails", async (
   expect(f.rows("gates_evaluation")).toEqual([]);
   expect(f.rows("gates_token")).toEqual([]);
 });
+
+it("reads a token holder before and after return, and no holder for an unknown token", async () => {
+  const f = await fixture(single);
+  await f.start();
+  const token = String(f.rows("gates_token")[0]!["token_id"]);
+  expect(f.gates.tokenHolder(token)).toBe("parcel-00");
+  expect(f.gates.tokenHolder("unknown")).toBeUndefined();
+  f.save("parcel-00", "shipped", [], "entry-1", "done");
+  expect(f.rows("gates_token")[0]!["returned_at"]).not.toBeNull();
+  expect(f.gates.tokenHolder(token)).toBe("parcel-00");
+});

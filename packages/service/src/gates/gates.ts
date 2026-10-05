@@ -264,6 +264,7 @@ export function createGates(options: GatesOptions): Gates {
   const hooks = saveHook(options, tables, views, mark);
   return {
     ...hooks,
+    tokenHolder: (tokenId) => tables.token(tokenId)?.actor_id,
     async revision(load, revision) {
       requireRunning();
       const writes: { gate: string; key: string }[] = [];

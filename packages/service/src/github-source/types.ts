@@ -83,6 +83,8 @@ export class GitHubSourceError extends Error {
   }
 }
 export interface GitHubIssue {
+  readonly title?: string;
+  readonly url?: string;
   readonly nodeId: string;
   readonly repository: string;
   readonly number: number;

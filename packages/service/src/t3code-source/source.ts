@@ -4,6 +4,7 @@
 // ---
 import { T3ConnectionError } from "@wyrd-company/t3code-client";
 import { persistence } from "./persistence.ts";
+import { threadState } from "./state.ts";
 import { migrations } from "./migrations.ts";
 import { environmentLoop } from "./environment.ts";
 import type { T3CodeSourceOptions, T3CodeSource } from "./types.ts";
@@ -64,6 +65,21 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
     };
   });
   const source: T3CodeSource = {
+    thread(name, threadId) {
+      const configuration = options.environments[name];
+      if (!configuration) return undefined;
+      const stored = persistence(options.store, name),
+        environment = stored.environment(),
+        row = stored.row(threadId);
+      if (!environment || !row?.thread) return undefined;
+      const turn = threadState(row.thread).turn?.state;
+      return {
+        title: row.thread.title,
+        url: `${configuration.url.replace(/\/$/, "")}/${encodeURIComponent(environment.environment_id)}/${encodeURIComponent(threadId)}`,
+        ...(turn ? { turn: turn as "running" | "completed" | "interrupted" | "error" } : {}),
+        archived: row.status !== "followed",
+      };
+    },
     status: () => environments.map((e) => ({ ...e.status })),
     ready(name, signal) {
       const environment = environments.find((entry) => entry.status.environment === name);

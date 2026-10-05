@@ -18,6 +18,8 @@ export function createMirror(store: Store, now: () => number) {
   const db = store.connection.database;
   const issue = (row: Record<string, unknown>): GitHubIssue => ({
     nodeId: row["issue_node_id"] as string,
+    ...(typeof row["title"] === "string" ? { title: row["title"] } : {}),
+    ...(typeof row["url"] === "string" ? { url: row["url"] } : {}),
     repository: row["repository"] as string,
     number: row["number"] as number,
     state: row["state"] as GitHubIssue["state"],
@@ -128,7 +130,7 @@ export function createMirror(store: Store, now: () => number) {
     for (const [id, row] of after.issues)
       if (JSON.stringify(before.issues.get(id)) !== JSON.stringify(row))
         db.prepare(
-          "INSERT INTO github_issue VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(issue_node_id) DO UPDATE SET repository=excluded.repository, number=excluded.number, state=excluded.state, state_reason=excluded.state_reason, baselined=excluded.baselined, revision=excluded.revision, present=excluded.present",
+          "INSERT INTO github_issue (issue_node_id,repository,number,state,state_reason,baselined,revision,present,title,url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(issue_node_id) DO UPDATE SET repository=excluded.repository, number=excluded.number, state=excluded.state, state_reason=excluded.state_reason, baselined=excluded.baselined, revision=excluded.revision, present=excluded.present,title=excluded.title,url=excluded.url",
         ).run(
           id,
           row.issue.repository,
@@ -138,6 +140,8 @@ export function createMirror(store: Store, now: () => number) {
           Number(row.baselined),
           row.revision,
           Number(row.present),
+          row.issue.title ?? null,
+          row.issue.url ?? null,
         );
     for (const [id, row] of after.projects)
       if (JSON.stringify(before.projects.get(id)) !== JSON.stringify(row))

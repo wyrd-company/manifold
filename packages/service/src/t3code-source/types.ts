@@ -36,7 +36,14 @@ export interface EnvironmentStatus {
   readonly followedThreads: number;
   readonly openSubscriptions: number;
 }
+export interface ThreadView {
+  readonly title: string;
+  readonly url: string;
+  readonly turn?: "running" | "completed" | "interrupted" | "error";
+  readonly archived: boolean;
+}
 export interface T3CodeSource {
+  thread(environment: string, threadId: string): ThreadView | undefined;
   status(): readonly EnvironmentStatus[];
   ready(environment: string, signal?: AbortSignal): Promise<void>;
   write<T>(

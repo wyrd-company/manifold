@@ -46,6 +46,7 @@ import type { GitHubSource } from "../github-source/index.ts";
 import { startT3CodeSource, readThreadProject } from "../t3code-source/index.ts";
 import type { T3CodeSource } from "../t3code-source/index.ts";
 import { createHttpHost } from "../http-host/index.ts";
+import { openTasks } from "../tasks/index.ts";
 import { mountConsole } from "../console/index.ts";
 import type { HttpHost } from "../http-host/index.ts";
 import { createRevisions } from "./revisions.ts";
@@ -515,6 +516,37 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     });
     http.mount("/api/usage", parts.usage.listener);
     mountEscalations(http, parts.escalations);
+    const tasks = openTasks({
+      store: parts.store,
+      held: (actorId) => Boolean(router!.held(actorId)),
+      boundProjects: () =>
+        portfolio
+          .current()
+          .declaration.githubProjects.filter((binding) => !binding.archived)
+          .map((binding) => {
+            const lifecycle = options.declaredLifecycleOptions?.(binding.name);
+            return {
+              binding: binding.name,
+              owner: binding.owner,
+              number: binding.number,
+              item: binding.item,
+              ...(lifecycle ? { lifecycle } : {}),
+            };
+          }),
+      github,
+      actorUsage: portfolio.ledger.actorUsage,
+      listEscalations: escalations.list,
+      thread: t3code.thread,
+      tokenHolder: gates.tokenHolder,
+      log: (entry) =>
+        log({
+          level: entry.level,
+          event: "tasks-read-failed",
+          message: entry.error,
+          detail: { path: entry.path },
+        }),
+    });
+    http.mount("/api/tasks", tasks.requestListener);
     const address = await http.listen();
     step("listening", "start");
     log({ level: "info", event: "started", message: "Service started", detail: address });

@@ -82,7 +82,13 @@ function event(
   };
 }
 function issueValue(value: GitHubIssue) {
-  return { ...value };
+  return {
+    nodeId: value.nodeId,
+    repository: value.repository,
+    number: value.number,
+    state: value.state,
+    stateReason: value.stateReason,
+  };
 }
 export function reconcileIssue(
   state: MirrorState,

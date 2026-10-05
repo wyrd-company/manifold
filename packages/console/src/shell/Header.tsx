@@ -3,7 +3,10 @@
 //   implements: operator-console
 // ---
 import { PanelLeft, Workflow, ChevronRight } from "lucide-react";
-import { useLocation } from "@tanstack/react-router";
+import { useQuery, skipToken } from "@tanstack/react-query";
+import type { TaskResult } from "../api/tasks.ts";
+import { boardSearch } from "../screens/BoardContent.tsx";
+import { Link, useParams, useSearch, useLocation } from "@tanstack/react-router";
 import { Button } from "../ui/button.tsx";
 import { navigation, settingsTabs } from "./navigation.ts";
 import { ThemeToggle } from "./ThemeToggle.tsx";
@@ -16,6 +19,10 @@ export function Header({ toggleSidebar }: { toggleSidebar: () => void }) {
     (item) => item.path === path || (item.path !== "/" && path.startsWith(item.path + "/")),
   );
   const tab = settingsTabs.find((item) => item.path === path);
+  const { actorId } = useParams({ strict: false });
+  const search = useSearch({ strict: false });
+  const task = useQuery<TaskResult>({ queryKey: ["task", actorId], queryFn: skipToken }).data;
+  const issue = task?.kind === "ok" ? task.task.issue : undefined;
   return (
     <header>
       <Button variant="ghost" size="icon" aria-label="Toggle sidebar" onClick={toggleSidebar}>
@@ -27,7 +34,17 @@ export function Header({ toggleSidebar }: { toggleSidebar: () => void }) {
       </div>
       <div className="breadcrumb">
         <ChevronRight size={14} />
-        <span>{current?.label ?? "Page not found"}</span>
+        {actorId ? (
+          <>
+            <Link to="/board" search={boardSearch(search)}>
+              Board
+            </Link>
+            <ChevronRight size={14} />
+            <span className="mono">{issue ? `${issue.repository}#${issue.number}` : actorId}</span>
+          </>
+        ) : (
+          <span>{current?.label ?? "Page not found"}</span>
+        )}
         {tab ? (
           <>
             <ChevronRight size={14} />

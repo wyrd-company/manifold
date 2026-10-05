@@ -22,7 +22,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   to={item.path}
                   aria-label={item.label}
                   title={collapsed ? item.label : undefined}
-                  activeOptions={{ exact: item.path !== "/settings" }}
+                  activeOptions={{ exact: item.path !== "/settings" && item.path !== "/board" }}
                   activeProps={{ className: "active", "aria-current": "page" }}
                 >
                   <item.icon aria-hidden="true" />

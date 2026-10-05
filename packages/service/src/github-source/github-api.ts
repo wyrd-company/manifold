@@ -19,7 +19,7 @@ import type {
 import type { RouterClock } from "../router/index.ts";
 
 const issueRef =
-  "fragment GitHubIssueRef on Issue { id number state stateReason repository { nameWithOwner } }";
+  "fragment GitHubIssueRef on Issue { id number title url state stateReason repository { nameWithOwner } }";
 const fieldRef =
   "fragment GitHubField on ProjectV2FieldConfiguration { ... on ProjectV2FieldCommon { id name dataType } }";
 const fieldValues =
@@ -49,6 +49,8 @@ interface Connection<T> {
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
 }
 interface RawIssue {
+  title?: string;
+  url?: string;
   id: string;
   number: number;
   state: string;
@@ -87,13 +89,23 @@ interface RawProject {
   items: Connection<RawItem>;
 }
 function issue(raw: RawIssue): GitHubIssue {
-  return validate("issue", {
+  const identity = validate("issue", {
     nodeId: nodeId(raw.id),
     repository: raw.repository.nameWithOwner,
     number: raw.number,
     state: raw.state.toLowerCase() as GitHubIssue["state"],
     stateReason: (raw.stateReason?.toLowerCase() as GitHubIssue["stateReason"]) ?? null,
   });
+  if (
+    (raw.title !== undefined && typeof raw.title !== "string") ||
+    (raw.url !== undefined && (typeof raw.url !== "string" || !/^https?:\/\/[^\s]+$/.test(raw.url)))
+  )
+    throw new GitHubSourceError("api", "Invalid GitHub issue title or URL");
+  return {
+    ...identity,
+    ...(raw.title !== undefined ? { title: raw.title } : {}),
+    ...(raw.url !== undefined ? { url: raw.url } : {}),
+  };
 }
 export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock) {
   let controller: AbortController | undefined;

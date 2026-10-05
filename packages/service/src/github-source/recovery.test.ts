@@ -1099,3 +1099,49 @@ test("mirror notifications rerun gate critical paths on a transitive close, trac
   ).toBe(before);
   expect(s.store.loadSnapshot("parcel-waiting")!.savedAt).toBe(savedAt);
 });
+
+test("title and URL changes update tracked issues without a lifecycle event and remain outside event payloads", async () => {
+  const f = await setup();
+  f.fake.addItem("IT_A", "I_A");
+  f.fake.issues.get("I_A")!.title = "Collect parcel";
+  f.fake.issues.get("I_A")!.url = "https://example.test/issues/1";
+  await f.idle();
+  f.source.requestSweep();
+  await f.idle();
+  expect(f.source.trackedIssue("I_A")?.issue).toMatchObject({
+    title: "Collect parcel",
+    url: "https://example.test/issues/1",
+  });
+  const issueQueries = f.fake.queryLog.filter((query) => query.includes("fragment GitHubIssueRef"));
+  expect(issueQueries.length).toBeGreaterThan(0);
+  expect(
+    issueQueries.every((query) =>
+      /fragment GitHubIssueRef on Issue \{ id number title url state/.test(query),
+    ),
+  ).toBe(true);
+  const count = f.taken.length;
+  f.fake.issues.get("I_A")!.title = "Deliver parcel";
+  f.source.requestSweep();
+  await f.idle();
+  expect(f.source.trackedIssue("I_A")?.issue.title).toBe("Deliver parcel");
+  expect(f.taken).toHaveLength(count);
+  f.fake.issues.get("I_A")!.state = "CLOSED";
+  f.source.requestSweep();
+  await f.idle();
+  expect(f.taken).toContainEqual({
+    actor: "I_A",
+    payload: {
+      type: "github.issue.closed",
+      blocks: [],
+      parent: null,
+      issue: {
+        nodeId: "I_A",
+        repository: "sample/records",
+        number: 1,
+        state: "closed",
+        stateReason: null,
+      },
+    },
+  });
+  expect(f.errors).toEqual([]);
+});

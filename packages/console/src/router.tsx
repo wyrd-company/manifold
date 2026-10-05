@@ -9,6 +9,8 @@ import { AppShell } from "./shell/AppShell.tsx";
 import { navigation } from "./shell/navigation.ts";
 import { PageTitle, EmptyState } from "./screens/EmptyContent.tsx";
 import { OverviewContent } from "./screens/OverviewContent.tsx";
+import { TaskContent } from "./screens/board/TaskContent.tsx";
+import { boardSearch } from "./screens/BoardContent.tsx";
 import { BoardContent } from "./screens/BoardContent.tsx";
 import { EpicsContent } from "./screens/EpicsContent.tsx";
 import { ActorsContent } from "./screens/ActorsContent.tsx";
@@ -47,6 +49,7 @@ const routes = navigation.map((item, index) => {
   return createRoute({
     getParentRoute: () => root,
     path: item.path,
+    ...(item.path === "/board" ? { validateSearch: boardSearch } : {}),
     component: () => (
       <>
         <PageTitle title={item.label} description={item.description} />
@@ -86,4 +89,21 @@ settings.addChildren([
   }),
   createRoute({ getParentRoute: () => settings, path: "general", component: GeneralContent }),
 ]);
-export const router = createRouter({ routeTree: root.addChildren(routes), basepath: "/console" });
+export const router = createRouter({
+  routeTree: root.addChildren([
+    ...routes,
+    createRoute({
+      getParentRoute: () => root,
+      path: "/board/task/$actorId",
+      validateSearch: boardSearch,
+      component: TaskContent,
+    }),
+  ]),
+  basepath: "/console",
+});
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}

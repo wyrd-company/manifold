@@ -1228,3 +1228,43 @@ test("ready resets during a changed environment identity until its new origin co
     store.connection.database.prepare("SELECT environment_id FROM t3_environment").get(),
   ).toEqual({ environment_id: "replacement-server" });
 });
+
+test("thread view reads stored titles and turn state, encodes thread URLs, and marks archived rows", async () => {
+  const { server, store, start, options } = await setup();
+  const thread = fixtureThread("thread-one");
+  thread.latestTurn = {
+    turnId: "turn-one" as NonNullable<typeof thread.latestTurn>["turnId"],
+    state: "completed",
+    requestedAt: thread.createdAt,
+    startedAt: thread.createdAt,
+    completedAt: thread.createdAt,
+    assistantMessageId: null,
+  };
+  server.baseline(thread);
+  const source = start();
+  await source.ready("station");
+  await expect.poll(() => source.thread("station", "thread-one")?.title).toBe("A recipe");
+  expect(source.thread("station", "thread-one")).toEqual({
+    title: "A recipe",
+    url: `${options.environments.station.url}/server-one/thread-one`,
+    turn: "completed",
+    archived: false,
+  });
+  expect(source.thread("unknown", "thread-one")).toBeUndefined();
+  expect(source.thread("station", "missing")).toBeUndefined();
+  const db = store.connection.database;
+  db.prepare("UPDATE t3_thread SET thread_id=?, status='archived' WHERE thread_id=?").run(
+    "a/b snow",
+    "thread-one",
+  );
+  db.prepare("UPDATE t3_environment SET environment_id=? WHERE environment=?").run(
+    "server/one",
+    "station",
+  );
+  expect(source.thread("station", "a/b snow")).toMatchObject({
+    url: `${options.environments.station.url}/server%2Fone/a%2Fb%20snow`,
+    archived: true,
+  });
+  db.prepare("UPDATE t3_thread SET status='deleted' WHERE thread_id=?").run("a/b snow");
+  expect(source.thread("station", "a/b snow")?.archived).toBe(true);
+});

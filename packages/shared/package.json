@@ -22,6 +22,14 @@
     "./actors-api": {
       "types": "./dist/actors-api.d.ts",
       "import": "./dist/actors-api.js"
+    },
+    "./tasks-api": {
+      "types": "./dist/tasks-api.d.ts",
+      "import": "./dist/tasks-api.js"
+    },
+    "./escalations-api": {
+      "types": "./dist/escalations-api.d.ts",
+      "import": "./dist/escalations-api.js"
     }
   },
   "scripts": {

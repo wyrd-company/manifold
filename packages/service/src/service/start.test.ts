@@ -800,6 +800,7 @@ test("wires gates into revision following, router resume, and shutdown", async (
     replay: async () => {
       throw new Error("unused");
     },
+    tokenHolder: () => undefined,
     stop: () => {
       events.push("gate-stop");
     },
