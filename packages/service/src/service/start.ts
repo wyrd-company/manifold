@@ -50,6 +50,7 @@ import { startT3CodeSource, readThreadProject } from "../t3code-source/index.ts"
 import type { T3CodeSource } from "../t3code-source/index.ts";
 import { createHttpHost } from "../http-host/index.ts";
 import { openTasks } from "../tasks/index.ts";
+import { mountBlueprintsApi } from "../blueprints-api/index.ts";
 import { mountConsole } from "../console/index.ts";
 import type { HttpHost } from "../http-host/index.ts";
 import { createRevisions } from "./revisions.ts";
@@ -199,6 +200,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       configuration: configuration.processRepository,
       credentials: configuration.credentials,
       ...(options.probes?.pull ? { probe: options.probes.pull } : {}),
+      ...(options.probes?.save ? { saveProbe: options.probes.save } : {}),
     });
     const tokenFile = (name: string) => {
       const credential = configuration.credentials.resolve(name);
@@ -539,6 +541,24 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         }),
     });
     http.mount("/api/agent-tools", agentTools.requestListener);
+    mountBlueprintsApi(http, {
+      revisions,
+      processRepository,
+      store,
+      repository: {
+        url: configuration.processRepository.url,
+        branch: configuration.processRepository.branch,
+      },
+      configurationBound: configuration.blueprintLint.configurationBound,
+      bundle: { digest: "", blueprints: new Map() },
+      log: (entry) =>
+        log({
+          level: entry.level,
+          event: "blueprints-api-failed",
+          message: entry.error,
+          detail: { path: entry.path },
+        }),
+    });
     http.mount("/api/usage", parts.usage.listener);
     mountEscalations(http, parts.escalations);
     const tasks = openTasks({

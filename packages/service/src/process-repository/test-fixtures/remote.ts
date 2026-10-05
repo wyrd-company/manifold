@@ -60,6 +60,9 @@ export async function fixture(directory: string) {
     auth: string | undefined;
     replay: Buffer | undefined;
     packStarted?: () => void;
+    beforeReceive?: () => Promise<void>;
+    loseReceiveReply?: boolean;
+    refuseNextFetch?: boolean;
     hold?: { reached: () => void; released: Promise<void> };
   } = { mode: "healthy", auth: undefined, replay: undefined };
   const server = createServer((request, response) => {
@@ -83,6 +86,13 @@ export async function fixture(directory: string) {
         response.end();
         return;
       }
+      if (request.url!.includes("git-upload-pack") && state.refuseNextFetch) {
+        state.refuseNextFetch = false;
+        response.destroy();
+        return;
+      }
+      if (request.method === "POST" && request.url!.endsWith("git-receive-pack"))
+        await state.beforeReceive?.();
       if (state.hold) {
         const hold = state.hold;
         delete state.hold;
@@ -135,6 +145,11 @@ export async function fixture(directory: string) {
       backend.stdin.end(body);
       backend.on("close", () => {
         if (response.destroyed) return;
+        if (request.url!.endsWith("git-receive-pack") && state.loseReceiveReply) {
+          state.loseReceiveReply = false;
+          response.destroy();
+          return;
+        }
         const result = Buffer.concat(chunks);
         const boundary = result.indexOf("\r\n\r\n");
         const headers: Record<string, string> = {};

@@ -10,8 +10,10 @@ import type { IntakeRevision } from "../intake/index.ts";
 import type { Usage } from "../usage/index.ts";
 import type { Gates } from "../gates/index.ts";
 import type { Portfolio } from "../portfolio/index.ts";
+import { ProcessRepositorySaveError } from "../process-repository/index.ts";
+import type { SaveRequest, SaveOutcome } from "../process-repository/index.ts";
 import type { ProcessRepository } from "../process-repository/index.ts";
-import type { AppliedRevision, Revisions, ServiceLogEntry } from "./types.ts";
+import type { AppliedRevision, Revisions, ServiceLogEntry, SavedRevision } from "./types.ts";
 export function createRevisions(options: {
   readonly repository: ProcessRepository;
   readonly blueprints: BlueprintLoader;
@@ -111,8 +113,57 @@ export function createRevisions(options: {
     );
     return operation;
   }
+  async function pullAndApply() {
+    await apply();
+    try {
+      await options.repository.pull();
+    } catch (error) {
+      await apply();
+      throw error;
+    }
+    await apply();
+  }
+  async function savedResult(result: SaveOutcome): Promise<SavedRevision> {
+    if (result.kind === "conflict")
+      return { outcome: "conflict", reason: "file-changed", head: result.head, text: result.text };
+    if (result.kind !== "pushed")
+      return { outcome: result.kind, commit: result.commit, blueprints: latest };
+    try {
+      await pullAndApply();
+    } catch {
+      return { outcome: "saved", commit: result.commit, blueprints: undefined };
+    }
+    return { outcome: "saved", commit: result.commit, blueprints: latest };
+  }
+  async function save(request: SaveRequest): Promise<SavedRevision> {
+    await pullAndApply();
+    try {
+      return await savedResult(await options.repository.save(request));
+    } catch (error) {
+      if (!(error instanceof ProcessRepositorySaveError)) throw error;
+      await pullAndApply();
+      if (options.repository.current()!.commit === error.head) throw error;
+      try {
+        return await savedResult(await options.repository.save(request));
+      } catch (second) {
+        if (!(second instanceof ProcessRepositorySaveError)) throw second;
+        await pullAndApply();
+        const recovered = await options.repository.findSave(request);
+        if (recovered) return { outcome: "already-saved", commit: recovered, blueprints: latest };
+        const revision = options.repository.current()!;
+        if (revision.commit === second.head) throw second;
+        return {
+          outcome: "conflict",
+          reason: "branch-moved",
+          head: revision.commit,
+          text: await revision.read(request.path),
+        };
+      }
+    }
+  }
   return {
     latest: () => latest,
+    save: (request) => enqueue(() => save(request)),
     current: () => current,
     follow: () => enqueue(apply),
     pull: (request) =>

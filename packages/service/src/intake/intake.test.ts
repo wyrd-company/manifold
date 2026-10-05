@@ -545,6 +545,10 @@ it("captures the previous whole publication while the follower awaits load and a
       current: () => revision,
       revisionAt: async (commit) => s.revisions.get(commit),
       pull: async () => ({ kind: "unchanged", commit: revision.commit }),
+      save: async () => {
+        throw new Error("Unexpected save");
+      },
+      findSave: async () => undefined,
     },
     blueprints: {
       ...s.loader,

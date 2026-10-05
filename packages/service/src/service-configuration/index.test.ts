@@ -41,6 +41,7 @@ test("loads defaults, freezes configuration and resolves relative paths", async 
     branch: "main",
     credential: undefined,
     pullTimeoutMs: 60000,
+    commitAuthor: { name: "Manifold", email: "manifold@manifold.invalid" },
   });
   expect(loaded.comparatorSandbox).toEqual(comparatorSandboxDefaults);
   expect(loaded.credentials.names).toEqual([]);
@@ -509,6 +510,28 @@ test("agent tool identification defaults and bounds are validated", async () => 
     await expect(loadServiceConfiguration(invalid.file)).rejects.toMatchObject({
       issues: expect.arrayContaining([
         expect.objectContaining({ path: "/agentTools/identifyTimeoutMs" }),
+      ]),
+    });
+  }
+});
+
+test("commit author defaults each identity part and rejects git identity delimiters", async () => {
+  const { file } = await config({
+    ...minimal,
+    processRepository: { ...minimal.processRepository, commitAuthor: { name: "Example" } },
+  });
+  expect((await loadServiceConfiguration(file)).processRepository.commitAuthor).toEqual({
+    name: "Example",
+    email: "manifold@manifold.invalid",
+  });
+  for (const name of ["", "Example\nOther", "<Example>", "x".repeat(257)]) {
+    const { file } = await config({
+      ...minimal,
+      processRepository: { ...minimal.processRepository, commitAuthor: { name } },
+    });
+    await expect(loadServiceConfiguration(file)).rejects.toMatchObject({
+      issues: expect.arrayContaining([
+        expect.objectContaining({ path: "/processRepository/commitAuthor/name" }),
       ]),
     });
   }

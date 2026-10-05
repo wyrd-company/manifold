@@ -20,6 +20,8 @@ import type {
   PullOutcome,
   PullProbe,
   PullRequest,
+  SaveRequest,
+  SaveProbe,
 } from "../process-repository/index.ts";
 import type { GitHubSource } from "../github-source/index.ts";
 import type { T3CodeSource } from "../t3code-source/index.ts";
@@ -54,6 +56,7 @@ export interface ServiceProbes {
   readonly cardMove?: (move: import("../github-source/index.ts").CardMove) => void;
   /** Passed to the process repository. */
   readonly pull?: PullProbe;
+  readonly save?: SaveProbe;
   /** Passed to the store. */
   readonly delivery?: DeliveryProbe;
   /** Called after the revision follower applies a revision. */
@@ -118,7 +121,21 @@ export interface Revisions {
   pull(request?: PullRequest): Promise<PullOutcome>;
   /** Queues the apply of the current commit; resolves when it is applied. */
   follow(): Promise<void>;
+  save(request: SaveRequest): Promise<SavedRevision>;
 }
+
+export type SavedRevision =
+  | {
+      readonly outcome: "saved" | "already-saved" | "unchanged";
+      readonly commit: string;
+      readonly blueprints: RevisionLoad | undefined;
+    }
+  | {
+      readonly outcome: "conflict";
+      readonly reason: "file-changed" | "branch-moved";
+      readonly head: string;
+      readonly text: string | undefined;
+    };
 
 export interface AppliedRevision {
   readonly commit: string;

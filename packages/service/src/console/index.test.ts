@@ -213,3 +213,12 @@ test("refuses an incomplete console build at mount", () => {
     /index.html/,
   );
 });
+
+test("blueprint editor routes ending in YAML extensions load the shell for GET and HEAD", async () => {
+  for (const method of ["GET", "HEAD"]) {
+    const response = await read("/console/blueprints/blueprints/sample.yml", method);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+  }
+  expect((await read("/console/blueprints/missing.js")).status).toBe(404);
+});

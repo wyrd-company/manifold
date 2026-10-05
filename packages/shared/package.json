@@ -30,6 +30,10 @@
     "./escalations-api": {
       "types": "./dist/escalations-api.d.ts",
       "import": "./dist/escalations-api.js"
+    },
+    "./blueprints-api": {
+      "types": "./dist/blueprints-api.d.ts",
+      "import": "./dist/blueprints-api.js"
     }
   },
   "scripts": {
@@ -54,7 +58,8 @@
   "relationships": {
     "implements": [
       "actors-api",
-      "operator-console"
+      "operator-console",
+      "blueprints-api"
     ]
   }
 }

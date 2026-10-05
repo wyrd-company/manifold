@@ -11,11 +11,14 @@ export interface ProcessRepositoryOptions {
   readonly configuration: ProcessRepositoryConfiguration;
   readonly credentials: Credentials;
   readonly probe?: PullProbe;
+  readonly saveProbe?: SaveProbe;
 }
 export interface ProcessRepository {
   current(): ProcessRepositoryRevision | undefined;
   revisionAt(commit: string): Promise<ProcessRepositoryRevision | undefined>;
   pull(request?: PullRequest): Promise<PullOutcome>;
+  save(request: SaveRequest): Promise<SaveOutcome>;
+  findSave(request: Pick<SaveRequest, "base" | "saveId">): Promise<string | undefined>;
 }
 export interface PullRequest {
   readonly commit?: string;
@@ -41,5 +44,30 @@ export class ProcessRepositoryOpenError extends Error {
     this.name = "ProcessRepositoryOpenError";
     this.commit = commit;
     this.directory = directory;
+  }
+}
+
+export interface SaveRequest {
+  readonly path: string;
+  readonly base: string;
+  readonly text: string;
+  readonly message: string;
+  readonly saveId: string;
+}
+export type SaveOutcome =
+  | { readonly kind: "pushed"; readonly commit: string; readonly parent: string }
+  | { readonly kind: "already-saved"; readonly commit: string }
+  | { readonly kind: "unchanged"; readonly commit: string }
+  | { readonly kind: "conflict"; readonly head: string; readonly text: string | undefined };
+export type SaveStep = "committed" | "pushed";
+export type SaveProbe = (step: SaveStep, commit: string) => void;
+export class ProcessRepositorySaveError extends Error {
+  readonly kind: "authentication" | "rejected" | "remote";
+  readonly head: string;
+  constructor(kind: ProcessRepositorySaveError["kind"], head: string, message: string) {
+    super(message);
+    this.name = "ProcessRepositorySaveError";
+    this.kind = kind;
+    this.head = head;
   }
 }

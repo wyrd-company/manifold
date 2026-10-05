@@ -517,6 +517,7 @@ it("resumes the same revision after SIGKILL across repository, sources, inbox an
       directory: join(directory, "clone"),
       credential: undefined,
       pullTimeoutMs: 30000,
+      commitAuthor: { name: "Example", email: "example@example.test" },
     },
     github: {
       apiUrl: api.url,

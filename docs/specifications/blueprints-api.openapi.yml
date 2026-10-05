@@ -19,7 +19,7 @@ paths:
       summary: List every blueprint at the latest applied revision, bundled blueprints that no repository file replaces included.
       responses:
         "200":
-          description: The blueprints, repository blueprints first, each group by path.
+          description: Every blueprint, sorted by path across repository and bundled sources.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"

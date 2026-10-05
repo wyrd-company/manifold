@@ -130,3 +130,6 @@ export type { AgentToolCallResponse } from "./agent-tools.ts";
 export { createSchemaCompiler } from "./schema-compiler.ts";
 
 export { bundledFiles } from "./bundle.generated.ts";
+export { blueprintGraph } from "./blueprint-graph.ts";
+export { findingRanges } from "./finding-ranges.ts";
+export type * from "./blueprints-api.ts";

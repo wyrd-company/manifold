@@ -88,7 +88,10 @@ test("built console serves the shell and live actors without authentication", as
     await page.getByRole("dialog").getByLabel("Search pages").fill("Blueprints");
     await page.getByRole("dialog").getByLabel("Search pages").press("Enter");
     await page.getByRole("heading", { name: "Blueprints", exact: true }).waitFor();
-    expect(await page.getByText("Nothing here yet").count()).toBe(1);
+    await page
+      .getByRole("alert")
+      .getByText("Cannot read blueprints. Check the connection and try again.")
+      .waitFor();
     await page.goto(server.url + "/console/settings");
     await page.getByRole("heading", { name: "Task fields", exact: true }).waitFor();
     await page.getByRole("link", { name: "General", exact: true }).click();

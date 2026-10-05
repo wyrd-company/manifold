@@ -18,6 +18,8 @@ export function Header({ toggleSidebar }: { toggleSidebar: () => void }) {
   const current = navigation.find(
     (item) => item.path === path || (item.path !== "/" && path.startsWith(item.path + "/")),
   );
+  const params = useParams({ strict: false });
+  const blueprintPath = current?.label === "Blueprints" ? params._splat : undefined;
   const tab = settingsTabs.find((item) => item.path === path);
   const { actorId } = useParams({ strict: false });
   const search = useSearch({ strict: false });
@@ -45,6 +47,12 @@ export function Header({ toggleSidebar }: { toggleSidebar: () => void }) {
         ) : (
           <span>{current?.label ?? "Page not found"}</span>
         )}
+        {blueprintPath ? (
+          <>
+            <ChevronRight size={14} />
+            <span className="mono">{blueprintPath}</span>
+          </>
+        ) : null}
         {tab ? (
           <>
             <ChevronRight size={14} />

@@ -7,6 +7,7 @@ import { layout } from "./layout.ts";
 import { gitFileSystem } from "./git-fs.ts";
 import { recover } from "./recover.ts";
 import { revision } from "./revision.ts";
+import { saveRevision, findSave } from "./save.ts";
 import { pullRevision } from "./pull.ts";
 import type {
   ProcessRepository,
@@ -24,11 +25,25 @@ export async function openProcessRepository(
   const objects = { gitdir: paths.gitdir, fs: gitFileSystem(paths.gitdir), cache: {} };
   const commit = await recover(paths, objects);
   let current = commit ? revision(objects, commit) : undefined;
-  let running: Promise<PullOutcome> | undefined;
+  let running: Promise<unknown> | undefined;
+  let tail: Promise<unknown> = Promise.resolve();
+  function exclusive<T>(run: () => Promise<T>): Promise<T> {
+    const promise = tail.catch(() => undefined).then(run);
+    tail = promise;
+    running = promise;
+    void promise
+      .finally(() => {
+        if (running === promise) running = undefined;
+      })
+      .catch(() => undefined);
+    return promise;
+  }
   let queued: Promise<PullOutcome> | undefined;
   let queuedCommit: string | undefined;
   function launch(request?: PullRequest): Promise<PullOutcome> {
-    const promise = pullRevision(options, objects, paths, credential, current?.commit, request)
+    const promise = exclusive(() =>
+      pullRevision(options, objects, paths, credential, current?.commit, request),
+    )
       .then((outcome) => {
         if (outcome.kind === "advanced") {
           current = revision(objects, outcome.commit);
@@ -52,6 +67,12 @@ export async function openProcessRepository(
       } catch {
         return undefined;
       }
+    },
+    save(request) {
+      return exclusive(() => saveRevision(options, objects, credential, current?.commit, request));
+    },
+    findSave(request) {
+      return exclusive(() => findSave(objects, current?.commit, request));
     },
     pull(request?: PullRequest) {
       if (queued) {

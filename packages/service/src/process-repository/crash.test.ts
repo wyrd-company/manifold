@@ -33,6 +33,7 @@ async function setup() {
     credential: undefined,
     directory: join(directory, "clone"),
     pullTimeoutMs: 5000,
+    commitAuthor: { name: "Manifold", email: "manifold@manifold.invalid" },
   };
   return { remote, configuration };
 }

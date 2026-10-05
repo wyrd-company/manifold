@@ -47,7 +47,10 @@ export function staticListener(root: string): RequestListener {
     request.url = original.slice("/console".length);
     serve(request, response, () => {
       const relative = path.slice("/console/".length);
-      if (relative.startsWith("assets/") || /\.[^/]+$/.test(relative)) {
+      if (
+        relative.startsWith("assets/") ||
+        (/\.[^/]+$/.test(relative) && !/^blueprints\/blueprints\/.+\.ya?ml$/.test(relative))
+      ) {
         response.writeHead(404).end();
         return;
       }

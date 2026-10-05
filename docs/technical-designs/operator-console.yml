@@ -891,7 +891,9 @@ proposed-design:
     takes the request's path, which the HTTP host passes unchanged,
     removes `/console` from its start, and serves the rest from the
     directory. A `GET` or `HEAD`
-    of a file answers it. A path with no file extension and no file
+    of a file answers it. A Blueprints editor path under
+    `/console/blueprints/blueprints/` ending in `.yml` or `.yaml` answers
+    `index.html` when no file exists, for GET and HEAD. A path with no file extension and no file
     answers `index.html`, so a client route loads the application; a path
     with an extension and no file answers `404`. Files under `assets/` are
     served with `Cache-Control: public, max-age=31536000, immutable`, since

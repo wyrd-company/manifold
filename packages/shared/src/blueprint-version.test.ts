@@ -29,3 +29,21 @@ it("pins texts by path independently of insertion order and round-trips both sou
   ])
     expect(parseBlueprintVersionKey(key)).toBeUndefined();
 });
+
+//   verifies: [blueprint, blueprints-api]
+// ---
+import { expect, it } from "vite-plus/test";
+import { parseBlueprintVersionKey, blueprintVersionKey } from "./blueprint-version.ts";
+it("parses repository and bundled version keys without folding the digest into the path", () => {
+  const commit = "a".repeat(40);
+  const version = { commit, path: "blueprints/shipping.yml", bundle: "d".repeat(64) };
+  expect(parseBlueprintVersionKey(`${commit}:blueprints/shipping.yml@${version.bundle}`)).toEqual(
+    version,
+  );
+  expect(blueprintVersionKey(version)).toBe(`${commit}:blueprints/shipping.yml@${version.bundle}`);
+  expect(parseBlueprintVersionKey(`${commit}:blueprints/shipping.yml`)).toEqual({
+    commit,
+    path: version.path,
+  });
+  expect(parseBlueprintVersionKey(`${commit}:blueprints/shipping.yml@`)).toBeUndefined();
+});

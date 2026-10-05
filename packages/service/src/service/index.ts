@@ -11,6 +11,7 @@ export type {
   ServiceParts,
   Service,
   Revisions,
+  SavedRevision,
   AppliedRevision,
   ServiceHttp,
   ServiceLogEntry,

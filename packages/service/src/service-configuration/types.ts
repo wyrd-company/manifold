@@ -27,6 +27,7 @@ export interface ProcessRepositoryConfiguration {
   readonly credential: string | undefined;
   readonly directory: string;
   readonly pullTimeoutMs: number;
+  readonly commitAuthor: { readonly name: string; readonly email: string };
 }
 export interface Credentials {
   readonly names: readonly string[];

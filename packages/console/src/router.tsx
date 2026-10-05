@@ -58,6 +58,16 @@ const routes = navigation.map((item, index) => {
     ),
   });
 });
+const blueprintEditorRoute = createRoute({
+  getParentRoute: () => root,
+  path: "/blueprints/$",
+  component: () => (
+    <>
+      <PageTitle title="Blueprints" description="Blueprints / editor" />
+      <BlueprintsContent />
+    </>
+  ),
+});
 const settings = routes[8]!;
 settings.addChildren([
   createRoute({
@@ -92,6 +102,7 @@ settings.addChildren([
 export const router = createRouter({
   routeTree: root.addChildren([
     ...routes,
+    blueprintEditorRoute,
     createRoute({
       getParentRoute: () => root,
       path: "/board/task/$actorId",

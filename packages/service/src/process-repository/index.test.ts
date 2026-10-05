@@ -38,6 +38,7 @@ async function setup(timeout = 2000) {
     directory: join(directory, "clone"),
     credential: undefined,
     pullTimeoutMs: timeout,
+    commitAuthor: { name: "Manifold", email: "manifold@manifold.invalid" },
   };
   const a = await remote.commit("first");
   return { directory, remote, configuration, a };

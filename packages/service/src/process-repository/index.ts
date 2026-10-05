@@ -3,7 +3,11 @@
 //   implements: process-repository
 // ---
 export { openProcessRepository } from "./open.ts";
-export { ProcessRepositoryPullError, ProcessRepositoryOpenError } from "./types.ts";
+export {
+  ProcessRepositoryPullError,
+  ProcessRepositoryOpenError,
+  ProcessRepositorySaveError,
+} from "./types.ts";
 export type {
   ProcessRepositoryOptions,
   ProcessRepository,
@@ -11,4 +15,8 @@ export type {
   PullOutcome,
   PullStep,
   PullProbe,
+  SaveRequest,
+  SaveOutcome,
+  SaveStep,
+  SaveProbe,
 } from "./types.ts";
