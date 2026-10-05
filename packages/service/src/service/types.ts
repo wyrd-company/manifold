@@ -11,7 +11,11 @@ import type { Intake, IntakeRevision } from "../intake/index.ts";
 import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
 import type { Router } from "../router/index.ts";
 import type { ActorHost } from "../actor-host/index.ts";
-import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
+import type {
+  BlueprintLoader,
+  ImplementationRegistry,
+  RevisionLoad,
+} from "../blueprint-loader/index.ts";
 import type { Usage } from "../usage/index.ts";
 import type { Gates } from "../gates/index.ts";
 import type { Portfolio } from "../portfolio/index.ts";
@@ -160,3 +164,49 @@ export interface ServiceLogEntry {
 
 /** The path the GitHub source's listener is mounted at. */
 export const githubWebhookPath = "/webhooks/github";
+
+export interface ServiceWiringPart<Needs extends object, Gives extends object> {
+  /** Unique kebab-case name in the start list. */
+  readonly name: string;
+  /** Opens the module and returns only its new members. */
+  readonly start: (members: Needs, context: ServiceWiringContext) => Gives | Promise<Gives>;
+}
+export interface ServiceWiringContext {
+  readonly options: StartServiceOptions;
+  /** Registers cleanup immediately after opening a resource. */
+  onStop(stage: ServiceStopStage, stop: () => void | Promise<void>): void;
+  /** Reads a part in this list after it starts. */
+  later<Gives extends object>(part: ServiceWiringPart<never, Gives>): Later<Gives>;
+  /** Registers blueprint implementations before blueprint-loader starts. */
+  addImplementations(registry: ImplementationRegistry): void;
+}
+export interface Later<Gives extends object> {
+  /** Undefined until the part starts. */
+  current(): Gives | undefined;
+  /** Throws by part name until the part starts. */
+  get(): Gives;
+  /** Waits for the part, or rejects with the abort reason. */
+  ready(signal?: AbortSignal): Promise<Gives>;
+}
+export interface ServiceAssembly<Members extends object> {
+  part<Gives extends object>(
+    part: ServiceWiringPart<Members, Gives> & DistinctMembers<Members, Gives>,
+  ): ServiceAssembly<Members & Gives>;
+  step(step: ServiceStep): ServiceAssembly<Members>;
+  start(): Promise<{ readonly members: Members; stop(): Promise<void> }>;
+}
+export type DistinctMembers<Members extends object, Gives extends object> = [
+  Extract<keyof Gives, keyof Members>,
+] extends [never]
+  ? unknown
+  : { readonly memberNameRepeated: Extract<keyof Gives, keyof Members> };
+export type ServiceStopStage =
+  | "requests"
+  | "commands"
+  | "sources"
+  | "notifications"
+  | "pulls"
+  | "intake"
+  | "delivery"
+  | "timers"
+  | "store";

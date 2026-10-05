@@ -16,3 +16,13 @@ export type {
   ServiceHttp,
   ServiceLogEntry,
 } from "./types.ts";
+
+export { assembleService, wiringPart } from "./wiring.ts";
+export type {
+  ServiceWiringPart,
+  ServiceWiringContext,
+  Later,
+  ServiceAssembly,
+  DistinctMembers,
+  ServiceStopStage,
+} from "./types.ts";
