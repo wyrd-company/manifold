@@ -8,6 +8,7 @@ relationships:
     - usage-intake
     - usage-push
     - accounts-declaration
+    - portfolio-declaration
     - price-table
 description: >-
   Defines the `usage` commands of the host CLI, `manifold-host`, the Bun
@@ -51,12 +52,16 @@ description: >-
   `manifold-host usage lint` lints the usage declarations of a process
   repository checkout on the host: `accounts.yml` in the
   `accounts-declaration` format and `prices.yml` in the `price-table`
-  format. It runs `lintUsageDeclaration` from `packages/shared`, the
-  function the service runs on every revision it applies, so it reports
-  the same findings. The command takes one optional argument, the
+  format, and the accounts `portfolio.yml` allocates against
+  `accounts.yml`. It runs `lintUsageDeclaration` and
+  `lintAllocatedAccounts` from `packages/shared`, the functions the
+  service runs on every revision it applies, so it reports the same
+  findings and warnings. The command takes one optional argument, the
   directory of a process repository checkout, default the current
-  directory. It reads `accounts.yml` and `prices.yml` from that directory
-  and passes their text to the lint. An absent file is linted as an empty
+  directory. It reads `accounts.yml`, `prices.yml`, and `portfolio.yml`
+  from that directory. It passes the text of `accounts.yml` and
+  `prices.yml` to `lintUsageDeclaration`, and the text of `portfolio.yml`
+  and `accounts.yml` to `lintAllocatedAccounts`. An absent file is linted as an empty
   document, as the service reads it. A directory that cannot be read, or a
   file that exists but cannot be read, is reported on standard error as
   `<file>: <reason>` and ends the command with exit code 2 before anything
@@ -65,8 +70,12 @@ description: >-
   as `accounts.yml` or `prices.yml`, the location the finding's RFC 6901
   JSON Pointer, and the kind and message the finding's. Findings of
   `accounts.yml` come first, then those of `prices.yml`, each in the
-  lint's order. The command prints nothing and exits 0 when there is no
-  finding, and exits 1 when there is one.
+  lint's order. The `account-undeclared` warnings come last, in the same
+  form with the file `portfolio.yml`, each line ending with ` (warning)`,
+  in the lint's order, so they equal the lines `manifold-host portfolio
+  lint` prints for them. The command prints nothing and exits 0 when
+  there is no finding and no warning, exits 0 when there are only
+  warnings, and exits 1 when there is a finding.
 format: cli
 validation-criteria: >-
   The command surface conforms to
@@ -87,7 +96,11 @@ validation-criteria: >-
   `/accounts/acct/capacity/amount` for an amount of 0.0000001; exit 1 with
   a `schema` line for an account with no `capacity`; exit 1 with a
   `duplicate-model` line from `prices.yml`; exit 1 with a `syntax` line for
-  an `accounts.yml` that does not parse as YAML; and exit 2 with no
-  standard output for a missing directory and for an `accounts.yml` that
-  is a directory. A service test lints the same files through `apply` and
-  reads the same findings.
+  an `accounts.yml` that does not parse as YAML; exit 0 with one
+  `account-undeclared` line ending with ` (warning)` for a `portfolio.yml`
+  that allocates an account `accounts.yml` does not declare, and for one
+  that allocates an account in a checkout with no `accounts.yml`; and exit
+  2 with no standard output for a missing directory, for an `accounts.yml`
+  that is a directory, and for a `portfolio.yml` that is a directory. A
+  service test lints the same files through `apply` and reads the same
+  findings.

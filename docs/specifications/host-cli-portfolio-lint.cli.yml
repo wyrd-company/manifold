@@ -15,7 +15,7 @@ commands:
     mode: non-interactive
     subcommands:
       - name: lint
-        summary: Lint `portfolio.yml` and `bindings.yml` in a process repository checkout.
+        summary: Lint `portfolio.yml` and `bindings.yml` in a process repository checkout, and the accounts `portfolio.yml` allocates against `accounts.yml`.
         mode: non-interactive
         positional-arguments:
           - name: repository
@@ -31,12 +31,14 @@ commands:
               description: >-
                 One line per finding on standard output,
                 `<file>:<location> <kind> <message>`, with the file
-                `portfolio.yml` or `bindings.yml`; nothing when there is no
-                finding.
+                `portfolio.yml` or `bindings.yml`, then one line per
+                `account-undeclared` warning in the same form with the file
+                `portfolio.yml`, ending with ` (warning)`; nothing when
+                there is no finding and no warning.
               machine-readable: true
           exit-codes:
             - code: 0
-              meaning: There is no finding.
+              meaning: There is no finding; there may be warnings.
             - code: 1
               meaning: At least one file has a finding.
             - code: 2

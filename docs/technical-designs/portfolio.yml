@@ -182,7 +182,8 @@ proposed-design:
     from before Manifold ran, takes the declaration in force when it is
     credited. An account that the accounts declaration does not name, such
     as one `portfolio.yml` allocates and `accounts.yml` leaves out, is
-    credited nothing, and its balances read 0.
+    credited nothing, and its balances read 0; the lint reports each such
+    allocation as the warning `account-undeclared`.
   capacity-module: |-
     The capacity module is `packages/service/src/capacity/`. It holds no
     state of its own on disk: windows and credits are the ledger's, and the
@@ -431,10 +432,11 @@ proposed-design:
       t3codeProject(project: { environment: string; id: string }): T3codeProjectResolution;
     }
 
-    export type PortfolioApplyResult =
+    export type PortfolioApplyResult = (
       | { status: "applied"; commit: string }
       | { status: "unchanged"; commit: string }
-      | { status: "rejected"; commit: string; findings: readonly PortfolioFinding[] };
+      | { status: "rejected"; commit: string; findings: readonly PortfolioFinding[] }
+    ) & { warnings: readonly PortfolioWarning[] };
 
     export type PortfolioInForce = {
       commit: string | null; // null before the first accepted declaration
@@ -476,9 +478,13 @@ proposed-design:
     `createLedger` with the result, and builds the resolution index. It
     writes nothing.
   applying-a-revision: >-
-    `apply` reads `portfolio.yml` and `bindings.yml` through the revision,
-    lints their text with `lintPortfolioDeclaration`, and compares the
-    normalized declaration with the one in force. A declaration with a
+    `apply` reads `portfolio.yml`, `bindings.yml`, and `accounts.yml`
+    through the revision, lints the text of the first two with
+    `lintPortfolioDeclaration`, and compares the normalized declaration
+    with the one in force. It checks the text of `portfolio.yml` and
+    `accounts.yml` with `lintAllocatedAccounts`, and every result,
+    whatever its status, carries the warnings that check returns. A
+    warning changes nothing that `apply` decides. A declaration with a
     finding is rejected: `apply` returns the findings and the declaration in
     force, the ledger's portfolio, and resolution stay as they were. A
     declaration equal to the one in force, as canonical JSON, returns
@@ -598,6 +604,48 @@ proposed-design:
     constants live in `packages/shared`, where the service's configuration
     loader and the lint both import them, and `bun build --compile` embeds
     them in the host CLI.
+  allocated-accounts: |-
+    `lintAllocatedAccounts` in `packages/shared` is the one check that an
+    account `portfolio.yml` allocates is one `accounts.yml` declares, as
+    `portfolio-declaration` states. The service's `apply`, the host CLI
+    command `manifold-host portfolio lint`, and the host CLI command
+    `manifold-host usage lint` each call it with the two files of the same
+    revision or checkout, so each reports the same warnings. Any other
+    consumer that lints `portfolio.yml`, such as a console edit, calls it
+    with the `accounts.yml` of the revision it lints against.
+
+    ```ts
+    export function lintAllocatedAccounts(files: {
+      portfolio: string | undefined;
+      accounts: string | undefined;
+    }): readonly PortfolioWarning[];
+
+    export type PortfolioWarning = {
+      file: "portfolio";
+      location: string; // RFC 6901 JSON Pointer of the allocation, `.../allocations/<account>`
+      kind: "account-undeclared";
+      severity: "warning";
+      message: string;
+      details: { item: string; account: string };
+    };
+    ```
+
+    It parses and validates each file as its own lint does, and returns no
+    warning when either does not parse or validate, since that lint reports
+    the file. It walks the `items` mappings of the portfolio document in
+    document order, Other keys and archived items included, and gives one
+    warning for each allocation whose account name is not a key of the
+    declared `accounts`. An Other's item id is `other` or `<parent>/other`.
+    It is a pure function of the two texts.
+
+    The check warns and does not refuse, as the decision
+    `warn-of-undeclared-accounts` states. The service and the usage
+    declaration apply each file independently, so the pair in force can
+    disagree whatever the lint refuses. A refusal would freeze every edit
+    of `portfolio.yml` while `accounts.yml` lacks one name, and would
+    refuse an allocation written before its account is declared. The
+    warning is the feedback; the undeclared account's balances reading 0
+    is the behaviour.
   ledger-portfolio-in-shared: >-
     The host CLI lints with the ledger's allocation rules, so
     `parseLedgerPortfolio`, `LedgerError`, `LedgerErrorCode`,
@@ -620,7 +668,8 @@ proposed-design:
     of that revision accepts it. A crash after the row commits and before
     `setPortfolio` leaves the new row in force, and `openPortfolio` on
     restart builds the ledger and resolution from it. `openPortfolio` writes
-    nothing. Migration convergence belongs to the store's `migrate`.
+    nothing. The warnings are a pure function of the revision's files, so
+    `apply` twice returns the same warnings and writes nothing for them. Migration convergence belongs to the store's `migrate`.
   portfolio-tests: |-
     Tests live in `packages/service/src/portfolio/portfolio.test.ts` and
     drive `openPortfolio` through its public interface, against a database
@@ -677,9 +726,21 @@ proposed-design:
       revision's reads delayed, apply in call order, and the second
       revision is in force.
 
+    - Undeclared account: a revision whose `accounts.yml` declares `acct`
+      and whose `portfolio.yml` allocates `acct` to `alpha` returns
+      `applied` with no warning. A revision that allocates `acct-typo` to
+      `beta` returns `applied` with one `account-undeclared` warning at
+      `/items/beta/allocations/acct-typo`, and `beta` reads a balance of 0
+      for `acct-typo`. A revision with no `accounts.yml` returns `applied`
+      with a warning for each allocation. A revision whose only change is
+      a fixed `accounts.yml` returns `unchanged` with no warning.
+
     - Schema: the steps applied to an empty database produce the schema of
       `docs/specifications/portfolio-declarations-table.sql`.
 
     The host CLI test compiles the binary and runs `portfolio lint` as
     `host-cli-portfolio-lint` states, including a digit-leading item id,
-    which both the binary and the service reject with a `schema` finding.
+    which both the binary and the service reject with a `schema` finding,
+    and an allocation of an undeclared account and a checkout with no
+    `accounts.yml`, which both commands and the service report as the same
+    `account-undeclared` warnings.

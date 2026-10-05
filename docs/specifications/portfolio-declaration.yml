@@ -7,6 +7,7 @@ relationships:
   references:
     - portfolio-ledger
     - service-configuration
+    - accounts-declaration
 terms:
   - portfolio-item
   - allocation
@@ -111,6 +112,28 @@ description: >-
     offending parent, so one document gives at most one such finding. Any
     other error from the whole portfolio is an `invalid-portfolio` finding
     at `/items`.
+
+  Allocated accounts. Every account name the document allocates is an
+  account `accounts.yml` declares, as `accounts-declaration` states.
+  `lintAllocatedAccounts` in `packages/shared` checks this rule across the
+  two files. It takes the text of `portfolio.yml` and of `accounts.yml`,
+  undefined for an absent file, and returns warnings. An absent
+  `accounts.yml` declares no accounts. The check runs only when both
+  documents parse and validate against their schemas; otherwise it returns
+  no warning, and the lint of each file reports why. The kind:
+
+  - `account-undeclared`: an allocation names an account that
+    `accounts.yml` does not declare. Its severity is `warning`. The
+    location is the allocation, `.../allocations/<account>`, the value
+    whose key is the name. The message names the account and
+    `accounts.yml`, and the details hold the `item` id and the `account`.
+    Every allocation in the document is checked, an Other's and an
+    archived item's included. Each offending allocation gives one warning,
+    in document order.
+
+  A warning does not refuse the declaration. The service accepts a
+  declaration with an `account-undeclared` warning, and the account's
+  balances read 0 until `accounts.yml` declares it.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/portfolio-declaration.schema.yml` is a valid JSON
@@ -126,4 +149,10 @@ validation-criteria: >-
   per row. A digit-leading item id or account name is a `schema` finding,
   as a digit-leading name is in service configuration. A document whose
   guarantees under one item total 110% gives one `guarantee-limit` finding
-  whose message names that item and 110%.
+  whose message names that item and 110%. Tests of `lintAllocatedAccounts`
+  show no warning for an allocated account `accounts.yml` declares; one
+  `account-undeclared` warning at `/items/alpha/allocations/acct-typo` for an
+  allocation of an account it does not declare; a warning for each
+  allocation, an Other's and an archived item's included, in document
+  order, when `accounts.yml` is absent; and no warning when either file
+  does not parse or has a `schema` finding.

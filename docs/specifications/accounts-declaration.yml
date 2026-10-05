@@ -143,6 +143,11 @@ description: |-
     `months` length with a `reset` on a day after the 28th in UTC. A
     length outside its range is a `schema` finding at that length. The location is the offending `amount` or
     `reset`.
+
+  Allocated accounts. An account `portfolio.yml` allocates and this file
+  does not declare is the warning `account-undeclared` in `portfolio.yml`,
+  which `lintAllocatedAccounts` reports as `portfolio-declaration` states.
+  The service credits such an account nothing, so its balances read 0.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/accounts-declaration.schema.yml` is a valid JSON

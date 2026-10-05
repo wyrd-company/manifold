@@ -144,7 +144,7 @@ commands:
         examples:
           - manifold-host usage push --service http://127.0.0.1:8080 --environment env-one
       - name: lint
-        summary: Lint `accounts.yml` and `prices.yml` in a process repository checkout.
+        summary: Lint `accounts.yml` and `prices.yml` in a process repository checkout, and the accounts `portfolio.yml` allocates against `accounts.yml`.
         mode: non-interactive
         positional-arguments:
           - name: repository
@@ -160,12 +160,14 @@ commands:
               description: >-
                 One line per finding on standard output,
                 `<file>:<location> <kind> <message>`, with the file
-                `accounts.yml` or `prices.yml`; nothing when there is no
-                finding.
+                `accounts.yml` or `prices.yml`, then one line per
+                `account-undeclared` warning in the same form with the file
+                `portfolio.yml`, ending with ` (warning)`; nothing when
+                there is no finding and no warning.
               machine-readable: true
           exit-codes:
             - code: 0
-              meaning: There is no finding.
+              meaning: There is no finding; there may be warnings.
             - code: 1
               meaning: At least one file has a finding.
             - code: 2

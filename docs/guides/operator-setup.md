@@ -456,6 +456,7 @@ this section against its Project and record the actor returned by the API.
 | `github-error`                   | App grants, Project owner, hook id, and GitHub availability.                               |
 | Hook delivery returns 401 or 404 | Hook secret file, owner and hook declaration, and proxy method/path rule.                  |
 | `portfolio-rejected`             | Lint the process declarations and account capacity.                                        |
+| `portfolio-warnings`             | Declare each allocated account in `accounts.yml`, or correct its name in `portfolio.yml`.  |
 | `blueprint-invalid`              | Lint the local blueprint override; an invalid override still replaces the bundle.          |
 | T3 Code connection fails         | Server URL, token file, token expiry, and the two scopes.                                  |
 | No notification                  | Destination name, ntfy posture and token, and subscription.                                |

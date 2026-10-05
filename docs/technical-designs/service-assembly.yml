@@ -575,7 +575,8 @@ proposed-design:
     `blueprints.loadRevision(revision)`, keeps the result as `latest`,
     logs `blueprint-invalid` for each path in its `failures`, awaits
     `portfolio.apply(revision)`, logs `portfolio-rejected` with the
-    findings of a rejected result, awaits `taskMetadata.apply(revision)`,
+    findings of a rejected result, logs `portfolio-warnings` with the
+    commit and the warnings of a result that has any, whatever its status, awaits `taskMetadata.apply(revision)`,
     logs `task-metadata-rejected` with the findings of a rejected result,
     sets `followed` to the commit, logs
     `revision-applied`, and calls the `applied` probe. A save job runs the
