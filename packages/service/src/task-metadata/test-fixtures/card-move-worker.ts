@@ -24,5 +24,6 @@ process.on("message", (message) => {
       input: { manifold: { project: "P_one", issue: "I_A" } },
     });
   }
+  if (message === "sweep") service.github.requestSweep();
   if (message === "stop") void service.stop().then(() => process.exit(0));
 });

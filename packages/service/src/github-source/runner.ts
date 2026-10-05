@@ -71,9 +71,16 @@ export function createRunner(
         reference.number === row.project.number
       )
         bound.set(row.project.nodeId, row.project);
+  async function drainMoves() {
+    while (queue.length) {
+      if (stopped) return;
+      await moveNext();
+    }
+  }
   async function rebuild() {
     const next = new Map<string, GitHubProject>();
     for (const reference of options.boundProjects()) {
+      await drainMoves();
       if (stopped) return;
       try {
         const owner = Object.keys(options.configuration.owners).find(
@@ -101,6 +108,7 @@ export function createRunner(
           if (changed) options.onMirrorChanged?.();
         }
         next.set(project.nodeId, project);
+        await drainMoves();
       } catch (error) {
         report(error);
       }
@@ -414,6 +422,8 @@ export function createRunner(
         let newest = cursor;
         while (true) {
           if (stopped) return;
+          await drainMoves();
+          if (stopped) return;
           const page = await api.deliveries(owner, hook, nextCursor);
           const deliveries = page.attempts;
           let older = false;
@@ -448,6 +458,8 @@ export function createRunner(
             const latest = values.reduce((a, b) =>
               Date.parse(a.delivered_at) >= Date.parse(b.delivered_at) ? a : b,
             );
+            await drainMoves();
+            if (stopped) return;
             await api.redeliver(owner, hook, latest.id);
             if (stopped) return;
             mirror.redelivered(id, hook.id, latest.id);
@@ -459,6 +471,8 @@ export function createRunner(
     while (wakeRequested) {
       if (stopped) return;
       wakeRequested = false;
+      await drainMoves();
+      if (stopped) return;
       if (scanDue) {
         scanDue = false;
         try {

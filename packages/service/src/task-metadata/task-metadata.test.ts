@@ -106,7 +106,7 @@ test.each([
     close();
   }
 });
-test("no clean apply, no binding, and child identity each fail at their boundary", async () => {
+test("no clean apply, no binding, and absent root identity each fail at their boundary", async () => {
   const { options, close } = setup();
   try {
     for (const [changed, apply, kind] of [
@@ -122,6 +122,28 @@ test("no clean apply, no binding, and child identity each fail at their boundary
       actor.start();
       await expect(toPromise(actor)).rejects.toMatchObject({ type: "card-move", kind });
     }
+  } finally {
+    close();
+  }
+});
+
+test("rejection of the same revision preserves the first record without another write", async () => {
+  const { store, options, close } = setup();
+  try {
+    const metadata = openTaskMetadata(options);
+    const revision = memoryRevision("b".repeat(40), {
+      ...files,
+      "task-metadata.yml": "projects: []",
+    });
+    await metadata.apply(revision);
+    const first = store.connection.database.prepare("SELECT * FROM metadata_rejections").get();
+    store.connection.database.exec(
+      "CREATE TRIGGER forbid_rejection_update BEFORE UPDATE ON metadata_rejections BEGIN SELECT RAISE(ABORT, 'repeated rejection wrote'); END",
+    );
+    expect((await metadata.apply(revision)).status).toBe("rejected");
+    expect(store.connection.database.prepare("SELECT * FROM metadata_rejections").get()).toEqual(
+      first,
+    );
   } finally {
     close();
   }

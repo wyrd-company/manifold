@@ -2,9 +2,10 @@
 // relationships:
 //   implements: host-cli-blueprint-lint
 // ---
-import { readTaskMetadata, printTaskMetadataFindings } from "../task-metadata-lint/command.ts";
+import { readTaskMetadata } from "../task-metadata-lint/command.ts";
 import { declaredLifecycleOptions } from "@wyrd-company/manifold-shared";
-import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
 import { lintBlueprint, manifoldImplementationNames } from "@wyrd-company/manifold-shared";
 import type { BlueprintFinding } from "@wyrd-company/manifold-shared";
 
@@ -21,7 +22,10 @@ function line(file: string, finding: BlueprintFinding) {
             : "";
   return `${file}:${finding.location} ${finding.kind} ${finding.message.replaceAll(/\r?\n/g, " ")}${suffix}`;
 }
-export async function blueprintLintCommand(args: readonly string[]) {
+export async function blueprintLintCommand(
+  args: readonly string[],
+  bundle: { readonly files: ReadonlyMap<string, string> } = { files: new Map() },
+) {
   const files: string[] = [];
   let repository: string | undefined;
   let lifecycleOptions: ReadonlySet<string> | undefined;
@@ -53,7 +57,7 @@ export async function blueprintLintCommand(args: readonly string[]) {
       return 2;
     } else files.push(arg);
   }
-  if (!files.length) {
+  if (!files.length && repository === undefined) {
     console.error("Usage: manifold-host blueprint lint <file>...");
     return 2;
   }
@@ -61,7 +65,9 @@ export async function blueprintLintCommand(args: readonly string[]) {
     try {
       const result = await readTaskMetadata(repository);
       if (!result.ok) {
-        printTaskMetadataFindings(result);
+        console.error(
+          `task-metadata.yml: ${result.findings.length} findings; run manifold-host task-metadata lint`,
+        );
         return 2;
       }
       lifecycleOptions = declaredLifecycleOptions(result.declaration);
@@ -70,7 +76,35 @@ export async function blueprintLintCommand(args: readonly string[]) {
       return 2;
     }
   }
-  const inputs = [];
+  const inputs: { file: string; text: string }[] = [];
+  if (!files.length && repository !== undefined) {
+    try {
+      const texts = new Map(
+        [...bundle.files].filter(([path]) => /^blueprints\/.*\.ya?ml$/.test(path)),
+      );
+      async function discover(path: string) {
+        let entries;
+        try {
+          entries = await readdir(join(repository!, path), { withFileTypes: true });
+        } catch (error) {
+          if (path === "blueprints" && (error as NodeJS.ErrnoException).code === "ENOENT") return;
+          throw error;
+        }
+        for (const entry of entries) {
+          const child = `${path}/${entry.name}`;
+          if (entry.isDirectory()) await discover(child);
+          else if (/\.ya?ml$/.test(entry.name))
+            texts.set(child, await readFile(join(repository!, child), "utf8"));
+        }
+      }
+      await discover("blueprints");
+      for (const [file, text] of [...texts].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+        inputs.push({ file, text });
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 2;
+    }
+  }
   for (const file of files) {
     try {
       inputs.push({ file, text: await readFile(file, "utf8") });

@@ -198,6 +198,7 @@ export async function lintBlueprint(
       actions(transition["actions"], `${at}/actions`);
     });
   }
+  const lifecycleFindings: BlueprintFinding[] = [];
   function walk(config: Record<string, unknown>, location: string) {
     actions(config["entry"], `${location}/entry`);
     actions(config["exit"], `${location}/exit`);
@@ -220,12 +221,13 @@ export async function lintBlueprint(
         typeof input["status"] === "string" &&
         !options.lifecycleOptions.has(input["status"])
       )
-        finding(
-          "lifecycle-option",
-          `${at}/input/status`,
-          `Lifecycle option is not declared: ${input["status"]}`,
-          { name: input["status"] },
-        );
+        lifecycleFindings.push({
+          path,
+          kind: "lifecycle-option",
+          location: `${at}/input/status`,
+          message: `Lifecycle option is not declared: ${input["status"]}`,
+          name: input["status"],
+        });
       for (const key of ["onDone", "onError", "onSnapshot"])
         transitions(invoke[key], `${at}/${key}`);
     });
@@ -233,6 +235,7 @@ export async function lintBlueprint(
       walk(record(child), `${location}/states/${pointer(key)}`);
   }
   walk(blueprint.machine, "/machine");
+  lifecycleFindings.sort((a, b) => compareExpressionText(a.location, b.location));
   findings.push(...unknowns.sort((a, b) => compareExpressionText(a.location, b.location)));
   const machineFindings: BlueprintFinding[] = [];
   const nodeLocations = new Map<string, string>();
@@ -302,7 +305,8 @@ export async function lintBlueprint(
   if (!schemaInvalid)
     for (const row of await lintBlueprintExpressions(blueprint, compileSchema))
       findings.push({ ...row, path, location: `/machine${row.location}` });
-  if (findings.length) return { ok: false, findings, warnings: [] };
+  if (findings.length)
+    return { ok: false, findings: [...findings, ...lifecycleFindings], warnings: [] };
   const tokens = lintTokens(blueprint, { names, ...options });
   const warnings: BlueprintFinding[] = [];
   for (const gate of tokens.gates)
@@ -310,6 +314,7 @@ export async function lintBlueprint(
       const row = { ...item, path };
       (row.kind === "token-violation" ? findings : warnings).push(row);
     }
+  findings.push(...lifecycleFindings);
   return findings.length
     ? { ok: false, findings, warnings }
     : { ok: true, blueprint, warnings, tokens };

@@ -187,12 +187,13 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
     owner: string,
     text: string,
     variables: Record<string, unknown>,
+    missing: "field-missing" | "item-missing",
     signal?: AbortSignal,
   ): Promise<T> {
     try {
       return await query<T>(owner, text, variables, signal);
     } catch (error) {
-      throw writeError(error);
+      throw writeError(error, missing);
     }
   }
   async function connection<T>(
@@ -305,6 +306,7 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
         owner,
         "query GitHubProjectField($id: ID!, $name: String!) { node(id: $id) { ... on ProjectV2 { field(name: $name) { ... on ProjectV2SingleSelectField { id name options { id name } } } } } }",
         { id: project, name },
+        "field-missing",
         signal,
       );
       const field = data.node?.field;
@@ -332,6 +334,7 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
         owner,
         "mutation GitHubCardMove($project: ID!, $item: ID!, $field: ID!, $option: String!) { updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }) { projectV2Item { id } } }",
         { project, item, field, option },
+        "item-missing",
         signal,
       );
       if (data.updateProjectV2ItemFieldValue?.projectV2Item?.id !== item)
@@ -504,7 +507,7 @@ function hookAttempts(value: unknown): HookAttempt[] {
   });
 }
 
-function writeError(error: unknown): GitHubWriteError {
+function writeError(error: unknown, missing: "field-missing" | "item-missing"): GitHubWriteError {
   if (error instanceof GitHubWriteError) return error;
   const source = error instanceof GitHubSourceError ? error : undefined;
   const cause = source?.cause ?? error;
@@ -528,7 +531,7 @@ function writeError(error: unknown): GitHubWriteError {
     types.includes("RATE_LIMIT")
   )
     return new GitHubWriteError("transport", message, status);
-  if (types.includes("NOT_FOUND")) return new GitHubWriteError("item-missing", message, status);
+  if (types.includes("NOT_FOUND")) return new GitHubWriteError(missing, message, status);
   if (graphql || (status !== undefined && status >= 400))
     return new GitHubWriteError("rejected", message, status);
   return new GitHubWriteError("transport", message, status);

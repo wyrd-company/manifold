@@ -22,7 +22,12 @@ test("metadata CLI reports declaration findings and blueprint repository errors 
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("task-metadata.yml:/projects/parcels unknown-binding"),
     );
+    log.mockClear();
     expect(await blueprintLintCommand(["--repository", dir, "missing.yml"])).toBe(2);
+    expect(log).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      "task-metadata.yml: 1 findings; run manifold-host task-metadata lint",
+    );
     expect(error).not.toHaveBeenCalledWith(expect.stringContaining("ENOENT"));
     expect(await taskMetadataLintCommand([join(dir, "missing")])).toBe(2);
     expect(await blueprintLintCommand(["--repository"])).toBe(2);

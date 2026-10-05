@@ -93,6 +93,8 @@ export async function githubFake() {
   let target: string | undefined;
   let failure = 0;
   let writeFailure: { type: string; status?: number } | undefined;
+  let queryFailure: { operation: string; type: string } | undefined;
+  const laggingItems = new Map<string, ModelItem>();
   const fields = [
     {
       id: "F_stage",
@@ -129,7 +131,7 @@ export async function githubFake() {
     };
   };
   const rawItem = (id: string) => {
-    const value = items.get(id);
+    const value = laggingItems.get(id) ?? items.get(id);
     if (!value) return null;
     const raw = {
       ...value,
@@ -167,6 +169,17 @@ export async function githubFake() {
           .writeHead(failure, { "content-type": "application/json" })
           .end(JSON.stringify({ message: "synthetic failure" }));
         failure = 0;
+        return;
+      }
+      if (queryFailure?.operation === operation) {
+        const fault = queryFailure;
+        queryFailure = undefined;
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            data: { node: null },
+            errors: [{ type: fault.type, path: ["node"], message: "synthetic missing node" }],
+          }),
+        );
         return;
       }
       let data: unknown;
@@ -310,6 +323,13 @@ export async function githubFake() {
         }),
       );
     } else if (url.pathname.endsWith("/deliveries") && req.method === "GET") {
+      log.push({ operation: "GitHubDeliveries", variables: {} });
+      if (held?.operation === "GitHubDeliveries") {
+        const current = held;
+        held = undefined;
+        current.entered();
+        await current.released;
+      }
       deliveryRequests.push(url);
       const cursor = url.searchParams.get("cursor");
       const offset = cursor === "second" ? 100 : 0;
@@ -320,6 +340,13 @@ export async function githubFake() {
       res.writeHead(200, headers).end(JSON.stringify(deliveries.slice(offset, offset + 100)));
     } else if (url.pathname.endsWith("/attempts") && req.method === "POST") {
       const id = Number(url.pathname.split("/").at(-2));
+      log.push({ operation: "GitHubRedeliver", variables: { id } });
+      if (held?.operation === "GitHubRedeliver") {
+        const current = held;
+        held = undefined;
+        current.entered();
+        await current.released;
+      }
       redeliveries.push(id);
       const value = deliveries.find((d) => d.id === id)!;
       if (target) {
@@ -333,6 +360,15 @@ export async function githubFake() {
   await once(server, "listening");
   return {
     fields,
+    failQuery(operation: string, type: string) {
+      queryFailure = { operation, type };
+    },
+    lagItem(id: string) {
+      laggingItems.set(id, structuredClone(items.get(id)!));
+    },
+    resumeItem(id: string) {
+      laggingItems.delete(id);
+    },
     failWrite(type: string, status?: number) {
       writeFailure = { type, ...(status === undefined ? {} : { status }) };
     },

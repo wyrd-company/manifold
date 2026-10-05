@@ -35,7 +35,7 @@ export function metadataRecords(connection: StoreConnection) {
     },
     reject(commit: string, findings: readonly TaskMetadataFinding[]) {
       db.prepare(
-        "INSERT INTO metadata_rejections (commit_id, findings, rejected_at) VALUES (?, ?, ?) ON CONFLICT (commit_id) DO UPDATE SET findings=excluded.findings, rejected_at=excluded.rejected_at",
+        "INSERT INTO metadata_rejections (commit_id, findings, rejected_at) VALUES (?, ?, ?) ON CONFLICT (commit_id) DO NOTHING",
       ).run(commit, JSON.stringify(findings), Date.now());
     },
   };

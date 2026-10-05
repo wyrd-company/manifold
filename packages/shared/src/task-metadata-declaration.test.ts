@@ -120,3 +120,57 @@ test("blueprint lint checks only literal string statuses when lifecycle options 
     ).ok,
   ).toBe(true);
 });
+
+test("lifecycle rule follows structural findings and does not suppress token lint", async () => {
+  const doc = parse(blueprint({ status: "Unknown" }));
+  doc.machine.states.packing.meta = {
+    gate: { comparator: "comparators/order.ts", return: { state: "returned" } },
+  };
+  doc.machine.states.packing.on = { token: "trapped" };
+  doc.machine.states.trapped = {};
+  doc.machine.states.returned = {};
+  const result = await lintBlueprint(
+    "blueprints/parcel.yml",
+    stringify(doc),
+    manifoldImplementationNames,
+    { lifecycleOptions: new Set() },
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.findings.map((f) => f.kind)).toEqual(["token-violation", "lifecycle-option"]);
+  delete doc.machine.states.done;
+  delete doc.machine.states.packing.invoke.onDone;
+  const structural = await lintBlueprint(
+    "blueprints/parcel.yml",
+    stringify(doc),
+    manifoldImplementationNames,
+    { lifecycleOptions: new Set() },
+  );
+  expect(structural.ok).toBe(false);
+  if (!structural.ok)
+    expect(structural.findings.map((f) => f.kind)).toEqual([
+      "final-state-missing",
+      "lifecycle-option",
+    ]);
+});
+test("lifecycle findings use location order within their rule", async () => {
+  const doc = parse(blueprint({ status: "Unknown" }));
+  doc.machine.initial = "z";
+  doc.machine.states = {
+    z: doc.machine.states.packing,
+    a: doc.machine.states.packing,
+    done: doc.machine.states.done,
+  };
+  const result = await lintBlueprint(
+    "blueprints/parcel.yml",
+    stringify(doc),
+    manifoldImplementationNames,
+    { lifecycleOptions: new Set() },
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.findings.map((f) => f.location)).toEqual([
+      "/machine/states/a/invoke/input/status",
+      "/machine/states/z/invoke/input/status",
+    ]);
+});
