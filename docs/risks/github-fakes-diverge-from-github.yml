@@ -1,0 +1,37 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: The GitHub fakes of the tests may not behave as GitHub does
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the design that exposes the difference early.
+relationships:
+  mitigated-by:
+    - live-github-environment
+  related-to:
+    - github-event-source
+    - service-assembly
+
+description: >-
+  Every module that talks to GitHub is tested against fakes: signed webhook
+  deliveries, GraphQL reads, the sweep, the redelivery scan, and the App
+  installation token. A payload shape, a status code, a permission the
+  installation token lacks, or a delivery GitHub does not send can differ
+  from the fakes, and the tests pass while the service fails against
+  GitHub. Such a difference shows only when the service first runs
+  against GitHub, at user acceptance if nothing runs it sooner.
+
+categories:
+  - technical
+
+likelihood: 3
+impact: 3
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: the live GitHub environment runs the assembled service against
+# a real organization through the App installation and a signed organization
+# hook, and its smoke check covers delivery, intake, and the sweep. A
+# difference it finds is fixed in the fake as well as in the module.

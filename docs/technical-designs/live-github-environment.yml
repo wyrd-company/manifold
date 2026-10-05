@@ -1,0 +1,486 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - github-event-source
+    - service-assembly
+    - service-configuration
+    - intake
+    - escalations
+  mitigates:
+    - github-fakes-diverge-from-github
+objective: >-
+  Give Manifold a live GitHub test environment in the `mmenm` organization,
+  so that checks and acceptance runs reach real GitHub through the Manifold
+  GitHub App and a signed organization webhook, and a difference between
+  GitHub and the fakes of the integration tests shows before user
+  acceptance.
+background:
+  current-design: >-
+    Every module that talks to GitHub runs only against fakes: signed
+    webhook deliveries, GraphQL reads, the sweep, the redelivery scan, and
+    the App installation token. The service listens on loopback, serves its
+    API without authentication, mounts the GitHub source at
+    `githubWebhookPath`, `/webhooks/github`, and the escalation answer page
+    at `/escalations`. GitHub hooks do not get their URL from the service:
+    an account owner creates each hook with its URL, and service
+    configuration holds only the hook's id and secret file. The agent
+    threads module has one live check, `test:live`, run outside
+    `task check`. Pinggy's documented forwarding sends every path of the
+    public URL to one local address; it has no setting that forwards some
+    paths and refuses others.
+  problems:
+    - >-
+      A difference between GitHub and the fakes, such as a payload shape, a
+      permission the installation token lacks, or a delivery GitHub does not
+      send, is found only at user acceptance.
+    - >-
+      GitHub can reach a service on loopback only through a tunnel, and a
+      tunnel that forwards every path exposes the unauthenticated API.
+    - >-
+      Test resources made by hand in a shared organization drift, and
+      cleaning them up by hand can remove a resource no test made.
+design-challenges:
+  convergence: >-
+    Provisioning and teardown make many GitHub calls, and a run can stop
+    after any of them. Each run, from any start state, must end in the same
+    state, and must touch only resources the tooling made.
+  exposure: >-
+    The tunnel must pass GitHub's deliveries and, when a test needs them,
+    escalation answers, and nothing else, including paths that the
+    service's prefix match would take, such as `/webhooks/github/x`.
+  moving-url: >-
+    A tunnel can get a new public URL on each start and on each reconnect,
+    and the organization hook and `escalations.publicUrl` must follow it.
+  evidence: >-
+    The smoke check must show that GitHub sent a delivery and the service
+    accepted it, and that the sweep, not a delivery, found a change.
+  secrets: >-
+    The tooling reads four credentials and generates one, and no value may
+    reach its output, a generated file other than the secret's own file,
+    the worktree, or a conversation.
+proposed-design:
+  high-level-overview: >-
+    The tooling is a private workspace package at `testing/live-github/`,
+    outside `packages/`, that no service or host CLI code imports. Five
+    Taskfile targets call its entry points. `live:provision` makes, in the
+    organization, a test repository with seed issues, a test process
+    repository with its content committed, an organization-owned test
+    Project holding the seed issues, and an inactive organization webhook;
+    it writes the hook's secret and a service configuration to a state
+    directory outside the worktree. `live:start` runs a supervisor in the
+    foreground: it starts a local forwarder that passes only the allowed
+    paths, a Pinggy tunnel to the forwarder through OpenSSH, and the built
+    service on loopback, and then points the hook at the tunnel and makes
+    it active. `live:smoke` runs the live smoke check against the started
+    environment and scans its output and the generated files for credential
+    values. `live:stop` stops the supervisor. `live:teardown` removes every
+    resource provisioning made, and only those. Every GitHub resource
+    carries an ownership marker, and the tooling finds, adopts, and removes
+    only resources that carry it. The service gets no new configuration
+    setting.
+  location: >-
+    `testing/live-github/` holds `package.json` (private,
+    `@wyrd-company/manifold-live-github`), `README.md`, `settings.yml`,
+    `src/`, and `content/`. `pnpm-workspace.yaml` adds `testing/*`, so the
+    package's tests, lint, and typecheck run in `task check`. Its entry
+    points are TypeScript files that Node runs directly, as the agent
+    threads live check runs: `src/provision.ts`, `src/start.ts`,
+    `src/stop.ts`, `src/smoke.ts`, and `src/teardown.ts`. Each takes no
+    argument other than the flags below and exits non-zero on failure. The
+    package depends on `@octokit/request`, `@octokit/graphql`, and
+    `@octokit/auth-app`, which the service already uses, and on `yaml`.
+    Nothing in `packages/` imports it.
+  targets: |-
+    `Taskfile.yml` gains these targets. None is a dependency of `check`.
+
+    | Target | Runs | Does |
+    |---|---|---|
+    | `live:provision` | `src/provision.ts` | Converges the GitHub resources, the hook secret, and the service configuration. `CONTENT=<directory>` takes the process repository content from another directory. |
+    | `live:start` | `task build`, then `src/start.ts` | Runs the supervisor in the foreground until `live:stop`, `SIGINT`, or `SIGTERM`. `ANSWERS=1` also passes escalation answers. `OVERLAY=<file>` merges a configuration overlay. |
+    | `live:stop` | `src/stop.ts` | Sends `SIGTERM` to the supervisor and waits for it to end. |
+    | `live:smoke` | `src/smoke.ts` | Runs the live smoke check against the started environment, then the secret scan. |
+    | `live:teardown` | `src/teardown.ts` | Converges to no resource. Refuses while a supervisor runs. |
+  settings: |-
+    `settings.yml` is committed and holds no credential value. The tooling
+    reads it at each run. Environment variables of the same name in upper
+    snake case override the credential file paths.
+
+    ```yaml
+    organization: mmenm
+    marker: live-env-owned
+    repository: fixture-app
+    processRepository: fixture-settings
+    project: Fixture board
+    seedIssues: 2
+    credentials:
+      patFile: ~/gh_manifold_pat
+      pinggyTokenFile: ~/pinggy_access_token
+      appEnvFile: ~/manifold-app.env
+      appPrivateKeyFile: ~/manifold-app.pem
+    pinggyHost: pro.pinggy.io
+    sweepIntervalMs: 60000
+    ```
+
+    The names are generic and are not drawn from Manifold's domain. The
+    state directory is `$XDG_STATE_HOME/manifold-live-github/`, or
+    `~/.local/state/manifold-live-github/` when `XDG_STATE_HOME` is unset.
+    It is created with mode `0700`, and every file in it with mode `0600`.
+  state-directory: |-
+    | File | Written by | Holds |
+    |---|---|---|
+    | `resources.json` | provision, teardown | The id, node id, name, and number of each resource the tooling made, and the head commit it wrote to the process repository. |
+    | `hook.secret` | provision | The organization hook's secret, 32 random bytes in hex. A credential file. |
+    | `service.yml` | provision, start | The service configuration. |
+    | `service/` | the service | The store database, the process repository clone, and the service's log. |
+    | `tunnel/` | start | The OpenSSH configuration that holds the Pinggy token, a credential file removed when the tunnel stops, and the tunnel's known hosts and log. |
+    | `run.json` | start | The supervisor's process id, the service's and the forwarder's loopback addresses, the service's process id, the tunnel URL, and whether answers pass. Removed when the supervisor ends. |
+    | `smoke/<run-id>.log` | smoke | The smoke check's output, as it also printed it. |
+  credentials: >-
+    The tooling reads each credential from its file when a step needs it,
+    holds it in memory, and passes it to the one client or process that
+    needs it, never through a command line argument, a log line, or a file
+    other than its own. The PAT goes only to the Octokit clients of
+    provisioning, teardown, and the smoke check's GitHub calls. The Pinggy
+    token goes only into the tunnel's OpenSSH configuration file, as the
+    `User`, so that no process listing shows it. The App's private key file
+    is named by its path in `service.yml`, and the tooling reads it only to
+    mint an installation token for the preflight. `~/manifold-app.env` is
+    parsed as `KEY=VALUE` lines; the tooling uses `APP_ID` and
+    `INSTALLATION_ID` and ignores the rest, since the `github-app`
+    credential kind takes the numeric app ID and installation ID. The app
+    ID and the installation ID are identifiers, not credentials: they are
+    written into `service.yml` and are never printed. The credential values
+    are the PAT, the Pinggy token, the hook secret, and the App's private
+    key. The service is started with an environment that holds only
+    `PATH`, `HOME`, `NODE_ENV`, and the variables Node needs, so no
+    variable passes the PAT or the Pinggy token to it.
+  ownership: >-
+    Each GitHub resource the tooling makes carries the marker from
+    `settings.yml`: each repository has it as a topic; the Project has it
+    in its short description; each seed issue's body ends with an HTML
+    comment holding it; and the organization hook's URL carries it as the
+    query parameter `owner-marker`. A resource is the tooling's own only
+    when it carries the marker. Provisioning finds each resource by its
+    name and marker, adopts one it finds, and makes one it does not.
+    When a resource has the name and no marker, provisioning stops with
+    an error that names it, and never changes or adopts it. Teardown
+    removes only resources that carry the marker. `resources.json` is a
+    record of what the tooling made, not the source of ownership, so a
+    lost or stale file never makes the tooling touch another resource. The
+    marker in a hook URL does not reach the service: the forwarder sends
+    the path alone.
+  preflight: >-
+    Provisioning, start, smoke, and teardown first check what they need,
+    and stop with a message that names the missing piece and no value:
+    each credential file they read exists and is not empty; the PAT
+    authenticates; with a classic PAT, its `X-OAuth-Scopes` header names
+    `repo`, `project`, and `admin:org_hook`, and also `delete_repo` for
+    teardown; the organization exists; and, for start and smoke, the App's
+    installation token lists the test repository and the test process
+    repository among `GET /installation/repositories`. A fine-grained PAT
+    has no scope header, so its missing permission shows as the `403` of
+    the first call that needs it, named by the operation. The tooling
+    reports a missing scope or installation access; it does not work
+    around it.
+  provision: |-
+    Provisioning converges each resource in this order. Each step reads
+    first, writes only on a difference, and reports the resource as
+    `present`, `created`, or `updated`. A second run reports every resource
+    `present` and makes no write to GitHub or to a file.
+
+    1. `hook.secret`. Kept when it exists; generated when it does not.
+    2. The test repository: private, initialized with a README, with the
+       marker topic.
+    3. The seed issues `Sample item 1` to `Sample item <seedIssues>` in the
+       test repository, each with the marker in its body.
+    4. The test Project, owned by the organization, titled from
+       `settings.yml`, with the marker in its short description. Its
+       lifecycle field is the built-in single-select `Status` field with
+       the options `Todo`, `In Progress`, and `Done`; provisioning checks
+       that it exists with those options and stops with an error when it
+       does not.
+    5. Each seed issue as an item of the Project.
+    6. The test process repository: private, initialized, with the marker
+       topic. Its default branch holds the content directory's files, with
+       each GitHub Project binding in `bindings.yml` set to the
+       organization and the test Project's number. Provisioning builds the
+       tree through the Git Data API and compares its tree SHA with the
+       branch head's; it commits and moves the branch only when they
+       differ.
+    7. The organization hook: `application/json`, SSL verification on,
+       the secret from `hook.secret`, and the events
+       `github-event-source` lists for an organization hook: `issues`,
+       `issue_dependencies`, `sub_issues`, `projects_v2_item`,
+       `projects_v2`, and `push`. A new hook is made inactive, with the URL
+       `https://hook.invalid/webhooks/github?owner-marker=<marker>`,
+       because no tunnel exists yet. An existing hook keeps its URL and
+       its `active` value, and gets the events set when they differ. When
+       step 1 generated the secret in this run, the hook's secret is set
+       from the file, so a lost secret file never leaves a hook whose
+       secret nothing holds.
+    8. `resources.json`, then `service.yml` (see Service configuration).
+
+    A run stopped after any step leaves resources that carry the marker
+    and a record that may lack them. The next run finds them by name and
+    marker and continues from the first step whose resource differs. A
+    seed issue whose creation was answered but not recorded is found by
+    title and marker, so no second copy is made.
+  service-configuration: |-
+    Provisioning writes `service.yml`, and start rewrites it when the
+    tunnel URL or the overlay changes it:
+
+    ```yaml
+    processRepository:
+      url: https://github.com/mmenm/fixture-settings.git
+      credential: live-app
+      directory: service/clone
+    store:
+      file: service/manifold.sqlite
+    http:
+      host: 127.0.0.1
+      port: 0
+    credentials:
+      live-app:
+        kind: github-app
+        appId: <APP_ID>
+        installationId: <INSTALLATION_ID>
+        privateKeyFile: /home/<user>/manifold-app.pem
+    github:
+      owners:
+        mmenm:
+          credential: live-app
+          hooks:
+            - id: <hook id>
+              secretFile: hook.secret
+      sweepIntervalMs: 60000
+    ```
+
+    `sweepIntervalMs` is shorter than the default so that the sweep step
+    of the smoke check ends in a few minutes. With `ANSWERS=1`, start adds
+    `escalations.publicUrl` as the tunnel URL. `OVERLAY=<file>` names a
+    YAML file whose sections are merged over the generated ones, so that a
+    later check can add `environments`, `escalations.destinations`, and
+    their credentials; the generated `processRepository`, `store`,
+    `http`, `github`, and `live-app` credential win over the overlay. No
+    value in `service.yml` is the PAT, and no path in it names the PAT
+    file.
+  forwarder: |-
+    The forwarder is a Node HTTP server in the supervisor, bound to
+    `127.0.0.1` on a free port. It is the tunnel's only target. It decides
+    on the raw request target, before any decoding, and passes a request
+    to the service only when one rule matches:
+
+    | Method | Path, the request target before `?` | Passed when | Sent to the service as |
+    |---|---|---|---|
+    | `POST` | exactly `/webhooks/github` | always | `/webhooks/github`, the query dropped |
+    | `POST` | matches `^/escalations/[A-Za-z0-9_-]{22}/answer$` | `ANSWERS=1` | the same path, the query dropped |
+
+    Every other request, including another method on an allowed path, a
+    path with a trailing `/`, an extra segment, a percent-encoded or dot
+    segment, `/api/` and everything under it, `/escalations` and an answer
+    page, and `/`, is answered by the forwarder with `404`, the header
+    `x-live-forwarder: refused`, and an empty body, and never reaches the
+    service. A passed request keeps its method, body, and headers, without
+    hop-by-hop headers, and the service's answer goes back unchanged. The
+    service never sends `x-live-forwarder`, so the header tells a refusal
+    from a service answer. Until the service is listening, the forwarder
+    answers a passed path with `503`. The forwarder logs each decision,
+    with the method, the path, and the outcome, to the supervisor's log.
+  tunnel: >-
+    The supervisor starts OpenSSH as `ssh -F <tunnel config> -T -N live`,
+    with the config holding `HostName` from `settings.yml`, `Port 443`,
+    `User` the Pinggy token, `RemoteForward 0 127.0.0.1:<forwarder port>`,
+    `LocalForward 127.0.0.1:<free port> localhost:4300`,
+    `ServerAliveInterval 30`, `ExitOnForwardFailure yes`,
+    `StrictHostKeyChecking accept-new`, and `UserKnownHostsFile` in
+    `tunnel/`. The supervisor captures the child's process id at spawn and
+    signals only that process. It reads the public HTTPS URL from Pinggy's
+    web debugger at `/urls` through the local forward, and fails start when
+    no HTTPS URL is read within 30 seconds. When the tunnel process ends
+    while the supervisor runs, the supervisor starts it again after 5
+    seconds, with no limit, and on a new URL points the hook at it, and,
+    with `ANSWERS=1`, rewrites `escalations.publicUrl` and restarts the
+    service. The tunnel configuration file is removed when the tunnel
+    process ends and rewritten at its next start.
+  start: |-
+    The supervisor runs these steps, then waits:
+
+    1. Refuses when `run.json` names a process that is alive.
+    2. Runs the preflight, and reads `resources.json`; stops when
+       provisioning has not run.
+    3. Starts the forwarder.
+    4. Starts the tunnel and reads its URL.
+    5. Writes `service.yml` with the tunnel URL and the overlay.
+    6. Starts the service as
+       `node packages/service/dist/main.js <state>/service.yml` from the
+       worktree it runs in, with the environment the Credentials section
+       states, stdout and stderr to `service/service.log`, and its process
+       id captured at spawn. It reads the bound address from the service's
+       `started` log line, and fails start when the line does not appear
+       within 120 seconds.
+    7. Sets the organization hook's URL to the tunnel URL plus
+       `/webhooks/github?owner-marker=<marker>` and `active` to true, each
+       only when it differs. A start with the same URL changes nothing.
+    8. Writes `run.json`, and prints the tunnel URL and the loopback
+       address of the service.
+
+    On `SIGINT` or `SIGTERM`, the supervisor sets the hook inactive, so
+    that no delivery goes to a URL another Pinggy user may later hold, then
+    stops the service with `SIGTERM` and waits for it to end, stops the
+    tunnel and the forwarder, and removes `run.json`. A supervisor that
+    died without this leaves an active hook and a stale `run.json`; the
+    next start finds the recorded process gone, and step 7 corrects the
+    hook. A failed step stops what earlier steps started, in reverse
+    order.
+  stop: >-
+    `live:stop` reads the supervisor's process id from `run.json`, checks
+    that the process is alive and that its command line runs
+    `src/start.ts`, sends it `SIGTERM`, and waits up to 60 seconds for
+    `run.json` to be removed. With no `run.json`, or a process that is gone,
+    it removes the stale file and reports the environment stopped.
+  smoke: |-
+    `live:smoke` reads `run.json` and runs the steps in order. It prints
+    each step as `PASS` or `FAIL` with the reason, writes the same lines to
+    `smoke/<run-id>.log`, runs every step even after a failure where the
+    step does not need an earlier step's result, and exits non-zero on any
+    failure. Each wait polls every 2 seconds up to its limit.
+
+    0. **Configuration.** `service.yml` holds no PAT value and names no
+       PAT file, and the service process's environment, read from
+       `/proc/<service pid>/environ`, holds no PAT value.
+    1. **Delivery.** It creates an issue `Sample item <run-id>` in the test
+       repository and adds it to the Project. Within 60 seconds, the
+       organization hook's delivery log, read with the PAT, holds a
+       `projects_v2_item` delivery whose payload's `content_node_id` is the
+       issue's node id and whose status code is `202`, and the service's
+       store, opened read-only, holds a `github_delivery` row with that
+       delivery's GUID.
+    2. **Intake.** Within 60 seconds of step 1, `GET /api/actors` on the
+       service's loopback address lists the actor `task:<issueNodeId>`.
+    3. **Sweep.** It sets the hook inactive and reads it back inactive,
+       creates a second issue, and adds it to the Project. Within
+       `2 × sweepIntervalMs + 60` seconds, `GET /api/actors` lists the
+       actor of that issue, and the hook's delivery log holds no delivery
+       that names it. The hook is set active again in every outcome of
+       the step, including a failure and an interrupt.
+    4. **Tunnel paths.** Through the tunnel URL: `POST /webhooks/github`
+       with an unsigned body gets the service's rejection, `400`, `401`,
+       or `404`, with no `x-live-forwarder`; `GET /webhooks/github`,
+       `POST /webhooks/github/x`, `GET /api/actors`, `GET /escalations`,
+       `GET /escalations/<22 characters>`, and `GET /` each get the
+       forwarder's refusal; `POST /escalations/<22 characters>/answer`, with
+       a form body holding a key and a choice, gets the service's `404`, with no `x-live-forwarder`, when `run.json`
+       says answers pass, and the forwarder's refusal when it does not.
+    5. **Secret scan.** The scan below over the smoke log and the
+       generated files.
+
+    The issues the smoke check makes stay in the test repository and on
+    the Project, and teardown removes them with the repository.
+  secret-scan: >-
+    The scan reads the four credential values from their files and looks
+    for each, as written and in its base64, URL-encoded, and JSON-escaped
+    forms, and for each 64-character base64 line of the private key's body,
+    in: the smoke log of this run; every file under the state directory
+    except `hook.secret` and the tunnel configuration file, which are the
+    credentials' own files; and every file `git ls-files --cached --others
+    --exclude-standard` lists in the worktree. A match fails the scan with
+    the file's path and the credential's name, never the value or its
+    context. A test in `task check` proves the scan with synthetic values:
+    a generated file holding one value in each form fails it, and the same
+    files without it pass.
+  teardown: |-
+    Teardown refuses while `run.json` names a live process. It converges to
+    no resource, in this order, and reports each resource `absent` or
+    `removed`. A second run reports every resource `absent`.
+
+    1. The organization hook carrying the marker in its URL.
+    2. The Project carrying the marker.
+    3. The test repository and the test process repository carrying the
+       marker topic, which removes their issues.
+    4. The state directory's `hook.secret`, `service.yml`, `service/`,
+       `tunnel/`, and `resources.json`. The smoke logs stay.
+
+    A resource with a test name and no marker is reported `foreign` and
+    left. A run stopped after any step leaves fewer marked resources, and
+    the next run removes the rest.
+  public-url-seam: >-
+    The GitHub event source needs no public base URL in service
+    configuration. A hook's URL lives in GitHub, set by whoever owns the
+    hook, here the supervisor through the PAT, and the service only
+    verifies deliveries against the hook's id and secret file. The
+    tunnel URL reaches GitHub as the organization hook's URL, the tunnel
+    URL plus `githubWebhookPath`, set at each start and each new tunnel
+    URL. It reaches the service only as `escalations.publicUrl`, written
+    into `service.yml` when answers pass, so that ntfy buttons post to
+    `{publicUrl}/escalations/{id}/answer` through the tunnel. The README
+    states both.
+  readme: >-
+    `testing/live-github/README.md` states: what the environment is for;
+    the prerequisites, which are the four credential files by path, the
+    PAT's scopes, the App installed on the organization with access to the
+    two test repositories, and OpenSSH; each target with its flags; the
+    state directory and its files; how the hook URL and
+    `escalations.publicUrl` follow the tunnel; which paths the tunnel
+    passes; that one environment exists per organization at a time; and
+    that no credential value is ever printed.
+  tests: >-
+    Each behaviour is written red before green, and runs in `task check`
+    with no credential and no network. A stateful fake of the GitHub REST
+    and GraphQL calls the tooling makes, which records each call, backs
+    the convergence tests: provisioning from nothing makes every resource;
+    a second run reports every resource `present` and records no write;
+    for each write in a clean run, a run stopped right after it and then
+    run again ends in the clean run's state with no duplicate; a resource
+    with a test name and no marker stops provisioning and survives
+    teardown; teardown removes every marked resource, a second teardown
+    records no write, and a teardown stopped after each removal converges
+    on its next run. Forwarder tests send each row of the forwarder table
+    and each refused form to a forwarder in front of an echo server, with
+    and without answers, and check the status, the header, and what the
+    echo server received. The secret scan test is stated above. A test
+    lints `content/` with the host CLI's manifest, blueprint, and
+    portfolio lints. The start and smoke entry points have no test of
+    their own in `task check`; the recorded live run on the task is their
+    proof.
+  content: >-
+    `content/` is the default process repository content: `manifold.yml`
+    naming `decision-models/intake.yml`; an intake decision model that
+    gives every issue the blueprint `blueprints/hold.yml` and the
+    portfolio item `sample`; `blueprints/hold.yml`, whose initial state
+    `waiting` has no transition, so that a task actor stays active and
+    `GET /api/actors` lists it; `portfolio.yml` with the one item
+    `sample`; and `bindings.yml` with one GitHub Project binding, `board`,
+    to item `sample` and environment `local`, whose owner and number
+    provisioning sets. No thread is started, so no environment needs to be
+    configured. A later check provisions its own content with
+    `CONTENT=<directory>`, such as the starter process repository, and
+    provisioning sets that content's GitHub Project bindings to the test
+    Project in the same way.
+  limits: >-
+    One environment exists per organization at a time. Two machines that
+    provision the same organization adopt the same resources, and the
+    second to generate a hook secret replaces the first's. The smoke check
+    needs the supervisor running on the same machine, since it reads the
+    service's store and process environment. GitHub keeps the issues and
+    Project items the smoke check makes until teardown.
+  timing: >-
+    Each wait polls every 2 seconds and accounts for webhook delivery, the
+    sweep, and intake, so that no step fails sooner than the system can
+    act. Start waits up to 30 seconds for the tunnel URL and up to 120
+    seconds for the service's `started` line; stop waits up to 60 seconds
+    for the supervisor to end. The tunnel restarts 5 seconds after it ends,
+    with no limit. The smoke check waits up to 60 seconds for the delivery,
+    up to 60 seconds for intake, and up to `2 × sweepIntervalMs + 60`
+    seconds for the sweep.
+  access: >-
+    The environment uses only the App permissions the service already
+    holds: contents read on the process repository, issues and metadata
+    read, organization Projects read, and organization hooks read and
+    write for the redelivery scan. It asks no change to the App's
+    permissions or webhook events, and makes the organization hook with
+    the PAT, not the App's own webhook. It needs the App's installation on
+    the organization to reach every repository in it, so that the test
+    repositories reach the service each time provisioning makes them. It
+    needs the PAT to hold `repo`, `project`, `admin:org_hook`, and
+    `delete_repo`, or the same permissions on a fine-grained PAT, so that
+    teardown removes the repositories it made.
