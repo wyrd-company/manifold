@@ -380,3 +380,44 @@ test("Task fields conflict comparison and latest base preserve the operator draf
     await fixture.close();
   }
 }, 30_000);
+
+test("Project removal confirmation keeps the reviewed digest during a background plan refresh", async () => {
+  const fixture = await projectsHost();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+    page.setDefaultTimeout(4000);
+    await page.goto(fixture.url + "/console/projects/delivery");
+    await page
+      .getByRole("switch", { name: "Also remove what the task fields do not define" })
+      .check();
+    await page.getByRole("button", { name: "Apply 2 changes", exact: true }).click();
+    await page.getByRole("dialog").getByText("Obsolete", { exact: false }).waitFor();
+    fixture.addRemoval();
+    const background = page.waitForResponse(
+      (response) => response.url().endsWith("/delivery/plan") && response.status() === 200,
+    );
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("offline"));
+      window.dispatchEvent(new Event("online"));
+    });
+    await background;
+    await page
+      .getByRole("button", { name: "Apply 3 changes", exact: true, includeHidden: true })
+      .waitFor({ state: "attached" });
+    expect(await page.getByRole("dialog").getByText("Legacy", { exact: false }).count()).toBe(0);
+    await page.getByRole("button", { name: "Apply and remove", exact: true }).click();
+    await page
+      .getByText("The plan changed since you reviewed it. Review the changes, then apply again.", {
+        exact: true,
+      })
+      .waitFor();
+    await page.getByRole("button", { name: "Apply 3 changes", exact: true }).click();
+    await page.getByRole("dialog").getByText("Legacy", { exact: false }).waitFor();
+    await page.getByRole("button", { name: "Apply and remove", exact: true }).click();
+    await page.getByText("In sync", { exact: true }).first().waitFor();
+  } finally {
+    await browser.close();
+    await fixture.close();
+  }
+}, 30_000);
