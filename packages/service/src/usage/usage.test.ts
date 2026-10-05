@@ -782,6 +782,8 @@ it("reattributes pending calls before posting through the mapping's provider ins
   s.push([]);
   expect(s.ledger.actorUsage("actor-1").accounts[0]).toMatchObject({ actual: 10, outstanding: 0 });
   expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(10);
+  s.push([]);
+  expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(10);
 });
 it("attributes held calls to an unowned thread and adds its account to the usage read", async () => {
   const s = await setup();
