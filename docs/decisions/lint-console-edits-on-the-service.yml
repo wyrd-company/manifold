@@ -12,13 +12,20 @@ description: >-
   Function`, and it takes the implementation names and the token lint's
   configuration bound, which the service holds in code and in service
   configuration. The console runs under a Content Security Policy of
-  `default-src 'self'`, which forbids evaluating generated code.
+  `default-src 'self'`, which forbids evaluating generated code. The
+  editor's canvas also draws the blueprint's graph, and must show a
+  canvas edit at once, before a lint request could answer. The graph is
+  `blueprintGraph` in `packages/shared`, which checks the document's shape
+  and resolves every target with XState.
 considered-options:
   "1": >-
     The service lints. The editor sends the text to `POST
     /api/blueprints/lint` a short wait after the last change, and the
     service runs `lintBlueprint` with its own names and configured bound,
-    and adds each finding's range and the graph.
+    and adds each finding's range and the graph. The browser runs only
+    `blueprintGraph`, through the shared package's `./blueprint-graph`
+    export, whose shape check is an Ajv standalone validator generated at
+    build time, so the canvas draws each text at once.
   "2": >-
     The browser lints. The console bundles `lintBlueprint` and its
     dependencies, runs it in a web worker on each change, and reads the
@@ -34,8 +41,16 @@ decision-outcome:
     Option 1 is the only one where one function with one set of inputs
     produces every result, so the editor, the loader, and the host CLI
     cannot drift. It keeps the console's policy free of `'unsafe-eval'` and
-    keeps the lint's dependencies, XState, Ajv, JSONata, and the token
-    lint, out of the console's bundle. Option 2 weakens the policy for
+    keeps the lint, its schema compiler, JSONata, and the token lint out of
+    the console's bundle. The graph is the one exception: the canvas needs
+    it with no request in between, and the browser runs the same
+    `blueprintGraph` the service answers with, so the two graphs cannot
+    drift either. That brings XState and the `yaml` package into the
+    console's bundle, and neither evaluates generated code. A graph
+    resolved by code of the console's own would resolve targets apart from
+    XState and drift from what runs; a graph read only from lint answers
+    would show each canvas edit after the wait and a request. Option 2
+    weakens the policy for
     every screen to serve one. Option 3 cannot check the schemas a
     blueprint declares while the operator types, since those are only
     known at run time, so the editor would miss findings the service
@@ -44,7 +59,9 @@ expected-outcomes:
   positive:
     - The editor, the service, and the host CLI report the same findings for the same text.
     - The console's Content Security Policy forbids generated code on every screen.
-    - The console's bundle carries no lint, schema compiler, or state machine library.
+    - The console's bundle carries no lint and no schema compiler that runs at run time.
+    - The canvas and the service draw the same graph for the same text, from one function.
   negative:
+    - The console's bundle carries XState and the `yaml` package for the graph.
     - Each pause in typing costs one request and one lint on the service process.
     - The editor cannot lint while the service is unreachable.

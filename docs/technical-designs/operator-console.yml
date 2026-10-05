@@ -1095,7 +1095,10 @@ proposed-design:
     compiles no code at run time, and the subpath export `./blueprint-graph`
     serves it to the console with `findingRanges`, holding no lint, under
     the console's Content Security Policy. The service and the console run
-    the same function.
+    the same function. This is the one part of the blueprint check the
+    browser runs, as `lint-console-edits-on-the-service` records: the lint
+    stays on the service, and the console's bundle carries XState and the
+    `yaml` package for the graph, and no lint and no schema compiler.
   finding-ranges: >-
     `findingRanges(text, findings)` in `packages/shared` returns each
     finding with the `range` of `blueprints-api`. It parses the text once
