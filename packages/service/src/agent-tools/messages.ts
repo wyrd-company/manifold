@@ -167,6 +167,7 @@ export function messages(options: AgentToolsOptions) {
           ? request.threadId
           : undefined;
       if (!threadId && request.callId) {
+        if (!options.sourceReady(request.environment)) return { notice: null };
         const candidates = db
           .prepare(
             "SELECT DISTINCT thread_id FROM agenttool_message WHERE environment=? AND delivered_at IS NOT NULL AND read_at IS NULL AND noticed_at IS NULL ORDER BY thread_id",
@@ -177,7 +178,10 @@ export function messages(options: AgentToolsOptions) {
           const id = String(row["thread_id"]);
           if (!options.actors().followers(request.environment, id).length) continue;
           try {
+            if (!options.sourceReady(request.environment) || signal.aborted)
+              return { notice: null };
             const thread = await options.threads.readThread(request.environment, id, signal);
+            if (!options.sourceReady(request.environment)) return { notice: null };
             if (
               thread?.activities.some(
                 (activity) =>
@@ -194,7 +198,7 @@ export function messages(options: AgentToolsOptions) {
         }
         if (matches.length === 1) threadId = matches[0];
       }
-      if (!threadId) return { notice: null };
+      if (!threadId || signal.aborted) return { notice: null };
       const count = options.store.connection.transaction(
         () =>
           db

@@ -472,6 +472,7 @@ test("hooks run in order, roll back writes on failure, and ignore errored saves"
   expect(order).toEqual([]);
   expect(f.snapshot()).toEqual(before);
   expect(f.store.loadErroredSnapshot("parcel")).toBeDefined();
+  expect(f.host.followers("station", "delivery.1")).toEqual(["parcel"]);
 });
 
 test("the root delayed transition uses the empty state path", async () => {
@@ -588,6 +589,8 @@ test("a failed initial save can retry start with the same invocation identity", 
   });
   expect(() => f.start()).toThrow("initial rollback");
   expect(f.store.loadSnapshot("parcel")).toBeUndefined();
+  expect(f.host.followers("station", "delivery.1")).toEqual([]);
+  expect(f.host.issueThreads("parcel-node")).toEqual([]);
   fail = false;
   f.start();
   expect(f.snapshot().status).toBe("active");
@@ -837,6 +840,7 @@ test("thread followers and event schemas include held snapshots and agent topics
       context: { manifold: { environment: "station", threads: ["delivery.1", "second"] } },
     },
   });
+  await f.restart();
   expect(f.host.followers("station", "delivery.1")).toEqual(["held", "parcel"]);
   expect(f.host.followedThreads("station")).toEqual(["delivery.1", "second"]);
   expect(f.host.eventSchema("held", "scanned")).toEqual({ status: "unavailable" });
@@ -864,4 +868,88 @@ test("event schema reads resolve the same bundled references as blueprint lint",
     }),
   ).toBe(true);
   expect(schema.validate({ type: "agent.handoff" })).toBe(false);
+});
+
+test("identity reads use saved indexes through attach, changes, hold, restore and completion", async () => {
+  const f = await fixture(
+    parcel({ waiting: { on: { repeat: { actions: "follow" }, scanned: "delivered" } } }),
+    {
+      implementations: {
+        actions: {
+          follow: assign({
+            manifold: () => ({ issue: "changed", environment: "elsewhere", threads: ["second"] }),
+          }),
+        },
+      },
+    },
+  );
+  const assertReads = (host: typeof f.host, issue: string, environment: string, thread: string) => {
+    const scanning = vi.spyOn(f.store, "activeSnapshots").mockImplementation(() => {
+      throw Error("read scanned snapshots");
+    });
+    try {
+      expect(host.followers(environment, thread)).toEqual(["parcel"]);
+      expect(host.followedThreads(environment)).toEqual([thread]);
+      expect(host.issueThreads(issue)).toEqual([
+        { actorId: "parcel", environment, threadId: thread },
+      ]);
+    } finally {
+      scanning.mockRestore();
+    }
+  };
+  f.start();
+  assertReads(f.host, "parcel-node", "station", "delivery.1");
+  await f.send("repeat");
+  expect(f.host.followers("station", "delivery.1")).toEqual([]);
+  expect(f.host.issueThreads("parcel-node")).toEqual([]);
+  assertReads(f.host, "changed", "elsewhere", "second");
+  await f.restart();
+  assertReads(f.host, "changed", "elsewhere", "second");
+  const held = await openActorHost({
+    store: f.store,
+    blueprints: { version: async () => ({ status: "missing", reason: "file" }) },
+    saveHooks: [],
+    log: () => {},
+  });
+  expect(held.restore(f.store.loadSnapshot("parcel")!, f.router).status).toBe("held");
+  assertReads(held, "changed", "elsewhere", "second");
+  f.router.publish({
+    source: "github",
+    eventId: "end",
+    topics: ["github.issue.changed"],
+    event: { type: "scanned" },
+  });
+  await idle();
+  expect(f.host.followers("elsewhere", "second")).toEqual([]);
+  expect(f.host.followedThreads("elsewhere")).toEqual([]);
+  expect(f.host.issueThreads("changed")).toEqual([]);
+});
+
+test("event validators are shared per version and type and available before the first save", async () => {
+  let initial: ReturnType<typeof f.host.eventSchema> | undefined;
+  const f = await fixture(parcel({ waiting: { entry: "look" } }), {
+    implementations: {
+      actions: {
+        look: () => {
+          initial = f.host.eventSchema("parcel", "scanned");
+        },
+      },
+    },
+  });
+  f.start();
+  const first = f.host.eventSchema("parcel", "scanned");
+  expect(initial?.status).toBe("declared");
+  if (first.status !== "declared" || initial?.status !== "declared")
+    throw Error("Missing validator");
+  expect(initial.validate).toBe(first.validate);
+  const second = f.host.eventSchema("parcel", "scanned");
+  if (second.status !== "declared") throw Error("Missing validator");
+  expect(second.validate).toBe(first.validate);
+  f.host.start({ actorId: "another", blueprint: f.blueprint, input: {} });
+  const shared = f.host.eventSchema("another", "scanned");
+  if (shared.status !== "declared") throw Error("Missing validator");
+  expect(shared.validate).toBe(first.validate);
+  const other = f.host.eventSchema("parcel", "repeat");
+  if (other.status !== "declared") throw Error("Missing validator");
+  expect(other.validate).not.toBe(first.validate);
 });

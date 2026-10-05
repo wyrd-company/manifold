@@ -141,6 +141,8 @@ export async function recoveryService(config: RecoveryConfiguration) {
         return receipt;
       },
     },
+    sourceReady: (name) =>
+      source.status().some((status) => status.environment === name && status.state === "following"),
     environmentId: (name, signal) => source.environmentId(name, signal),
     escalations: () => escalations,
     probe(call) {

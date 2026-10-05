@@ -57,6 +57,10 @@ async function fixture(
   });
   const sent: { messageId: string; text: string }[] = [];
   let reads = 0;
+  let ready = true;
+  let finishRead: (() => void) | undefined;
+  let holdReads = false;
+  let readSignal: AbortSignal | undefined;
   const tools = openAgentTools({
     store,
     configuration: { identifyTimeoutMs: 500 },
@@ -71,8 +75,13 @@ async function fixture(
         schema === "declared" ? { status: schema, validate } : { status: schema },
     }),
     threads: {
-      readThread: async () => {
+      readThread: async (_environment, _threadId, signal) => {
         reads++;
+        readSignal = signal;
+        if (holdReads)
+          await new Promise<void>((resolve) => {
+            finishRead = resolve;
+          });
         return schemas.orchestrationReadModel.OrchestrationThread.parse({
           ...fixtureThread("thread.a"),
           session: {
@@ -112,6 +121,7 @@ async function fixture(
         return { sequence: 7 };
       },
     },
+    sourceReady: () => ready,
     environmentId: async () => {
       if (options.available === false) throw new Error("Unavailable");
       return "server-a";
@@ -151,6 +161,17 @@ async function fixture(
   return {
     url: http.url,
     reads: () => reads,
+    ready: (value: boolean) => {
+      ready = value;
+    },
+    holdReads: () => {
+      holdReads = true;
+    },
+    readSignal: () => readSignal,
+    finishRead: () => {
+      holdReads = false;
+      finishRead?.();
+    },
     store,
     tools,
     escalations,
@@ -465,4 +486,59 @@ test("only a declared delivery save sets the first message receipt", async () =>
       .prepare("SELECT delivered_to FROM agenttool_message WHERE message_id=?")
       .get(id)!["delivered_to"],
   ).toBe("parcel");
+});
+
+test("a not-ready notice source keeps mail unmarked until a ready request", async () => {
+  const f = await fixture();
+  const db = f.store.connection.database;
+  db.prepare(
+    "INSERT INTO agenttool_message(message_id,environment,thread_id,sender_actor_id,text,sent_at,delivered_at,delivered_to) VALUES (?, 'station', 'thread.a', 'depot', 'A parcel arrived', 0, 1, 'parcel')",
+  ).run("00000000-0000-4000-8000-000000000001");
+  const notice = async () => {
+    const response = await fetch(f.url + "/api/agent-tools/notices", {
+      method: "POST",
+      body: JSON.stringify({ environment: "station", callId: "call-a" }),
+    });
+    return response.json();
+  };
+  f.ready(false);
+  expect(await notice()).toEqual({ notice: null });
+  expect(f.reads()).toBe(0);
+  expect(db.prepare("SELECT noticed_at FROM agenttool_message").get()!["noticed_at"]).toBeNull();
+  f.ready(true);
+  expect(await notice()).toEqual({ notice: expect.stringContaining("1 new message") });
+  expect(f.reads()).toBe(1);
+  expect(
+    db.prepare("SELECT noticed_at FROM agenttool_message").get()!["noticed_at"],
+  ).not.toBeNull();
+});
+
+test("a disconnected notice request keeps mail unmarked after its read completes", async () => {
+  const f = await fixture();
+  const db = f.store.connection.database;
+  db.prepare(
+    "INSERT INTO agenttool_message(message_id,environment,thread_id,sender_actor_id,text,sent_at,delivered_at,delivered_to) VALUES (?, 'station', 'thread.a', 'depot', 'A parcel arrived', 0, 1, 'parcel')",
+  ).run("00000000-0000-4000-8000-000000000001");
+  f.holdReads();
+  const controller = new AbortController();
+  const abandoned = fetch(f.url + "/api/agent-tools/notices", {
+    method: "POST",
+    body: JSON.stringify({ environment: "station", callId: "call-a" }),
+    signal: controller.signal,
+  }).catch(() => undefined);
+  try {
+    await eventually(() => expect(f.reads()).toBe(1));
+    controller.abort();
+    await abandoned;
+    await eventually(() => expect(f.readSignal()?.aborted).toBe(true));
+  } finally {
+    f.finishRead();
+  }
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(db.prepare("SELECT noticed_at FROM agenttool_message").get()!["noticed_at"]).toBeNull();
+  const response = await fetch(f.url + "/api/agent-tools/notices", {
+    method: "POST",
+    body: JSON.stringify({ environment: "station", callId: "call-a" }),
+  });
+  expect(await response.json()).toEqual({ notice: expect.stringContaining("1 new message") });
 });

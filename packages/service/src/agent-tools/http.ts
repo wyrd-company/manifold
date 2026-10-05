@@ -80,7 +80,15 @@ export function listener(
             );
           if (!options.environments.has(value.environment))
             refuse("unknown-environment", "Unknown environment.", 404);
-          result = await mail.notice(value, signal);
+          const disconnected = new AbortController();
+          const closed = () => disconnected.abort();
+          response.once("close", closed);
+          if (response.destroyed) disconnected.abort();
+          try {
+            result = await mail.notice(value, AbortSignal.any([signal, disconnected.signal]));
+          } finally {
+            response.removeListener("close", closed);
+          }
         } else {
           if (!requestSchema(value))
             refuse(

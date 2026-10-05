@@ -10,6 +10,7 @@ import { ActorNotLoadedError } from "../router/index.ts";
 import type { ActorRecord as RouterActorRecord, Router } from "../router/index.ts";
 import type { DeliveryTarget, PersistedSnapshot } from "../store/index.ts";
 import { activeEntries, activeInvokes, deadlineArms, deliverDeadline } from "./entries.ts";
+import { identityIndex } from "./identities.ts";
 import { identityOf, identityTopics, validateInput } from "./identity.ts";
 import { machineOf, nodesOf, prefixOf, records } from "./records.ts";
 import type { ActorRecord, EntryRecords } from "./records.ts";
@@ -24,6 +25,10 @@ export async function openActorHost({
 }: ActorHostOptions): Promise<ActorHost> {
   const versions = new Map<string, VersionLoad>();
   const actors = new Map<string, ActorRecord>();
+  const identities = identityIndex();
+  const storedActors = store.activeSnapshots();
+  for (const stored of storedActors) identities.saved(stored);
+  const eventSchemas = new Map<string, Map<string, ReturnType<ActorHost["eventSchema"]>>>();
   const saves = new WeakMap<PersistedSnapshot, ActorSave>();
   let router: Router | undefined;
   async function load(key: string) {
@@ -33,9 +38,7 @@ export async function openActorHost({
       version ? await blueprints.version(version) : { status: "missing", reason: "file" },
     );
   }
-  for (const key of [
-    ...new Set(store.activeSnapshots().map((snapshot) => snapshot.machine)),
-  ].sort())
+  for (const key of [...new Set(storedActors.map((snapshot) => snapshot.machine))].sort())
     await load(key);
   function connected() {
     if (!router) throw new TypeError("Actor host is not connected");
@@ -229,6 +232,7 @@ export async function openActorHost({
       };
     },
     restore(stored) {
+      identities.saved(stored);
       const version = versions.get(stored.machine);
       if (!version || version.status === "missing")
         return {
@@ -285,54 +289,27 @@ export async function openActorHost({
         commit: record.blueprint.version.commit,
       };
     },
-    followers(environment, threadId) {
-      return store
-        .activeSnapshots()
-        .filter((stored) => {
-          const identity = identityOf(stored.snapshot);
-          return identity.environment === environment && identity.threads?.includes(threadId);
-        })
-        .map((stored) => stored.actorId)
-        .sort();
-    },
-    followedThreads(environment) {
-      return [
-        ...new Set(
-          store.activeSnapshots().flatMap((stored) => {
-            const identity = identityOf(stored.snapshot);
-            return identity.environment === environment ? (identity.threads ?? []) : [];
-          }),
-        ),
-      ].sort();
-    },
-    issueThreads(issue) {
-      return store
-        .activeSnapshots()
-        .flatMap((stored) => {
-          const identity = identityOf(stored.snapshot);
-          return identity.issue === issue && identity.environment
-            ? (identity.threads ?? []).map((threadId) => ({
-                actorId: stored.actorId,
-                environment: identity.environment!,
-                threadId,
-              }))
-            : [];
-        })
-        .sort(
-          (a, b) =>
-            a.environment.localeCompare(b.environment) ||
-            a.threadId.localeCompare(b.threadId) ||
-            a.actorId.localeCompare(b.actorId),
-        );
-    },
+    saved: identities.saved,
+    followers: identities.followers,
+    followedThreads: identities.followedThreads,
+    issueThreads: identities.issueThreads,
     eventSchema(actorId, eventType) {
-      const stored = store.loadSnapshot(actorId);
-      const version = stored ? versions.get(stored.machine) : undefined;
+      const key = actors.get(actorId)?.blueprint.key ?? store.loadSnapshot(actorId)?.machine;
+      const version = key ? versions.get(key) : undefined;
       if (version?.status !== "loaded") return { status: "unavailable" };
-      const schema = version.blueprint.document.schemas.events[eventType];
-      return schema === undefined
-        ? { status: "undeclared" }
-        : { status: "declared", validate: compileSchema([schema])[0]! };
+      const cached =
+        eventSchemas.get(key!) ?? new Map<string, ReturnType<ActorHost["eventSchema"]>>();
+      eventSchemas.set(key!, cached);
+      let answer = cached.get(eventType);
+      if (!answer) {
+        const schema = version.blueprint.document.schemas.events[eventType];
+        answer =
+          schema === undefined
+            ? { status: "undeclared" }
+            : { status: "declared", validate: compileSchema([schema])[0]! };
+        cached.set(eventType, answer);
+      }
+      return answer;
     },
     async release(actorId) {
       const router = connected();

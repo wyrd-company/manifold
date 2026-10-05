@@ -42,6 +42,7 @@ export function startRouter({
   }
   function update(write: SnapshotWrite) {
     if (write.snapshot.status === "error") return;
+    host.saved?.(write);
     if (write.snapshot.status === "active") index.set(write.actorId, host.subscription(write));
     else {
       index.remove(write.actorId);

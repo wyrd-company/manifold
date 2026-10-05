@@ -22,6 +22,7 @@ export interface AgentToolsOptions {
     "followers" | "followedThreads" | "eventSchema" | "issueThreads" | "actorOf"
   >;
   readonly threads: Pick<AgentThreads, "readThread" | "runningThreads" | "startTurn">;
+  readonly sourceReady: (environment: string) => boolean;
   readonly environmentId: (environment: string, signal?: AbortSignal) => Promise<string>;
   readonly probe?: (committed: CommittedCall) => void;
   readonly clock?: { now(): number; sleep(ms: number, signal?: AbortSignal): Promise<void> };
