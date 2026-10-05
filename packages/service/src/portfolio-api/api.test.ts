@@ -14,6 +14,7 @@ test("portfolio read uses balances and updates warnings when accounts alone chan
   if (!result.ok) throw Error("fixture");
   const h = await consoleHost();
   let declared = false;
+  let at = 0;
   const account = {
     unit: "usd" as const,
     kind: "api" as const,
@@ -44,10 +45,14 @@ test("portfolio read uses balances and updates warnings when accounts alone chan
     },
     accounts: () => (declared ? { "acct-a": account, "acct-c": account } : { "acct-a": account }),
     processRepository: {
-      revisionAt: async () => memoryRevision("a".repeat(40), { "portfolio.yml": text }),
+      revisionAt: async () => {
+        await Promise.resolve();
+        at = 1000;
+        return memoryRevision("a".repeat(40), { "portfolio.yml": text });
+      },
     },
     store: { activeSnapshots: () => [] },
-    now: () => 0,
+    now: () => at,
     log: () => {},
   };
   try {
@@ -61,6 +66,7 @@ test("portfolio read uses balances and updates warnings when accounts alone chan
       return body;
     };
     const first = await read();
+    expect(first.at).toBe(new Date(1000).toISOString());
     expect(first.warnings.map((w) => w.details?.["account"])).toEqual(["acct-c"]);
     expect(first.items.find((i) => i.id === "alpha")?.allocations[0]).toMatchObject({
       actual: 17700,

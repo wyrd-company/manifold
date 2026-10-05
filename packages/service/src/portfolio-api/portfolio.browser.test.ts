@@ -379,7 +379,7 @@ test("Portfolio screen keeps nested remainders, changed-parent status, project c
     browser = await chromium.launch({ headless: true });
   try {
     const text =
-      "items:\n  alpha:\n    allocations:\n      acct-a: { guarantee: 50 }\n    items:\n      gamma:\n        allocations:\n          acct-a: { guarantee: 40 }\n      other:\n        allocations:\n          acct-a: { guarantee: 20 }\n  beta:\n    allocations:\n      acct-a: { guarantee: 50 }\n";
+      "items:\n  alpha:\n    allocations:\n      acct-a: { guarantee: 50 }\n    items:\n      gamma:\n        allocations:\n          acct-a: { guarantee: 8.04 }\n      other:\n        allocations:\n          acct-a: { guarantee: 20 }\n  beta:\n    allocations:\n      acct-a: { guarantee: 50 }\n";
     await service.revisions.save({
       path: "portfolio.yml",
       base: service.processRepository.current()!.commit,
@@ -417,7 +417,7 @@ test("Portfolio screen keeps nested remainders, changed-parent status, project c
     await page.getByRole("button", { name: "Refresh portfolio" }).click();
     await page.locator(".portfolio-projects").filter({ hasText: "sample · example/1" }).waitFor();
     await page.getByRole("button", { name: "Edit alpha", exact: true }).click();
-    await page.getByRole("dialog").getByText("40% unallocated", { exact: true }).waitFor();
+    await page.getByRole("dialog").getByText("71.96% unallocated", { exact: true }).waitFor();
     expect(await page.getByRole("button", { name: "Archive item" }).isDisabled()).toBe(true);
     await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByRole("button", { name: "Edit allocations", exact: true }).click();

@@ -44,8 +44,7 @@ export function mountPortfolioApi(host: HttpHost, options: PortfolioApiOptions):
     }
     void (async () => {
       const portfolio = options.portfolio.current(),
-        accounts = options.accounts(),
-        at = (options.now ?? Date.now)();
+        accounts = options.accounts();
       let warnings: readonly PortfolioWarning[] = [];
       if (portfolio.commit) {
         if (cache?.commit !== portfolio.commit) {
@@ -69,6 +68,7 @@ export function mountPortfolioApi(host: HttpHost, options: PortfolioApiOptions):
           ...portfolio.declaration.ledger.allocations.map((a) => a.account),
         ]),
       ];
+      const at = (options.now ?? Date.now)();
       const balances = new Map(
         portfolio.declaration.items.map((item) => [
           item.id,

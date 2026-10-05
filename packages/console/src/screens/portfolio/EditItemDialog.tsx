@@ -3,6 +3,7 @@
 //   implements: operator-console
 // ---
 import { useState } from "react";
+import { formatPercent } from "@wyrd-company/manifold-shared/amounts";
 import type { PortfolioItem, PortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api";
 import type { PortfolioEdit } from "./edits.ts";
 import type { DeclarationLint } from "../../api/portfolio-declarations-stand-in.ts";
@@ -146,15 +147,17 @@ export function EditItemDialog({
               <h3>
                 Sub-items{" "}
                 <small className="muted">
-                  {100 -
-                    read.items
-                      .filter((i) => i.parent === id && !i.archived)
-                      .reduce(
-                        (s, i) =>
-                          s + (i.allocations.find((a) => a.account === account)?.guarantee ?? 0),
-                        0,
-                      )}
-                  % unallocated
+                  {formatPercent(
+                    100 -
+                      read.items
+                        .filter((i) => i.parent === id && !i.archived)
+                        .reduce(
+                          (s, i) =>
+                            s + (i.allocations.find((a) => a.account === account)?.guarantee ?? 0),
+                          0,
+                        ),
+                  )}{" "}
+                  unallocated
                 </small>
               </h3>
               {children.map((child) => {

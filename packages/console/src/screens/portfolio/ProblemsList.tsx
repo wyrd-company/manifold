@@ -4,7 +4,7 @@
 // ---
 import type { DeclarationLint } from "../../api/portfolio-declarations-stand-in.ts";
 export function ProblemsList({ lint }: { lint: DeclarationLint | undefined }) {
-  return lint ? (
+  return lint && (lint.findings.length || lint.warnings.length) ? (
     <div className="portfolio-problems">
       {[...lint.findings.map((f) => ({ ...f, severity: "error" })), ...lint.warnings].map((f) => (
         <p
