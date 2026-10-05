@@ -778,12 +778,17 @@ scrolls by itself.
   value. Each field has a visible label; controls are 28px.
 - Footer: "Remove" (destructive outline) for a node or an edge.
 
-Groups for a state: Basics (key, type, description, initial child),
-Transitions, Entry actions, Exit actions, Invoke, Gate, Tags, Meta, and
-Output for a top-level final state. Groups for a transition: Trigger
-(event type, delay, or invoke), Target, Guard, Actions, and Details
-(reenter, description, order, meta). The blueprint's groups: Basics,
-Context, Schemas, and Layout.
+Every state node has an inspector, the machine's root included. Groups for
+a state: Basics (key, id, description, type, initial child, and, for a
+history state, shallow or deep and its default target), Transitions, Entry
+actions, Exit actions, Invoke, Gate, Meta, Tags, and Output. The root is the
+Blueprint inspector: Basics (description, machine id, type, initial
+child), Context, Schemas, Layout, and the state groups other than Gate.
+Groups for a transition: Trigger (event type, delay, or invoke), Target,
+Guard, Actions, and Details (reenter, description, order, meta). A group
+that the node's type does not use shows only while it holds a value. "More
+properties" (ghost, with a `Plus` icon) ends the inspector and opens a menu
+of the properties not shown; choosing one adds its group.
 
 - **Transitions** lists each outgoing transition as a row: its trigger
   icon, its label in mono, an arrow, and its target in mono, or "not
@@ -792,11 +797,13 @@ Context, Schemas, and Layout.
 - **Actions** are rows of the action (a combobox, or "Assign" for an
   expression), its parameters under it, and a ghost remove button; "Add
   action" (outline) sits under them.
-- **Invoke** is a card per invoke: `src` as a combobox in mono, its
-  description in 13px `muted-foreground` under it, then Contract: Input and
+- **Invoke** is a card per invoke: `src` as a combobox in mono with its
+  description in 13px `muted-foreground` under it; Contract: Input and
   Output, each a small table of property (mono), type, and required (a
   check), or "Not declared" in muted text with "Declare contract"
-  (outline). Unknown names show their line in warning text.
+  (outline); `id` and `systemId` in mono; its input; and its done, error,
+  and snapshot transitions as Transitions rows. Unknown names show their
+  line in warning text.
 - **Gate** shows "Add gate" (outline) with no gate. A gate shows its
   comparator path (mono), its return point, the "Reservation" switch, the
   token event type (mono), the dependencies region, and "Remove gate"

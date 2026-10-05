@@ -782,6 +782,19 @@ proposed-design:
     transition the text no longer holds returns `missing` and changes
     nothing. A key that is empty, holds `.` or `#`, or that a sibling holds
     returns `invalid` with the message the field shows.
+  edit-basis: >-
+    Each edit carries its basis, the draft text the operator made it on:
+    the text the canvas or inspector showed when the click, drop, or field
+    change happened. `commitEdit(draft, basis, edit, graph)` applies the
+    edit only when the draft's text is still its basis, and otherwise
+    returns `stale` and changes nothing. The pair of basis and edit is the
+    edit's identity, so a replay of one edit applies at most once: after
+    it applied, the draft's text is its result and no longer its basis.
+    Two clicks are two edits, each made on the text the previous one left,
+    so each applies once. A gesture whose basis became stale while it ran,
+    because a lint answer, a source read, or another edit changed the
+    text first, is dropped and the canvas shows the current text; the
+    operator makes it again on what is shown.
   edit-references: >-
     A target is written in the shortest form that resolves to it from its
     source: the sibling's key path, such as `routing` or
@@ -824,34 +837,56 @@ proposed-design:
     error under it and writes nothing. Parameters are a YAML field over
     `params`.
   inspector-fields: >-
-    The blueprint inspector holds its description, the machine `id`, the
-    root's initial state, `context` as a YAML field, the input, output,
-    and context schemas, each event schema, and each actor schema as YAML
-    fields with "Add event schema" and "Add actor schema", and the layout,
-    "Automatic" or "Pinned" with Automatic layout. A state inspector holds
-    its key; its type, a select of State, Compound state, Parallel state,
-    and Final state, where a state with child states cannot become a state
-    or a final state; its description; its initial child, for a compound
-    state; its transitions, each with its trigger's icon, its label, and
-    its target or "not connected" in warning text, each opening that
-    transition's inspector, and "Add transition", which asks for the
-    target and then opens the event picker; its entry and exit actions;
-    its invokes, each with its `src`, its `id`, its `input` as a static
-    YAML field or a mapping expression, and its `onDone` and `onError`
-    targets, with "Add invoke"; its gate, "Add gate" or the comparator
-    path, the return point, exit or a state, the reservation switch, the
-    token event type, the dependencies region, and "Remove gate"; its
-    tags; its other `meta` keys as a YAML field; and, for a top-level final
-    state, its `output` as a static YAML field or a mapping expression. A
-    history inspector holds its key, shallow or deep, and its default
-    target. An initial inspector holds the level's initial child. A
-    transition inspector holds what its trigger names: the event type, the
-    delay, or the invoke it belongs to; its targets, each a select of
-    state paths or "No target"; its guard, none, an expression, `in` with
-    a multi-select of state paths, or a named guard with its parameters;
-    its actions; `reenter`; its description; its `meta` as a YAML field;
-    and, when it is one of several candidates, "N of M" with "Earlier" and
-    "Later".
+    Every state node has an inspector, the machine's root included, and
+    each inspector has a control for every property `blueprint.schema.yml`
+    allows on that node, so no declaration needs the YAML view. A state
+    node's properties are those of `state-node-properties`, in these
+    groups: Basics, with the key (absent for the root), `id`,
+    `description`, `type`, `initial`, and, for a history state, `history`
+    and `target`; Transitions, with `on`, `always`, `after`, and `onDone`;
+    Entry actions, `entry`; Exit actions, `exit`; Invoke, `invoke`; Gate,
+    `meta.gate`; Meta, the other `meta` keys as a YAML field; Tags, `tags`;
+    and Output, `output`. `states` is the node's children on the canvas.
+    The root's inspector is the blueprint inspector, which adds the
+    document's `description`, the machine's `context` as a YAML field, the
+    input, output, and context schemas, each event schema, and each actor
+    schema as YAML fields with "Add event schema" and "Add actor schema",
+    and the layout, "Automatic" or "Pinned" with Automatic layout; its
+    Basics hold the machine `id` and its `type`, compound or parallel, and
+    it has no key and no Gate group, since a gate on the root is a lint
+    finding. A group whose property has no meaning for the node's type in
+    XState, such as Invoke on a history state or `initial` on an atomic
+    one, is shown only while the node holds a value for it, so a value
+    written by hand stays editable; "More properties", a menu at the end
+    of the inspector, lists each allowed property the inspector does not
+    show and adds its group. The type is a select of State, Compound
+    state, Parallel state, Final state, and History state, where a state
+    with child states can only be compound or parallel. The `id` field
+    writes on Enter or loss of focus, and a change of a state's `id`
+    rewrites each `#<id>` target that names it, as `rename-state` rewrites
+    keys. The Transitions group lists each transition the node declares,
+    each with its trigger's icon, its label, and its target or "not
+    connected" in warning text, each opening that transition's inspector,
+    and "Add transition", which asks for the target and then opens the
+    event picker. A transition the canvas does not draw, one declared on
+    the root or an invoke's `onSnapshot`, is edited from these lists in the
+    same transition inspector. An invoke is a card with `src`, `id`,
+    `systemId`, `input` as a static YAML field or a mapping expression,
+    `onDone` and `onError` targets, and its `onSnapshot` transitions,
+    with "Add invoke". The gate holds "Add gate", or the comparator path,
+    the return point, exit or a state, the reservation switch, the token
+    event type, the dependencies region, and "Remove gate". Output is a
+    static YAML field or a mapping expression. The initial marker's
+    inspector holds its level's `initial`. A transition inspector holds
+    every property of `transition`: what its trigger names, the event
+    type, the delay, or the invoke it belongs to; its targets, each a
+    select of state paths or "No target"; its guard, none, an expression,
+    `in` with a multi-select of state paths, or a named guard with its
+    parameters; its actions; `reenter`; its description; its `meta` as a
+    YAML field; and, when it is one of several candidates, "N of M" with
+    "Earlier" and "Later". `inspector-model.ts` is a pure function from a
+    node's or edge's kind and value to the groups and fields the inspector
+    renders, each field with the JSON Pointer it writes.
   invoke-contract: >-
     An invoke shows what its `src` names: for a Manifold implementation,
     its description from the implementation catalog; for a child
@@ -1236,7 +1271,8 @@ proposed-design:
     `src/screens/blueprints/` holds `BlueprintsList.tsx`,
     `BlueprintEditor.tsx`, `YamlView.tsx`, `ProblemsStrip.tsx`,
     `PublishDialog.tsx`, `DiscardDialog.tsx`, `ConflictAlert.tsx`, and the
-    pure modules `draft.ts`, `blueprint-edits.ts`, `canvas-history.ts`, and
+    pure modules `draft.ts`, `blueprint-edits.ts`, `canvas-history.ts`,
+    `inspector-model.ts`, and
     `problems.ts`; `canvas/` holds `BlueprintCanvas.tsx`,
     `CanvasToolbar.tsx`, `StateNode.tsx`, `GroupNode.tsx`,
     `HistoryNode.tsx`, `InitialNode.tsx`, `TransitionEdge.tsx`,
@@ -2451,14 +2487,20 @@ proposed-design:
     replaces whole, and a service started on a `dist/` with no
     `index.html` refuses to start. The browser's writes are `localStorage`
     keys for theme and sidebar mode, each set to the operator's latest
-    choice, so a repeated save leaves one value. A canvas or inspector edit is a
-    pure function of the draft's text that writes the whole new text to
-    the draft, so a crash leaves the text before or after the edit, never
-    part of it. An edit that runs twice converges: a second `set`,
-    `set-layout`, `rename-state` to the same key, or `clear-layout` returns
-    the same text; a second `remove-state` or `remove-transition` returns
-    `missing` and changes nothing; and a second `add-state` adds a second
-    state, as a second click does.
+    choice, so a repeated save leaves one value. A canvas or inspector edit
+    is a pure function of the draft's text that writes the whole new text
+    to the draft in one `localStorage` write, so a crash leaves the text
+    before or after the edit, never part of it. Every edit, `add-state`,
+    `rename-state`, `remove-state`, `set-initial`, `add-transition`,
+    `remove-transition`, `move-candidate`, `set`, `remove`, `rename-key`,
+    `set-layout`, and `clear-layout`, commits through `commitEdit` with
+    its basis, so an edit run twice applies once: the second run finds the
+    draft's text changed from its basis and returns `stale`. After a crash
+    before the write, the draft holds the basis, the edit is not applied,
+    and the reopened editor shows the text without it; after the write,
+    the draft holds the result, and a replay is `stale`. Undo and redo
+    commit the same way, with the text after and before an edit as their
+    basis.
   errors: >-
     `store.activeSnapshots()` throwing answers `500` with no body detail,
     and the error goes to the service's log with the request path. A
@@ -2489,7 +2531,17 @@ proposed-design:
     rewrites a sibling, a `.child`, and a `#id` target, an `in` guard, a
     gate's return and dependencies, and layout keys; a remove drops the
     targets into the state and moves the parent's `initial`; an edit under
-    an alias returns `unsafe`; and each edit run twice converges as stated.
+    an alias returns `unsafe`; `commitEdit` applies each edit kind once on
+    its basis and returns `stale` for a replay after it applied, two
+    `add-state` edits each on the previous result add two states, a draft
+    left at the basis by a crash before the write takes the edit once, and
+    a draft left at the result by a crash after the write returns `stale`.
+    `inspector-model.ts` is tested against `blueprint.schema.yml`: for the
+    root and for each node kind, atomic, compound, parallel, final, and
+    history, with every property of `state-node-properties` set, and for
+    each transition and invoke property, the model holds a field whose
+    pointer is that property, and a field write through
+    `applyBlueprintEdit` changes that property and nothing else.
     `canvas-layout.ts` is tested on the bundled task blueprint and on a
     fixture with nested and parallel states, every trigger, a history
     state, and a targetless transition: in automatic layout no two nodes
