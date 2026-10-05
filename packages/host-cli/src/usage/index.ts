@@ -181,6 +181,10 @@ export async function runUsageCommand(
     home: string;
   },
 ): Promise<number> {
+  if (args[0] === "lint") {
+    const { usageLintCommand } = await import("../usage-lint/command.ts");
+    return usageLintCommand(args.slice(1), io);
+  }
   if (args[0] === "push") {
     const { runUsagePush } = await import("../usage-push/index.ts");
     return runUsagePush(args.slice(1), io);

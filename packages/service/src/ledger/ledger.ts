@@ -200,7 +200,31 @@ export function createLedger(options: {
       reservable: share.reservable,
     };
   }
+  const nextWindow = database.prepare(
+    "SELECT window_key, opens_at, closes_at FROM ledger_windows WHERE account = ? AND opens_at > ? ORDER BY opens_at LIMIT 1",
+  );
+  const windowCapacity = database.prepare(
+    "SELECT CAST(COALESCE(SUM(amount), 0) AS TEXT) AS capacity FROM ledger_entries WHERE account = ? AND window_key = ? AND kind = 'credit'",
+  );
+  function describeWindow(account: string, row: Window | undefined | null) {
+    if (!row) return null;
+    const amount = windowCapacity.get(account, row.window_key) as { capacity: string };
+    return {
+      window: row.window_key,
+      opensAt: row.opens_at,
+      closesAt: row.closes_at,
+      capacity: Number(amount.capacity),
+    };
+  }
   return {
+    windowAt({ account, at }) {
+      text(account, "account");
+      integer(at, "at");
+      return {
+        current: describeWindow(account, window(account, at)),
+        next: describeWindow(account, nextWindow.get(account, at) as Window | undefined),
+      };
+    },
     setPortfolio(value) {
       portfolio = value;
     },

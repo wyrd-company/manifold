@@ -39,7 +39,7 @@ const call = (key = "call-1", input = 1000000, output = 500000): UsageCall => ({
   estimated: false,
 });
 const accounts =
-  "accounts:\n  acct:\n    unit: usd\n    usage: [{ environment: env-one, provider: codex }]";
+  "accounts:\n  acct:\n    unit: usd\n    kind: api\n    capacity: { amount: 1, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }\n    usage: [{ environment: env-one, provider: codex }]";
 const prices =
   "unit: usd\nmodels:\n  model-a: { standard: { input: 2, output: 8 } }\n  model-c: { standard: { input: 0.2, output: 0.2 } }";
 async function setup(credited = true) {
@@ -385,7 +385,8 @@ it("resolves an instance account before its provider fallback, across persisted 
     accounts.replace(
       "usage: [{ environment: env-one, provider: codex }]",
       "usage: [{ environment: env-one, provider: codex, instance: instance-2 }]",
-    ) + "\n  acct-alt:\n    unit: usd\n    usage: [{ environment: env-one, provider: codex }]";
+    ) +
+    "\n  acct-alt:\n    unit: usd\n    kind: api\n    capacity: { amount: 1, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }\n    usage: [{ environment: env-one, provider: codex }]";
   await s.apply(declaration);
   s.push([call("pending-instance")]);
   expect(s.usage.retryPending().pending.noWindow).toBe(1);
@@ -669,7 +670,14 @@ it("retains negative cache reclassification as pending and commits later calls a
     )
     .run(
       JSON.stringify({
-        accounts: { acct: { unit: "usd", usage: [{ environment: "env-one", provider: "codex" }] } },
+        accounts: {
+          acct: {
+            unit: "usd",
+            kind: "api",
+            capacity: { amount: 1, reset: "2026-01-01T00:00:00Z", every: { hours: 1 } },
+            usage: [{ environment: "env-one", provider: "codex" }],
+          },
+        },
         prices: {
           unit: "usd",
           models: {

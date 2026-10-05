@@ -4,6 +4,8 @@
 //     - service-assembly
 //     - gate-runtime
 // ---
+import { openCapacity } from "../capacity/index.ts";
+import type { Capacity } from "../capacity/index.ts";
 import { startIntake, intakeMigrationSteps, intakeFailedHandler } from "../intake/index.ts";
 import type { Intake } from "../intake/index.ts";
 import { mkdir } from "node:fs/promises";
@@ -51,6 +53,7 @@ import { githubWebhookPath } from "./types.ts";
 import type { Service, ServiceParts, ServiceStep, StartServiceOptions } from "./types.ts";
 export async function startService(options: StartServiceOptions): Promise<Service> {
   const log = options.log ?? stderrLog;
+  let capacity: Capacity | undefined;
   let store: Store | undefined;
   let router: Router | undefined;
   let escalations: Escalations | undefined;
@@ -108,6 +111,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       if (intake) await finish("intake-stopped", () => intake!.stop());
       if (router) await finish("router-stopped", () => router!.stop());
       gates?.stop();
+      capacity?.close();
       if (store) await finish("store-closed", () => store!.close());
       log({ level: "info", event: "stopped", message: "Service stopped" });
       if (errors.length) throw errors[0];
@@ -164,7 +168,26 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       },
     });
     step("escalations-opened", "start");
-    const portfolio = openPortfolio({ connection: store.connection });
+    const basePortfolio = openPortfolio({ connection: store.connection });
+    capacity = openCapacity({
+      connection: store.connection,
+      ledger: basePortfolio.ledger,
+      accounts: () => usage.accounts(),
+      credited: (credit) => {
+        log({
+          level: "info",
+          event: "capacity-credited",
+          message: "Account window credited",
+          detail: credit,
+        });
+        options.probes?.capacityCredited?.(credit);
+      },
+      followUp: () => {
+        usage.retryPending();
+        gates?.inputChanged();
+      },
+    });
+    const portfolio = { ...basePortfolio, ledger: capacity.ledger };
     step("portfolio-opened", "start");
     const usageConnection = store.connection;
     const usage = openUsage({
@@ -315,6 +338,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       ...(gates ? { gates } : {}),
     });
     await revisions.follow();
+    usage.retryPending();
     step("revision-followed", "start");
     try {
       await revisions.pull();

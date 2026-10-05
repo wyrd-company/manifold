@@ -16,7 +16,14 @@ afterEach(async () => {
 });
 const declarations = (input = 2) => ({
   accounts: {
-    accounts: { acct: { unit: "usd", usage: [{ environment: "env-one", provider: "codex" }] } },
+    accounts: {
+      acct: {
+        unit: "usd",
+        kind: "api",
+        capacity: { amount: 1, reset: "2026-01-01T00:00:00Z", every: { hours: 1 } },
+        usage: [{ environment: "env-one", provider: "codex" }],
+      },
+    },
   },
   prices: { unit: "usd", models: { "model-a": { standard: { input, output: 8 } } } },
 });
@@ -103,15 +110,12 @@ test("assembles unauthenticated usage and follows declarations through pulls", a
   const first = await request("first");
   expect(first.status).toBe(200);
   expect(await first.json()).toMatchObject({ calls: { pending: 1 } });
-  service.portfolio.ledger.credit({
-    key: "credit-one",
-    account: "acct",
-    window: "window-one",
-    opensAt: 0,
-    closesAt: 1000,
-    amount: 100,
-  });
-  expect(service.usage.retryPending().posted).toBe(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(
+    service.store.connection.database
+      .prepare("SELECT count(*) AS count FROM ledger_operations WHERE kind = 'credit'")
+      .get()?.["count"],
+  ).toBe(1);
   expect(service.portfolio.ledger.actorUsage("actor-one").accounts[0]?.actual).toBe(2);
   await service.github.stop();
   await f.commit(60, declarations(4));
@@ -256,4 +260,33 @@ test("the registered usage hook settles a real actor only after it reaches done"
     settled: true,
     accounts: [{ estimate: 1, actual: 2, variance: 1 }],
   });
+});
+
+test("service accepts capacity declarations without prices when no account needs pricing", async () => {
+  const f = await fixture();
+  await f.commit(60, {
+    accounts: {
+      accounts: {
+        acct: {
+          unit: "usd",
+          kind: "subscription",
+          capacity: { amount: 10, reset: "2026-01-01T00:00:00Z", every: { days: 7 } },
+        },
+      },
+    },
+  });
+  const logs: string[] = [];
+  const service = await startService({
+    configurationFile: f.file,
+    log: (entry) => logs.push(entry.event),
+  });
+  cleanup.push(service.stop);
+  expect(logs).not.toContain("usage-rejected");
+  expect(service.usage.accounts()["acct"]).toMatchObject({
+    kind: "subscription",
+    capacity: { amount: 10 },
+  });
+  expect(
+    service.portfolio.ledger.balance({ item: "alpha", account: "acct", waiting: [] }).allocation,
+  ).toBe(6000000);
 });

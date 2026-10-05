@@ -40,7 +40,10 @@ export type LedgerActorUsage = {
     outstanding: number;
   }[];
 };
+export type LedgerWindow = { window: string; opensAt: number; closesAt: number; capacity: number };
+export type LedgerWindows = { current: LedgerWindow | null; next: LedgerWindow | null };
 export interface Ledger {
+  windowAt(query: { account: string; at: number }): LedgerWindows;
   setPortfolio(portfolio: import("./portfolio.js").LedgerPortfolio): void;
   credit(request: {
     key: string;

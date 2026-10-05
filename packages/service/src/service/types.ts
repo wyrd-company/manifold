@@ -47,6 +47,7 @@ export interface StartServiceOptions {
 }
 
 export interface ServiceProbes {
+  readonly capacityCredited?: (credit: import("../capacity/index.ts").CapacityCredit) => void;
   /** Called after each start and stop step completes. */
   readonly step?: (step: ServiceStep) => void;
   /** Passed to the process repository. */

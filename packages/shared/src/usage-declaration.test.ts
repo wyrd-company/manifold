@@ -22,7 +22,7 @@ it("accepts empty declarations and rejects duplicate usage across accounts", () 
   });
   const result = lintUsageDeclaration({
     accounts:
-      "accounts:\n  acct:\n    unit: usd\n    usage: [{ environment: env-one, provider: codex }]\n  acct-alt:\n    unit: usd\n    usage: [{ environment: env-one, provider: codex }]\n",
+      "accounts:\n  acct:\n    unit: usd\n    kind: api\n    capacity: { amount: 1, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }\n    usage: [{ environment: env-one, provider: codex }]\n  acct-alt:\n    unit: usd\n    kind: api\n    capacity: { amount: 1, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }\n    usage: [{ environment: env-one, provider: codex }]\n",
     prices: undefined,
   });
   expect(result).toMatchObject({
@@ -109,3 +109,118 @@ models:
     }),
   ).toMatchObject({ ok: true });
 });
+
+it.each([
+  ["amount", 0.0000001],
+  ["amount", 1.1234567],
+  ["amount", 1e12],
+  ["reset", "2026-02-30T00:00:00Z"],
+  ["reset", "2026-01-01"],
+  ["reset", "0001-01-01T00:00:00+01:00"],
+  ["reset", "2026-01-29T00:00:00Z"],
+])("locates invalid capacity %s = %s", (field, value) => {
+  const capacity = {
+    amount: 1,
+    reset: "2026-01-01T00:00:00Z",
+    every: { months: 1 },
+    [field]: value,
+  };
+  expect(
+    lintUsageDeclaration({
+      accounts: JSON.stringify({ accounts: { acct: { unit: "usd", kind: "api", capacity } } }),
+      prices: undefined,
+    }),
+  ).toMatchObject({
+    ok: false,
+    findings: [{ kind: "invalid-capacity", location: `/accounts/acct/capacity/${field}` }],
+  });
+});
+it("requires capacity at its pointer", () => {
+  expect(
+    lintUsageDeclaration({
+      accounts: "accounts: { acct: { unit: usd, kind: api } }",
+      prices: undefined,
+    }),
+  ).toMatchObject({
+    ok: false,
+    findings: [{ kind: "schema", location: "/accounts/acct/capacity" }],
+  });
+});
+
+it("accepts accounts with capacity and no usage or prices", () => {
+  expect(
+    lintUsageDeclaration({
+      accounts: JSON.stringify({
+        accounts: {
+          acct: {
+            unit: "usd",
+            kind: "subscription",
+            capacity: { amount: 120, reset: "2026-01-01T00:00:00Z", every: { days: 7 } },
+          },
+        },
+      }),
+      prices: undefined,
+    }),
+  ).toMatchObject({ ok: true, declaration: { prices: { unit: "usd", models: {} } } });
+});
+it.each([
+  ["hours", 87600],
+  ["days", 3650],
+  ["months", 120],
+])("bounds the %s period", (unit, maximum) => {
+  const accounts = (n: number) =>
+    JSON.stringify({
+      accounts: {
+        acct: {
+          unit: "usd",
+          kind: "api",
+          capacity: { amount: 1, reset: "2026-01-01T00:00:00Z", every: { [unit]: n } },
+        },
+      },
+    });
+  expect(lintUsageDeclaration({ accounts: accounts(maximum), prices: undefined }).ok).toBe(true);
+  expect(
+    lintUsageDeclaration({ accounts: accounts(maximum + 1), prices: undefined }),
+  ).toMatchObject({
+    ok: false,
+    findings: [{ kind: "schema", location: `/accounts/acct/capacity/every/${unit}` }],
+  });
+});
+it.each(["0001-01-01T00:00:00Z", "9999-12-31T23:59:59.999Z", "2026-01-01T01:00:00+01:00"])(
+  "accepts representable reset %s",
+  (reset) => {
+    expect(
+      lintUsageDeclaration({
+        accounts: JSON.stringify({
+          accounts: {
+            acct: {
+              unit: "usd",
+              kind: "api",
+              capacity: { amount: 1.000001, reset, every: { hours: 1 } },
+            },
+          },
+        }),
+        prices: undefined,
+      }).ok,
+    ).toBe(true);
+  },
+);
+
+it.each(["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])(
+  "rejects offset resets outside four-digit UTC years: %s",
+  (reset) => {
+    expect(
+      lintUsageDeclaration({
+        accounts: JSON.stringify({
+          accounts: {
+            acct: { unit: "usd", kind: "api", capacity: { amount: 1, reset, every: { hours: 1 } } },
+          },
+        }),
+        prices: undefined,
+      }),
+    ).toMatchObject({
+      ok: false,
+      findings: [{ kind: "invalid-capacity", location: "/accounts/acct/capacity/reset" }],
+    });
+  },
+);

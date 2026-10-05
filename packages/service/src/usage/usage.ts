@@ -41,6 +41,7 @@ export function openUsage(options: UsageOptions): Usage {
     return { status: "applied", commit: revision.commit };
   };
   return {
+    accounts: () => structuredClone(declaration.accounts),
     push,
     retryPending,
     listener: usageListener(options.environments, push, options.onError ?? (() => {})),

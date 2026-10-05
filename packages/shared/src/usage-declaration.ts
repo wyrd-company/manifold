@@ -62,6 +62,56 @@ function document<T>(
     });
   }
 }
+function capacityFindings(name: string, account: UsageAccount, findings: UsageFinding[]) {
+  const path = `/accounts/${pointer(name)}/capacity`;
+  const invalid = (field: string, message: string) =>
+    findings.push({
+      file: "accounts",
+      kind: "invalid-capacity",
+      location: `${path}/${field}`,
+      message,
+    });
+  const { amount, reset, every } = account.capacity;
+  const millionths = Math.round(amount * 1000000);
+  const [coefficient = "", exponent = "0"] = String(amount).toLowerCase().split("e");
+  const decimals = (coefficient.split(".")[1]?.length ?? 0) - Number(exponent);
+  if (!Number.isSafeInteger(millionths) || millionths < 1 || decimals > 6)
+    invalid(
+      "amount",
+      "Capacity must convert to 1 through Number.MAX_SAFE_INTEGER millionths with at most six fractional digits.",
+    );
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-](\d{2}):(\d{2}))$/.exec(
+      reset,
+    );
+  const at = Date.parse(reset);
+  const date = new Date(at);
+  let valid =
+    !!match &&
+    Number.isFinite(at) &&
+    at >= Date.parse("0001-01-01T00:00:00Z") &&
+    at <= Date.parse("9999-12-31T23:59:59.999Z");
+  if (match) {
+    const year = Number(match[1]),
+      month = Number(match[2]),
+      day = Number(match[3]);
+    const calendar = new Date(0);
+    calendar.setUTCFullYear(year, month - 1, day);
+    valid &&=
+      calendar.getUTCFullYear() === year &&
+      calendar.getUTCMonth() === month - 1 &&
+      calendar.getUTCDate() === day &&
+      Number(match[4]) < 24 &&
+      Number(match[5]) < 60 &&
+      Number(match[6]) < 60 &&
+      Number(match[7] ?? 0) < 24 &&
+      Number(match[8] ?? 0) < 60;
+  }
+  if (!valid)
+    invalid("reset", "Reset must be an RFC 3339 instant within UTC years 0001 through 9999.");
+  else if ("months" in every && date.getUTCDate() > 28)
+    invalid("reset", "A monthly reset must fall on or before day 28 in UTC.");
+}
 export function lintUsageDeclaration(files: {
   accounts: string | undefined;
   prices: string | undefined;
@@ -75,6 +125,8 @@ export function lintUsageDeclaration(files: {
   const findings: UsageFinding[] = [];
   const accounts = document(files.accounts, "accounts", accountsValidator, findings);
   const prices = document(files.prices, "prices", pricesValidator, findings);
+  for (const [name, account] of Object.entries(accounts?.accounts ?? {}))
+    capacityFindings(name, account, findings);
   const seenUsage = new Set<string>();
   for (const [name, account] of Object.entries(accounts?.accounts ?? {}))
     for (const [index, usage] of (account.usage ?? []).entries()) {

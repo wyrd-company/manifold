@@ -892,7 +892,14 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
         },
       },
       accounts: {
-        accounts: { acct: { unit: "usd", usage: [{ environment: "env-one", provider: "codex" }] } },
+        accounts: {
+          acct: {
+            unit: "usd",
+            kind: "api",
+            capacity: { amount: 1, reset: "2026-01-01T00:00:00Z", every: { hours: 1 } },
+            usage: [{ environment: "env-one", provider: "codex" }],
+          },
+        },
       },
       prices: {
         unit: "usd",
@@ -1018,20 +1025,6 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
   await fs.mkdir(join(f.directory, "data"), { recursive: true });
   const observer = openStore({ path });
   cleanup.push(() => observer.close());
-  observer.connection.migrate("ledger", ledgerMigrationSteps);
-  const ledger = createLedger({
-    connection: observer.connection,
-    portfolio: parseLedgerPortfolio({ items: [{ id: "alpha", parent: null }], allocations: [] }),
-  });
-  // No capacity module exists: credit through the ledger's public seam before intake.
-  ledger.credit({
-    key: "example-credit",
-    account: "acct",
-    window: "example-window",
-    opensAt: 0,
-    closesAt: Date.now() + 3600000,
-    amount: 1000,
-  });
   const first = start();
   await first.ready();
   const portfolio = openPortfolio({ connection: observer.connection });
@@ -1073,9 +1066,9 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
     accounts: [{ account: "acct", estimate: 10, outstanding: 10, actual: 0 }],
   });
   expect(portfolio.ledger.balance({ item: "alpha", account: "acct", waiting: [] })).toMatchObject({
-    allocation: 600,
+    allocation: 600000,
     outstanding: 10,
-    available: 590,
+    available: 599990,
   });
   expect(server.commands.map((command) => command.type)).toEqual([
     "thread.create",
@@ -1192,7 +1185,7 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
   expect(portfolio.ledger.balance({ item: "alpha", account: "acct", waiting: [] })).toMatchObject({
     actual: 8,
     outstanding: 0,
-    available: 592,
+    available: 599992,
   });
   const replayed = await promisify(execFile)(binary, pushArgs);
   expect(JSON.parse(replayed.stdout)).toMatchObject({ skippedSources: 1, calls: { accepted: 0 } });

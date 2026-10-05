@@ -46,7 +46,7 @@ await usage.apply({
   commit: "commit-1",
   read: async (path) =>
     path === "accounts.yml"
-      ? "accounts:\n  acct:\n    unit: usd\n    usage: [{ environment: env-one, provider: codex, instance: instance-one }]"
+      ? "accounts:\n  acct:\n    unit: usd\n    kind: api\n    capacity: { amount: 1, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }\n    usage: [{ environment: env-one, provider: codex, instance: instance-one }]"
       : "unit: usd\nmodels:\n  model-a: { standard: { input: 2, output: 8 } }",
 });
 usage.saveHook({

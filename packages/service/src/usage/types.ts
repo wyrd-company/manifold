@@ -4,6 +4,7 @@
 // ---
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
+  UsageAccount,
   UsageFinding,
   UsagePushRequest,
   UsagePushResult,
@@ -37,6 +38,7 @@ export interface Usage {
   saveHook(save: UsageActorSave): void;
   apply(revision: UsageRevision): Promise<UsageApplyResult>;
   retryPending(): UsageRetryResult;
+  accounts(): Readonly<Record<string, UsageAccount>>;
 }
 export type UsageOptions = {
   connection: LedgerConnection;

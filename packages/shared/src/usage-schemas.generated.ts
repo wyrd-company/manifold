@@ -353,18 +353,71 @@ export const accountsDeclarationSchema = {
     account: {
       type: "object",
       additionalProperties: false,
-      required: ["unit"],
+      required: ["unit", "kind", "capacity"],
       properties: {
         unit: {
           description: "The account's native unit.",
           type: "string",
           enum: ["usd"],
         },
+        kind: {
+          description:
+            "`api` for an account billed by usage against a budget; `subscription` for an account with a usage limit that resets.",
+          type: "string",
+          enum: ["api", "subscription"],
+        },
+        capacity: {
+          $ref: "#/$defs/capacity",
+        },
         usage: {
           description: "The usage that charges the account.",
           type: "array",
           items: {
             $ref: "#/$defs/usage",
+          },
+        },
+      },
+    },
+    capacity: {
+      description: "What the account can spend in each window, and when its windows open.",
+      type: "object",
+      additionalProperties: false,
+      required: ["amount", "reset", "every"],
+      properties: {
+        amount: {
+          description:
+            "The capacity of one window in the account's unit: a positive decimal with at most six fractional digits.",
+          type: "number",
+          exclusiveMinimum: 0,
+        },
+        reset: {
+          description:
+            "An RFC 3339 date-time with `Z` or a numeric offset at which one of the account's windows opens, from 0001-01-01T00:00:00.000Z to 9999-12-31T23:59:59.999Z once its offset is applied.",
+          type: "string",
+          format: "date-time",
+        },
+        every: {
+          description: "The length of a window, in exactly one unit.",
+          type: "object",
+          additionalProperties: false,
+          minProperties: 1,
+          maxProperties: 1,
+          properties: {
+            hours: {
+              type: "integer",
+              minimum: 1,
+              maximum: 87600,
+            },
+            days: {
+              type: "integer",
+              minimum: 1,
+              maximum: 3650,
+            },
+            months: {
+              type: "integer",
+              minimum: 1,
+              maximum: 120,
+            },
           },
         },
       },

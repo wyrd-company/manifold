@@ -74,12 +74,18 @@ export type UsagePriceEntry = {
 export type PriceTable = { unit: "usd"; models: Record<string, UsagePriceEntry> };
 export type UsageAccount = {
   unit: "usd";
+  kind: "api" | "subscription";
+  capacity: {
+    amount: number;
+    reset: string;
+    every: { hours: number } | { days: number } | { months: number };
+  };
   usage?: readonly { environment: string; provider: UsageProvider; instance?: string }[];
 };
 export type UsageDeclaration = { accounts: Record<string, UsageAccount>; prices: PriceTable };
 export type UsageFinding = {
   file: "accounts" | "prices";
-  kind: "syntax" | "schema" | "duplicate-usage" | "duplicate-model";
+  kind: "syntax" | "schema" | "duplicate-usage" | "duplicate-model" | "invalid-capacity";
   location: string;
   message: string;
 };
