@@ -83,14 +83,14 @@ export async function githubFake() {
   const log: { operation: string; variables: Record<string, unknown> }[] = [];
   const queryLog: string[] = [];
   const deliveries: {
-    id: number;
+    id: number | bigint;
     guid: string;
     delivered_at: string;
     status_code: number;
     event: string;
     payload: unknown;
   }[] = [];
-  const redeliveries: number[] = [];
+  const redeliveries: (number | bigint)[] = [];
   const deliveryRequests: URL[] = [];
   let deliveryPagination: "normal" | "repeated" = "normal";
   let target: string | undefined;
@@ -327,6 +327,12 @@ export async function githubFake() {
         }),
       );
     } else if (url.pathname.endsWith("/deliveries") && req.method === "GET") {
+      if ([...url.searchParams.keys()].some((key) => !["per_page", "cursor"].includes(key))) {
+        res
+          .writeHead(422, { "content-type": "application/json" })
+          .end(JSON.stringify({ message: "Unexpected hook delivery parameter" }));
+        return;
+      }
       log.push({ operation: "GitHubDeliveries", variables: {} });
       if (held?.operation === "GitHubDeliveries") {
         const current = held;
@@ -341,9 +347,25 @@ export async function githubFake() {
       if (deliveries.length > offset + 100 || (deliveryPagination === "repeated" && cursor))
         headers["link"] =
           `<http://127.0.0.1:${(server.address() as AddressInfo).port}${url.pathname}?per_page=100&cursor=second>; rel="next"`;
-      res.writeHead(200, headers).end(JSON.stringify(deliveries.slice(offset, offset + 100)));
+      res
+        .writeHead(200, headers)
+        .end(
+          JSON.stringify(deliveries.slice(offset, offset + 100), (_key, value) =>
+            typeof value === "bigint" ? String(value) : value,
+          ).replace(/"id":"([0-9]+)"/g, '"id":$1'),
+        );
     } else if (url.pathname.endsWith("/attempts") && req.method === "POST") {
-      const id = Number(url.pathname.split("/").at(-2));
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const body = Buffer.concat(chunks).toString();
+      if (url.search || (body && Object.keys(JSON.parse(body)).length)) {
+        res
+          .writeHead(422, { "content-type": "application/json" })
+          .end(JSON.stringify({ message: "Unexpected hook redelivery parameter" }));
+        return;
+      }
+      const exactId = BigInt(url.pathname.split("/").at(-2)!);
+      const id = exactId <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(exactId) : exactId;
       log.push({ operation: "GitHubRedeliver", variables: { id } });
       if (held?.operation === "GitHubRedeliver") {
         const current = held;

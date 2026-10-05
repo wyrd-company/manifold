@@ -448,9 +448,7 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
           `GET ${hook.repository ? "/repos/{owner}/{repo}" : "/orgs/{org}"}/hooks/{hook_id}/deliveries`,
           {
             baseUrl: options.configuration.apiUrl,
-            owner,
-            org: owner,
-            repo: hook.repository,
+            ...(hook.repository ? { owner, repo: hook.repository } : { org: owner }),
             hook_id: hook.id,
             per_page: 100,
             ...(cursor ? { cursor } : {}),
@@ -466,17 +464,14 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
         return { attempts: hookAttempts(data), nextCursor: nextCursor ?? undefined };
       });
     },
-    async redeliver(owner: string, hook: GitHubHookConfiguration, attempt: number) {
+    async redeliver(owner: string, hook: GitHubHookConfiguration, attempt: number | bigint) {
       await call(owner, async (token, signal) =>
         request(
-          `POST ${hook.repository ? "/repos/{owner}/{repo}" : "/orgs/{org}"}/hooks/{hook_id}/deliveries/{delivery_id}/attempts`,
+          `POST ${hook.repository ? "/repos/{owner}/{repo}" : "/orgs/{org}"}/hooks/{hook_id}/deliveries/${attempt}/attempts`,
           {
             baseUrl: options.configuration.apiUrl,
-            owner,
-            org: owner,
-            repo: hook.repository,
+            ...(hook.repository ? { owner, repo: hook.repository } : { org: owner }),
             hook_id: hook.id,
-            delivery_id: attempt,
             headers: { authorization: `token ${token}` },
             request: { signal },
           },
@@ -487,7 +482,7 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
 }
 
 interface HookAttempt {
-  id: number;
+  id: number | bigint;
   guid: string;
   delivered_at: string;
   status_code: number;
@@ -498,10 +493,11 @@ function hookAttempts(value: unknown): HookAttempt[] {
     if (typeof entry !== "object" || entry === null)
       throw new GitHubSourceError("api", "Invalid GitHub delivery attempt");
     const row = entry as Record<string, unknown>;
+    const id = row["id"];
     if (
-      typeof row["id"] !== "number" ||
-      !Number.isSafeInteger(row["id"]) ||
-      row["id"] <= 0 ||
+      (typeof id !== "number" && typeof id !== "bigint") ||
+      (typeof id === "number" && !Number.isSafeInteger(id)) ||
+      id <= 0 ||
       typeof row["guid"] !== "string" ||
       !row["guid"] ||
       typeof row["delivered_at"] !== "string" ||
@@ -511,7 +507,7 @@ function hookAttempts(value: unknown): HookAttempt[] {
     )
       throw new GitHubSourceError("api", "Invalid GitHub delivery attempt");
     return {
-      id: row["id"],
+      id,
       guid: row["guid"],
       delivered_at: row["delivered_at"],
       status_code: row["status_code"],

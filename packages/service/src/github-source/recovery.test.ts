@@ -687,7 +687,7 @@ test("HTTP rejects bodies beyond the GitHub payload limit without recording a de
 });
 
 test.each([undefined, "records"])(
-  "delivery scans advance by Link cursor for hook repository %s",
+  "hook delivery scans and redelivery obey REST parameters for repository %s",
   async (repository) => {
     const s = await setup();
     await s.idle();
@@ -711,6 +711,15 @@ test.each([undefined, "records"])(
       "second",
     ]);
     expect(s.fake.deliveryRequests.every((url) => !url.searchParams.has("page"))).toBe(true);
+    expect(
+      s.fake.deliveryRequests.every(
+        (url) =>
+          url.pathname ===
+          (repository
+            ? "/repos/sample/records/hooks/1/deliveries"
+            : "/orgs/sample/hooks/1/deliveries"),
+      ),
+    ).toBe(true);
     expect(s.errors).toEqual([]);
   },
 );
@@ -1166,4 +1175,27 @@ test("reconciling unchanged issue title and URL twice reports no second mirror c
   await f.idle();
   expect(changes).toBe(firstWrite);
   expect(f.errors).toEqual([]);
+});
+
+test("redelivery preserves a GitHub attempt id above the safe integer range", async () => {
+  const s = await setup();
+  await s.idle();
+  s.fake.setTarget(undefined);
+  const attempt = 9007199254740993n;
+  s.fake.deliveries.push({
+    id: attempt,
+    guid: "large-attempt",
+    delivered_at: new Date(s.clock.now()).toISOString(),
+    status_code: 502,
+    event: "ping",
+    payload: {},
+  });
+  s.clock.advance(60000);
+  await expect.poll(() => s.fake.redeliveries).toEqual([attempt]);
+  const statement = s.store.connection.database.prepare(
+    "SELECT attempt_id FROM github_redelivery WHERE delivery_id=?",
+  );
+  statement.setReadBigInts(true);
+  expect(statement.get("large-attempt")?.["attempt_id"]).toBe(attempt);
+  expect(s.errors).toEqual([]);
 });

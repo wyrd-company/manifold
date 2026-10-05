@@ -311,7 +311,7 @@ export function createMirror(store: Store, now: () => number) {
     hasRedelivery(id: string) {
       return Boolean(db.prepare("SELECT 1 FROM github_redelivery WHERE delivery_id=?").get(id));
     },
-    redelivered(id: string, hook: number, attempt: number) {
+    redelivered(id: string, hook: number, attempt: number | bigint) {
       db.prepare("INSERT INTO github_redelivery VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING").run(
         id,
         hook,
