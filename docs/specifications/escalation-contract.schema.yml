@@ -168,6 +168,8 @@ $defs:
                 enum:
                   - held-actor
                   - stranded-token
+                  - intake-failed
+                  - comparator-failed
               subject:
                 type: object
                 additionalProperties:

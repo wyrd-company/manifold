@@ -23,12 +23,22 @@ description: >-
   `project_owner`, and `project_number` hold the Project reference;
   `failure` and `evaluation` hold JSON; times are epoch milliseconds.
   `start_failure` and `start_attempts` hold the last failure to start the
-  actor of a `recorded` row and the number of failed starts. `status` moves
+  actor of a `recorded` row and the number of failed starts.
+  `issue_digest` holds the digest of the tracked issue the row was decided
+  over, as `intake` (issue-changes) defines; on a `failed` row it is null
+  when the row must be decided again, and the `intake-failed` handler's
+  retry sets it so. `status` moves
   from `failed` to `failed` or `recorded`, and from `recorded` to
   `started`; a `recorded` row may record a start failure and stay
   `recorded`. A trigger aborts every update of a `started` row, every
   update of a `recorded` row that changes its status to `failed` or any of
-  its decision columns, and every `DELETE`.
+  its decision columns, its issue digest included, and every `DELETE`.
+
+  Step 2 adds `issue_digest` with `ALTER TABLE ... ADD COLUMN`, which
+  places it after `updated_at`, so every existing row reads null and a
+  `failed` row from before the step is decided again once, then drops
+  `intake_record_decided` and creates it again with the digest among the
+  columns it keeps.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/intake-records-table.sql` runs without error on an
@@ -41,4 +51,7 @@ validation-criteria: >-
   an update of a `recorded` row to another blueprint or portfolio item,
   and a `DELETE` each fail with the table's message; an update that
   records a start failure on a `recorded` row, and one from `recorded` to
-  `started` that clears it, succeed.
+  `started` that clears it, succeed. An update of a `recorded` row's
+  `issue_digest` fails, and one of a `failed` row's to null succeeds.
+  Steps 1 and 2 applied to a file at step 1 that holds a row of each
+  status keep every row, with a null digest.

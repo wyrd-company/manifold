@@ -59,9 +59,10 @@ design-challenges:
     open, and the topic and its token must stay out of the store and the
     logs.
   service-questions: >-
-    Some questions are the service's, not a blueprint's: a held actor and a
-    stranded token. They need the same channels and an answer that the
-    service acts on.
+    Some questions are the service's, not a blueprint's: a held actor, a
+    stranded token, an issue intake could not take in, and a gate whose
+    comparator cannot run. They need the same channels and an answer that
+    the service acts on.
 proposed-design:
   high-level-overview: >-
     An escalation is a row in the store: who raised it, the question, its
@@ -76,8 +77,8 @@ proposed-design:
     buttons on every client. A blueprint raises one by invoking the
     `escalate` callback in a state; the callback lives as long as the state,
     reads its escalation's row, and sends the answer back to its actor as an
-    event. The service raises its own for held actors and stranded tokens,
-    and acts on the answer itself. The contracts are specified in
+    event. The service raises its own for held actors, stranded tokens,
+    failed intakes, and failed comparators, and acts on the answer itself. The contracts are specified in
     `escalation-contract`, the configuration in `escalations-configuration`,
     and the tables in `escalations-database-schema`.
   escalation: >-
@@ -155,8 +156,11 @@ proposed-design:
     the escalation.
   raising-from-the-service: >-
     The service raises an escalation with `raise({ kind, subject, question,
-    choices })`, where `subject` is a record of strings that names what the
-    escalation is about. Two kinds exist. `held-actor` is raised from the
+    choices, title })`, where `subject` is a record of strings that names
+    what the escalation is about and `title` is optional, default
+    `Question`. `raise` and `withdraw` join the caller's transaction, so a
+    raiser writes its escalation in the transaction that records the cause.
+    Four kinds exist, as `escalation-contract` lists. `held-actor` is raised from the
     router's `onHeld`, with subject `{ actorId }`, the reason, the inbox
     row that errored or the restore mismatch, in its question, and the
     choices `retry` and `dismiss`. `stranded-token` is raised by a gate on
@@ -164,7 +168,14 @@ proposed-design:
     trap set into one inside it, with subject `{ gate, tokenId }`, where
     `gate` is `<blueprintPath>#<statePath>`, the actor and its
     configuration in its question, and the choices `return` and `dismiss`.
-    A service escalation goes to the `default` destination and takes no
+    `intake-failed` is raised by intake in the transaction that records a
+    failed decision or a failed start of an issue, with subject `{ issue }`,
+    the issue's node id, the failure in its question, and the choices
+    `retry` and `dismiss`, as `intake` (escalations) states.
+    `comparator-failed` is raised by a gate whose comparator is missing,
+    fails to load, or fails to evaluate, with subject `{ gate }`, the
+    failure in its question, and the choices `retry` and `dismiss`, as
+    `gate-runtime` (comparator-failures) states. A service escalation goes to the `default` destination and takes no
     free text. `withdraw({ kind, subject })` withdraws the open escalation
     of a kind and subject inside the caller's transaction; a gate calls it
     when the stranded token returns some other way, as on the holder's end.
@@ -191,9 +202,18 @@ proposed-design:
     module exports it as `heldActorHandler(release)`. The `stranded-token`
     handler is the gate's: for `return` it writes the token's return
     inside the transaction, so the gate runs its comparator again; for
-    `dismiss` it does nothing. A crash after the handling commits and
+    `dismiss` it does nothing. The `intake-failed` handler is intake's,
+    exported as `intakeFailedHandler`: for `retry` it marks the issue's
+    record to be decided again inside the transaction and returns a call
+    that queues the issue, as `intake` (retry) states; for `dismiss` it does
+    nothing. The `comparator-failed` handler is the gate's: for `retry` it
+    writes nothing and returns a call that runs the gate again, loading its
+    comparator first when the gate has none; for `dismiss` it does nothing.
+    A crash after the handling commits and
     before `release` runs is covered by resume, which restores every held
-    actor again. `start()`, called after the router has started, runs the
+    actor again; one before intake's queue call, by the reconcile at
+    intake's start; and one before the gate runs, by `afterDrain`, which
+    runs every gate. `start()`, called after the router has started, runs the
     handler of every answered service escalation whose handling is not
     recorded. `release` of an actor that is not held does nothing, and
     `return` of a token already returned does nothing.
@@ -343,7 +363,10 @@ proposed-design:
     when its handling ran; and `escalation_notification`, one row per
     escalation, destination, and purpose, with its message until it is
     settled, its status, attempts, next attempt time, last error, and
-    settled time. Rows are kept after an escalation ends, so the console
+    settled time. A service row's `kind` is any non-empty name, checked
+    against `ServiceEscalationKind` in code, so a new kind changes no
+    table; step 2 rebuilds `escalation` to that check, as
+    `escalations-database-schema` states. Rows are kept after an escalation ends, so the console
     can show what was asked and how it was answered.
   public-interface: |-
     `packages/service/src/escalations/index.ts` exports these names.
@@ -394,7 +417,11 @@ proposed-design:
       stop(): Promise<void>;
     }
 
-    export type ServiceEscalationKind = "held-actor" | "stranded-token";
+    export type ServiceEscalationKind =
+      | "held-actor"
+      | "stranded-token"
+      | "intake-failed"
+      | "comparator-failed";
     export type EscalationSubject = Readonly<Record<string, string>>;
     export type ServiceEscalationHandler = (escalation: Escalation) => void | (() => void);
 
@@ -403,6 +430,8 @@ proposed-design:
       readonly subject: EscalationSubject;
       readonly question: string;
       readonly choices: readonly EscalationChoice[];
+      /** Default `Question`. */
+      readonly title?: string;
     }
 
     export interface EscalateInput {
@@ -543,5 +572,9 @@ proposed-design:
     errors, fixes the cause, answers `retry`, and shows the actor drain its
     pending rows without a restart; a `retry` that meets the same failure
     raises a new open occurrence, and a `retry` of that occurrence after
-    the cause is fixed, across a restart, releases the actor. Values are
+    the cause is fixed, across a restart, releases the actor. A `raise`
+    inside a caller's transaction that the caller then rolls back leaves
+    no escalation and no notification row; one with a `title` publishes
+    that title. Step 2 of the migration, over a file at step 1 that holds
+    escalations and notifications, keeps every row. Values are
     generic and never drawn from Manifold's own domain.

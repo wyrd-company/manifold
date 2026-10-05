@@ -28,7 +28,8 @@ objective: >-
   version of its blueprint, runs its comparator in the sandbox, grants one
   token at a time with its reservation in one transaction, returns every
   token at its return point or at the actor's end, escalates a holder that
-  can no longer return its token, and converges after a crash at any point.
+  can no longer return its token and a comparator that cannot run, and
+  converges after a crash at any point.
 background:
   current-design: >-
     `gates` states what a gate is: the declaration, the comparator contract,
@@ -131,10 +132,45 @@ proposed-design:
     comparator of every declaration row through `revisionAt`. A loaded
     comparator replaces the gate's earlier one, which is disposed. A file
     that is absent, or a load that fails, leaves the gate with no
-    comparator, records the failure, and reports it to `onError`; the gate
-    grants nothing until a later revision loads one. An evaluation that
+    comparator, raises a `comparator-failed` escalation, and reports it to
+    `onError`; the gate grants nothing until a load succeeds, at a later
+    revision or at the operator's `retry`. An evaluation that
     returns kind `engine` marks the comparator spent; the module disposes it
     and loads the same source again before the gate's next pass.
+  comparator-failures: >-
+    A gate whose comparator cannot run raises a `comparator-failed`
+    escalation through the escalations module's `raise`, with subject `{
+    gate }`, the gate key, the title `Comparator failed`, the choices
+    `retry` (`Retry`) and `dismiss` (`Dismiss`), and a question naming the
+    gate, the comparator file, the declaring version key, the cause, and
+    the message. The cause is `missing` when the declaring version no
+    longer declares the gate or its comparator file is absent, the load
+    failure's kind when the sandbox refuses the source, and the evaluation
+    failure's kind when an evaluation fails: `transpile`, `module`,
+    `timeout`, `memory`, `thrown`, `invalid-output`, or `engine`. An
+    evaluation failure raises in the transaction that inserts its
+    evaluation row. A missing comparator and a failed load have no row of
+    their own, so the escalation, raised in its own transaction, is their
+    durable record. Each failure calls `raise`, and `raise` returns the
+    gate's open escalation while one is open, so a comparator that fails at
+    every pass keeps one escalation and its question names the failure
+    that raised it. After the escalation is answered and handled, the next
+    failure raises the next occurrence, as `escalations` (occurrences)
+    states. A refused reservation is not a comparator failure and raises
+    nothing. `revision` withdraws the gate's open escalation when it loads
+    a comparator for the gate without a failure, in the transaction after
+    the load, so a revision that brings a working comparator closes it;
+    `prepare` and the reload of a spent comparator withdraw nothing, since
+    they load the comparator that failed. The module's `comparatorFailed`
+    is the `comparator-failed` handler. For `retry` it writes nothing and
+    returns a call that, when the gate has a loaded comparator, marks the
+    gate dirty, and, when it has none, loads the comparator of the gate's
+    declaration row through `revisionAt`, as the reload of a spent
+    comparator does, which marks the gate dirty when the load succeeds and
+    raises the next occurrence when it fails. For `dismiss`, and for a gate
+    with no declaration row, it does nothing. A crash after the handling
+    commits and before the call runs is covered by `prepare` and
+    `afterDrain`, which load every declared comparator and run every gate.
   population: >-
     The population of a gate is every actor whose stored snapshot is
     `active`, whose version key names the gate's blueprint path, whose state
@@ -218,7 +254,9 @@ proposed-design:
     holders, and the balances; when there is no such member it ends with no
     evaluation. Otherwise it draws a seed from a uniform 32-bit random
     source, evaluates the comparator over the input and the seed, and acts
-    on the result. A failure is recorded as an evaluation and ends the pass.
+    on the result. A failure is recorded as an evaluation, raises a
+    `comparator-failed` escalation in the same transaction, and ends the
+    pass.
     `null` is recorded and ends the pass. A selection is granted, as `grant`
     states, and the pass takes its next step, so it runs until the
     comparator returns `null`. A grant makes one member a holder, so a pass
@@ -252,8 +290,8 @@ proposed-design:
     Project item or an issue observed absent. So the module relies neither
     on member saves nor on event types for it. `inputChanged()` marks every
     gate dirty. The service calls it after each ledger write it makes
-    outside a gate, and passes it to the GitHub event source as
-    `onMirrorChanged`, which the source calls after each transaction it
+    outside a gate, and from the GitHub event source's `onMirrorChanged`,
+    which the source calls after each transaction it
     commits that changes a mirror row, whatever it publishes, as
     `github-event-source` states. The pass runs in a later `setImmediate`
     callback, after that transaction has committed. Time is not an input
@@ -392,7 +430,8 @@ proposed-design:
       readonly clock?: { now(): number };
       /** Defaults to a uniform 32-bit draw from `node:crypto`. */
       readonly seed?: () => number;
-      readonly probe?: (step: "granting" | "granted", tokenId: string) => void;
+      /** `granting` and `granted` name a token id; `comparator-failed` a gate key. */
+      readonly probe?: (step: "granting" | "granted" | "comparator-failed", id: string) => void;
       readonly onError?: (error: GateError) => void;
     }
 
@@ -407,6 +446,8 @@ proposed-design:
       saved(save: GateSave): void;
       /** The `stranded-token` handler; the function it returns runs after the handling commits. */
       strandedToken(escalation: GateStrandedEscalation): (() => void) | undefined;
+      /** The `comparator-failed` handler; the function it returns runs after the handling commits. */
+      comparatorFailed(escalation: GateComparatorEscalation): (() => void) | undefined;
       /** Marks every gate dirty: a ledger or GitHub mirror change outside the module. */
       inputChanged(): void;
       replay(evaluationId: number): Promise<GateReplay>;
@@ -437,17 +478,18 @@ proposed-design:
 
     `GateVersionLoad`, `GateRevision`, `GateRevisionLoad`,
     `GatePortfolio`, `GateTokenLint`, `GateTrackedIssue`,
-    `GateEscalations`, `GateStrandedEscalation`, and
-    `GateEvaluationResult` are declared
+    `GateEscalations`, `GateStrandedEscalation`,
+    `GateComparatorEscalation`, and `GateEvaluationResult` are declared
     structurally in the module as the members it uses: the loader's
     `VersionLoad` and `RevisionLoad`, the process repository's revision
     `read`, the portfolio's `ledger.reserve`, `ledger.balance`, and
     `current().declaration.ledger.allocations`, the token lint's
     `TokenLintResult` with its `configurationKey` and its `gates[]` with
     `statePath`, `verdict`, and `traps`, a `ReadonlySet<string>`, the GitHub source's `TrackedIssue`, and the
-    escalations module's `raise({ kind, subject, question, choices })`,
-    `withdraw({ kind, subject })`, and the escalation's `subject` and
-    answer that a handler receives.
+    escalations module's `raise({ kind, subject, question, choices, title
+    })` and `withdraw({ kind, subject })` for the kinds `stranded-token`
+    and `comparator-failed`, and the escalation's `subject` and answer that
+    a handler receives.
     Each module's own type satisfies them, and a test passes a fixture of
     the same shape until that module merges.
   module-layout: >-
@@ -477,13 +519,14 @@ proposed-design:
   service-wiring: >-
     The service applies `gatesMigrationSteps`, creates the gates with its
     store, loader, process repository, comparator sandbox, portfolio, GitHub
-    source, and escalations, registers `saved` with the actor host and
-    `strandedToken` with the escalations module, awaits `revision` with the
+    source, and escalations, registers `saved` with the actor host, and
+    `strandedToken` and `comparatorFailed` with the escalations module as
+    the handlers of their kinds, awaits `revision` with the
     head revision and then `prepare`, and starts the router with
     `afterDrain`. It calls `revision` with every later revision it loads, in
     the order it pulls them. It calls `inputChanged` after each ledger write
-    it makes outside a gate, and gives it to the GitHub source as
-    `onMirrorChanged`.
+    it makes outside a gate, and from the GitHub source's
+    `onMirrorChanged`, which also calls intake's `mirrorChanged`.
   convergence: >-
     One entry into the gated state is granted at most one token: the token
     id is derived from the entry id and is the token row's primary key, and
@@ -501,7 +544,13 @@ proposed-design:
     and the same returns and trap flag, since each write is conditional on
     the row's present state, and raises no second escalation. A crash inside
     a save rolls back the hook's writes with the snapshot. The
-    stranded-token handler twice returns once. `afterDrain` twice writes the
+    stranded-token handler twice returns once. A comparator failure raised
+    twice keeps one open escalation; a crash inside an evaluation
+    failure's transaction leaves neither the row nor the escalation, and
+    the pass that resume runs evaluates again; a crash after it commits
+    leaves both, and the pass after the restart fails again into the same
+    open escalation. A `retry` handled twice runs the gate twice, and a
+    pass grants only to members without a token. `afterDrain` twice writes the
     missing entries once and runs passes that grant only to actors without a
     token. `revision` twice writes the same declaration rows, and a crash
     inside it rolls them back, so the next `revision` writes them; `prepare`
@@ -564,7 +613,18 @@ proposed-design:
     to the comparator; every evaluation is recorded with its input, output,
     and seed, and `replay` of a grant returns the same selection; a
     comparator that throws, then a comparator that times out, each record a
-    failure and the next input change runs the gate again; an actor in the
+    failure and the next input change runs the gate again; the throw
+    raises one `comparator-failed` escalation whose subject is the gate
+    key, the timeout keeps it, and no second escalation opens while it is
+    open; a comparator file absent from the revision, and one the sandbox
+    refuses, each raise one with cause `missing` and the load failure's
+    kind, and the gate grants nothing; a `retry` answer through the
+    escalations module, once the test's `revisionAt` answers a source the
+    sandbox loads at the declaration's commit, loads it and grants, and one while the cause stays raises the next
+    occurrence; a later revision that loads a working comparator withdraws
+    the open escalation, and `prepare` over the same failing declaration
+    withdraws nothing; a `dismiss` answer changes no row of the module; a
+    refused reservation raises nothing; an actor in the
     gated state whose issue blocks two open tracked issues in a chain has
     `criticalPath` 3, and a dependency cycle ends the walk; with the GitHub
     source's `onMirrorChanged` wired to `inputChanged` and no save of the
@@ -581,8 +641,12 @@ proposed-design:
     `gate-xstate` spike names, after the token's inbox row is written
     (`granted`), after the token is sent (the store's `sent`), and after the
     holder's save (the store's `saved`), and at `granting`, inside the
-    grant's transaction. The parent asserts the kill signal, starts a
+    grant's transaction, and at `comparator-failed`, after an evaluation
+    failure and its escalation commit and before the next save. The parent
+    asserts the kill signal, starts a
     router, gates, and ledger on the same file, and shows each token granted
     once, one reservation per token, holders counted once, and the grants
-    that follow in the comparator's order. Values are generic and never
+    that follow in the comparator's order; after the kill at
+    `comparator-failed`, one open `comparator-failed` escalation for the
+    gate. Values are generic and never
     drawn from Manifold's own domain.

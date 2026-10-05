@@ -124,7 +124,10 @@ description: |-
   force, and the evaluation record of `decision-models`. A `recorded` or
   `started` record never changes its decision, and is never decided
   again. A `failed` record holds the commit it failed at, the failure, the
-  evaluation when the model ran, and the number of attempts. A `recorded`
+  evaluation when the model ran, the digest of the tracked issue it was
+  decided over, and the number of attempts. It is decided again at a
+  later commit, at a change of the issue, and at the operator's `retry`
+  of its `intake-failed` escalation. A `recorded`
   record whose actor could not start holds the start failure and the
   number of failed starts, and its start is tried again on the recorded
   version at each later discovery and reconcile.

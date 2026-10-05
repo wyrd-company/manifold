@@ -11,7 +11,7 @@ CREATE TABLE escalation (
   actor_id TEXT,
   invoke_id TEXT,
   entry_id TEXT,
-  kind TEXT CHECK (kind IN ('held-actor', 'stranded-token')),
+  kind TEXT CHECK (length(kind) > 0),
   subject TEXT,
   occurrence INTEGER CHECK (occurrence > 0),
   title TEXT NOT NULL CHECK (length(title) > 0),

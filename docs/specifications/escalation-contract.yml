@@ -136,6 +136,24 @@ description: |-
     for an unknown id; `413` for a body over 64 KiB, which holds the
     longest valid answer even with every character `\u`-escaped.
 
+  Service escalations. The service raises four kinds, each sent to the
+  `default` destination with no free text. Its `raiser` is
+  `{ type: "service", kind, subject, occurrence }`.
+
+  | Kind | Title | Subject | Choices | Raised when |
+  |---|---|---|---|---|
+  | `held-actor` | `Question` | `{ actorId }` | `retry`, `dismiss` | An actor is held. |
+  | `stranded-token` | `Question` | `{ gate, tokenId }` | `return`, `dismiss` | A holder enters a trap of its gate. |
+  | `intake-failed` | `Intake failed` | `{ issue }` | `retry`, `dismiss` | Intake records a failure for an issue. |
+  | `comparator-failed` | `Comparator failed` | `{ gate }` | `retry`, `dismiss` | A gate's comparator is missing or fails to load or to evaluate. |
+
+  `actorId` is an actor id, `issue` an issue's GitHub node id, `gate` a
+  gate key, `<blueprintPath>#<statePath>`, and `tokenId` a token id.
+  `retry` on `intake-failed` takes the issue in again on the current
+  revision; `retry` on `comparator-failed` runs the gate again, loading
+  its comparator first when the gate has none. `dismiss` closes the
+  escalation and changes nothing else.
+
   An escalation, as the API returns it, has `id`, `raiser`, `title`,
   `question`, `choices`, `freeText`, `destinations`, `status`, `answer`
   when answered, `raisedAt`, and `closedAt` when not open, with times as
@@ -149,6 +167,7 @@ validation-criteria: >-
   `escalate` callback rejects an input the escalate input schema rejects.
   Every event the callback sends, every escalation and answer body the API
   returns, and every body the sender publishes, captured by a fake ntfy
-  server, validates against its definition. A blueprint that declares the
+  server, validates against its definition, a service escalation of each
+  of the four kinds included. A blueprint that declares the
   example's `reviewing` state lints clean with `escalate` among the actor
   names. Fixtures use a domain unrelated to Manifold.

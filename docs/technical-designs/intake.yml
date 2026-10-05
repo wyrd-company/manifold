@@ -2,6 +2,7 @@ $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
     - github-event-source
+    - escalations
     - portfolio
     - blueprint-loader
     - durable-event-delivery
@@ -51,8 +52,9 @@ design-challenges:
     it was started with, and must start with every change committed before.
   failure: >-
     A process repository that cannot decide, or decides something that
-    cannot run, must leave the issue visibly untaken, and must take it once
-    the process is fixed, without an operator forcing it.
+    cannot run, must leave the issue untaken and tell the operator, and
+    must take it once the process or the issue is fixed, without an
+    operator forcing it, while the operator can still ask for it at once.
 proposed-design:
   high-level-overview: >-
     Intake is one module, `packages/service/src/intake/`, whose only public
@@ -69,8 +71,11 @@ proposed-design:
     through the actor host, in one synchronous step that reads the issue
     from the mirror and attaches the actor to the router, and marks the
     record `started`. A record that is `started` is final. A failure is a
-    `failed` record with a typed kind and no actor, retried once at each
-    later commit.
+    `failed` record with a typed kind and no actor, which raises an
+    `intake-failed` escalation in the transaction that records it. A
+    `failed` record is decided again once at each later commit, once at
+    each change of its tracked issue, and when the operator answers
+    `retry`.
   public-interface: |-
     `packages/service/src/intake/index.ts` exports exactly these names.
 
@@ -88,6 +93,35 @@ proposed-design:
 
     export function startIntake(options: IntakeOptions): Intake;
 
+    /**
+     * The `intake-failed` handler the escalations module runs inside the
+     * transaction that records the handling. Needs no started intake.
+     */
+    export function intakeFailedHandler(
+      store: Store,
+      requeue: (issueNodeId: string) => void,
+    ): (escalation: IntakeFailedEscalation) => (() => void) | undefined;
+
+    /** The escalations module's `raise` and `withdraw`; both join the caller's transaction. */
+    export interface IntakeEscalations {
+      raise(request: {
+        readonly kind: "intake-failed";
+        readonly subject: { readonly issue: string };
+        readonly title: string;
+        readonly question: string;
+        readonly choices: readonly { readonly id: "retry" | "dismiss"; readonly label: string }[];
+      }): unknown;
+      withdraw(request: { readonly kind: "intake-failed"; readonly subject: { readonly issue: string } }): void;
+    }
+
+    /** The members of an escalation the handler reads. */
+    export interface IntakeFailedEscalation {
+      readonly raiser:
+        | { readonly type: "blueprint" }
+        | { readonly type: "service"; readonly kind: string; readonly subject: Readonly<Record<string, string>> };
+      readonly answer?: { readonly value: { readonly choice: string } | { readonly text: string } };
+    }
+
     export interface IntakeOptions {
       readonly store: Store;
       /** The GitHub event source satisfies it. */
@@ -97,6 +131,7 @@ proposed-design:
       /** The basis the service last published, or undefined before the first. */
       current(): IntakeRevision | undefined;
       readonly actors: TaskActorStarter;
+      readonly escalations: IntakeEscalations;
       /** Called for each failed decision and each failed start. */
       readonly onFailed?: (record: IntakeRecord) => void;
       /** Called for each failure the runner recovers from by itself. */
@@ -137,6 +172,8 @@ proposed-design:
       discovered(issueNodeIds: readonly string[]): void;
       /** Reconciles every tracked issue against the revision `current` now answers. */
       revisionLoaded(): void;
+      /** Queues each `failed` record whose tracked issue changed since its decision. */
+      mirrorChanged(): void;
       record(issueNodeId: string): IntakeRecord | undefined;
       /** Resolves when nothing is queued or running. */
       idle(): Promise<void>;
@@ -158,6 +195,8 @@ proposed-design:
       readonly actorId: string;
       readonly failure: IntakeFailure | null;
       readonly evaluation: JsonValue | null;
+      /** The digest of the tracked issue the record was decided over; null to decide again. */
+      readonly issueDigest: string | null;
       readonly attempts: number;
       /** The last failure to start the actor of a `recorded` record. */
       readonly startFailure: IntakeStartFailure | null;
@@ -204,7 +243,9 @@ proposed-design:
     portfolio declaration in force, the binding, and the revision's
     blueprints to a decision or a failure. `inputs.ts` holds the pure
     functions that build the decision input and the task input from a
-    tracked issue and a binding. `models.ts` holds the decision models of
+    tracked issue and a binding, and the issue digest.
+    `escalation.ts` holds the pure function from a record to the
+    escalation's question, and `intakeFailedHandler`. `models.ts` holds the decision models of
     each commit an attempt uses, and disposes a commit's models when no
     attempt holds them and the commit is no longer current.
     `records.ts` holds every SQL read and write of the intake table.
@@ -230,19 +271,23 @@ proposed-design:
     A reconcile queues every issue that needs intake: each id of
     `tracked.trackedIssueIds()` with no record, or with a `failed` record
     whose `commit` is not the commit `current()` answers, and each
-    `recorded` record. `startIntake` runs a reconcile, and so does
-    `revisionLoaded`. Before the first revision, `current()` answers
+    `recorded` record. A `failed` record at the current commit whose
+    `issueDigest` is null is queued too. `startIntake` runs a reconcile,
+    and so does `revisionLoaded`. Before the first revision, `current()` answers
     `undefined`, the runner takes nothing, and the reconcile after the
     first load queues every tracked issue. Intake adds no timer: its only
-    wakes are `discovered`, `revisionLoaded`, and `startIntake`.
+    wakes are `discovered`, `revisionLoaded`, `mirrorChanged`, and
+    `startIntake`.
   runner: >-
     One runner takes queued issues one at a time, in the order they were
     queued, so no two intakes of one issue overlap and no two writes to the
     intake table race. For each issue it reads the record. `started` is
     done. `recorded` goes to the start step. No record, or a `failed`
     record from another commit, goes to the decision step. A `failed`
-    record at the current commit is done: the same commit, binding, and
-    portfolio decide the same way. A `recorded` record never goes back to
+    record at the current commit goes to the decision step when its
+    `issueDigest` differs from the digest of the issue `trackedIssue`
+    answers now, a null digest included, and is done otherwise: the same
+    commit, binding, portfolio, and issue decide the same way. A `recorded` record never goes back to
     the decision step.
   decision-step: |-
     The decision step first captures its basis, in one synchronous run of
@@ -301,6 +346,61 @@ proposed-design:
     `read` of the revision that rejects is an `IntakeError` of kind
     `read`; the issue stays queued for the next wake, and the runner goes
     on to the next issue.
+  issue-changes: >-
+    A `failed` record is decided again once when its tracked issue changes.
+    The issue digest is the SHA-256 digest, in lower-case hex, of the
+    canonical JSON of the tracked issue as `trackedIssue` answers it: the
+    issue, its blocking and blocked-by issues, its sub-issues and parent,
+    and each present item on a bound Project with its `archived` flag and
+    every field value. Object keys are sorted by code point, the issue
+    lists by node id, and the items by Project node id, so one mirror state
+    gives one digest. The digest covers every fact the decision input and
+    the task input read from the issue, so a change to a field, to an item,
+    or to a relationship each counts, and a mirror change that leaves the
+    issue as it was does not. A failed decision records the digest of the
+    tracked issue it captured in its basis. `mirrorChanged()` reads every
+    `failed` record at the current commit and queues each whose issue
+    `trackedIssue` answers with another digest; an issue it does not answer
+    is left. The service calls it from the GitHub event source's
+    `onMirrorChanged`, after the transaction that changed the mirror has
+    committed, so the runner reads the changed issue. A change during an
+    evaluation queues the issue, and its turn finds the digest the failure
+    recorded differs from the issue now, so the change is taken once.
+  escalations: >-
+    Every failure raises or keeps the issue's `intake-failed` escalation
+    through `escalations.raise`, in the transaction that writes the failure,
+    with subject `{ issue: <issueNodeId> }`, the title `Intake failed`, the
+    choices `retry` (`Retry`) and `dismiss` (`Dismiss`), and a question in
+    Markdown: the issue's repository and number, the commit, whether the
+    decision or the start failed, the failure's kind and message, and its
+    detail as a fenced JSON block cut on a character boundary so the whole
+    question is at most 8,000 characters, ending with a line that says the
+    detail was cut. When the record's previous failure, decision or start,
+    has another kind, the same transaction first withdraws the open
+    escalation, so the operator's question always names the failure in
+    force; a failure of the same kind keeps the open one, since `raise`
+    returns it. A dismissed or handled escalation is followed by the next
+    occurrence at the issue's next failure, as `escalations` (occurrences)
+    states. A `recorded` decision and a `started` record each withdraw the
+    issue's open escalation in the transaction that writes them, so a
+    successful intake, by retry or otherwise, closes it, and a start failure
+    after a decision failure raises a new occurrence that names the start.
+    An `IntakeError` raises nothing: the runner recovers from it by itself.
+  retry: >-
+    `intakeFailedHandler(store, requeue)` is the `intake-failed` handler.
+    For `retry`, inside the transaction that records the handling, it sets
+    `issueDigest` to null on the issue's record where it is `failed`, and
+    returns a call to `requeue` with the issue's node id; the service passes
+    a `requeue` that calls `discovered` on the started intake, and does
+    nothing before intake starts. The null digest sends the record to the
+    decision step on the current revision even at the commit it failed at.
+    A `recorded` record needs no write: every reconcile and discovery starts
+    it again on its recorded version. For `dismiss`, and for an issue whose
+    record is `started` or absent, it writes nothing and returns nothing. A
+    crash after the handling commits and before `requeue` runs leaves the
+    null digest, which the reconcile at intake's start queues. The handler
+    reads only the intake table, so the escalations module's `start` can
+    run it before intake starts.
   start-step: >-
     The start step starts the actor of a `recorded` record, and never
     decides again. With no `await` before it, it reads the store: when a
@@ -354,17 +454,22 @@ proposed-design:
     implements the router's `ActorHost` and `TaskActorStarter` with
     XState's `createActor`.
   records: >-
-    `records.ts` writes the record in four ways, each in one
-    `store.connection.transaction`. A failed decision inserts the row, or
+    `records.ts` writes the record in five ways, and `intake.ts` runs each
+    of the first four in one `store.connection.transaction` with the
+    escalation's raise or withdrawal. A failed decision inserts the row, or
     updates a `failed` row, setting `status` to `failed`, the commit, the
-    failure, the evaluation when there was one, and the binding, Project,
-    and environment when step 2 found them; it raises `attempts` by one. A
-    decision inserts the row, or updates a `failed` row, setting `status`
-    to `recorded` with every field of the decision; the statement's
+    failure, the evaluation when there was one, the issue digest, and the
+    binding, Project, and environment when step 2 found them; it raises
+    `attempts` by one and raises the escalation. A decision inserts the
+    row, or updates a `failed` row, setting `status` to `recorded` with
+    every field of the decision and the issue digest; the statement's
     `WHERE status = 'failed'` leaves a `recorded` or `started` row
-    unchanged. A failed start sets `startFailure` and raises
-    `startAttempts` where the row is `recorded`. A start sets `status` to
-    `started` and clears `startFailure` where the row is `recorded`. The
+    unchanged; it withdraws the escalation. A failed start sets
+    `startFailure` and raises `startAttempts` where the row is `recorded`,
+    and raises the escalation. A start sets `status` to `started` and
+    clears `startFailure` where the row is `recorded`, and withdraws the
+    escalation. A retry request sets `issueDigest` to null where the row is
+    `failed`, in the handler's transaction. The
     table's triggers refuse every other change: a `recorded` row only
     moves to `started` or records a start failure, a `started` row never
     changes, no row's decision columns change once it is `recorded`, and
@@ -390,9 +495,17 @@ proposed-design:
     it and marks the record `started` without a second actor. A crash
     after a start failure's commit leaves a `recorded` record that the next
     reconcile starts on its version. A decision
-    twice at one commit writes the same `failed` record with `attempts`
-    raised, or finds a `recorded` record and writes nothing. `stop` twice
-    does nothing more.
+    twice at one commit and one issue digest writes the same `failed`
+    record with `attempts` raised, or finds a `recorded` record and writes
+    nothing. A failure raised twice keeps one open escalation, since
+    `raise` returns the open one, and a withdrawal twice withdraws once. A
+    crash inside a failure's transaction leaves neither the failure nor its
+    escalation, and the next wake decides again. A crash after it commits
+    leaves both, and a restart at the same commit and digest decides
+    nothing and leaves one open escalation. `mirrorChanged` twice for one
+    change queues the issue once, and its second turn finds the digest
+    recorded and does nothing. A `retry` handled twice sets the same null
+    digest. `stop` twice does nothing more.
   errors: >-
     A process repository's faults are intake failures, recorded as data
     and never thrown. A failed read of the revision, and a throw from the
@@ -409,9 +522,15 @@ proposed-design:
   wiring: >-
     The service migrates `intake` with `intakeMigrationSteps`, starts the
     router, starts the GitHub event source with `onTracked` calling the
-    intake's `discovered`, and then calls `startIntake` with the store,
-    the source as `tracked`, the blueprint loader, and `current` answering
-    the `IntakeRevision` the service last published. The service's revision
+    intake's `discovered` and `onMirrorChanged` calling the gates'
+    `inputChanged` and then the intake's `mirrorChanged`, and then calls
+    `startIntake` with the store, the source as `tracked`, the blueprint
+    loader, the escalations module as `escalations`, and `current`
+    answering the `IntakeRevision` the service last published. Before it,
+    the service gives the escalations module
+    `intakeFailedHandler(store, (id) => intake?.discovered([id]))` as the
+    `intake-failed` handler. The source's callbacks keep their shape; the
+    service composes them. The service's revision
     follower takes each commit as one job, one commit at a time: it loads
     the revision with `loadRevision`, then applies it to the portfolio
     module, then publishes `{ revision, blueprints, portfolio:
@@ -467,6 +586,20 @@ proposed-design:
     started at the second commit; `discovered` twice and `discovered` with
     a reconcile give one record and one actor; an issue on two bound
     Projects is taken once, through the binding whose name sorts first;
+    each failure raises one open `intake-failed` escalation whose subject is
+    the issue and whose question names the failure, a second failure of the
+    same kind keeps it, and one of another kind withdraws it and raises the
+    next occurrence; a field change on a failed issue, through the fake and
+    `mirrorChanged`, after the cause in the decision model's table is
+    keyed to the new value, gives one `started` record and one actor and
+    withdraws the escalation; a mirror change that leaves the issue's
+    digest as it was decides nothing; a `retry` answer through the
+    escalations module at the commit the failure was recorded at decides
+    again, and with the cause still present raises the next occurrence;
+    a `dismiss` answer changes no record; a start failure after a decision
+    failure withdraws the decision's escalation and raises one that names
+    the start; a question whose detail would pass 8,000 characters is cut
+    and says so;
     a reconcile at start takes every tracked issue with no record; an
     issue event the fake publishes in the turn after `actors.start` reaches
     the actor, and a change committed before the start step is in its
@@ -499,4 +632,8 @@ proposed-design:
     and a kill after the fixture host's first snapshot commits and before
     `started`; after a restart on the same file each issue has one
     `started` record and one snapshot, and the actor's version is the one
-    recorded.
+    recorded. A kill at `failed`, after the failure and its escalation
+    commit and before the next save; after a restart on the same file the
+    issue has one `failed` record and one open `intake-failed` escalation.
+    A kill after a `retry` answer's handling commits and before `requeue`
+    runs; after a restart the issue is decided again once.

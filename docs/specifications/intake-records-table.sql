@@ -8,7 +8,9 @@
 
 -- One row per issue intake has decided or failed to decide. A `recorded` or
 -- `started` row holds the issue's one decision; a `failed` row holds the
--- commit it failed at and is decided again at a later commit.
+-- commit it failed at and the digest of the tracked issue it was decided
+-- over, and is decided again at a later commit, at a change of the issue,
+-- or when its digest is cleared for a retry.
 CREATE TABLE intake_record (
   issue_node_id TEXT PRIMARY KEY CHECK (length(issue_node_id) > 0),
   status TEXT NOT NULL CHECK (status IN ('failed', 'recorded', 'started')),
@@ -30,6 +32,7 @@ CREATE TABLE intake_record (
   start_attempts INTEGER NOT NULL DEFAULT 0 CHECK (start_attempts >= 0),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  issue_digest TEXT CHECK (issue_digest IS NULL OR (length(issue_digest) = 64 AND issue_digest NOT GLOB '*[^0-9a-f]*')),
   CHECK (status = 'recorded' OR start_failure IS NULL),
   CHECK (
     (status = 'failed' AND failure IS NOT NULL)
@@ -74,6 +77,7 @@ CREATE TRIGGER intake_record_decided
       AND NEW.failure IS OLD.failure
       AND NEW.attempts IS OLD.attempts
       AND NEW.created_at IS OLD.created_at
+      AND NEW.issue_digest IS OLD.issue_digest
     )
   BEGIN SELECT RAISE(ABORT, 'intake_record decision is final'); END;
 
