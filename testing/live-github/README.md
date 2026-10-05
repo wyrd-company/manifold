@@ -39,6 +39,11 @@ configuration overlays. Scripts read them at run time and report no values.
 | `task live:stop`                                         | Ask the supervisor to stop; recover recorded children after supervisor failure         |
 | `task live:teardown`                                     | Remove marked resources; refuse while a supervisor answers                             |
 
+To check an extracted service archive, set `SERVICE_ENTRY=/path/to/manifold-service/dist/main.js`
+when starting the supervisor directly with `node testing/live-github/src/start.ts`.
+It starts that entry with one configuration argument and keeps the same tunnel,
+child cleanup, and smoke checks.
+
 Run start in one terminal and smoke in another. Do not run teardown until the PAT
 repository deletion permission is confirmed. Stop may report shutdown pending;
 leave the supervisor to finish and run stop again. It owns child cleanup while

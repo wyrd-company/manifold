@@ -26,6 +26,9 @@ import { createForwarder } from "./forwarder.ts";
 import { acquireControl, ChildLedger, recoverChildren } from "./supervisor.ts";
 import type { ChildRecord, ControlLease, SupervisorStatus } from "./supervisor.ts";
 
+export function serviceArguments(configuration: string, entry = "packages/service/dist/main.js") {
+  return [resolve(entry), configuration];
+}
 export function serviceEnvironment(source: NodeJS.ProcessEnv) {
   return Object.fromEntries(
     Object.entries(source).filter(([key]) =>
@@ -272,7 +275,7 @@ export async function runStart() {
       const child = await ledger.launch(
         "service",
         process.execPath,
-        [resolve("packages/service/dist/main.js"), join(directory, "service.yml")],
+        serviceArguments(join(directory, "service.yml"), process.env["SERVICE_ENTRY"]),
         { cwd: process.cwd(), env: serviceEnvironment(process.env) },
       );
       service = child.record;

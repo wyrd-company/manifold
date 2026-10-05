@@ -31,6 +31,7 @@ const children = [
   "src/process-repository/remote.test.ts",
   "src/router/router.test.ts",
   "src/service/process.test.ts",
+  "src/service/operator-setup.test.ts",
   "src/service/start.test.ts",
   "src/service/usage.test.ts",
   "src/store/store.test.ts",

@@ -262,7 +262,9 @@ proposed-design:
     used); generate the private key into `credentials/` with mode 0600. (5) The process
     repository: copy `examples/starter/` from the checkout into a new
     repository on the organization; replace each placeholder its comments
-    name: in `bindings.yml` the test Project's `owner` and `number`, the
+    name: in `decision-models/intake.yml` the provider instance and model
+    available through the environment's account; in `bindings.yml` the test
+    Project's `owner` and `number`, the
     environment name, and the id of the T3code project the task threads
     run in, which intake reads from the binding; in `task-metadata.yml`
     the lifecycle field of the test Project, whose options must include
@@ -275,7 +277,8 @@ proposed-design:
     bundles, and a file committed at that path replaces it. Run the first
     lint from the repository's root with `manifold-host manifest lint`,
     `manifold-host portfolio lint`, `manifold-host usage lint`,
-    `manifold-host task-metadata lint`, and `manifold-host comparator lint
+    `manifold-host task-metadata lint`, `manifold-host blueprint lint
+    --repository .`, and `manifold-host comparator lint
     comparators/estimate.ts`, expect no finding, and push. On each
     environment, add the task repository's checkout as a T3code project
     with `t3 project add <path>` and record its id for `bindings.yml`.

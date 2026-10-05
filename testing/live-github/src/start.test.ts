@@ -6,6 +6,7 @@ import { expect, test } from "vite-plus/test";
 import {
   debuggerHttpsUrl,
   serviceEnvironment,
+  serviceArguments,
   startedAddress,
   tunnelConfiguration,
 } from "./start.ts";
@@ -118,4 +119,13 @@ test("cleanup stops real children and closes its socket even when logging and ho
     await lease.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("archive startup uses the extracted entry and one configuration argument", () => {
+  expect(
+    serviceArguments("/deployment/service.yml", "/install/manifold-service/dist/main.js"),
+  ).toEqual(["/install/manifold-service/dist/main.js", "/deployment/service.yml"]);
+  expect(serviceArguments("/deployment/service.yml")[0]).toMatch(
+    /packages\/service\/dist\/main.js$/,
+  );
 });

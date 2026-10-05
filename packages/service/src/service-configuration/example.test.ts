@@ -18,25 +18,12 @@ const example = new URL(
   "../../../../docs/specifications/service-configuration.example.yml",
   import.meta.url,
 );
-// REBASE STAND-IN: task 1156 owns this root property and its loader.
-// Keep the example intact; validate the exact empty section before removing it
-// only from the copy passed to today's loader.
 const root = serviceConfigurationSchemas.find(
   (schema) => schema.$id === serviceConfigurationSchemaId,
 )!;
 const ajv = new Ajv2020({ allErrors: true });
 for (const schema of serviceConfigurationSchemas) {
-  ajv.addSchema(
-    schema.$id === root.$id
-      ? {
-          ...root,
-          properties: {
-            ...root.properties,
-            agentTools: { type: "object", additionalProperties: false },
-          },
-        }
-      : schema,
-  );
+  ajv.addSchema(schema);
 }
 const validate = ajv.getSchema(serviceConfigurationSchemaId)!;
 function check(text: string) {
@@ -47,7 +34,7 @@ function check(text: string) {
   expect(isMap(document.contents)).toBe(true);
   if (!isMap(document.contents)) throw new Error("Expected a configuration mapping");
   expect(document.contents.items.map((pair) => String(pair.key)).sort()).toEqual(
-    [...Object.keys(root.properties), "agentTools"].sort(),
+    Object.keys(root.properties).sort(),
   );
   const lines = text.split("\n");
   visit(document, {
@@ -90,7 +77,7 @@ test("the operator example loads with every credential file and every root secti
       await writeFile(join(directory, path), "", { mode: 0o600 });
     }
     expect(document.toJS().agentTools).toEqual({});
-    document.delete("agentTools");
+
     const file = join(directory, "service.yml");
     await writeFile(file, String(document));
     const loaded = await loadServiceConfiguration(file);
@@ -99,6 +86,7 @@ test("the operator example loads with every credential file and every root secti
       "ntfy-token",
       "workstation-token",
     ]);
+    expect(loaded.agentTools).toBeDefined();
     expect(loaded.store.file).toBe(join(directory, "state/manifold.sqlite"));
   } finally {
     await rm(directory, { recursive: true, force: true });

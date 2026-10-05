@@ -134,10 +134,14 @@ Replace the starter's commented placeholders:
 - `task-metadata.yml`: the Project's lifecycle field and its options. Include
   `In Progress` and `Done`, which the bundled blueprint uses. A new Project's
   `Status` field includes `Todo`, `In Progress`, and `Done`.
+- `decision-models/intake.yml`: set `data.model.instanceId` to the provider
+  instance configured in T3 Code and `data.model.model` to a model available
+  through that environment's account. The starter values are placeholders.
 - `accounts.yml`: each account's `unit`, `kind` (`api` or `subscription`), and
   `capacity`. Set `amount` in the account's unit, a UTC `reset` instant, and
   `every` with exactly one of `hours`, `days`, or `months`. Amounts have at most
   six decimal places; a monthly reset must be on day 28 or earlier in UTC.
+  Set each `usage` entry's environment and provider to the ones you run.
 
 Capacity is declared in the process repository, not service configuration.
 The starter's intake names `blueprints/task.yml`, a bundled blueprint. A file
@@ -150,6 +154,7 @@ manifold-host manifest lint
 manifold-host portfolio lint
 manifold-host usage lint
 manifold-host task-metadata lint
+manifold-host blueprint lint --repository .
 manifold-host comparator lint comparators/estimate.ts
 ```
 

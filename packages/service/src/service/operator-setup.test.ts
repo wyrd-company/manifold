@@ -6,60 +6,72 @@ import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import git from "isomorphic-git";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
+import { promisify } from "node:util";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { expect, test } from "vite-plus/test";
-import { model } from "../intake/test-fixtures/fixture.ts";
 import { serviceFixture } from "./test-fixtures/repository.ts";
 import { signedDelivery } from "../github-source/test-fixtures/api.ts";
 import { serve, readRequest } from "../escalations/test-support.ts";
 import { startService } from "./index.ts";
 
-// REBASE STAND-IN: replace these process declarations with examples/starter/
-// and the bundled blueprints/task.yml once task 1158 lands.
 test("the guide reaches an issue's actor through the private API against fake GitHub", async () => {
   const f = await serviceFixture();
   let stop: (() => Promise<void>) | undefined;
   try {
     const gitdir = f.remote.gitdir;
-    const { commit } = await git.readCommit({ fs, gitdir, oid: f.first });
-    const { tree } = await git.readTree({ fs, gitdir, oid: commit.tree });
-    async function blob(path: string, value: unknown) {
-      return {
-        path,
-        mode: "100644",
-        type: "blob" as const,
-        oid: await git.writeBlob({ fs, gitdir, blob: Buffer.from(stringify(value)) }),
-      };
+    const starter = join(f.directory, "starter");
+    await fs.cp(new URL("../../../../examples/starter/", import.meta.url), starter, {
+      recursive: true,
+    });
+    const bindings = parse(await fs.readFile(join(starter, "bindings.yml"), "utf8"));
+    Object.assign(bindings.githubProjects["work-board"], {
+      owner: "sample",
+      number: 1,
+      t3codeProjects: ["project"],
+    });
+    await fs.writeFile(join(starter, "bindings.yml"), stringify(bindings));
+    for (const args of [
+      ["manifest", "lint"],
+      ["portfolio", "lint"],
+      ["usage", "lint"],
+      ["task-metadata", "lint"],
+      ["comparator", "lint", "comparators/estimate.ts"],
+      ["blueprint", "lint", "--repository", "."],
+    ]) {
+      await promisify(execFile)(childArtifacts().host, args, { cwd: starter });
     }
-    const models = await git.writeTree({
-      fs,
-      gitdir,
-      tree: [
-        await blob(
-          "intake.yml",
-          model('{"blueprint":"blueprints/counter.yml","portfolioItem":"alpha"}'),
+    async function tree(directory: string): Promise<string> {
+      return git.writeTree({
+        fs,
+        gitdir,
+        tree: await Promise.all(
+          (await fs.readdir(directory, { withFileTypes: true })).map(async (entry) => ({
+            path: entry.name,
+            mode: entry.isDirectory() ? "040000" : "100644",
+            type: entry.isDirectory() ? ("tree" as const) : ("blob" as const),
+            oid: entry.isDirectory()
+              ? await tree(join(directory, entry.name))
+              : await git.writeBlob({
+                  fs,
+                  gitdir,
+                  blob: await fs.readFile(join(directory, entry.name)),
+                }),
+          })),
         ),
-      ],
-    });
-    const next = await git.writeTree({
-      fs,
-      gitdir,
-      tree: [
-        ...tree.filter((entry) => entry.path !== "bindings.yml"),
-        await blob("bindings.yml", {
-          githubProjects: {
-            first: { owner: "sample", number: 1, environment: "env-one", item: "alpha" },
-          },
-        }),
-        await blob("manifold.yml", { intake: { decisionModel: "models/intake.yml" } }),
-        { path: "models", mode: "040000", type: "tree", oid: models },
-      ],
-    });
+      });
+    }
+    const { commit } = await git.readCommit({ fs, gitdir, oid: f.first });
     await f.remote.force(
       await git.writeCommit({
         fs,
         gitdir,
-        commit: { ...commit, tree: next, parent: [f.first], message: "Example declaration" },
+        commit: {
+          ...commit,
+          tree: await tree(starter),
+          parent: [f.first],
+          message: "Starter process",
+        },
       }),
     );
     const service = await startService({ configurationFile: f.file, log: () => {} });
@@ -97,8 +109,8 @@ test("the guide reaches an issue's actor through the private API against fake Gi
           actorId: "task:I_A",
           issue: "I_A",
           project: "P_one",
-          portfolioItem: "alpha",
-          blueprint: expect.objectContaining({ path: "blueprints/counter.yml" }),
+          portfolioItem: "work",
+          blueprint: expect.objectContaining({ path: "blueprints/task.yml" }),
         }),
       );
     expect((await fetch(`${base}/console/`)).status).toBe(200);
@@ -155,4 +167,14 @@ test("the guide token pipeline exchanges a pairing credential for the approved s
     await oauth.close();
     await f.close();
   }
+});
+
+test("the guide names the starter's provider and model placeholders", async () => {
+  const guide = await fs.readFile(
+    new URL("../../../../docs/guides/operator-setup.md", import.meta.url),
+    "utf8",
+  );
+  expect(guide).toContain("`decision-models/intake.yml`");
+  expect(guide).toContain("`data.model.instanceId`");
+  expect(guide).toContain("`data.model.model`");
 });
