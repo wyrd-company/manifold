@@ -178,7 +178,8 @@ proposed-design:
     `gate-runtime` (comparator-failures) states.
     `agent-question` is raised by the agent tools module for an agent's
     `escalate` call, with subject `{ actorId, environment, threadId,
-    turnId }` and the agent's title, question, choices, and free-text flag.
+    turnId }`, a title that names the agent's task, and the agent's
+    question, choices, and free-text flag.
     A service escalation goes to the `default` destination; its title
     defaults to `Question`, and it takes free text only when its request
     asks for it. `withdraw({ kind, subject })` withdraws the open escalation

@@ -38,8 +38,8 @@ description: |-
     the T3 Code thread id, given when the prompt names it.
   - `escalate`: asks a person a question. Input
     `#/$defs/escalate-input`: `question`, required, Markdown of 1 to 8,000
-    characters; `title`, 1 to 120 characters, default `Question`;
-    `choices`, up to three `{ id, label }` with unique ids, each id a
+    characters; `title`, optional, 1 to 120 characters, a short name for
+    the question that the service sets beside the task's name; `choices`, up to three `{ id, label }` with unique ids, each id a
     lower-case slug of at most 32 characters and each label 1 to 40
     characters; `freeText`, default `false`; `thread`, as for `handoff`.
     The input has at least one choice or `freeText: true`.
@@ -191,7 +191,8 @@ description: |-
   - `agent.handoff`: the agent handed off. `turnId`, the turn that made
     the call; `handoff`, the tool's `handoff` argument.
   - `agent.escalated`: the agent asked a person. `turnId`;
-    `escalationId`; `title`; `question`; `choices`; `freeText`.
+    `escalationId`; `title`, the escalation's title, as the question title
+    rule below gives it; `question`; `choices`; `freeText`.
   - `agent.escalation.answered`: a person answered the agent, and the
     answer is in the thread. `escalationId`; `answer`, `{ choice }` or
     `{ text }`; `channel`, `link` or `api`; `messageId`, the id of the
@@ -235,15 +236,45 @@ description: |-
   first actor in actor id order that follows the thread, sent to the
   `default` destination.
 
+  Question title. The escalation's title names the task the question
+  comes from, so a person who gets questions from several tasks can tell
+  them apart in the notification, on the answer page, and in Manifold's
+  API. The task is the issue whose node id is `issue` in the identity of
+  the escalation's actor, while the GitHub mirror tracks it. Its name is
+  `<repository>#<number>`, with the repository as `owner/name`. The title
+  is the row of this table that applies:
+
+  | Task tracked | Issue title read | Agent's `title` | Escalation title |
+  | --- | --- | --- | --- |
+  | yes | yes | given | `<repository>#<number>: <title> — <issue title>` |
+  | yes | yes | absent | `<repository>#<number>: <issue title>` |
+  | yes | no | given | `<repository>#<number>: <title>` |
+  | yes | no | absent | `<repository>#<number>` |
+  | no | — | given | `<title>` |
+  | no | — | absent | `Question` |
+
+  A title longer than 120 Unicode code points is cut to 119 code points
+  and ends with `…`, so the agent's title, which comes before the issue
+  title, is kept before the issue title is. The title is fixed when the
+  escalation is raised: a later change to the issue's title does not
+  change it, and a repeated call in the turn returns the escalation with
+  its first title.
+
+  ```text
+  example-org/widgets#7: Paint colour — Repaint the garden shed
+  example-org/widgets#7: Repaint the garden shed
+  ```
+
   Answer message. The answer reaches the thread as the user message of a
   `thread.turn.start`. Its message id is the id of kind
   `agent-tools/answer-message` derived from the escalation id, as
   `agent-threads` derives ids, and its command id the id of kind
-  `turn-start/command` derived from that message id. Its text is, for a
-  choice:
+  `turn-start/command` derived from that message id. Its text names no
+  title: the thread is the asking agent's own, and a turn asks one
+  question. For a choice:
 
   ```text
-  Answer to your question "<title>": <label> (choice `<id>`).
+  Your question was answered: <label> (choice `<id>`).
 
   Continue your work with this answer.
   ```
@@ -251,7 +282,7 @@ description: |-
   and for text:
 
   ```text
-  Answer to your question "<title>":
+  Your question was answered:
 
   <text>
 
@@ -408,3 +439,6 @@ validation-criteria: >-
   two calls in one turn give one id and calls in two turns give two. A
   test renders the `get-messages` message and the notice for none, one,
   and two messages and compares them with the texts above.
+  A test derives the escalation title for each row of the question title
+  table, and for a title cut at 120 code points, and compares it with the
+  expected string.

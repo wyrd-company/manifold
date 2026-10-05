@@ -148,7 +148,7 @@ description: |-
   | `stranded-token` | `Question` | `{ gate, tokenId }` | `return`, `dismiss` | A holder enters a trap of its gate. |
   | `intake-failed` | `Intake failed` | `{ issue }` | `retry`, `dismiss` | Intake records a failure for an issue that is still tracked and unchanged since the attempt read it. |
   | `comparator-failed` | `Comparator failed` | `{ gate }` | `retry`, `dismiss` | A gate's comparator is missing or fails to load or to evaluate. |
-  | `agent-question` | Request title, default `Question` | `{ actorId, environment, threadId, turnId }` | Request choices | An agent asks a person through the agent tools module. |
+  | `agent-question` | The task's name and the agent's title, as `agent-tools` gives it | `{ actorId, environment, threadId, turnId }` | Request choices | An agent asks a person through the agent tools module. |
 
   `actorId` is an actor id, `issue` an issue's GitHub node id, `gate` a
   gate key, `<blueprintPath>#<statePath>`, and `tokenId` a token id.

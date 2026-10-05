@@ -285,12 +285,14 @@ proposed-design:
     with `not-followed`. The escalation's actor is the first follower in
     actor id order. In one transaction the module reads the turn's
     question row in `agenttool_question` by the call key; a row answers the
-    call with its escalation as a replay. Otherwise it calls the escalations
-    module's `raise` with kind `agent-question`, subject `{ actorId,
-    environment, threadId, turnId }`, the title, question, choices, and
-    free-text flag, and the `default` destination; inserts the question
-    row; and publishes `agent.escalated` with the escalation id, title,
-    question, choices, and free-text flag under the thread's agent topic.
+    call with its escalation as a replay. Otherwise it resolves the
+    question's task and title, as `question-title` describes, calls the
+    escalations module's `raise` with kind `agent-question`, subject
+    `{ actorId, environment, threadId, turnId }`, that title, the
+    question, choices, and free-text flag, and the `default` destination;
+    inserts the question row; and publishes `agent.escalated` with the
+    escalation id, the escalation's title, question, choices, and free-text
+    flag under the thread's agent topic.
     `raise` joins the transaction, so the escalation, its notification
     rows, the question row, and the event commit together or not at all.
     The call answers `raised` with the escalation id, and the tool's
@@ -299,6 +301,29 @@ proposed-design:
     channel the escalations module offers: the `default` destination's
     ntfy topic with a button per choice, its answer page, Manifold's API,
     and the Task page, which shows every escalation.
+  question-title: >-
+    A person may get questions from several tasks at once, so the title of
+    an agent's question names its task. The task is read inside the
+    escalate transaction, after the replay check: the module loads the
+    escalation actor's latest snapshot from the store, a held actor's
+    included, and takes the issue node id at `context.manifold.issue`;
+    then `trackedIssue(nodeId)`, an option the service answers from the
+    GitHub source's `trackedIssue`, gives the issue's repository, number,
+    and, once the mirror has read it, title. These are an
+    `AgentQuestionContext`, `{ repository, number, title? }`. An identity
+    with no `issue`, or an issue the mirror does not track, has no context.
+    The pure function `questionTitle(context, title)` in `calls.ts` builds
+    the escalation's title from the context and the agent's optional
+    `title` by the question title table of `agent-tools`, and cuts it to
+    120 code points, the limit of an escalation title, ending with `…`.
+    The task's name leads, so a notification list that cuts a long title
+    still shows which task asks. The context is read once, at the raise,
+    and the escalation's title holds it from then on: the notification,
+    the close, the answer page, the API, and `agent.escalated` all carry
+    that one title, and the escalations module renders it unchanged. The
+    escalation's title is the context's only record, since nothing reads
+    the context after the raise. The read is the mirror's, so the call
+    makes no GitHub request and waits for none.
   answer-turn: >-
     The module gives the escalations module the handler of kind
     `agent-question`, which runs inside the transaction that records the
@@ -317,9 +342,11 @@ proposed-design:
     sequence. A command the server rejects marks the row `failed` with the
     server's message and logs it; the answer stays on the escalation,
     through Manifold's API and the Task page. The text is the answer
-    message of `agent-tools`: the escalation's title, the chosen label and
-    choice id or the text, and the line that tells the agent to continue
-    its work with the answer. The sender sends at once, whether or not the
+    message of `agent-tools`: a sentence that the question was answered,
+    the chosen label and choice id or the text, and the line that tells
+    the agent to continue its work with the answer. It quotes no title,
+    since the escalation's title names the task for a person and the agent
+    already knows its own question. The sender sends at once, whether or not the
     thread runs a turn: T3 Code starts a turn for the message when the
     thread has none running, and adds the message to the running turn when
     one runs, so the agent receives the answer once either way, in the
@@ -557,6 +584,12 @@ proposed-design:
         "followers" | "followedThreads" | "eventSchema" | "issueThreads" | "actorOf"
       >;
       readonly threads: Pick<AgentThreads, "readThread" | "runningThreads" | "startTurn">;
+      /**
+       * The tracked issue of a node id, from the GitHub source's
+       * `trackedIssue`, read when an escalate call arrives; `undefined`
+       * when the mirror does not track it.
+       */
+      readonly trackedIssue: (nodeId: string) => AgentQuestionContext | undefined;
       /** The environment source's `environmentId`, read when a call arrives. */
       readonly environmentId: (environment: string, signal?: AbortSignal) => Promise<string>;
       /** Called after a call commits and before the response is written. */
@@ -580,6 +613,15 @@ proposed-design:
       start(): void;
       /** Stops identification waits and the answer sender; pending rows stay pending. */
       stop(): Promise<void>;
+    }
+
+    /** The task an agent's question comes from. */
+    export interface AgentQuestionContext {
+      /** `owner/name`. */
+      readonly repository: string;
+      readonly number: number;
+      /** Absent until the GitHub mirror has read it. */
+      readonly title?: string;
     }
 
     export interface CommittedCall {
@@ -632,7 +674,8 @@ proposed-design:
     `agent-tools` part gives `implementations`, which holds `send-message`,
     to `context.addImplementations`, so the blueprint loader builds every
     version with it and no other part changes. It reads the actor host,
-    the router, the environment source, and the escalations module
+    the router, the environment source, the escalations module, and the
+    GitHub source's `trackedIssue`
     through `context.later` and the getters it is given, and no call or
     invoke reaches them before they start. Its `requestListener`, which
     answers the calls and the notices, is mounted with
@@ -646,7 +689,8 @@ proposed-design:
   module-layout: >-
     `index.ts` re-exports the public names. `calls.ts` holds the pure
     rules: the call id read from `meta`, the call key, the event ids, the
-    answer message id and text, and the path rewrite of a handoff failure.
+    question title, the answer message id and text, and the path rewrite
+    of a handoff failure.
     `identify.ts` runs the identification over the candidates with its
     bound. `handoff.ts` and `escalate.ts` hold each tool's transaction.
     `answers.ts` holds the handler and the sender. `messages.ts` holds the
@@ -667,7 +711,11 @@ proposed-design:
     crash inside its transaction raises none. A crash after an answer
     commits and before its handling runs the handler at the escalations
     module's `start`, and the handler writes the answer row once, since it
-    inserts only when the row is absent. A crash after the answer row
+    inserts only when the row is absent. The question's title is built
+    inside the escalate transaction from reads that write nothing, so a
+    crash before the commit leaves no title behind, and a repeated call
+    after the commit returns the escalation with the title of its raise,
+    even when the issue's title changed between the calls. A crash after the answer row
     commits and before the command is sent sends it after the restart. A
     crash after T3 Code accepts the command and before the row is marked
     sent sends the same command id again, which T3 Code answers with its
@@ -737,7 +785,17 @@ proposed-design:
     event, and the second answers `replay`; a handoff in the next turn is a
     new event; an `escalate` with two choices raises one escalation on the
     `default` destination and publishes `agent.escalated`; a second call in
-    the turn returns the same escalation; its answer through the API writes
+    the turn returns the same escalation; an `escalate` from the thread of
+    a task whose issue the mirror tracks with a title, made through the
+    endpoint with the request the plugin sends, once with a `title` and
+    once without, publishes to the fake ntfy server an ask whose `title` is
+    `<repository>#<number>: <title> — <issue title>` and
+    `<repository>#<number>: <issue title>`, serves an answer page that
+    shows that title, and, answered with a choice and with text, starts a
+    turn whose message is the answer message of `agent-tools` with no
+    title quoted; a later change of the issue's title in the mirror does
+    not change the title of an open question or of its replay; a service
+    escalation of each other kind keeps its title; its answer through the API writes
     one answer row, starts one turn in the fake server's thread with the
     answer text and the derived message id, and publishes
     `agent.escalation.answered` with that message id and the id of the turn
@@ -803,8 +861,9 @@ proposed-design:
     event delivered once, the message delivered once, and `get-messages`
     answering it once. Host CLI tests run the compiled `mcp` command over
     stdio against a test HTTP server: it lists the three tools with their
-    schemas, forwards a call's
-    arguments and `_meta`, maps an accepted response, a refusal, a
+    schemas, `escalate`'s `title` optional and with no default, forwards a
+    call's arguments and `_meta`, an `escalate` with no `title` forwarded
+    with none, maps an accepted response, a refusal, a
     timeout, and a refused connection to their results, and writes nothing
     but protocol to standard output. The live test, run by the service
     package's `test:live` script and not by `task check`, starts the `t3`
