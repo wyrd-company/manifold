@@ -90,6 +90,12 @@ test("changed guarantee parents ignore untouched levels and ceiling-only edits",
 });
 test("draft preview leaves the service read unchanged, including implicit Other", () => {
   const original = structuredClone(read);
-  draftRead(read, text);
+  const withoutOther = text.replace(
+    "      other:\n        allocations:\n          acct-a: { guarantee: 20 }\n",
+    "",
+  );
+  const next = draftRead(read, withoutOther);
   expect(read).toEqual(original);
+  expect(next.items.find((i) => i.id === "alpha/other")?.allocations[0]?.guarantee).toBe(0);
+  expect(next.items.find((i) => i.id === "alpha")?.unallocated?.[0]?.percent).toBe(60);
 });

@@ -72,7 +72,20 @@ export function draftRead(read: PortfolioResponse, text: string): PortfolioRespo
       !items.some((i) => i.id === item.id) &&
       (!item.parent || items.some((i) => i.id === item.parent))
     )
-      items.push({ ...item, allocations: item.allocations.map((a) => ({ ...a })) });
+      items.push({
+        ...item,
+        allocations: item.allocations.map((a) => ({
+          account: a.account,
+          declared: false,
+          guarantee: 0,
+          amount: 0,
+          actual: a.actual,
+          outstanding: a.outstanding,
+          available: a.available,
+          reservable: a.reservable,
+          lifetime: a.lifetime,
+        })),
+      });
   }
   function amounts(parent: string | null, account: string, capacity: number) {
     for (const item of items.filter((i) => i.parent === parent && !i.archived)) {
