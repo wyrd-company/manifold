@@ -529,8 +529,7 @@ description: |-
   agent tool, from the `agent-tools` schema asset, which the host CLI
   harness plugin serves. `parseBlueprintVersionKey` returns
   `undefined` for a string that is not a version key. `bundleDigest`
-  computes SHA-256 of the UTF-8 JSON serialization of `[path, text]`
-  pairs, sorted by path in Unicode code point order.
+  computes the digest of a bundle from its texts by path.
 format: json-schema
 validation-criteria: >-
   Every blueprint, blueprint version, and blueprint finding validates

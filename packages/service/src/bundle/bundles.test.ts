@@ -6,9 +6,34 @@ import { expect, it } from "vite-plus/test";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { bundleDigest } from "@wyrd-company/manifold-shared";
 import { openStore } from "../store/index.ts";
 import { openBundles, bundleMigrationSteps, shippedBundle, bundle } from "./index.ts";
+it("migrates the bundle schema declared in the SQL asset", () => {
+  const store = openStore({ path: ":memory:" });
+  const reference = new DatabaseSync(":memory:");
+  try {
+    store.connection.migrate("bundle", bundleMigrationSteps);
+    reference.exec(
+      readFileSync(
+        new URL("../../../../docs/specifications/bundle-tables.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    const rows = (database: DatabaseSync) =>
+      database
+        .prepare(
+          "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name = 'bundle' OR name LIKE 'bundle_%' ORDER BY name",
+        )
+        .all()
+        .map((row) => ({ ...row, sql: String(row["sql"]).replace(/\s+/g, " ").trim() }));
+    expect(rows(store.connection.database)).toEqual(rows(reference));
+  } finally {
+    reference.close();
+    store.close();
+  }
+});
 it("keeps whole immutable bundles across opens and upgrades", () => {
   const dir = mkdtempSync(join(tmpdir(), "bundles-"));
   const path = join(dir, "store.sqlite");

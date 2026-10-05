@@ -20,7 +20,7 @@ export function parseBlueprintVersionKey(key: string): BlueprintVersion | undefi
     : undefined;
 }
 
-/** SHA-256 of sorted [path, text] pairs serialized as UTF-8 JSON. */
+/** SHA-256 of code point ordered UTF-8 paths and texts, each followed by U+0000. */
 export function bundleDigest(files: ReadonlyMap<string, string>): string {
   const codePoints = (value: string) => Array.from(value, (char) => char.codePointAt(0)!);
   const entries = [...files].sort(([a], [b]) => {
@@ -32,5 +32,7 @@ export function bundleDigest(files: ReadonlyMap<string, string>): string {
     }
     return left.length - right.length;
   });
-  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+  const hash = createHash("sha256");
+  for (const [path, text] of entries) hash.update(path).update("\0").update(text).update("\0");
+  return hash.digest("hex");
 }

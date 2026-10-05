@@ -13,7 +13,7 @@ it("pins texts by path independently of insertion order and round-trips both sou
     ["blueprints/b.yml", "second"],
     ["blueprints/a.yml", "first"],
   ]);
-  const expected = "e5329fbc70f9adbce24350f3a26b1f327b6371f00e30765883f568f378e637a8";
+  const expected = "cbdaf1821afbf8ed25653c1a16b7c813bdc9d963680170d0fcde69c8615a4a39";
   expect(bundleDigest(files)).toBe(expected);
   expect(bundleDigest(new Map([...files].toReversed()))).toBe(expected);
   expect(bundleDigest(new Map([["blueprints/a.yml", "changed"]]))).not.toBe(expected);
