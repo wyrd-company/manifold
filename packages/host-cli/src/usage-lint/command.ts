@@ -15,7 +15,9 @@ export async function usageLintCommand(
     return 2;
   }
   const directory = args[0] ?? process.cwd();
+  let file = directory;
   async function read(name: string) {
+    file = name;
     try {
       return await readFile(join(directory, name), "utf8");
     } catch (error) {
@@ -26,16 +28,20 @@ export async function usageLintCommand(
   }
   try {
     await readdir(directory);
-    const [accounts, prices] = await Promise.all([read("accounts.yml"), read("prices.yml")]);
+    const accounts = await read("accounts.yml");
+    const prices = await read("prices.yml");
     const result = lintUsageDeclaration({ accounts, prices });
     if (result.ok) return 0;
-    for (const finding of result.findings)
+    const findings = ["accounts", "prices"].flatMap((name) =>
+      result.findings.filter((finding) => finding.file === name),
+    );
+    for (const finding of findings)
       io.stdout.write(
         `${finding.file}.yml:${finding.location} ${finding.kind} ${finding.message.replace(/\s*\r?\n\s*/g, " ")}\n`,
       );
     return 1;
   } catch (error) {
-    io.stderr.write(`${directory}: ${error instanceof Error ? error.message : String(error)}\n`);
+    io.stderr.write(`${file}: ${error instanceof Error ? error.message : String(error)}\n`);
     return 2;
   }
 }
