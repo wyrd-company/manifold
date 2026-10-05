@@ -144,7 +144,7 @@ description: |-
   |---|---|---|---|---|
   | `held-actor` | `Question` | `{ actorId }` | `retry`, `dismiss` | An actor is held. |
   | `stranded-token` | `Question` | `{ gate, tokenId }` | `return`, `dismiss` | A holder enters a trap of its gate. |
-  | `intake-failed` | `Intake failed` | `{ issue }` | `retry`, `dismiss` | Intake records a failure for an issue. |
+  | `intake-failed` | `Intake failed` | `{ issue }` | `retry`, `dismiss` | Intake records a failure for an issue that is still tracked and unchanged since the attempt read it. |
   | `comparator-failed` | `Comparator failed` | `{ gate }` | `retry`, `dismiss` | A gate's comparator is missing or fails to load or to evaluate. |
 
   `actorId` is an actor id, `issue` an issue's GitHub node id, `gate` a

@@ -71,8 +71,10 @@ proposed-design:
     through the actor host, in one synchronous step that reads the issue
     from the mirror and attaches the actor to the router, and marks the
     record `started`. A record that is `started` is final. A failure is a
-    `failed` record with a typed kind and no actor, which raises an
-    `intake-failed` escalation in the transaction that records it. A
+    `failed` record with a typed kind and no actor. A current failure, one
+    whose issue is still tracked and unchanged since the attempt read it,
+    raises an `intake-failed` escalation in the transaction that records
+    it; a stale one raises nothing and is decided again. A
     `failed` record is decided again once at each later commit, once at
     each change of its tracked issue, and when the operator answers
     `retry`.
@@ -489,13 +491,17 @@ proposed-design:
     updates a `failed` row, setting `status` to `failed`, the commit, the
     failure, the evaluation when there was one, the issue digest, and the
     binding, Project, and environment when step 2 found them; it raises
-    `attempts` by one and raises the escalation. A decision inserts the
+    `attempts` by one, and raises the escalation when the failure is
+    current, or withdraws it when the issue left tracking, as
+    `issue-changes` states. A decision inserts the
     row, or updates a `failed` row, setting `status` to `recorded` with
     every field of the decision and the issue digest; the statement's
     `WHERE status = 'failed'` leaves a `recorded` or `started` row
     unchanged; it withdraws the escalation. A failed start sets
     `startFailure` and raises `startAttempts` where the row is `recorded`,
-    and raises the escalation. A start sets `status` to `started` and
+    and raises the escalation; a start failure is always current, since
+    the start step reads the issue and writes with no `await` between, and
+    leaves an untracked issue without a write. A start sets `status` to `started` and
     clears `startFailure` where the row is `recorded`, and withdraws the
     escalation. A retry request sets `issueDigest` to null where the row is
     `failed`, in the handler's transaction. The
@@ -621,7 +627,7 @@ proposed-design:
     started at the second commit; `discovered` twice and `discovered` with
     a reconcile give one record and one actor; an issue on two bound
     Projects is taken once, through the binding whose name sorts first;
-    each failure raises one open `intake-failed` escalation whose subject is
+    each current failure raises one open `intake-failed` escalation whose subject is
     the issue and whose question names the failure, a second failure of the
     same kind keeps it, and one of another kind withdraws it and raises the
     next occurrence; a field change on a failed issue, through the fake and

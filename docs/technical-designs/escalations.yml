@@ -169,7 +169,8 @@ proposed-design:
     `gate` is `<blueprintPath>#<statePath>`, the actor and its
     configuration in its question, and the choices `return` and `dismiss`.
     `intake-failed` is raised by intake in the transaction that records a
-    failed decision or a failed start of an issue, with subject `{ issue }`,
+    current failed decision or a failed start of an issue, one whose issue
+    is still tracked and unchanged since the attempt read it, with subject `{ issue }`,
     the issue's node id, the failure in its question, and the choices
     `retry` and `dismiss`, as `intake` (escalations) states.
     `comparator-failed` is raised by a gate whose comparator is missing,
