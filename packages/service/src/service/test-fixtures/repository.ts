@@ -62,11 +62,18 @@ export async function serviceFixture() {
         ),
       ],
     });
+    // This fixture runs its own blueprint; leave the shipped default's gate idle.
+    const comparators = await git.writeTree({
+      fs,
+      gitdir: remote.gitdir,
+      tree: [await blob("estimate.ts", "export default () => null;", true)],
+    });
     const tree = await git.writeTree({
       fs,
       gitdir: remote.gitdir,
       tree: [
         { path: "blueprints", mode: "040000", type: "tree", oid: blueprints },
+        { path: "comparators", mode: "040000", type: "tree", oid: comparators },
         await blob("portfolio.yml", {
           items: {
             alpha: { allocations: { acct: { guarantee } } },
