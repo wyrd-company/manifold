@@ -93,7 +93,10 @@ description: |-
   stays until the actor settles at its end. `context.fields` holds the
   task's field values, set from `task.fields` at start and updated by
   every `github.project-item.field-changed` of the actor's Project, so the
-  comparator reads a field set after the issue was added. No
+  comparator reads a field set after the issue was added. The blueprint
+  reads field values only: a change of the lifecycle field, whether its
+  own move or a person's, whatever its `movedBy`, takes no other
+  transition. No
   `dependencies` region is declared, so every task is `clear` to the
   comparator.
 
@@ -107,7 +110,10 @@ description: |-
     without a handoff has stopped;
   - `t3.session.failed` of its thread;
   - `t3.thread.archived` or `t3.thread.deleted` of its thread, which also
-    clears `context.thread`, so a `retry` creates a new thread.
+    clears `context.thread`, so a `retry` creates a new thread. The same
+    events taken in `active.stalled` clear `context.thread` and leave the
+    escalation open, so a `retry` answered after the thread is removed
+    creates one replacement thread.
 
   Agent escalations. An agent that escalates ends its turn, and the
   service raises the escalation and answers it back to the thread as a new
@@ -116,10 +122,10 @@ description: |-
   `active.working` and in `active.stalled` and enters
   `active.working.escalated`, where the settlement of the actor's own
   turn takes no transition, since the turn ended to wait for the answer.
-  `agent.escalation.answered` enters `active.working.waiting`. A turn
-  that the answer starts carries a message id the actor does not hold,
-  so the actor waits on that turn for its handoff, a failed session, or a
-  removed thread.
+  `agent.escalation.answered` enters `active.working.waiting` and
+  assigns its `messageId`, the user message that carries the answer, to
+  `context.turn`, so the answer turn is the actor's own turn: its
+  settlement with no handoff is a stall, as for the first turn.
 
   `active.stalled` invokes `escalate` with the title `Agent thread
   stopped`, a question naming the issue and the stall, and the choices
@@ -208,6 +214,24 @@ description: |-
               type: expression.guard
               params:
                 expression: event.threadId = context.thread
+          t3.thread.archived:
+            guard:
+              type: expression.guard
+              params:
+                expression: event.threadId = context.thread
+            actions:
+              - type: expression.assign
+                params:
+                  expression: '{ "thread": "" }'
+          t3.thread.deleted:
+            guard:
+              type: expression.guard
+              params:
+                expression: event.threadId = context.thread
+            actions:
+              - type: expression.assign
+                params:
+                  expression: '{ "thread": "" }'
         states:
           working:
             initial: opening
@@ -321,6 +345,10 @@ description: |-
                       type: expression.guard
                       params:
                         expression: event.threadId = context.thread
+                    actions:
+                      - type: expression.assign
+                        params:
+                          expression: '{ "turn": event.messageId }'
           stalled:
             invoke:
               id: ask
