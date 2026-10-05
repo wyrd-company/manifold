@@ -103,7 +103,10 @@ try {
     "Only manifold-service/ may be at archive root",
   );
   for (const path of paths) {
-    assert(!/(^|\/)test-fixtures(\/|$)|\.test\.[jt]s$/.test(path), `Test material: ${path}`);
+    assert(
+      !/(^|\/)(test|tests|__tests__|test-fixtures|spec)(\/|$)|\.(test|spec)\.[jt]s$/.test(path),
+      `Test material: ${path}`,
+    );
     assert(
       !path.startsWith("manifold-service/src/") &&
         !/\/(@wyrd-company\/manifold-(shared|console)|@wyrd-company\+manifold-(shared|console)[^/]*)\/(?:node_modules\/[^/]+\/[^/]+\/)?src\//.test(

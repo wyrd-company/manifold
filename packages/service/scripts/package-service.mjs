@@ -53,8 +53,8 @@ try {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = resolve(directory, entry.name);
       if (
-        ["test", "tests", "__tests__", "test-fixtures"].includes(entry.name) ||
-        /\.test\.[jt]s$/.test(entry.name)
+        ["test", "tests", "__tests__", "test-fixtures", "spec"].includes(entry.name) ||
+        /\.(test|spec)\.[jt]s$/.test(entry.name)
       )
         await rm(path, { recursive: true, force: true });
       else if (entry.isDirectory()) await removeTests(path);
