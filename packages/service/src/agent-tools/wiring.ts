@@ -33,7 +33,11 @@ export const agentTools = wiringPart({
       escalations: () => escalations.get().escalations,
       threads: agentThreads,
       sourceReady: (environment) =>
-        source.current()?.t3code.status().some((status) => status.environment === environment && status.state === "following") ?? false,
+        source
+          .current()
+          ?.t3code.status()
+          .some((status) => status.environment === environment && status.state === "following") ??
+        false,
       environmentId: async (environment, signal) =>
         (await source.ready()).t3code.environmentId(environment, signal),
       log,
