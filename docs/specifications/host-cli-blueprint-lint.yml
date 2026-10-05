@@ -35,7 +35,11 @@ description: >-
   does. A declaration with findings is reported on standard error as
   `task-metadata.yml: <n> findings; run manifold-host task-metadata lint`
   and ends the command with exit code 2 before any blueprint is linted.
-  Without `--repository`, the lint does not check `status`.
+  With `--repository` and no file argument, the command lints every
+  blueprint that repository runs: each blueprint file of the checkout, and
+  each blueprint Manifold bundles whose path no file of the checkout
+  replaces, each named by its repository path. Without `--repository`,
+  the lint does not check `status`, and at least one file is required.
 
   The command reads every file argument as UTF-8 text before it lints any.
   A file that cannot be read is reported on standard error as
@@ -71,13 +75,17 @@ validation-criteria: >-
   line for a gate whose strand needs a named guard's choice, and with a
   `token-unknown` line for a gate linted with `--configuration-bound 10`
   on a graph larger than that; and exit 2 with no standard output for no
-  file, for an unreadable file after a valid file, and for
+  file without `--repository`, for an unreadable file after a valid file, and for
   `--configuration-bound 0`. With `--repository` naming a checkout whose
   declaration lists `Packed`, it observes exit 0 for a blueprint whose
   `github-card-move` input is `{ status: Packed }` and exit 1 with a
   `lifecycle-option` line for `{ status: Pakced }`; exit 0 for the second
-  blueprint without `--repository`; and exit 2 with no standard output for
-  a checkout whose `task-metadata.yml` has a `schema` finding. For each
+  blueprint without `--repository`; exit 1 with a `lifecycle-option` line
+  for a bundled blueprint's path when `--repository` is given with no file
+  and the checkout's declaration lacks a status that bundled blueprint
+  sets, and no line for that path when the checkout replaces it with a
+  clean file; and exit 2 with no standard output for a checkout whose
+  `task-metadata.yml` has a `schema` finding. For each
   token-lint fixture of `token-lint`,
   the lines equal those built from the loader's findings and warnings for
   the same text.

@@ -182,8 +182,9 @@ proposed-design:
     and the actor's save restores the actor in the invoking state with the
     same invocation, and its invoke runs the move again. Setting a
     single-select field to an option is the same write each time, so the
-    second write leaves GitHub holding the one value, and the source's card
-    move row for the invocation is replaced, not added. The read that
+    second write leaves GitHub holding the one value, and the source keeps
+    the invocation's one card move row with the evidence the first write
+    left, even when GitHub refuses the second. The read that
     follows publishes one change. A new entry of the state is a new
     invocation and a new move.
   own-moves: >-
@@ -194,7 +195,14 @@ proposed-design:
     value the actor attempted whose write the source cannot confirm as the
     one that set it, such as a move that failed with `transport` followed by
     a person choosing the same option, carries `{ actorId, confirmed: false
-    }`, so a person's change is never claimed as the actor's. A blueprint
+    }`. A person's change is claimed as the actor's in one case only, the
+    one `github-event-source` states under attribution: a person who moves
+    the card away and back to the value of a confirmed move before the
+    source reads it is reported as that move, confirmed, since the card
+    holds the value both chose. Otherwise `confirmed: true` is the actor's
+    write, `confirmed: false` is a value the actor attempted that the
+    source cannot show it set, and `null` is a value no write of
+    Manifold's set. A blueprint
     takes a person's move with a guard on `event.movedBy = null`, its own
     with a guard on `event.movedBy.confirmed`, and decides how to take an
     unconfirmed one, or lets its own pass with no transition. A

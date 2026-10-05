@@ -51,10 +51,11 @@ description: |-
   the single-select field, and the option it set, by node id and option
   id; `state`; and `sequence`, which orders the moves. A move writes its
   row with state `sent` before it sends the write, with a `sequence` one
-  more than the largest in the table, replacing a row with the same key,
-  so a move that one state entry repeats keeps one row. A write GitHub
-  takes sets the row `confirmed`, a write GitHub refuses deletes it, and a
-  write whose fate is unknown leaves it `sent`. A reconcile that publishes a change of the item's
+  more than the largest in the table, when its invocation has no row; a
+  move that one state entry repeats keeps the row it finds, with its state
+  and `sequence`. A write GitHub takes sets the row `confirmed`, a write
+  GitHub refuses deletes the row only when that attempt wrote it, and a
+  write whose fate is unknown leaves the row as it is. A reconcile that publishes a change of the item's
   field deletes the rows it attributes or rules out, in its transaction, as
   `github-event-source` states.
 

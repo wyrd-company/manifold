@@ -38,7 +38,9 @@ commands:
               The process repository checkout whose `task-metadata.yml` and
               `bindings.yml` give the declared lifecycle options a literal
               `status` of a `github-card-move` invoke is checked against.
-              Without it, `status` is not checked.
+              With no file argument, every blueprint the repository runs is
+              linted, bundled blueprints included. Without it, `status` is
+              not checked.
             required: false
             value:
               type: path
@@ -46,14 +48,17 @@ commands:
               - ./process
         positional-arguments:
           - name: files
-            description: Paths to blueprint files.
+            description: >-
+              Paths to blueprint files. Optional with `--repository`, which
+              then lints every blueprint the repository runs, bundled
+              blueprints included.
             position: 0
             greedy: true
-            required: true
+            required: false
             value:
               type: path-list
               arity:
-                min: 1
+                min: 0
                 max: unbounded
         output:
           modes:
@@ -76,7 +81,8 @@ commands:
               meaning: At least one file has a finding.
             - code: 2
               meaning: >-
-                No file was given, a file could not be read,
+                No file was given without `--repository`, a file could not
+                be read,
                 `--configuration-bound` is not an integer of at least 1, or
                 the task metadata declaration of `--repository` has a
                 finding.
@@ -85,6 +91,7 @@ commands:
           - manifold-host blueprint lint blueprints/delivery.yml blueprints/returns.yml
           - manifold-host blueprint lint --configuration-bound 50000 blueprints/delivery.yml
           - manifold-host blueprint lint --repository . blueprints/delivery.yml
+          - manifold-host blueprint lint --repository .
         notes:
           - Implementation names are checked against the names the service registers.
           - "`token-potential` and `token-unknown` are warnings: they are printed and do not change the exit code."

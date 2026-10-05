@@ -440,13 +440,18 @@ proposed-design:
     and an owner that `owners` does not name are `forbidden`; a request
     that fails before GitHub answers, runs past `requestTimeoutMs`, or is
     answered with a `5xx` or a rate limit is `transport`; any other GraphQL
-    error is `rejected`, with GitHub's message. The row is written with
-    state `sent` in step 3, and set to `confirmed` in the transaction of
-    step 5, since a mutation that returns its item is GitHub's evidence that
-    it took the write. A mutation that GitHub refuses deletes the move's row
-    in its own transaction. A `transport` failure, and a crash between
-    steps 3 and 5, leave the row `sent`: GitHub may have taken the write or
-    not. A move's failure is not sent to `onError`: its caller takes it.
+    error is `rejected`, with GitHub's message. Step 3 writes the row with
+    state `sent` only when the invocation has no row; a repeated move of
+    one invocation, such as the invoke a restored actor runs again, keeps
+    the row it finds with its state and `sequence`, since that row may be
+    evidence of an earlier write GitHub took. Step 5 sets the row
+    `confirmed`, since a mutation that returns its item is GitHub's
+    evidence that it took the write. A mutation that GitHub refuses deletes
+    the row in its own transaction only when this attempt wrote it in step
+    3; a refusal proves only that the repeated request set nothing, so a
+    row an earlier attempt wrote keeps its state. A `transport` failure,
+    and a crash between steps 3 and 5, leave the row as it is: GitHub may
+    have taken the write or not. A move's failure is not sent to `onError`: its caller takes it.
   attribution: >-
     The card move rows decide `movedBy` on each
     `github.project-item.field-changed` a reconcile publishes, inside the
@@ -835,7 +840,12 @@ proposed-design:
     lagging read, publishes `null`, and the second move then publishes
     unconfirmed. A replayed move after its change was attributed, followed
     by a person's change away and back, publishes `null` and then
-    unconfirmed. While a sweep's observation is held open by the fake, a
+    unconfirmed. A move that GitHub takes, then a restart before the
+    actor's save, with the first read after the restart lagging at the
+    earlier value and the restored invoke's repeated mutation refused with
+    `FORBIDDEN`: the invoke fails with `forbidden`, the row stays
+    `confirmed`, and the next read publishes the original move with
+    `movedBy` confirmed for the actor. While a sweep's observation is held open by the fake, a
     queued move waits, and is sent after that observation commits.
     A field the Project lacks, a text field of that name, an option the
     field lacks, an issue with no item on the Project, a `NOT_FOUND` at the
