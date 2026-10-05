@@ -3,6 +3,9 @@
 //   implements: [operator-console, portfolio-api]
 // ---
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { useSearch, useNavigate } from "@tanstack/react-router";
+import { fetchBlueprints } from "../../api/blueprints.ts";
+import { PageTitle } from "../EmptyContent.tsx";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Plus } from "lucide-react";
 import { fetchPortfolio } from "../../api/portfolio.ts";
@@ -36,7 +39,7 @@ import { ProblemsList } from "./ProblemsList.tsx";
 import { StatusBar } from "./StatusBar.tsx";
 import { ArchivedList } from "./ArchivedList.tsx";
 import { EditItemDialog } from "./EditItemDialog.tsx";
-import { draftRead } from "./preview.ts";
+import { draftRead, changedGuaranteeParents } from "./preview.ts";
 function expandedItems() {
   try {
     const value: unknown = JSON.parse(localStorage.getItem("manifold.portfolio.expanded") ?? "[]");
@@ -47,24 +50,33 @@ function expandedItems() {
     return [];
   }
 }
+export function portfolioSearch(value: Record<string, unknown>): { account?: string } {
+  return typeof value["account"] === "string" ? { account: value["account"] } : {};
+}
 export function PortfolioContent() {
+  const search = useSearch({ strict: false, select: portfolioSearch }),
+    navigate = useNavigate();
+  const repositoryQuery = useQuery({
+    queryKey: ["blueprints"],
+    queryFn: fetchBlueprints,
+    retry: false,
+  });
+  const repository =
+    repositoryQuery.data?.kind === "ok" ? repositoryQuery.data.body.repository : undefined;
   const client = useQueryClient(),
     query = useQuery({
       queryKey: ["portfolio"],
       queryFn: fetchPortfolio,
       retry: false,
-      refetchOnWindowFocus: false,
     }),
     sourceQuery = useQuery({
       queryKey: ["declaration", "portfolio.yml"],
       queryFn: fetchDeclarationSource,
       retry: false,
-      refetchOnWindowFocus: false,
     });
   const [draft, setDraft] = useState<PortfolioDraft | undefined>(() =>
       readPortfolioDraft(localStorage),
     ),
-    [account, setAccount] = useState(""),
     [expanded, setExpanded] = useState(expandedItems),
     [lint, setLint] = useState<{ text: string; body: DeclarationLint }>(),
     [lintError, setLintError] = useState(false),
@@ -191,11 +203,15 @@ export function PortfolioContent() {
   useEffect(() => {
     if (source) queueMicrotask(() => settleSource());
   }, [source]);
-  const selected = read?.accounts.some((a) => a.name === account)
-    ? account
+  const selected = read?.accounts.some((a) => a.name === search.account)
+    ? search.account!
     : (read?.accounts[0]?.name ?? "");
   const display = read && draft ? draftRead(read, draft.text) : read;
-  const findings = draft ? (lint?.text === draft.text ? lint.body : undefined) : source;
+  const findings = draft ? lint?.body : source;
+  const changedParents =
+    draft && display && read
+      ? changedGuaranteeParents(draftRead(read, draft.baseText), display, selected)
+      : [];
   const canSave =
     !!draft &&
     !draft.saved &&
@@ -220,49 +236,58 @@ export function PortfolioContent() {
   );
   return (
     <section className="portfolio-screen">
-      <div className="portfolio-title-actions">
-        {draft && !dialog ? (
-          <>
-            <Button variant="outline" disabled={busy} onClick={cancel}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!canSave || busy}
-              onClick={() => {
-                setMessage("Update portfolio allocations");
-                setPublish(true);
-              }}
-            >
-              Save allocations
-            </Button>
-          </>
-        ) : !dialog ? (
-          <>
-            <Button
-              variant="outline"
-              disabled={!source || invalidSource}
-              onClick={() => setDraft(startDraft())}
-            >
-              Edit allocations
-            </Button>
-            <Button
-              disabled={!source || invalidSource}
-              onClick={() => setDialog({ before: draft })}
-            >
-              <Plus size={14} /> Add item
-            </Button>
-          </>
-        ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Refresh portfolio"
-          disabled={query.isFetching}
-          onClick={() => void refresh()}
-        >
-          <RefreshCw size={16} />
-        </Button>
+      <div className="portfolio-heading">
+        <PageTitle title="Portfolio" description="How capacity is allocated across your work." />
+        <div className="portfolio-title-actions">
+          {draft && !dialog ? (
+            <>
+              <Button variant="outline" disabled={busy} onClick={cancel}>
+                Cancel
+              </Button>
+              <Button
+                disabled={!canSave || busy || !repository}
+                onClick={() => {
+                  setMessage("Update portfolio allocations");
+                  setPublish(true);
+                }}
+              >
+                Save allocations
+              </Button>
+            </>
+          ) : !dialog ? (
+            <>
+              <Button
+                variant="outline"
+                disabled={!source || invalidSource}
+                onClick={() => setDraft(startDraft())}
+              >
+                Edit allocations
+              </Button>
+              <Button
+                disabled={!source || invalidSource}
+                onClick={() => setDialog({ before: draft })}
+              >
+                <Plus size={14} /> Add item
+              </Button>
+            </>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Refresh portfolio"
+            disabled={query.isFetching}
+            onClick={() => void refresh()}
+          >
+            <RefreshCw size={16} />
+          </Button>
+        </div>
       </div>
+      {repositoryQuery.data?.kind === "failed" ? (
+        <div role="alert" className="error-alert">
+          {repositoryQuery.data.message}
+          <Button onClick={() => void repositoryQuery.refetch()}>Try again</Button>
+        </div>
+      ) : null}
       {toast ? (
         <p role="status" className="info-alert">
           {toast}
@@ -308,7 +333,12 @@ export function PortfolioContent() {
               <select
                 aria-label="Allocations for"
                 value={selected}
-                onChange={(e) => setAccount(e.target.value)}
+                onChange={(e) =>
+                  void navigate({
+                    to: "/portfolio",
+                    search: (previous) => ({ ...previous, account: e.target.value }),
+                  })
+                }
               >
                 {display.accounts.map((a) => (
                   <option key={a.name}>{a.name}</option>
@@ -333,7 +363,9 @@ export function PortfolioContent() {
           ) : null}
           {conflict ? (
             <div role="alert" className="error-alert">
-              portfolio.yml changed at {conflict.head.slice(0, 7)}. Your changes are kept.
+              {conflict.reason === "file-changed"
+                ? `portfolio.yml changed on ${repository?.branch ?? ""} at ${conflict.head.slice(0, 7)}. Your changes are kept.`
+                : `${repository?.branch ?? ""} moved while saving, at ${conflict.head.slice(0, 7)}. Your changes are kept.`}
               <Button
                 variant="outline"
                 onClick={() => {
@@ -371,6 +403,7 @@ export function PortfolioContent() {
             lint={findings}
             pending={pending}
             editing={!!draft}
+            parents={changedParents}
           />
           <ProblemsList lint={findings ?? { findings: [], warnings: display.warnings }} />
           {lintError ? (
@@ -480,19 +513,21 @@ export function PortfolioContent() {
           </div>
         </DialogPopup>
       </Dialog>
-      <PublishDialog
-        open={publish}
-        title="Save allocations"
-        path="portfolio.yml"
-        added={!source?.exists}
-        repository={{ url: "Process repository", branch: "configured branch" }}
-        message={message}
-        onMessage={setMessage}
-        busy={busy}
-        error={error}
-        onClose={() => setPublish(false)}
-        onPublish={() => void save(message)}
-      />
+      {repository ? (
+        <PublishDialog
+          open={publish}
+          title="Save allocations"
+          path="portfolio.yml"
+          added={!source?.exists}
+          repository={repository}
+          message={message}
+          onMessage={setMessage}
+          busy={busy}
+          error={error}
+          onClose={() => setPublish(false)}
+          onPublish={() => void save(message)}
+        />
+      ) : null}
     </section>
   );
 }

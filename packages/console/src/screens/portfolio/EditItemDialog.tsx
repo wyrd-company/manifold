@@ -147,11 +147,13 @@ export function EditItemDialog({
                 Sub-items{" "}
                 <small className="muted">
                   {100 -
-                    children.reduce(
-                      (s, i) =>
-                        s + (i.allocations.find((a) => a.account === account)?.guarantee ?? 0),
-                      0,
-                    )}
+                    read.items
+                      .filter((i) => i.parent === id && !i.archived)
+                      .reduce(
+                        (s, i) =>
+                          s + (i.allocations.find((a) => a.account === account)?.guarantee ?? 0),
+                        0,
+                      )}
                   % unallocated
                 </small>
               </h3>

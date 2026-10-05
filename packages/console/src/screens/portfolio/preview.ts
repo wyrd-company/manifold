@@ -72,7 +72,57 @@ export function draftRead(read: PortfolioResponse, text: string): PortfolioRespo
       !items.some((i) => i.id === item.id) &&
       (!item.parent || items.some((i) => i.id === item.parent))
     )
-      items.push(item);
+      items.push({ ...item, allocations: item.allocations.map((a) => ({ ...a })) });
   }
-  return { ...read, items };
+  function amounts(parent: string | null, account: string, capacity: number) {
+    for (const item of items.filter((i) => i.parent === parent && !i.archived)) {
+      const row = item.allocations.find((a) => a.account === account);
+      if (!row) continue;
+      const amount = Number((BigInt(capacity) * BigInt(Math.round(row.guarantee * 100))) / 10000n);
+      Object.assign(row, { amount });
+      amounts(item.id, account, amount);
+    }
+  }
+  for (const account of read.accounts) amounts(null, account.name, account.window?.capacity ?? 0);
+  function remainder(parent: string | null) {
+    return read.accounts.map((account) => {
+      const children = items
+        .filter((i) => i.parent === parent && !i.archived)
+        .map((i) => i.allocations.find((a) => a.account === account.name));
+      const capacity =
+        parent === null
+          ? (account.window?.capacity ?? 0)
+          : (items.find((i) => i.id === parent)?.allocations.find((a) => a.account === account.name)
+              ?.amount ?? 0);
+      return {
+        account: account.name,
+        percent: Number(
+          (100 - children.reduce((sum, a) => sum + (a?.guarantee ?? 0), 0)).toFixed(2),
+        ),
+        amount: capacity - children.reduce((sum, a) => sum + (a?.amount ?? 0), 0),
+      };
+    });
+  }
+  for (const item of items)
+    if (item.unallocated) Object.assign(item, { unallocated: remainder(item.id) });
+  return { ...read, items, unallocated: remainder(null) };
+}
+
+export function changedGuaranteeParents(
+  base: PortfolioResponse,
+  next: PortfolioResponse,
+  account: string,
+): (string | null)[] {
+  const parents = new Set<string | null>();
+  const guarantee = (item: PortfolioItem | undefined) =>
+    item && !item.archived
+      ? (item.allocations.find((a) => a.account === account)?.guarantee ?? 0)
+      : 0;
+  for (const id of new Set([...next.items, ...base.items].map((i) => i.id))) {
+    const before = base.items.find((i) => i.id === id),
+      after = next.items.find((i) => i.id === id);
+    if (guarantee(before) !== guarantee(after))
+      parents.add(after?.parent ?? before?.parent ?? null);
+  }
+  return [...parents];
 }

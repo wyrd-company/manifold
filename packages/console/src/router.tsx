@@ -14,7 +14,7 @@ import { boardSearch } from "./screens/BoardContent.tsx";
 import { BoardContent } from "./screens/BoardContent.tsx";
 import { EpicsContent } from "./screens/EpicsContent.tsx";
 import { ActorsContent } from "./screens/ActorsContent.tsx";
-import { PortfolioContent } from "./screens/PortfolioContent.tsx";
+import { PortfolioContent, portfolioSearch } from "./screens/PortfolioContent.tsx";
 import { BlueprintsContent } from "./screens/BlueprintsContent.tsx";
 import { ProjectsContent } from "./screens/ProjectsContent.tsx";
 import { EnvironmentsContent } from "./screens/EnvironmentsContent.tsx";
@@ -44,7 +44,14 @@ const contents: readonly ComponentType[] = [
   EnvironmentsContent,
   SettingsContent,
 ];
+const portfolioRoute = createRoute({
+  getParentRoute: () => root,
+  path: "/portfolio",
+  validateSearch: portfolioSearch,
+  component: PortfolioContent,
+});
 const routes = navigation.map((item, index) => {
+  if (item.path === "/portfolio") return portfolioRoute;
   const Content = contents[index]!;
   return createRoute({
     getParentRoute: () => root,

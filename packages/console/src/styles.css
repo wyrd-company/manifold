@@ -1374,3 +1374,23 @@ select:focus-visible {
   background: var(--error);
   color: white;
 }
+.portfolio-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+.portfolio-heading .page-title,
+.portfolio-heading .portfolio-title-actions {
+  margin-bottom: 0;
+}
+.portfolio-projects {
+  position: relative;
+}
+.portfolio-project-measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+}

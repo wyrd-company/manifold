@@ -101,6 +101,13 @@ test("built Portfolio reads settled balances, lints allocations, saves one commi
     });
     expect(invalidSave.status).toBe(422);
     await page.goto(url + "/console/portfolio");
+    const titleBox = await page
+      .getByRole("heading", { name: "Portfolio", exact: true })
+      .boundingBox();
+    const actionsBox = await page
+      .getByRole("button", { name: "Edit allocations", exact: true })
+      .boundingBox();
+    expect(Math.abs(titleBox!.y - actionsBox!.y)).toBeLessThan(50);
     await page
       .locator(".portfolio-budget-card")
       .filter({ hasText: "acct-a" })
@@ -117,6 +124,9 @@ test("built Portfolio reads settled balances, lints allocations, saves one commi
     await page.getByLabel("Allocations for").selectOption("acct-b");
     const beta = page.getByRole("row").filter({ has: page.getByText("beta", { exact: true }) });
     await beta.getByText("$10.00", { exact: true }).waitFor();
+    expect(new URL(page.url()).searchParams.get("account")).toBe("acct-b");
+    await page.reload();
+    expect(await page.getByLabel("Allocations for").inputValue()).toBe("acct-b");
     await page.getByLabel("Allocations for").selectOption("acct-a");
     await page.getByRole("button", { name: "Edit allocations", exact: true }).click();
     await page.getByLabel("alpha allocation", { exact: true }).fill("70");
@@ -131,6 +141,29 @@ test("built Portfolio reads settled balances, lints allocations, saves one commi
     expect(
       await page.getByRole("button", { name: "Save allocations", exact: true }).isDisabled(),
     ).toBe(true);
+    let releaseLint!: () => void;
+    const heldLint = new Promise<void>((resolve) => {
+      releaseLint = resolve;
+    });
+    await page.route("**/api/declarations/lint", async (route) => {
+      await heldLint;
+      await route.continue();
+    });
+    try {
+      await page.getByLabel("beta allocation", { exact: true }).fill("39");
+      await page.getByRole("status").filter({ hasText: "Checking…" }).waitFor();
+      expect(
+        await page.getByLabel("alpha allocation", { exact: true }).getAttribute("aria-invalid"),
+      ).toBe("true");
+      expect(await page.locator(".portfolio-problems").innerText()).toContain("total 110%");
+    } finally {
+      releaseLint();
+    }
+    await page
+      .locator(".portfolio-problems")
+      .getByText(/total 109%/)
+      .waitFor();
+    await page.unroute("**/api/declarations/lint");
     await page.getByLabel("beta allocation", { exact: true }).fill("30");
     await page.waitForFunction(
       () =>
@@ -143,6 +176,10 @@ test("built Portfolio reads settled balances, lints allocations, saves one commi
     await page.getByLabel("alpha allocation", { exact: true }).waitFor();
     expect(await page.getByLabel("alpha allocation", { exact: true }).inputValue()).toBe("70");
     await page.getByRole("button", { name: "Save allocations", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByText(`${f.configuration.processRepository.url} · main`, { exact: true })
+      .waitFor();
     const saveIds: string[] = [];
     await page.route("**/api/declarations/save", async (route) => {
       const body = route.request().postDataJSON() as { saveId: string };
@@ -174,6 +211,32 @@ test("built Portfolio reads settled balances, lints allocations, saves one commi
     expect(
       commits.filter((c) => c.commit.message.startsWith("Update portfolio allocations")),
     ).toHaveLength(1);
+    const reads = { portfolio: 0, source: 0 };
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/portfolio")) reads.portfolio++;
+      if (request.url().includes("/api/declarations/source")) reads.source++;
+    });
+    service.portfolio.ledger.postActual({
+      key: "focus-actual",
+      actor: "task:focus",
+      item: "alpha",
+      account: "acct-a",
+      amount: 200000,
+      usedAt: Date.now(),
+    });
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      window.dispatchEvent(new Event("visibilitychange"));
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+      window.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page
+      .locator(".portfolio-budget-card")
+      .filter({ hasText: "acct-a" })
+      .getByText("$0.2177", { exact: true })
+      .waitFor();
+    expect(reads.portfolio).toBeGreaterThan(0);
+    expect(reads.source).toBeGreaterThan(0);
     expect(errors).toEqual([]);
   } finally {
     await browser.close();
@@ -289,6 +352,103 @@ test("item dialogs preserve ids, add and remove sub-items, archive, and restore 
       service.portfolio.current().declaration.items.find((i) => i.id === "new-collection")
         ?.archived,
     ).toBe(false);
+  } finally {
+    await browser.close();
+    await service.stop();
+    await f.close();
+  }
+});
+
+test("Portfolio screen keeps nested remainders, changed-parent status, project counts and typed conflicts", async () => {
+  const f = await serviceFixture();
+  const reset = "2026-01-01T00:00:00Z";
+  await f.commit(50, {
+    accounts: {
+      accounts: {
+        "acct-a": { unit: "usd", kind: "api", capacity: { amount: 10, reset, every: { days: 1 } } },
+        "acct-b": {
+          unit: "usd",
+          kind: "subscription",
+          capacity: { amount: 20, reset, every: { days: 7 } },
+        },
+      },
+    },
+  });
+  await git.setConfig({ fs, gitdir: f.remote.gitdir, path: "http.receivepack", value: true });
+  const service = await startService({ configurationFile: f.file, log: () => {} }),
+    browser = await chromium.launch({ headless: true });
+  try {
+    const text =
+      "items:\n  alpha:\n    allocations:\n      acct-a: { guarantee: 50 }\n    items:\n      gamma:\n        allocations:\n          acct-a: { guarantee: 40 }\n      other:\n        allocations:\n          acct-a: { guarantee: 20 }\n  beta:\n    allocations:\n      acct-a: { guarantee: 50 }\n";
+    await service.revisions.save({
+      path: "portfolio.yml",
+      base: service.processRepository.current()!.commit,
+      text,
+      message: "Declare nested budgets",
+      saveId: "3".repeat(32),
+    });
+    const address = service.http.address(),
+      url = `http://${address.host}:${address.port}`,
+      page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+    page.setDefaultTimeout(5000);
+    let longNames = true;
+    await page.route("**/api/portfolio", async (route) => {
+      const response = await route.fetch(),
+        body = await response.json();
+      delete body.accounts.find((a: { name: string }) => a.name === "acct-b").window;
+      body.items.find((i: { id: string }) => i.id === "alpha").projects = longNames
+        ? {
+            github: [
+              { binding: "a".repeat(64), owner: "example", number: 1 },
+              { binding: "b".repeat(64), owner: "example", number: 2 },
+            ],
+            t3code: [{ environment: "local", project: "sample", via: "association" }],
+          }
+        : { github: [{ binding: "sample", owner: "example", number: 1 }], t3code: [] };
+      await route.fulfill({ response, json: body });
+    });
+    await page.goto(url + "/console/portfolio?account=unknown");
+    expect(await page.getByLabel("Allocations for").inputValue()).toBe("acct-a");
+    const card = page.locator(".portfolio-budget-card").filter({ hasText: "acct-b" });
+    await card.getByText("No window yet").waitFor();
+    expect(await card.getByRole("meter").getAttribute("aria-valuenow")).toBe("0");
+    await page.getByText("2 GitHub Projects, 1 T3code project", { exact: true }).waitFor();
+    longNames = false;
+    await page.getByRole("button", { name: "Refresh portfolio" }).click();
+    await page.locator(".portfolio-projects").filter({ hasText: "sample · example/1" }).waitFor();
+    await page.getByRole("button", { name: "Edit alpha", exact: true }).click();
+    await page.getByRole("dialog").getByText("40% unallocated", { exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: "Archive item" }).isDisabled()).toBe(true);
+    await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.getByRole("button", { name: "Edit allocations", exact: true }).click();
+    await page.getByLabel("gamma allocation", { exact: true }).fill("70");
+    const status = page.getByRole("status").filter({ hasText: "alpha ·" });
+    await status.getByText("alpha · 10% unallocated", { exact: true }).waitFor();
+    expect(await status.innerText()).not.toContain("Top level");
+    const nestedRemainder = page.getByRole("row").filter({ hasText: "Unallocated" }).nth(0);
+    expect(await nestedRemainder.innerText()).toContain("10%");
+    await nestedRemainder.getByText("$0.50", { exact: true }).waitFor();
+    let reason = "file-changed";
+    await page.route("**/api/declarations/save", (route) =>
+      route.fulfill({
+        status: 409,
+        json: {
+          error: "conflict",
+          message: "Sample conflict",
+          reason,
+          head: service.processRepository.current()!.commit,
+          text,
+        },
+      }),
+    );
+    await page.getByRole("button", { name: "Save allocations", exact: true }).click();
+    await page.getByRole("button", { name: "Commit and push", exact: true }).click();
+    await page.getByRole("alert").filter({ hasText: "portfolio.yml changed on main at" }).waitFor();
+    await page.getByRole("button", { name: "Apply my changes to the latest", exact: true }).click();
+    await page.getByRole("button", { name: "Save allocations", exact: true }).click();
+    reason = "branch-moved";
+    await page.getByRole("button", { name: "Commit and push", exact: true }).click();
+    await page.getByRole("alert").filter({ hasText: "main moved while saving, at" }).waitFor();
   } finally {
     await browser.close();
     await service.stop();

@@ -2,4 +2,4 @@
 // relationships:
 //   implements: operator-console
 // ---
-export { PortfolioContent } from "./portfolio/PortfolioContent.tsx";
+export { PortfolioContent, portfolioSearch } from "./portfolio/PortfolioContent.tsx";

@@ -2,6 +2,7 @@
 // relationships:
 //   implements: operator-console
 // ---
+import { ProjectNames } from "./ProjectNames.tsx";
 import type { PortfolioResponse, PortfolioItem } from "@wyrd-company/manifold-shared/portfolio-api";
 import type { PortfolioFinding } from "@wyrd-company/manifold-shared";
 import { formatPercent } from "@wyrd-company/manifold-shared/amounts";
@@ -105,11 +106,7 @@ export function PortfolioTable({
               );
             }
             const i = row.item,
-              a = i.allocations.find((a) => a.account === account),
-              projects = [
-                ...i.projects.github.map((p) => `${p.binding} · ${p.owner}/${p.number}`),
-                ...i.projects.t3code.map((p) => p.binding ?? p.project),
-              ].join(", ");
+              a = i.allocations.find((a) => a.account === account);
             return (
               <tr key={i.id} className={row.depth ? "portfolio-child" : ""}>
                 <td style={{ paddingLeft: 16 + row.depth * 24 }}>
@@ -130,11 +127,7 @@ export function PortfolioTable({
                     </button>
                   ) : null}
                   <strong>{i.title}</strong>
-                  {projects ? (
-                    <small title={projects} className="portfolio-projects muted">
-                      {projects}
-                    </small>
-                  ) : null}
+                  <ProjectNames projects={i.projects} />
                 </td>
                 <td>
                   {editing ? (

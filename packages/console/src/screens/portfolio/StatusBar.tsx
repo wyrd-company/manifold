@@ -11,16 +11,17 @@ export function StatusBar({
   lint,
   pending,
   editing,
+  parents,
 }: {
   read: PortfolioResponse;
   account: string;
   lint: DeclarationLint | undefined;
   pending: boolean;
   editing: boolean;
+  parents: readonly (string | null)[];
 }) {
   const limits = lint?.findings.filter((f) => f.kind === "guarantee-limit") ?? [];
   if (!editing && !limits.length) return null;
-  const parents = [null, ...read.items.filter((i) => i.unallocated).map((i) => i.id)];
   return (
     <div role="status" className={limits.length ? "error-alert" : "info-alert"}>
       {pending

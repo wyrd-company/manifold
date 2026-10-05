@@ -59,7 +59,10 @@ export function BudgetSourceCards({ accounts }: { accounts: readonly PortfolioAc
               </p>
             </>
           ) : (
-            <p className="muted">No window yet</p>
+            <>
+              <Meter share={0} />
+              <p className="muted">No window yet</p>
+            </>
           )}
         </section>
       ))}
