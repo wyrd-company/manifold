@@ -492,8 +492,8 @@ proposed-design:
     })` and `withdraw({ kind, subject })` for the kinds `stranded-token`
     and `comparator-failed`, and the escalation's `subject` and answer that
     a handler receives.
-    Each module's own type satisfies them, and a test passes a fixture of
-    the same shape until that module merges.
+    Each module's own type satisfies them, and a test may pass a fixture
+    of the same shape.
   module-layout: >-
     `index.ts` re-exports the public names and nothing else. `gates.ts`
     implements `createGates`: the version map, the comparators, the dirty

@@ -717,10 +717,8 @@ proposed-design:
     as `blueprints/task.yml`, and a repository file at that path replaces
     it, even when the file fails lint. Its version key is
     `<commit>:<path>@<bundle-digest>`. `BlueprintsApiOptions.bundle` is the
-    bundle's digest and its blueprints by path and text; until the default
-    process design's bundle module merges, the option is a structural
-    stand-in of that shape, which the service passes as an empty bundle,
-    and the rebase replaces it with that module's export. A bundled
+    bundle's digest and its blueprints by path and text, and the service
+    passes the bundle module's export. A bundled
     blueprint is listed, read, and linted as a repository blueprint is,
     and a save of its path adds the repository file that replaces it.
   blueprints-public-interface: |-
