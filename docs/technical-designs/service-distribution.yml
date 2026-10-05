@@ -22,6 +22,7 @@ relationships:
     - accounts-declaration
     - task-metadata-declaration
     - host-cli-mcp
+    - host-cli-hook
     - agent-tools-configuration
     - t3code-environments-configuration
   # GAP-EDGE: the decision record is context, not a contract; the schema
@@ -308,7 +309,9 @@ proposed-design:
     provider's MCP configuration, as `host-cli-mcp` gives it per provider;
     the guide links that specification for each provider's file and
     snippet and restates none of them, and checks the registration by the
-    provider listing the `handoff` and `escalate` tools. (12) Check: add an issue to the test Project and
+    provider listing the `handoff`, `escalate`, and `get-messages` tools,
+    and registers the plugin's hook as `host-cli-hook` gives it per
+    provider. (12) Check: add an issue to the test Project and
     find its `task:<issue node id>` actor in the console or through
     `GET /api/actors`. (13) When something is wrong: the log events an
     operator meets first (`start-failed` with its issues, `pull-failed`,
@@ -397,16 +400,17 @@ proposed-design:
     uses the configured bind address. The webhook endpoint verifies each
     delivery by its hook's secret, and both escalation endpoints need the
     escalation's key, so these are the endpoints that are safe to expose;
-    `/api/`, `/console/`, `/api/usage/push`, and
-    `/api/agent-tools/calls` are not. The section gives
+    `/api/`, `/console/`, `/api/usage/push`, `/api/agent-tools/calls`, and
+    `/api/agent-tools/notices` are not. The section gives
     the rule as a table of method, path, and reason, then one example in a
     widely used proxy (Caddy) that matches each endpoint by method and
     exact path pattern. A tunnel for testing follows the same rule and
     enables only the endpoints its test exercises. The host CLI on each
-    environment calls two API endpoints: `usage push` posts to
-    `/api/usage/push`, and the harness plugin posts each tool call to
-    `/api/agent-tools/calls`. An environment on the service host reaches
-    both over loopback. An environment on another machine reaches these
+    environment calls three API endpoints: `usage push` posts to
+    `/api/usage/push`, the harness plugin posts each tool call to
+    `/api/agent-tools/calls`, and its hook posts each notice request to
+    `/api/agent-tools/notices`. An environment on the service host reaches
+    them over loopback. An environment on another machine reaches these
     paths and the console through the service host's private-network bind
     address. Neither API path nor the console goes through the public proxy.
   verification: >-

@@ -175,8 +175,8 @@ The public proxy forwards exactly these endpoints, with `{id}` one path segment:
 | POST   | `/escalations/{id}/answer` | Answer submission, authorized by its escalation key. |
 
 The proxy answers all other paths and methods itself. Do not forward prefixes.
-Keep `/api/`, `/console/`, `/api/usage/push`, and `/api/agent-tools/calls` off the
-public network. A test tunnel follows the same rule and enables only the
+Keep `/api/`, `/console/`, `/api/usage/push`, `/api/agent-tools/calls`, and
+`/api/agent-tools/notices` off the public network. A test tunnel follows the same rule and enables only the
 endpoints the test exercises.
 
 A Caddy example for your public hostname:
@@ -233,8 +233,8 @@ upstream in each Caddy forwarding rule above with the configured private bind
 address. Keep its three endpoint rules unchanged.
 
 Check from each remote environment: `GET /console/` on the private service URL
-returns HTML. From the public URL, `/console/`, `/api/usage/push`, and
-`/api/agent-tools/calls` receive the proxy's 404.
+returns HTML. From the public URL, `/console/`, `/api/usage/push`,
+`/api/agent-tools/calls`, and `/api/agent-tools/notices` receive the proxy's 404.
 
 ## 7. Create the organization hook
 

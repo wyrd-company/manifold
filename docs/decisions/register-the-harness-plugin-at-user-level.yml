@@ -36,5 +36,5 @@ expected-outcomes:
     - Every thread T3 Code starts, with any provider, can hand off and escalate.
     - One registration per provider per environment, and no file in a user's repository.
   negative:
-    - Sessions outside T3 Code on that machine list two tools they cannot use.
+    - Sessions outside T3 Code on that machine list the plugin's tools, which they cannot use.
     - Registration is a manual step per provider and environment in the operator setup guide.

@@ -84,7 +84,8 @@ description: |-
     escalated; the response names the turn's escalation.
   - `get-messages`: `{ status: "read", threadId, turnId, messages,
     message }`. `messages` lists every message read in the calling turn,
-    in the order they were sent, each `#/$defs/thread-message`:
+    in read position order, as Reading below states, each
+    `#/$defs/thread-message`:
     `messageId`, `from` (`{ actorId, issue }`, the sending task's actor id
     and its issue node id or `null`), `text`, `sentAt`, and `deliveredAt`,
     each time an RFC 3339 UTC timestamp with milliseconds.
@@ -105,9 +106,12 @@ description: |-
   | `invalid-escalation` | 422 | The escalate input breaks a rule; `issues` names each. |
   | `environment-unavailable` | 503 | The environment's T3 Code server is not reachable within the identification bound. |
 
-  A body over 1 MiB answers `413`, a path other than `/calls` under
-  `/api/agent-tools` answers `404`, and a method other than `POST`
-  answers `405`, each with a refusal of code `invalid-request`. `message`
+  The service answers two paths under `/api/agent-tools`: `/calls`, with
+  a body of at most 1 MiB, and `/notices`, with a body of at most 64 KiB,
+  as Mail notice below states. A body over its path's limit answers
+  `413`, any other path under `/api/agent-tools` answers `404`, and a
+  method other than `POST` on either path answers `405`, each with a
+  refusal of code `invalid-request`. `message`
   is the text the plugin returns to the agent: for an accepted handoff,
   that the handoff was taken and the agent ends its turn now; for a raised
   escalation, that the question was sent, that the agent ends its turn
