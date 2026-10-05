@@ -1,0 +1,153 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - operator-console
+    - escalation-contract
+    - portfolio-ledger
+    - github-event-source
+    - bindings-declaration
+    - actors-api
+terms:
+  - binding
+  - github-mirror
+  - holder
+  - token
+  - tracked-issue
+  - escalation
+  - reservation
+  - estimate
+  - actual
+  - variance
+description: |-
+  Defines the tasks read endpoints of Manifold's API: `GET /api/tasks`,
+  which lists the tasks of every bound Project with their lifecycle status,
+  and `GET /api/tasks/{actorId}`, which reads one task with its actor, its
+  threads, its usage from the ledger, and its escalations.
+  `docs/specifications/tasks-api.openapi.yml` is the machine-readable
+  definition. The Board and the Task page of the operator console read
+  them, and any automation may.
+
+  The endpoints are mounted with the HTTP host's `mount` at the prefix
+  `/api/tasks` and are always served without authentication. Access
+  control belongs to the deployment. They read and change nothing.
+
+  Task identity. A task is a tracked issue whose item is present and not
+  archived on a bound Project. Its id is its task actor's id,
+  `task:<issueNodeId>`, whether or not the actor exists yet, so a task
+  that intake has not taken in has an id and a page.
+
+  Bound Projects. The bound Projects are the GitHub Project bindings of
+  the bindings declaration in force that are not archived, in the
+  declaration's order. A bound Project's lifecycle field is the
+  single-select field that the process repository declares for it, with
+  the option names a blueprint may set, in their declared order. A bound
+  Project with no lifecycle declaration has `lifecycle` absent.
+
+  Lifecycle status. A task's status on a bound Project is the name of the
+  option its item holds in the Project's lifecycle field, as the GitHub
+  mirror holds it. It is `null` when the Project has no lifecycle
+  declaration, the item holds no value in that field, or the field holds a
+  value of another kind.
+
+  List. `GET /api/tasks` answers `{ "projects": [...] }`, one entry per
+  bound Project:
+
+  - `binding`: the binding's name.
+  - `owner`, `number`: the Project's owner login and number.
+  - `item`: the binding's portfolio item.
+  - `lifecycle`: `{ field, options }`, the declared field name and option
+    names in declared order, or absent.
+  - `tasks`: one task summary per task on the Project, ordered by
+    `repository`, then by `number`, ascending.
+
+  A task summary holds:
+
+  - `actorId`: `task:<issueNodeId>`.
+  - `issue`: `{ nodeId, repository, number, state, title, url }` from the
+    GitHub mirror. `state` is `open` or `closed`. `title` and `url` are
+    absent until the mirror has read them.
+  - `status`: the lifecycle status on this Project, or `null`.
+  - `portfolioItem`: the string at `context.manifold.portfolioItem` of the
+    task actor's snapshot, or absent.
+  - `actor`: the task actor, or absent when the store holds no snapshot
+    for its id. `{ status, states }`, where `status` is `held` when the
+    store holds an errored snapshot for the actor, else the snapshot's
+    status, `active`, `done`, or `stopped`; and `states` is the leaf state
+    paths of the snapshot's state value, as `actors-api` defines them.
+  - `openEscalations`: the number of the task's escalations whose status
+    is `open`.
+
+  An issue on two bound Projects is a task on each, with the same
+  `actorId`. The answer is `200` with `Content-Type: application/json`
+  and `Cache-Control: no-store`. With no bound Project, `projects` is
+  empty. The query string is ignored. The list is not paged.
+
+  One task. `GET /api/tasks/{actorId}` answers `200` with
+  `{ "task": {...} }` for the id of a task, and `404` with an empty body
+  for any other id, an id that is not `task:` followed by a node id
+  included. The segment is percent-decoded once before it is compared. The
+  task holds:
+
+  - `actorId` and `issue`, as in a summary.
+  - `projects`: one entry per bound Project the task is on,
+    `{ binding, owner, number, field, status }`, where `field` is the
+    declared lifecycle field name or absent, and `status` is as in a
+    summary.
+  - `portfolioItem`: as in a summary.
+  - `actor`: absent when the store holds no snapshot, else `{ status,
+    states, machine, blueprint, environment, savedAt }`. `status` and
+    `states` are as in a summary; for a held actor they describe the last
+    good snapshot. `machine`, `blueprint`, `environment`, and `savedAt`
+    are as `actors-api` defines them for a summary.
+  - `threads`: one entry per thread id in `context.manifold.threads`, in
+    that order, `{ threadId, environment, title, url, turn, archived }`.
+    `environment` is the actor's `context.manifold.environment`. `title`,
+    `url`, `turn`, and `archived` come from the T3 Code environment
+    source's view of the thread and are absent when the source does not
+    follow it. `url` is the thread's page on the T3 Code web client,
+    `{environment url}/{T3 Code environment id}/{threadId}`. `turn` is the
+    latest turn's state, `running`, `completed`, `interrupted`, or
+    `error`, or absent when the thread has no turn. `archived` is true
+    when T3 Code has archived or deleted the thread.
+  - `usage`: `{ settled, accounts }` from the ledger's actor usage read
+    for the actor id. Each account entry is `{ account, estimate, actual,
+    variance, reserved }`: the sum of the actor's reservations, its posted
+    actuals, actual less estimate, and its outstanding reservation, each
+    in the account's native unit. An actor with no ledger entry has
+    `accounts` empty.
+  - `escalations`: `{ open, recent }`. `open` holds the task's open
+    escalations, oldest raised first. `recent` holds its answered and
+    withdrawn escalations, newest closed first, at most 20. Each is an
+    escalation as `escalation-contract` defines it.
+
+  The task's escalations are those whose raiser is the blueprint actor
+  with the task's actor id, and the service escalations whose subject
+  names the task: `actorId` equal to the task's actor id, `issue` equal to
+  its issue node id, or `tokenId` naming a gate token whose holder is the
+  task's actor.
+
+  A path under the prefix other than `/api/tasks` and
+  `/api/tasks/{actorId}` answers `404`. A method other than `GET` answers
+  `405` with `Allow: GET`. A read that throws answers `500` with an empty
+  body.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/tasks-api.openapi.yml` is a valid OpenAPI 3.1
+  document whose escalation schema resolves to `escalation-contract`. A
+  test in `packages/service` requests both endpoints without
+  authentication through the service's HTTP host, with a store, a ledger,
+  and an escalations module on one database file, and GitHub mirror and
+  T3 Code thread fixtures, and checks that each body validates against
+  its response schema in the OpenAPI document. The fixtures include two
+  bound Projects and one archived binding, one Project with no lifecycle
+  declaration, one issue on both Projects, one archived item, one item
+  whose status is not set, one task with no actor, one held actor, one
+  settled actor with actuals on two accounts, a blueprint escalation, a
+  `held-actor` escalation, an `intake-failed` escalation, and a
+  `stranded-token` escalation of the task, and an escalation of another
+  actor. The test checks each field stated above, the order of projects,
+  tasks, and escalations, the `404` for an unknown id, a non-task id, and
+  a sub-path, and the `405`. Fixture values are generic and never drawn
+  from Manifold's own domain.

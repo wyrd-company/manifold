@@ -296,8 +296,20 @@ proposed-design:
        */
       ready(environment: string, signal?: AbortSignal): Promise<void>;
       write<T>(environment: string, threadId: string, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>): Promise<T>;
+      /** The stored view of a thread the source follows or followed; undefined for any other. */
+      thread(environment: string, threadId: string): ThreadView | undefined;
       /** Closes every client; resolves when every environment loop has ended. */
       stop(): Promise<void>;
+    }
+
+    export interface ThreadView {
+      readonly title: string;
+      /** `{url}/{environmentId}/{threadId}`: the thread's page on the T3 Code web client. */
+      readonly url: string;
+      /** The latest turn's state; absent when the thread has no turn. */
+      readonly turn?: "running" | "completed" | "interrupted" | "error";
+      /** True when T3 Code has archived or deleted the thread. */
+      readonly archived: boolean;
     }
 
     export interface EnvironmentStatus {
@@ -313,6 +325,17 @@ proposed-design:
 
     export type { EnvironmentsConfiguration, ThreadChangeEvent } from "./types.ts";
     ```
+  thread-view: >-
+    `thread(environment, threadId)` reads the thread's `t3_thread` row and
+    its environment's `t3_environment` row synchronously. It returns
+    `undefined` when the environment is not configured or either row is
+    absent. `title` is the compact thread's title, `turn` is the latest
+    turn's state from the thread state, and `archived` is true for a row
+    whose status is `archived` or `deleted`. `url` joins the environment's
+    configured `url`, without a trailing `/`, the stored `environmentId`,
+    and the thread id, each id percent-encoded, which is the route the T3
+    Code web client serves a thread on. The operator console links a
+    task's threads through it.
   module-layout: >-
     `index.ts` re-exports the public names. `state.ts` holds the pure
     functions: `compactThread`, `threadState`, and `threadChanges`.

@@ -116,3 +116,5 @@ CREATE TABLE github_card_move (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX github_card_move_field ON github_card_move (item_node_id, field_node_id, sequence);
+ALTER TABLE github_issue ADD COLUMN title TEXT;
+ALTER TABLE github_issue ADD COLUMN url TEXT;

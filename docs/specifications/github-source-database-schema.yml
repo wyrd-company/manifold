@@ -75,8 +75,9 @@ description: |-
     a field value `github-events` defines, `NULL` for no value, and the
     field's name when last read.
 
-  - `github_issue`: an issue's repository as `owner/name`, number, state, and
-    state reason. `present` is 0 after an issue read reports its node absent
+  - `github_issue`: an issue's repository as `owner/name`, number, state,
+    and state reason, and its title and web URL when last read, `NULL`
+    until a read writes them. `present` is 0 after an issue read reports its node absent
     and 1 after its next complete read. Its last observed state and revisions
     remain stored; no removal event is published. `baselined` is 1 once the issue has been read as a tracked
     issue, after which a change to a dependency or sub-issue it takes part in

@@ -346,17 +346,24 @@ Tasks in lanes, one per lifecycle state declared in the task fields. The
 current state of a task's actor shows on its card.
 
 - Title row: "Board" and a one-line description. No primary action.
-- Filters in one row: Portfolio item, Root task, and "Clear filters" when a
-  filter is set. The task count is right-aligned in the same row.
+- Filters in one row: Project, when more than one GitHub Project is bound,
+  then Portfolio item, Root task, and "Clear filters" when a filter is set.
+  The board shows one Project at a time, since each Project declares its
+  own lanes. The task count and a ghost "Refresh" button are
+  right-aligned in the same row.
 - Lanes are 264px wide with a 40px header (name and count badge). The board
   scrolls horizontally; each lane scrolls vertically.
 - Cards are ordered by priority, highest first. An empty lane shows
   "No tasks" in a dashed box.
+- A task whose lifecycle state is not set, or is not a declared state, is
+  in a "No status" lane before the declared lanes. The lane shows only
+  while it holds a task. A Project that declares no lifecycle field shows
+  every task there, under an info alert that says so.
 - A card opens the Task page.
 - Each lane can collapse to a 44px strip that shows an expand icon, the count,
   and the lane name set vertically. The lane header has a ghost collapse
-  button. Backlog is collapsed by default. Each operator's collapsed lanes
-  are kept between visits.
+  button. Lanes start expanded. Each operator's collapsed lanes are kept
+  between visits.
 - A card's drop targets are the state changes its actor currently accepts,
   so they differ per card. While a card is dragged, each target lane gets a
   dashed primary border and a "Drop to move to <state>" label, and the
@@ -371,9 +378,10 @@ A task card has, from top to bottom:
    in the Done lane.
 2. Title, 13px weight 500, at most two lines.
 3. Portfolio item and root task, 12px muted.
-4. Actor row, only when the task has an active actor: status dot, current state
-   in mono, actor status, and an "Escalated" (warning) or "Failed" (error)
-   badge.
+4. Actor row, when the task has an actor: status dot, current state in
+   mono, actor status, and an "Escalated" (warning) or "Failed" (error)
+   badge. A task that has no actor yet shows "Waiting for intake" in muted
+   text in its place.
 
 ### Epics
 
@@ -512,10 +520,14 @@ link returns to it.
 - Main column:
   - An escalation panel when the actor is escalated (warning surface): the
     agent's question, the choices as outline buttons when the escalation has
-    them, a one-line answer field otherwise, and a line naming the other
-    channels the state accepts ("here, in the T3 Code thread, or by a
-    notification action"), with "Open thread" when the thread is one. The
-    answer goes back to the thread that raised the escalation.
+    them, a one-line answer field when it takes text, and a muted line
+    "The first answer from any channel is recorded." The
+    answer goes back to the thread that raised the escalation. Each open
+    escalation is its own block in the panel. While an answer is sent, the
+    block's controls are disabled. The block then shows the outcome in
+    place of its controls: "Answered: <answer>" on a success surface, or,
+    when another channel answered first, "Already answered: <answer>
+    (<channel>)" on a neutral surface.
   - Current actor: the current state and the actor's status, blueprint,
     environment, account, usage and time, the actor timeline bar with each
     visit's state and duration under it, and "Open actor". A task in Backlog
@@ -523,6 +535,12 @@ link returns to it.
   - Description: the issue text and the acceptance list as read-only
     checkboxes.
   - Actors: every actor for this task, with its last state, when, and usage.
+  - Threads: a table of the actor's T3 Code threads: title, the latest
+    turn's state as a status dot and label, an "Archived" badge, and an
+    "Open in T3 Code" link icon.
+  - Escalations: the task's answered and withdrawn escalations, newest
+    first: title, status badge, the answer and the channel it came
+    through, and when it closed.
   - Activity: newest first, a status dot and one line per event.
 - Right column (320px):
   - Fields: every task field with its value, read only; lifecycle state, the
@@ -531,7 +549,10 @@ link returns to it.
   - Dependencies: "Waits on" and "Blocks", each task with its status dot,
     reference, and title, from the issue's "blocked by" relationships; "View
     in Epics".
-  - Usage: the task's total tokens and cost.
+  - Usage: the task's total tokens and cost, and a table with one row per
+    account: Account, Estimate, Actual, Variance, and Reserved, numbers
+    right-aligned. A variance above zero is in warning text. The caption
+    says "Settled" or "Open".
 
 ### Actors
 

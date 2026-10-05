@@ -4,11 +4,17 @@ relationships:
     - store
     - escalations
     - service-configuration
+    - github-event-source
+    - t3code-environment-source
+    - gate-runtime
+    - portfolio-ledger
   # GAP-EDGE: the technical-design schema declares no edge to a
   # specification; `references` is the best fit.
   references:
     - actors-api
     - blueprint-version
+    - tasks-api
+    - escalation-contract
 objective: >-
   Give the operator console one package that builds into static files, one
   place in the service that serves them and the API the console reads, and a
@@ -123,7 +129,7 @@ proposed-design:
     stylesheet, sets the class from the kept choice before the first paint,
     so that a reload in dark theme does not flash light.
   empty-screens: >-
-    Overview, Board, Epics, Portfolio, Blueprints, GitHub Projects,
+    Overview, Epics, Portfolio, Blueprints, GitHub Projects,
     Environments, and every Settings tab show
     their title row and the empty state from `DESIGN.md`: a dashed border,
     the screen's icon, the title "Nothing here yet", and the line "This
@@ -166,6 +172,237 @@ proposed-design:
     actor, the table is replaced by the empty state "No active actors",
     "Actors appear here while a blueprint runs." For `failed`, an error
     alert shows the message with "Try again".
+  tasks-api-client: >-
+    `src/api/tasks.ts` exports `fetchTasks()`, `fetchTask(actorId)`, and
+    `answerEscalation(id, answer)`. `fetchTasks` sends `GET /api/tasks`
+    and `fetchTask` sends `GET /api/tasks/{actorId}` with the id
+    percent-encoded; each turns the answer into `ok` with the body, or
+    `failed` with a message, as `fetchActors` does, and `fetchTask` turns
+    `404` into `missing`. `answerEscalation` sends `POST
+    /api/escalations/{id}/answer` with `{ choice }` or `{ text }` and
+    turns the answer into `answered` or `closed` with the escalation for
+    `200`, `invalid` with the service's `error` for `400`, `missing` for
+    `404`, and `failed` with a message for any other status, a network
+    error, or a body that does not validate. Each mapping from a status
+    and a body to a result is a pure function. Bodies are checked at this
+    boundary with the guards exported by
+    `@wyrd-company/manifold-shared/tasks-api` and
+    `@wyrd-company/manifold-shared/escalations-api`. Reads go through
+    TanStack Query under the keys `["tasks"]` and `["task", actorId]`, as
+    the Actors screen reads. An answer is a TanStack Query mutation; when
+    it settles, it marks both keys stale, so the Board and the Task page
+    read again. No timer reads on a schedule.
+  board-screen: >-
+    `BoardContent` reads `fetchTasks()`. Its title row is "Board" with its
+    description, and it has no primary action. The filter row holds a
+    Project select when more than one bound Project is listed, a Portfolio
+    item select over the portfolio items the shown Project's tasks name,
+    "Clear filters" when the Portfolio item filter is set, and,
+    right-aligned, the shown task count and a ghost "Refresh" icon button.
+    The selected Project and portfolio item are the route's search
+    parameters `project`, as `<owner>/<number>`, and `item`, so a reload
+    or a pasted link shows the same board; with no `project`, or one that
+    names no listed Project, the board shows the first listed Project. The
+    board has one lane per declared lifecycle option, in declared order,
+    named by the option. A task whose status is `null` or names no
+    declared option is in a "No status" lane before the declared lanes,
+    shown only while it holds a task. A Project with no lifecycle
+    declaration shows its tasks in the "No status" lane and, above the
+    lanes, an info alert "This Project declares no lifecycle field." Lanes
+    and cards are laid out as `DESIGN.md` states. Cards follow the API's
+    order within a lane. A lane collapses and expands with its header's
+    ghost button; collapsed lanes are kept in `localStorage` under
+    `manifold.board.collapsed`, a JSON object from `<owner>/<number>` to
+    the list of collapsed lane names, and every lane starts expanded. A
+    card is a link that opens the task's page. With no bound Project, the
+    board is replaced by the empty state "No bound Projects", "Bind a
+    GitHub Project in the process repository to see its tasks here." For
+    `failed`, an error alert shows the message with "Try again".
+  task-card: >-
+    `TaskCard` shows, from top to bottom: the issue reference,
+    `<repository>#<number>`, in mono, with "Closed" and a check when the
+    issue is closed; the title, or the reference again in muted text while
+    the mirror has no title; the portfolio item in 12px muted text when the
+    summary has one; and, when the summary has `actor`, the actor row: a
+    status dot, the first state path in mono, the actor status, and an
+    "Escalated" warning badge when `openEscalations` is above 0 or a
+    "Failed" error badge when the actor is held. The dot is success for
+    `active`, muted for `done` and `stopped`, and error for `held`. A task
+    with no actor shows "Waiting for intake" in muted text in place of the
+    actor row.
+  task-route: >-
+    The Task page is the route `board/task/$actorId` under `/console/`,
+    with the actor id percent-encoded in its segment. It is a route of its
+    own beside the Board's, so the Task page replaces the Board's content
+    and the sidebar keeps Board selected. The breadcrumb shows "Board",
+    linked to the Board with the search parameters the operator came from,
+    and the issue reference. The page's back link "Board" returns there.
+    A screen that opens a task later, such as Epics, adds its own
+    `<screen>/task/$actorId` route with the same content.
+  task-page: >-
+    `TaskContent` reads `fetchTask(actorId)`. The header holds the issue
+    reference in muted mono, the title, a lifecycle badge for each Project
+    the task is on (a dot and the status name, or "No status"), and a meta
+    line with the portfolio item and the blueprint path. On the right are
+    "Open on GitHub" (outline, opening `issue.url` in a new tab, shown when
+    the issue has a URL) and, as the one primary action, "Open thread",
+    which opens the URL of the last thread in the list that has one. The
+    main column holds, from top to bottom: the escalation panel; Current
+    actor, with the actor status badge, each state path in mono, the
+    blueprint path with the commit's first seven characters, the
+    environment in mono, and when the actor was last saved, or "Waiting
+    for intake" when the task has no actor; Threads, a table with each
+    thread's title (or its id in mono), its latest turn state as a status
+    dot and label, "Archived" when archived, and an "Open in T3 Code" link
+    icon when it has a URL; and Escalations, the recent escalations, each
+    with its title, its status, its answer as the choice's label or the
+    text, the channel it came through, and when it closed. The right
+    column holds Fields, with each Project's lifecycle field name and
+    status and a lock icon, since Manifold sets it, and Usage, a table
+    with one row per account: Account, Estimate, Actual, Variance, and
+    Reserved, numbers right-aligned in tabular figures, a positive
+    variance in warning text, and a caption "Settled" or "Open" from
+    `usage.settled`. With no account, Usage shows "No usage recorded."
+    For `missing`, the page shows the empty state "Task not found", "This
+    issue is not on a bound Project.", with a link to the Board. For
+    `failed`, an error alert shows the message with "Try again".
+  escalation-panel: >-
+    `EscalationPanel` lists the task's open escalations, oldest first,
+    each on a warning surface with its title, its question as plain text
+    with line breaks kept, and its controls: one outline button per
+    choice, labelled with the choice's label, and, when it takes free
+    text, a one-line answer field with an "Answer" button. Under the
+    controls a muted line says "The first answer from any channel is
+    recorded." With no open escalation, the panel is absent. Choosing or
+    answering sends `answerEscalation` and disables every control of that
+    escalation while it is in flight. On `answered`, the escalation shows
+    "Answered: <label or text>" on a success surface. On `closed`, it
+    shows how the escalation ended, from the escalation the service
+    returned: "Already answered: <label or text> (<channel>)" for an
+    answer from another channel, or "Withdrawn" for a withdrawal, on a
+    neutral surface. On `invalid`, the service's error shows under the
+    controls and they enable again. On `missing` or `failed`, an error
+    shows under the controls and they enable again. A shown outcome stays
+    until the task is read again, after which the escalation is in Recent.
+  tasks-endpoint: >-
+    The tasks read model is `packages/service/src/tasks/`. `openTasks`
+    takes its reads as functions and structural parts, holds no state,
+    and computes each answer per request from what they return, so each
+    request reads the mirror, the store, the ledger, and the escalations
+    as they are. Pure functions in `tasks.ts` build the answers:
+    `boardProjects(projects, trackedIssues, snapshots, openEscalations)`
+    and `taskDetail(...)`. `escalationsOfTask(escalations, task,
+    tokenHolder)` picks a task's escalations by the rule in `tasks-api`;
+    the module reads `escalations.list({})` once per request and filters
+    it in memory. Leaf state paths and blueprint version keys use the same
+    functions as the actors endpoint. `requestListener` implements
+    `tasks-api` and writes the JSON. A read that throws answers `500` and
+    the error goes to `log` with the request path.
+  tasks-public-interface: |-
+    `packages/service/src/tasks/index.ts` exports exactly these names.
+
+    ```ts
+    import type { RequestListener } from "node:http";
+    import type { Store } from "../store/index.ts";
+    import type { TaskResponse, TasksResponse } from "@wyrd-company/manifold-shared/tasks-api";
+
+    export function openTasks(options: TasksOptions): Tasks;
+
+    export interface TasksOptions {
+      readonly store: Pick<Store, "loadSnapshot" | "loadErroredSnapshot">;
+      /** The GitHub Project bindings in force that are not archived, in declaration order. */
+      boundProjects(): readonly TasksBoundProject[];
+      /** The GitHub source's `trackedIssueIds` and `trackedIssue`. */
+      readonly github: TasksGitHub;
+      /** The ledger's `actorUsage`. */
+      actorUsage(actorId: string): TasksActorUsage;
+      /** The escalations module's `list`. */
+      listEscalations(filter: { readonly status?: "open" | "answered" | "withdrawn" }): readonly TasksEscalation[];
+      /** The T3 Code source's `thread`. */
+      thread(environment: string, threadId: string): TasksThreadView | undefined;
+      /** The gates module's `tokenHolder`. */
+      tokenHolder(tokenId: string): string | undefined;
+      readonly log?: (entry: { level: "error"; path: string; error: string }) => void;
+    }
+
+    export interface TasksBoundProject {
+      readonly binding: string;
+      readonly owner: string;
+      readonly number: number;
+      readonly item: string;
+      /** The declared lifecycle field; absent when the Project declares none. */
+      readonly lifecycle?: { readonly field: string; readonly options: readonly string[] };
+    }
+
+    export interface Tasks {
+      list(): TasksResponse;
+      get(actorId: string): TaskResponse | undefined;
+      /** Mounted with `mount("/api/tasks", ...)`. */
+      readonly requestListener: RequestListener;
+    }
+    ```
+
+    `TasksGitHub`, `TasksActorUsage`, `TasksEscalation`, and
+    `TasksThreadView` are declared structurally in the module as the
+    members it reads of the GitHub source's `TrackedIssue`, the ledger's
+    `LedgerActorUsage`, the escalations module's `Escalation`, and the T3
+    Code source's `ThreadView`, so each part satisfies them and a test
+    passes fixtures of the same shape.
+
+    `@wyrd-company/manifold-shared` adds the subpath export `./tasks-api`,
+    which exports `tasksApiPath` (`/api/tasks`), the response types of
+    `tasks-api`, `isTasksResponse`, and `isTaskResponse`, and the subpath
+    export `./escalations-api`, which exports `escalationsApiPath`
+    (`/api/escalations`), the `Escalation` and answer types of
+    `escalation-contract`, `isEscalation`, and
+    `isEscalationAnswerResponse`. Both are dependency-free type guards, as
+    `./actors-api` is, so the console bundles no schema compiler; a shared
+    test checks each guard against the OpenAPI and JSON Schema definitions
+    with fixtures that pass and fail.
+  tasks-wiring: >-
+    Service assembly opens the tasks read model after the sources start
+    and before the host listens, and mounts its `requestListener` at
+    `/api/tasks` with `mount`. `boundProjects` reads the GitHub Project
+    bindings of `portfolio.current()` that are not archived, each with the
+    lifecycle field the process repository revision in force declares for
+    it, as the lifecycle field declaration specifies. `github` is the
+    GitHub source, `actorUsage` is `portfolio.ledger.actorUsage`,
+    `listEscalations` is the escalations module's `list`, `thread` is the
+    T3 Code source's `thread`, and `tokenHolder` is the gates module's
+    `tokenHolder`.
+  board-and-task-convergence: >-
+    The tasks endpoints only read, so a request that runs twice answers
+    twice from the current state. An answer from the escalation panel is
+    the escalations module's `answer`: a second answer, from the panel or
+    any channel, finds the escalation closed and returns the first answer,
+    which the panel shows; a crash after the answer commits and before the
+    browser reads the response leaves the escalation answered, and the
+    next read of the task shows it in Recent. The browser's one write is
+    `manifold.board.collapsed`, set to the operator's latest choice.
+  board-and-task-tests: >-
+    Each behavior is red before green, and tests go through public
+    interfaces. In `packages/service/src/tasks/`, the endpoint test in
+    `tasks-api`'s validation criteria. In `packages/console`, unit tests
+    cover the three result mappings, the lane grouping of a Project's
+    tasks, including the "No status" lane, and the reading and writing of
+    collapsed lanes. The browser test,
+    `packages/service/src/console/board.browser.test.ts`, starts the
+    production HTTP host with the built console, the console and tasks
+    mounts, and the escalations API, on a store with a ledger and an
+    escalations module on one database file. Fixture tasks come from
+    GitHub mirror and T3 Code thread fixtures over two declared lanes; one
+    task's actor is saved with a settled ledger, with a reservation and
+    actuals on one account, and an open escalation raised for it with two
+    choices and free text. The test opens the Board, checks the lanes and
+    each card, opens the escalated task's page, checks its state,
+    blueprint, thread link, and estimate, actual, variance, and reserved,
+    answers the escalation with a choice from the panel, and checks the
+    panel's answered outcome, the escalation in Recent after the page
+    reads again, and the escalation answered once through channel `api`
+    in the escalations module. It then raises a second escalation,
+    answers it through `POST /api/escalations/{id}/answer` with text, and
+    answers it from the panel with a choice; the panel shows the text
+    answer as the one recorded, and the module holds that answer only.
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It
     takes the request's path, which the HTTP host passes unchanged,

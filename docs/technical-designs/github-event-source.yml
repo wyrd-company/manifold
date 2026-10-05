@@ -227,6 +227,9 @@ proposed-design:
 
     export interface TrackedIssue {
       readonly issue: GitHubIssue;
+      /** The issue's title and web URL as last read; absent until a read writes them. */
+      readonly title: string | undefined;
+      readonly url: string | undefined;
       readonly blockedBy: readonly GitHubIssue[];
       readonly blocking: readonly GitHubIssue[];
       readonly subIssues: readonly GitHubIssue[];
@@ -530,7 +533,7 @@ proposed-design:
     }
 
     fragment GitHubIssueRef on Issue {
-      id number state stateReason repository { nameWithOwner }
+      id number state stateReason title url repository { nameWithOwner }
     }
 
     fragment GitHubItem on ProjectV2Item {
@@ -702,7 +705,11 @@ proposed-design:
     graph through it. `items` lists the issue's present item on each bound
     Project, with its `archived` flag and every field value row the mirror
     holds for it, keyed by the field's latest name, a row with no value as
-    `null`. `trackedIssueIds()` reads the node id of every issue for which
+    `null`. `title` and `url` are the issue's as the mirror last read
+    them. Each read of an issue writes its title and URL to its
+    `github_issue` row without a change, as a field's latest name is
+    written, so a title edit publishes no event and the next reconcile or
+    sweep of the issue brings the mirror up to date. `trackedIssueIds()` reads the node id of every issue for which
     `trackedIssue` answers. `project(nodeId)` reads the mirror's Project
     row of a node id, so the service maps an actor's Project to its
     binding. They read the mirror synchronously, so a caller

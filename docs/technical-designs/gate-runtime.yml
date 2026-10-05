@@ -451,6 +451,8 @@ proposed-design:
       /** Marks every gate dirty: a ledger or GitHub mirror change outside the module. */
       inputChanged(): void;
       replay(evaluationId: number): Promise<GateReplay>;
+      /** The actor id of a token's holder, returned or not; undefined for an unknown token. */
+      tokenHolder(tokenId: string): string | undefined;
       stop(): void;
     }
 
