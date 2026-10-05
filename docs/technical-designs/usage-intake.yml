@@ -271,11 +271,13 @@ proposed-design:
     actual does. A posted posting keeps its ledger entry, its account,
     its amount, and its window, since the ledger moves no actual. Its new
     actor, item, and visit are recorded as its late attribution, one row
-    per posting that is never changed. So what a call counts against
-    before its mapping arrives does not change: the account and window of
-    its actual, which capacity reads, and the item `other`, which
-    balances read. The late attribution changes only whose usage the call
-    is, which `actor-usage` reads. A mapping replayed or sent again finds
+    per posting that is never changed. So what a posted call counts
+    against before its mapping arrives does not change: the account and
+    window of its actual, which capacity reads, and the item `other`,
+    which balances read. Its late attribution changes only whose usage
+    the call is, which `actor-usage` reads. A pending call has counted
+    against nothing, so it is charged once, when it first posts, under
+    the mapping's attribution. A mapping replayed or sent again finds
     no posting left under the session's ledger actor without a late
     attribution, and writes nothing. A mapping for a session with no held
     calls finds none. Postings made after the mapping is held are

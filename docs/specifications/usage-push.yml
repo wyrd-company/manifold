@@ -103,9 +103,12 @@ description: |-
   A mapping is held once per environment, provider, and provider session.
   The calls the service already holds for a session with no mapping are
   attributed by the session's mapping when it arrives, in any later
-  request, each once: the account, window, and item their usage counts
-  against do not change, and the task's actor usage counts them. A
-  mapping sent again attributes nothing more. The host sends a request
+  request, each once. A call already posted keeps the account, window,
+  and item its usage counts against, and the task's actor usage counts
+  it. A call still pending, for an account, a price, or a ledger window,
+  has counted against nothing, so it takes the mapping's attribution
+  before it first posts, and its account resolves through the mapping's
+  provider instance. A mapping sent again attributes nothing more. The host sends a request
   again whenever it did not see its 200.
 format: json-schema
 validation-criteria: >-
