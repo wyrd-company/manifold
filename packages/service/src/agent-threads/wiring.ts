@@ -5,6 +5,7 @@
 import { openAgentThreads } from "./index.ts";
 import { invocationOf } from "../actor-host/index.ts";
 import { wiringPart } from "../service/wiring.ts";
+import { createMirror } from "../github-source/mirror.ts";
 import type { Service } from "../service/types.ts";
 import type { AgentThreads } from "./index.ts";
 import { actorHost as actorHostPart } from "../actor-host/wiring.ts";
@@ -12,10 +13,12 @@ import { t3codeSource } from "../t3code-source/wiring.ts";
 export const agentThreads = wiringPart({
   name: "agent-threads",
   start: (
-    members: Required<Pick<Service, "configuration" | "portfolio" | "processRepository" | "log">>,
+    members: Required<
+      Pick<Service, "configuration" | "portfolio" | "processRepository" | "log">
+    > & { githubMirror: ReturnType<typeof createMirror> },
     context,
   ): { agentThreads: AgentThreads } => {
-    const { configuration, portfolio, processRepository, log } = members;
+    const { configuration, portfolio, processRepository, log, githubMirror } = members;
     const actorHost = context.later(actorHostPart);
     const source = context.later(t3codeSource);
     const tokenFile = (name: string) => {
@@ -32,12 +35,8 @@ export const agentThreads = wiringPart({
       actorOf: (id) => actorHost.current()?.actorHost.actorOf(id),
       invocationOf,
       bindingArchived: (projectNodeId) => {
-        return (
-          portfolio
-            .current()
-            .declaration.githubProjects.find((binding) => binding.name === projectNodeId)
-            ?.archived ?? false
-        );
+        const project = githubMirror.read().projects.get(projectNodeId)?.project;
+        return project ? (portfolio.githubProject(project)?.archived ?? false) : false;
       },
       revisionAt: processRepository.revisionAt,
       sourceReady: async (environment, signal) => {

@@ -8,9 +8,10 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify } from "yaml";
 import { afterEach, expect, test } from "vite-plus/test";
-import { startService } from "../service/index.ts";
+import { startService, githubWebhookPath } from "../service/index.ts";
 import type { ServiceLogEntry } from "../service/index.ts";
 import { serviceFixture } from "../service/test-fixtures/repository.ts";
+import { signedDelivery } from "../github-source/test-fixtures/api.ts";
 import { commandServer } from "./test-fixtures/commands.ts";
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -161,4 +162,120 @@ test("a real hosted actor without an environment cannot dispatch", async () => {
   if (loaded.status !== "loaded") throw new Error(JSON.stringify(loaded));
   service.actorHost.start({ actorId: "worker", blueprint: loaded.blueprint, input: {} });
   await expect.poll(() => service.store.loadSnapshot("worker")?.snapshot.value).toBe("failed");
+});
+
+test("thread-create reads an archived binding by Project node id at the current revision", async () => {
+  const fixture = await serviceFixture();
+  cleanup.push(fixture.close);
+  const server = await commandServer();
+  cleanup.push(() => server.close());
+  await writeFile(join(fixture.directory, "t3.token"), "fixture-token");
+  await writeFile(
+    fixture.file,
+    stringify({
+      ...fixture.configuration,
+      credentials: {
+        ...fixture.configuration.credentials,
+        writer: { kind: "t3code-token", tokenFile: "t3.token" },
+      },
+      environments: { station: { url: server.url, credential: "writer" } },
+    }),
+  );
+  const document = {
+    machine: {
+      initial: "opening",
+      context: {},
+      states: {
+        opening: {
+          invoke: {
+            id: "opening",
+            src: "thread-create",
+            input: {
+              type: "expression.map",
+              params: {
+                expression:
+                  '{"project":"project","title":"Parcel sample","model":{"instanceId":"provider","model":"model"}}',
+              },
+            },
+            onDone: "waiting",
+            onError: {
+              target: "failed",
+              actions: {
+                type: "expression.assign",
+                params: { expression: '{"failure":event.error}' },
+              },
+            },
+          },
+        },
+        waiting: {},
+        failed: {},
+        done: { type: "final" },
+      },
+    },
+    schemas: {
+      input: true,
+      context: true,
+      output: true,
+      events: {},
+      actors: { "thread-create": { input: true, output: true } },
+    },
+  };
+  const bindings = (archived: boolean) => ({
+    githubProjects: {
+      parcels: { owner: "sample", number: 1, item: "alpha", environment: "station", archived },
+    },
+  });
+  const active = await fixture.commit(60, { bindings: bindings(false) }, document);
+  const service = await startService({ configurationFile: fixture.file, log: () => {} });
+  cleanup.push(service.stop);
+  await expect.poll(() => service.github.project("P_one")).toBeDefined();
+  const loaded = await service.blueprints.version({
+    commit: active,
+    path: "blueprints/counter.yml",
+  });
+  if (loaded.status !== "loaded") throw new Error(JSON.stringify(loaded));
+  const blueprint = loaded.blueprint;
+  function start(actorId: string, project: string) {
+    service.actorHost.start({
+      actorId,
+      blueprint,
+      input: { manifold: { environment: "station", project } },
+    });
+  }
+  start("parcel-active", "P_one");
+  await expect
+    .poll(() => service.store.loadSnapshot("parcel-active")?.snapshot.value)
+    .toBe("waiting");
+  expect(server.commands).toHaveLength(1);
+  const archived = await fixture.commit(60, { bindings: bindings(true) }, document);
+  const delivery = signedDelivery("push", {
+    ref: "refs/heads/main",
+    after: archived,
+    deleted: false,
+    repository: { clone_url: fixture.remote.url, html_url: fixture.remote.url },
+  });
+  const { host, port } = service.http.address();
+  expect(
+    (
+      await fetch(`http://${host}:${port}${githubWebhookPath}`, {
+        method: "POST",
+        headers: delivery.headers,
+        body: delivery.body,
+      })
+    ).status,
+  ).toBe(202);
+  await expect.poll(() => service.revisions.current()?.revision.commit).toBe(archived);
+  start("parcel-archived", "P_one");
+  await expect
+    .poll(() => service.store.loadSnapshot("parcel-archived")?.snapshot.value)
+    .toBe("failed");
+  expect(service.store.loadSnapshot("parcel-archived")?.snapshot["context"]).toMatchObject({
+    failure: { kind: "archived" },
+  });
+  expect(server.commands).toHaveLength(1);
+  start("parcel-unbound", "P_missing");
+  await expect
+    .poll(() => service.store.loadSnapshot("parcel-unbound")?.snapshot.value)
+    .toBe("waiting");
+  expect(server.commands).toHaveLength(2);
 });
