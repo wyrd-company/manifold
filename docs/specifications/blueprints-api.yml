@@ -110,11 +110,14 @@ description: >-
 
   `blueprint` is the path's item in the list as it stands after the
   answer's commit is applied, absent when that commit is not yet applied
-  because the pull after the push failed. A save whose base file differs
-  from the file on the branch answers `409` with `head`, the branch's
-  commit, and `text`, the file's text there, absent when the file is not
-  there; nothing is pushed. A save the remote refuses answers `502` with
-  `error` `rejected` and the remote's reason; an authentication the remote
+  because the pull after the push failed. A save that conflicts answers
+  `409` with `reason`, `head`, the branch's commit, and `text`, the file's
+  text there, absent when the file is not there; nothing of the save is on
+  the branch. `reason` is `file-changed` when the file on the branch
+  differs from the file at `base`, and `branch-moved` when the branch moved
+  under the save's push and again under its one retry. A save the remote
+  refuses while the branch stays where the save found it answers `502`
+  with `error` `rejected` and the remote's reason; an authentication the remote
   refuses answers `502` with `error` `authentication`; any other failure to
   reach the remote, its pull timeout included, answers `502` with `error`
   `remote`. Before the first applied revision, and while the service
@@ -153,7 +156,10 @@ validation-criteria: >-
   `process-repository`, and the list then shows the new commit; that the
   same save again answers `already-saved` with that commit and pushes
   nothing; that a save whose base file changed on the remote answers `409`
-  with the remote's text, and one whose base is behind only on other files
-  answers `saved` on top of the remote's commit; that a text with a finding
+  with reason `file-changed` and the remote's text, and one whose base is
+  behind only on other files answers `saved` on top of the remote's
+  commit; that a branch moved before each of the save's two pushes answers
+  `409` with reason `branch-moved`, and a push refused with the branch
+  unmoved answers `502` `rejected`; that a text with a finding
   answers `422`; and the `400`, `403`, `404`, `405`, `413`, `415`, and `503`
   answers.

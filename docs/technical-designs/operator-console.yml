@@ -549,9 +549,15 @@ proposed-design:
     A draft is the edited text of one blueprint, with the commit it is
     based on, kept in the browser. It lives in `localStorage` under
     `manifold.blueprint-draft.<path>` as JSON `{ base, baseText, text,
-    saveId? }`. The editor writes the draft on each change to the text, and
-    removes it when the text equals `baseText`, when "Discard draft" is
-    confirmed, and when a save answers `200`. A draft whose `base` is
+    saveId?, message?, saved? }`. The editor writes the draft on each change
+    to the text, and removes it when the text equals `baseText` and the
+    draft has no `saved`, and when "Discard draft" is confirmed. A save
+    that answers `200` does not remove the draft: it sets `saved` to the
+    answer's commit and keeps `message`, so the text stays in the browser
+    until the service has loaded the saved commit. A draft with `saved` is
+    removed only when a source read answers the draft's text, or when a
+    save answer carries `blueprint` and the source read that follows it
+    succeeds. A draft whose `base` is
     older than the source's commit keeps its base, and the header shows
     the info line "A newer version exists. Publishing keeps changes made
     since, unless they changed this file." "Discard draft" asks first, in
@@ -574,19 +580,39 @@ proposed-design:
     written to the draft before the request, so a retry of the same text
     after a reload sends the same `saveId`. Any change to the text removes
     the `saveId`. The button shows a spinner and the dialog cannot close
-    while the request runs. For `200`, the editor removes the draft, reads
-    the list and the source again, and shows "Saved as <short commit>" in a
-    success toast for `saved`, "Already saved as <short commit>" for
-    `already-saved`, and "No change to save" for `unchanged`; the editor
-    then shows the new source with its base at the new commit. For `422`,
+    while the request runs. For `200`, the editor sets the draft's
+    `saved` and shows "Saved as <short commit>" in a success toast for
+    `saved`, "Already saved as <short commit>" for `already-saved`, and "No
+    change to save" for `unchanged`. When the answer carries `blueprint`,
+    the editor reads the list and the source again; the source read
+    removes the draft, and the editor shows the new source with its base
+    at the new commit. When the answer has no `blueprint`, or the source
+    read fails, the pending alert opens. For `422`,
     the dialog closes and the findings mark the text. For `409`, the
     dialog closes and the conflict alert opens. For `502`, `503`, a
     network failure, or a request whose answer never arrives, the dialog
     shows the message in an error alert with "Try again", which sends the
     same request.
+  pending-save: >-
+    A draft with `saved` is a pending save: the commit is on the branch,
+    and the service has not yet answered a source read for it. The pending
+    alert sits under the editor header in the info tint: "Saved as <short
+    commit>. The service has not loaded it yet. Your text is kept." with
+    "Load saved version". The editor shows the draft's text, read only,
+    and Publish and "Discard draft" are hidden. "Load saved version" sends
+    the save request again, with the draft's base, text, message, and
+    `saveId`; the service's follower pulls before it saves, so the answer
+    is `already-saved` with `blueprint` once the service holds the commit,
+    and the editor then reads the source and removes the draft. A failed
+    request shows its message in the alert and keeps the draft. A reload
+    reopens the draft with `saved` and the same alert, and a source read
+    that already answers the draft's text removes it at once.
   conflict: >-
-    The conflict alert sits under the editor header in the error tint:
-    "<path> changed on <branch> at <short head>. Your text is kept." with
+    The conflict alert sits under the editor header in the error tint. For
+    reason `file-changed` it reads "<path> changed on <branch> at <short
+    head>. Your text is kept."; for reason `branch-moved` it reads
+    "<branch> moved while saving, at <short head>. Your text is kept.
+    Publish again." It has
     three buttons. "Compare" opens a 920px dialog with a `@codemirror/merge`
     `MergeView`: the branch's text on the left, read only, and the draft's
     text on the right, editable, so the operator can take changes across.
@@ -627,7 +653,7 @@ proposed-design:
     loader and the host CLI report. A save lints first, answers `422` for a
     finding, and otherwise awaits `revisions.save` and maps its result to
     the answer: `saved`, `already-saved`, and `unchanged` to `200` with the
-    path's list item from the result's load, `conflict` to `409`,
+    path's list item from the result's load, `conflict` to `409` with its reason,
     `ProcessRepositorySaveError` and `ProcessRepositoryPullError` to `502`
     with their kind (a pull error of kind `authentication` as
     `authentication`, `branch-missing` and `incomplete` as `remote`), a
@@ -794,6 +820,7 @@ proposed-design:
     export interface SaveConflictResponse {
       readonly error: "conflict";
       readonly message: string;
+      readonly reason: "file-changed" | "branch-moved";
       readonly head: string;
       readonly text?: string;
     }
@@ -944,7 +971,9 @@ proposed-design:
     the finding. In `packages/console`, unit tests cover the blueprints
     result mapping, the draft functions (write, base text equality removes,
     malformed removed, `saveId` kept across a reload and removed by a
-    change), `problems.ts`, and `graph-layout.ts` on a nested and a
+    change, a `200` sets `saved` and keeps the draft, and a draft with
+    `saved` is removed only by a source read of its text or by a save
+    answer with `blueprint` and a source read after it), `problems.ts`, and `graph-layout.ts` on a nested and a
     parallel graph. `packages/service/src/blueprints-api/blueprints.browser.test.ts`
     starts the service on a fixture process repository served over smart
     HTTP with push enabled, launches headless Chromium, opens Blueprints,
@@ -957,7 +986,13 @@ proposed-design:
     one new commit on the fixture remote with that message. A second case
     commits a change to the same file on the remote while the editor holds
     a draft, publishes, sees the conflict alert, reloads, and still holds
-    the draft's text. In `packages/service/src/console/`, `mountConsole` uses the
+    the draft's text. A third case has the fixture server accept the push
+    and refuse the next fetch once, so the save answers `saved` with no
+    `blueprint`: the editor shows the toast and the pending alert with the
+    saved text, a reload shows the same, and "Load saved version", with
+    the server healthy, answers `already-saved`, clears the alert and the
+    draft, and the list shows the saved commit as the version, with one
+    new commit on the remote. In `packages/service/src/console/`, `mountConsole` uses the
     production HTTP host on a loopback port with no credentials: the actors
     endpoint behaviors in `actors-api`'s validation criteria; a client
     route under `/console/` answers `index.html`; a hashed asset answers

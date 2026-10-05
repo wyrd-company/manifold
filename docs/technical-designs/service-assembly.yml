@@ -174,7 +174,13 @@ proposed-design:
           /** The blueprint load in which the commit is applied; undefined when it is not yet applied. */
           readonly blueprints: RevisionLoad | undefined;
         }
-      | { readonly outcome: "conflict"; readonly head: string; readonly text: string | undefined };
+      | {
+          readonly outcome: "conflict";
+          /** `file-changed`: the branch changed the file; `branch-moved`: the branch moved under the retry. */
+          readonly reason: "file-changed" | "branch-moved";
+          readonly head: string;
+          readonly text: string | undefined;
+        };
 
     export interface AppliedRevision {
       readonly commit: string;
@@ -355,16 +361,23 @@ proposed-design:
     or with no load when that pull rejected, since the commit is on the
     branch and the next pull applies it. For `already-saved` and
     `unchanged`, it resolves with that outcome, the commit, and `latest`
-    when `followed` is the commit, and for `conflict` with the head and
-    its text. When the save rejects with `ProcessRepositorySaveError`, the
-    job pulls and applies again; when the current commit is then the
-    error's `head`, nothing else moved the branch and the job rejects with
-    the error; otherwise it calls `save` once more with the same request,
-    which finds the first push by its trailer, takes the save on top of a
-    branch that moved in other files, or answers `conflict`, and the job
-    handles that second result as the first, rejecting with its error. A
-    branch that moves under a save is therefore answered by what it
-    changed, and no save is retried more than once. No other pull runs
+    when `followed` is the commit, and for `conflict` with reason
+    `file-changed`, the head, and its text. When the save rejects with
+    `ProcessRepositorySaveError`, the job pulls and applies again; when the
+    current commit is then the error's `head`, nothing else moved the
+    branch and the job rejects with the error, so an authentication or a
+    policy refusal keeps its kind; otherwise it calls `save` once more with
+    the same request, which finds the first push by its trailer, takes the
+    save on top of a branch that moved in other files, or answers
+    `conflict`, and the job handles that second result as the first. When
+    the second save also rejects with `ProcessRepositorySaveError`, the job
+    pulls and applies once more; when the current commit is then not the
+    second error's `head`, the branch moved again under the retry, and the
+    job resolves `conflict` with reason `branch-moved`, the current commit,
+    and the file's text at it; otherwise it rejects with the second error.
+    A branch that moves under a save is therefore answered by what it
+    changed, as a typed conflict and never as a remote error, and no save
+    is retried more than once. No other pull runs
     between a pull and its apply step, and no pull starts while the current
     commit is unapplied, so at most one published commit is ever unapplied,
     and it is the current commit. Every commit a pull publishes is
@@ -513,7 +526,12 @@ proposed-design:
     `unchanged`. A save after another commit changed the same file resolves
     `conflict`; with the fixture server moving the branch in another file
     between the save's pull and its push, the job pulls, saves once more,
-    and resolves `saved` on top of the moved branch. Save crash: a child
+    and resolves `saved` on top of the moved branch; with the fixture
+    server moving the branch before each of the two pushes, the job
+    resolves `conflict` with reason `branch-moved` and the branch's last
+    commit, and the remote holds the two other commits and no save
+    commit; with the fixture server refusing every push for a policy
+    reason and the branch unmoved, the job rejects with kind `rejected`. Save crash: a child
     process runs `startService` with a `save` probe that sends the process
     `SIGKILL` at `committed`, and in a second run at `pushed`; the parent
     starts the service again on the same files, saves the same request

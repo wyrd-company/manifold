@@ -114,7 +114,7 @@ paths:
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
-          description: The file on the branch differs from the file at the base commit.
+          description: The file on the branch changed since the base, or the branch moved under the save.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -425,12 +425,18 @@ components:
     SaveConflict:
       type: object
       additionalProperties: false
-      required: [error, message, head]
+      required: [error, message, reason, head]
       properties:
         error:
           const: conflict
         message:
           type: string
+        reason:
+          enum: [file-changed, branch-moved]
+          description: >-
+            `file-changed`: the file on the branch differs from the file at
+            the base. `branch-moved`: the branch moved under the push and
+            again under its one retry.
         head:
           $ref: "#/components/schemas/Commit"
         text:

@@ -7,9 +7,12 @@ relationships:
     - usage-intake
     - operator-console
     - actors-api
+    - blueprints-api
+    - process-repository
 description: >-
   Manifold's HTTP host serves the operator console, the API the console
-  reads, the escalation API, the usage push from each host CLI, the
+  reads and writes, including the save of a blueprint as a commit pushed
+  to the process repository, the escalation API, the usage push from each host CLI, the
   escalation answer endpoint, and GitHub webhooks. The operator who runs
   Manifold is the one person who uses its API, the host listens on
   loopback by default, and an operator who must expose the host, so that
@@ -47,5 +50,6 @@ expected-outcomes:
     - Access to the API is decided in one place, the deployment.
   negative:
     - Anyone who reaches the host can read actors, answer any open escalation without its key, and push usage.
+    - Anyone who reaches the host can save any blueprint, which commits and pushes it to the process repository as the GitHub App, and so changes what every new actor runs.
     - A deployment that exposes the host for webhooks exposes the whole API unless its proxy admits only the webhook path.
     - A second operator, or a host reached by more than one person, needs authentication that Manifold does not provide.
