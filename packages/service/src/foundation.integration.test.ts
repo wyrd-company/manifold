@@ -976,8 +976,20 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
   function start() {
     const child = fork(join(compiled, "main.js"), [f.file], { silent: true, execArgv: [] });
     let stderr = "";
-    child.stderr!.on("data", (chunk) => {
-      stderr += String(chunk);
+    const ready = new Promise<void>((resolve, reject) => {
+      let pending = "";
+      child.stderr!.on("data", (chunk) => {
+        stderr += String(chunk);
+        pending += String(chunk);
+        const lines = pending.split("\n");
+        pending = lines.pop()!;
+        for (const line of lines)
+          if (line.startsWith("{") && JSON.parse(line).event === "started") resolve();
+      });
+      child.once("error", reject);
+      child.once("exit", (code, signal) =>
+        reject(new Error(`Service exited before readiness (${code}, ${signal}): ${stderr}`)),
+      );
     });
     const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) =>
       child.once("exit", (code, signal) => resolve({ code, signal })),
@@ -991,19 +1003,7 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
     return {
       child,
       exited,
-      async ready() {
-        await expect
-          .poll(
-            () => {
-              if (child.exitCode !== null || child.signalCode !== null) throw new Error(stderr);
-              return stderr
-                .split("\n")
-                .some((line) => line.startsWith("{") && JSON.parse(line).event === "started");
-            },
-            { timeout: 15000 },
-          )
-          .toBe(true);
-      },
+      ready: () => ready,
       errors: () =>
         stderr
           .split("\n")
@@ -1013,13 +1013,18 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
     };
   }
   const path = join(f.directory, "data/state.sqlite");
-  const first = start();
-  await first.ready();
+  // Store opening migrates in a write transaction. Finish all parent writes before
+  // the service starts; afterwards this connection only observes the service.
+  await fs.mkdir(join(f.directory, "data"), { recursive: true });
   const observer = openStore({ path });
   cleanup.push(() => observer.close());
-  const portfolio = openPortfolio({ connection: observer.connection });
+  observer.connection.migrate("ledger", ledgerMigrationSteps);
+  const ledger = createLedger({
+    connection: observer.connection,
+    portfolio: parseLedgerPortfolio({ items: [{ id: "alpha", parent: null }], allocations: [] }),
+  });
   // No capacity module exists: credit through the ledger's public seam before intake.
-  portfolio.ledger.credit({
+  ledger.credit({
     key: "example-credit",
     account: "acct",
     window: "example-window",
@@ -1027,6 +1032,9 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
     closesAt: Date.now() + 3600000,
     amount: 1000,
   });
+  const first = start();
+  await first.ready();
+  const portfolio = openPortfolio({ connection: observer.connection });
   f.api.addItem("item-one", "I_A");
   const delivery = signedDelivery("projects_v2_item", {
     action: "created",
@@ -1048,8 +1056,8 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
     ).status,
   ).toBe(202);
   await expect
-    .poll(() => observer.loadSnapshot("task:I_A")?.snapshot.value, { timeout: 15000 })
-    .toEqual({ working: "waiting" });
+    .poll(() => observer.loadSnapshot("task:I_A")?.snapshot, { timeout: 15000 })
+    .toMatchObject({ value: { working: "waiting" }, context: { starts: 1 } });
   expect(observer.loadSnapshot("task:I_A")).toMatchObject({
     machine: blueprintVersionKey({ commit: revision, path: "blueprints/counter.yml" }),
     snapshot: {
