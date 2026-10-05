@@ -25,7 +25,8 @@ export async function processStartTime(pid: number) {
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
     return fields[0] === "Z" ? undefined : fields[19];
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ESRCH") return undefined;
     throw error;
   }
 }
