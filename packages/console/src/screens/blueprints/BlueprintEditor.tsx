@@ -109,6 +109,11 @@ function Editor({
   const [toast, setToast] = useState<string>();
   const [tab, setTab] = useState("source");
   const update = (next: BlueprintDraft) => {
+    if (next.text === lint.text) {
+      setRetry(0);
+      setChecking(false);
+      setLintFailed(false);
+    }
     current.current = next;
     writeDraft(localStorage, path, next);
     setDraft(next);

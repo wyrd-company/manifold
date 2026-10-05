@@ -383,3 +383,80 @@ test("late lint answers cannot mark newer text", async () => {
     await f.close();
   }
 }, 30_000);
+
+test.each(["aborted", "failed"] as const)(
+  "returning to checked text restores Publish after a %s lint",
+  async (outcome) => {
+    const fixture = await serviceFixture();
+    const service = await startService({ configurationFile: fixture.file, log: () => {} });
+    const browser = await chromium.launch({ headless: true });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const address = service.http.address();
+      const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+      await page.goto(
+        `http://${address.host}:${address.port}/console/blueprints/blueprints/counter.yml`,
+      );
+      await page.locator(".cm-content").waitFor();
+      const original = await page.locator(".cm-content").innerText();
+      const checked = original.replace("count: 60", "count: 61");
+      await page.locator(".cm-content").fill(checked);
+      await page.waitForFunction(
+        () =>
+          !document.querySelector<HTMLButtonElement>(".blueprint-header-actions button:last-child")
+            ?.disabled,
+      );
+      let received!: () => void;
+      const seen = new Promise<void>((resolve) => {
+        received = resolve;
+      });
+      let requests = 0;
+      await page.route("**/api/blueprints/lint", async (route) => {
+        requests++;
+        received();
+        if (outcome === "aborted") await held;
+        await route.fulfill({
+          status: 502,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "remote", message: "Example lint failure" }),
+        });
+      });
+      await page.locator(".cm-content").fill(original.replace("count: 60", "count: 62"));
+      await seen;
+      if (outcome === "failed")
+        await page.getByText("Cannot check this text.", { exact: false }).waitFor();
+      else await page.getByText("Checking…", { exact: true }).waitFor();
+      if (outcome === "failed") {
+        const retried = page.waitForResponse("**/api/blueprints/lint");
+        await page.getByRole("button", { name: "Try again", exact: true }).click();
+        await retried;
+        await page.getByText("Cannot check this text.", { exact: false }).waitFor();
+      }
+      await page.locator(".cm-content").fill(checked);
+      await page.waitForFunction(
+        () =>
+          !document.querySelector<HTMLButtonElement>(".blueprint-header-actions button:last-child")
+            ?.disabled,
+        undefined,
+        { timeout: 2000 },
+      );
+      expect(await page.getByText("Checking…", { exact: true }).count()).toBe(0);
+      expect(await page.getByText("Cannot check this text.", { exact: false }).count()).toBe(0);
+      // Wait past the lint debounce to prove cached text stays ready after a retry.
+      await page.waitForTimeout(500);
+      expect(await page.getByRole("button", { name: "Publish", exact: true }).isDisabled()).toBe(
+        false,
+      );
+      expect(requests).toBe(outcome === "failed" ? 2 : 1);
+    } finally {
+      release();
+      await browser.close();
+      await service.stop();
+      await fixture.close();
+    }
+  },
+  30_000,
+);
