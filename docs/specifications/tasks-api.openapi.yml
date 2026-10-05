@@ -307,3 +307,6 @@ components:
               reserved:
                 type: integer
                 minimum: 0
+              unit:
+                enum: [usd]
+                description: The account's unit in the accounts declaration in force; absent for an account it does not declare.

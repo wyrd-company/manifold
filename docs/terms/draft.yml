@@ -6,6 +6,6 @@ relationships:
     - operator-console
 title: Draft
 description: >-
-  The edited text of one blueprint in the operator console, with the
-  commit it is based on, kept in the browser until it is published or
-  discarded.
+  The edited text of one process repository file in the operator
+  console, such as a blueprint or `portfolio.yml`, with the commit it is
+  based on, kept in the browser until it is saved or discarded.

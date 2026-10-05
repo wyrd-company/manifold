@@ -150,6 +150,7 @@ proposed-design:
       balance(query: { item: string; account: string; waiting: readonly string[] }): LedgerBalance;
       actorUsage(actor: string): LedgerActorUsage;
       windowAt(query: { account: string; at: number }): LedgerWindows;
+      totals(query: { account: string }): LedgerTotals;
     }
 
     export type LedgerWindow = {
@@ -181,6 +182,12 @@ proposed-design:
       outstanding: number; // outstanding reservations, item and its sub-items
       available: number; // allocation - actual - outstanding; may be negative
       reservable: number; // the sharing rule's answer: what the item could reserve now
+    };
+
+    export type LedgerTotals = {
+      window: LedgerWindow | null; // the account's current window at now(); null before its first credit
+      used: number; // actuals in that window plus outstanding reservations, on every item
+      items: { item: string; lifetime: number }[]; // actuals in every window, per item, item alone
     };
 
     export type LedgerActorUsage = {
@@ -350,6 +357,16 @@ proposed-design:
     entries in every window and item), the variance (actual less estimate),
     and the outstanding reservation summed over items; and whether the actor
     is settled.
+  totals-read: >-
+    `totals` returns, for one account, its current window at `now()` with
+    its capacity, `used`, every actual in that window plus every
+    outstanding reservation on any item, live, archived, or not held by
+    the portfolio, which is the capacity less the account's unspent
+    capacity of `sharing-rule`, and, for each item the ledger holds an
+    `actual` entry for, `lifetime`, the sum of that item's own actuals in
+    every window, ordered by item id. Before the account's first credit,
+    `window` is null and `used` counts outstanding reservations only. It
+    writes nothing.
   sharing-rule: |-
     The sharing rule is a pure function in
     `packages/service/src/ledger/sharing-rule.ts`. It receives the portfolio
@@ -551,6 +568,13 @@ proposed-design:
     - Window read: with `w1` from 0 to 1000 credited 100 twice and `w2`
       from 2000 to 3000, `windowAt` at 1500 returns `w1` with capacity 200
       and `w2`; at -1 it returns no current window and `w1` as next.
+
+    - Totals: `alpha` and `beta` at 50%; `actor-1` posts 10 on `alpha`
+      in `w1`, a credit of 100 opens `w2` at 1000, and at 1500 `actor-1`
+      posts 5 on `alpha` and `actor-2` reserves 20 on `beta` and posts 4;
+      `totals` at 1500 answers `w2` with capacity 100, `used` 25, and
+      lifetimes 15 for `alpha` and 4 for `beta`; after `setPortfolio`
+      drops `beta`, `used` is still 25.
 
     - Durability: a second `Ledger` on the same file returns the same
       balances and actor usage.

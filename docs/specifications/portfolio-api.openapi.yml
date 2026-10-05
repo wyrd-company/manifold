@@ -1,0 +1,555 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: portfolio-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold portfolio API
+  version: 0.1.0
+  description: >-
+    The portfolio endpoints of Manifold's API: the portfolio read with
+    allocations, accounts, windows, and balances, and the source, lint,
+    and save of `portfolio.yml` as a commit pushed to the process
+    repository.
+security: []
+paths:
+  /api/portfolio:
+    get:
+      operationId: readPortfolio
+      summary: Read the portfolio in force with each item's balance per account.
+      responses:
+        "200":
+          description: The portfolio items, the accounts, and the balances at `at`.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/portfolio/source:
+    get:
+      operationId: readPortfolioSource
+      summary: Read `portfolio.yml` at the latest applied revision with its findings.
+      responses:
+        "200":
+          description: The file's text, the base commit for a save, and the text's findings.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioSource"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/portfolio/lint:
+    post:
+      operationId: lintPortfolioText
+      summary: Lint a `portfolio.yml` text as the service applies a revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LintRequest"
+      responses:
+        "200":
+          description: The text's findings and warnings.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LintResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/portfolio/save:
+    post:
+      operationId: savePortfolio
+      summary: Commit a `portfolio.yml` text to the configured branch and push it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveRequest"
+      responses:
+        "200":
+          description: The text is on the branch.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: The file on the branch changed since the base, or the branch moved under the save.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveConflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          description: The text has lint findings; nothing was written.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveInvalid"
+        "502":
+          description: The remote refused the push or could not be reached.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveRemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
+components:
+  headers:
+    NoStore:
+      schema:
+        const: no-store
+  responses:
+    Error:
+      description: An error with its kind and message.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowed:
+      description: A method the endpoint does not take.
+      headers:
+        Allow:
+          schema:
+            enum: [GET, POST]
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Commit:
+      type: string
+      pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    Instant:
+      type: string
+      format: date-time
+      description: An ISO 8601 UTC instant with milliseconds.
+    Amount:
+      type: integer
+      minimum: 0
+      description: An amount in the account's native unit, as the ledger holds it; millionths of a US dollar for `usd`.
+    SignedAmount:
+      type: integer
+      description: An amount in the account's native unit that may be negative.
+    Percent:
+      type: number
+      minimum: 0
+      maximum: 100
+      description: A percentage with at most two decimal places.
+    DeclaredName:
+      type: string
+      pattern: "^[a-z][a-z0-9-]{0,63}$"
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum:
+            - bad-request
+            - cross-site
+            - not-found
+            - method-not-allowed
+            - too-large
+            - unsupported-media-type
+            - unavailable
+            - internal
+        message:
+          type: string
+    PortfolioResponse:
+      type: object
+      additionalProperties: false
+      required: [commit, at, accounts, items, unallocated, warnings]
+      properties:
+        commit:
+          description: The commit of the declaration in force; null before the first accepted declaration.
+          oneOf:
+            - $ref: "#/components/schemas/Commit"
+            - type: "null"
+        at:
+          $ref: "#/components/schemas/Instant"
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Account"
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Item"
+        unallocated:
+          type: array
+          items:
+            $ref: "#/components/schemas/Unallocated"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+    Account:
+      type: object
+      additionalProperties: false
+      required: [name, declared]
+      properties:
+        name:
+          $ref: "#/components/schemas/DeclaredName"
+        declared:
+          type: boolean
+          description: Whether the accounts declaration in force declares the account.
+        unit:
+          enum: [usd]
+        kind:
+          enum: [api, subscription]
+        capacity:
+          type: object
+          additionalProperties: false
+          required: [amount, reset, every]
+          properties:
+            amount:
+              type: integer
+              minimum: 1
+              description: The declared amount converted to the ledger's integer.
+            reset:
+              type: string
+              description: The declared reset, as declared.
+            every:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              maxProperties: 1
+              properties:
+                hours:
+                  type: integer
+                  minimum: 1
+                days:
+                  type: integer
+                  minimum: 1
+                months:
+                  type: integer
+                  minimum: 1
+        window:
+          $ref: "#/components/schemas/Window"
+    Window:
+      type: object
+      additionalProperties: false
+      required: [key, opensAt, closesAt, capacity, used]
+      properties:
+        key:
+          type: string
+        opensAt:
+          $ref: "#/components/schemas/Instant"
+        closesAt:
+          $ref: "#/components/schemas/Instant"
+        capacity:
+          $ref: "#/components/schemas/Amount"
+        used:
+          $ref: "#/components/schemas/Amount"
+    Item:
+      type: object
+      additionalProperties: false
+      required: [id, parent, title, other, archived, projects, activeTasks, allocations]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: A declared item id, or `other` or `<parent>/other` for an Other item.
+        parent:
+          oneOf:
+            - type: string
+            - type: "null"
+        title:
+          type: string
+          minLength: 1
+        other:
+          type: boolean
+        archived:
+          type: boolean
+        projects:
+          type: object
+          additionalProperties: false
+          required: [github, t3code]
+          properties:
+            github:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [binding, owner, number]
+                properties:
+                  binding:
+                    type: string
+                  owner:
+                    type: string
+                  number:
+                    type: integer
+                    minimum: 1
+            t3code:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [environment, project, via]
+                properties:
+                  binding:
+                    type: string
+                    description: Present for `via` `binding`.
+                  environment:
+                    type: string
+                  project:
+                    type: string
+                  via:
+                    enum: [binding, association]
+        activeTasks:
+          type: integer
+          minimum: 0
+        allocations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Allocation"
+        unallocated:
+          type: array
+          items:
+            $ref: "#/components/schemas/Unallocated"
+    Allocation:
+      type: object
+      additionalProperties: false
+      required:
+        - account
+        - declared
+        - guarantee
+        - amount
+        - actual
+        - outstanding
+        - available
+        - reservable
+        - lifetime
+      properties:
+        account:
+          $ref: "#/components/schemas/DeclaredName"
+        declared:
+          type: boolean
+          description: Whether the declaration in force has an allocation row for the item and account.
+        guarantee:
+          $ref: "#/components/schemas/Percent"
+        ceiling:
+          $ref: "#/components/schemas/Percent"
+        weight:
+          type: integer
+          minimum: 1
+        pacing:
+          type: object
+          additionalProperties: false
+          required: [burst]
+          properties:
+            burst:
+              $ref: "#/components/schemas/Percent"
+        amount:
+          $ref: "#/components/schemas/Amount"
+        actual:
+          $ref: "#/components/schemas/Amount"
+        outstanding:
+          $ref: "#/components/schemas/Amount"
+        available:
+          $ref: "#/components/schemas/SignedAmount"
+        reservable:
+          $ref: "#/components/schemas/Amount"
+        lifetime:
+          $ref: "#/components/schemas/Amount"
+    Unallocated:
+      type: object
+      additionalProperties: false
+      required: [account, percent, amount]
+      properties:
+        account:
+          $ref: "#/components/schemas/DeclaredName"
+        percent:
+          $ref: "#/components/schemas/Percent"
+        amount:
+          $ref: "#/components/schemas/Amount"
+    Finding:
+      type: object
+      additionalProperties: false
+      required: [file, kind, location, message]
+      properties:
+        file:
+          enum: [portfolio, bindings, accounts]
+        kind:
+          type: string
+          minLength: 1
+        location:
+          type: string
+          description: An RFC 6901 JSON Pointer in the file's document.
+        message:
+          type: string
+        severity:
+          const: warning
+        details:
+          type: object
+    PortfolioSource:
+      type: object
+      additionalProperties: false
+      required: [path, commit, exists, text, findings, warnings]
+      properties:
+        path:
+          const: portfolio.yml
+        commit:
+          $ref: "#/components/schemas/Commit"
+        exists:
+          type: boolean
+        text:
+          type: string
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+    LintRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+    LintResponse:
+      type: object
+      additionalProperties: false
+      required: [findings, warnings]
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+    SaveRequest:
+      type: object
+      additionalProperties: false
+      required: [base, text, message, saveId]
+      properties:
+        base:
+          $ref: "#/components/schemas/Commit"
+        text:
+          type: string
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: "\\S"
+        saveId:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+    SaveResponse:
+      type: object
+      additionalProperties: false
+      required: [outcome, commit, loaded]
+      properties:
+        outcome:
+          enum: [saved, already-saved, unchanged]
+        commit:
+          $ref: "#/components/schemas/Commit"
+        loaded:
+          type: boolean
+          description: Whether the service holds the commit, as that commit or a later commit of the branch.
+    SaveConflict:
+      type: object
+      additionalProperties: false
+      required: [error, message, reason, head]
+      properties:
+        error:
+          const: conflict
+        message:
+          type: string
+        reason:
+          enum: [file-changed, branch-moved]
+          description: >-
+            `file-changed`: the file on the branch differs from the file at
+            the base. `branch-moved`: the branch moved under the push and
+            again under its one retry.
+        head:
+          $ref: "#/components/schemas/Commit"
+        text:
+          type: string
+    SaveInvalid:
+      type: object
+      additionalProperties: false
+      required: [error, message, findings, warnings]
+      properties:
+        error:
+          const: invalid
+        message:
+          type: string
+        findings:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+    SaveRemoteError:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error:
+          enum: [rejected, authentication, remote]
+        message:
+          type: string

@@ -10,6 +10,7 @@ relationships:
   # specification; `references` is the best fit.
   references:
     - accounts-declaration
+    - portfolio-api
 terms:
   - capacity
   - credit
@@ -116,6 +117,21 @@ proposed-design:
     equals allocation less settled actuals. The Portfolio page shows the
     sharing rule's answer, what the item could reserve now, beside the
     balance, and previews the rule on a fixed scenario when it is edited.
+  portfolio-read: >-
+    The operator reads the portfolio through `GET /api/portfolio` of
+    `portfolio-api`: the items of the declaration in force with their
+    allocations and attached projects, the accounts of the accounts
+    declaration in force with their capacity and the ledger's window that
+    covers the read, and each item's balance per account, from the
+    ledger's `balance` with no other item waiting, its `totals`, and its
+    `windowAt`. An account that an allocation names and the accounts
+    declaration does not is listed as undeclared, with balances of 0, and
+    the read carries the `account-undeclared` warnings of the declaration
+    in force. The read credits each declared account's current window as
+    a gate's balance read does, and changes nothing else. The operator
+    edits `portfolio.yml` from the Portfolio screen, which lints with
+    `lintPortfolioDeclaration` and `lintAllocatedAccounts` and saves
+    through the revision follower, as `operator-console` states.
   settlement: >-
     When an actor ends, by final state, by forced re-intake, or by its issue
     closing, its reservations are retired and its actuals stay. After a

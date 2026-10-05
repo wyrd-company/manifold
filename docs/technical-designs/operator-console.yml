@@ -20,6 +20,9 @@ relationships:
     - declarations-api
     - bindings-declaration
     - task-metadata-declaration
+    - portfolio-api
+    - accounts-declaration
+    - portfolio-declaration
 objective: >-
   Give the operator console one package that builds into static files, one
   place in the service that serves them and the API the console reads, and a
@@ -39,6 +42,11 @@ objective: >-
   from Settings, Task fields: edits the task fields as a draft with the
   service's lint, sees each bound Project's impact, and publishes them as
   a commit the service then holds in force.
+  It reads the budget from the Portfolio screen: each account's capacity and
+  window, and each portfolio item's allocation, usage, and what it can
+  reserve, every amount in its account's unit, and edits allocations and
+  items as a draft of `portfolio.yml`, linted as it changes with the
+  service's own lint and saved as a commit.
 background:
   current-design: >-
     `packages/console` holds a `package.json` and a README, and no framework.
@@ -98,6 +106,11 @@ design-challenges:
     An edit must survive a reload, a failed save, a service restart, and a
     branch that moved under it, and must reach the branch at most once
     however many times its save is retried.
+  form-to-text: >-
+    The Portfolio screen edits numbers and names in forms, while the
+    declaration is a YAML file a person also edits by hand. An edit must
+    change only the values it names, keep the file's comments and order,
+    and still apply when the file changed on the branch under the draft.
   browser-proof: >-
     The console is proved only when a browser renders it from the service.
     The test must run inside `task check` on a developer machine and in CI.
@@ -118,7 +131,10 @@ proposed-design:
     task's open escalations through `POST /api/escalations/{id}/answer`.
     The tasks read model, `packages/service/src/tasks/`, specified in
     `tasks-api`, is mounted by service assembly under `/api/tasks` with
-    `mount`. The Blueprints screen reads and writes through the
+    `mount`. The Portfolio screen reads and writes through the endpoints
+    of `portfolio-api`, which `packages/service/src/portfolio-api/`
+    mounts under `/api/portfolio` with `mount` from its service wiring
+    part. The Blueprints screen reads and writes through the
     blueprints endpoints of `blueprints-api`. The service module
     `packages/service/src/blueprints-api/` exports
     `mountBlueprintsApi(host, options)` and mounts those endpoints under
@@ -195,7 +211,7 @@ proposed-design:
     stylesheet, sets the class from the kept choice before the first paint,
     so that a reload in dark theme does not flash light.
   empty-screens: >-
-    Overview, Epics, Portfolio, Environments, and the Settings tabs
+    Overview, Epics, Environments, and the Settings tabs
     Accounts and budget sources and General show
     their title row and the empty state from `DESIGN.md`: a dashed border,
     the screen's icon, the title "Nothing here yet", and the line "This
@@ -326,8 +342,9 @@ proposed-design:
     column holds Fields, with each Project's lifecycle field name and
     status and a lock icon, since Manifold sets it, and Usage, a table
     with one row per account: Account, Estimate, Actual, Variance, and
-    Reserved, numbers right-aligned in tabular figures, a positive
-    variance in warning text, and a caption "Settled" or "Open" from
+    Reserved, each amount formatted in the account's unit as `amounts`
+    states, the variance signed, right-aligned in tabular figures, a
+    positive variance in warning text, and a caption "Settled" or "Open" from
     `usage.settled`. With no account, Usage shows "No usage recorded."
     For `missing`, the page shows the empty state "Task not found", "This
     issue is not on a bound Project.", with a link to the Board. For
@@ -384,6 +401,8 @@ proposed-design:
       readonly github: TasksGitHub;
       /** The usage intake module's `actorUsage`. */
       actorUsage(actorId: string): TasksActorUsage;
+      /** The unit of an account in the accounts declaration in force; undefined when it declares none. */
+      accountUnit(account: string): "usd" | undefined;
       /** The escalations module's `list`. */
       listEscalations(filter: { readonly status?: "open" | "answered" | "withdrawn" }): readonly TasksEscalation[];
       /** The T3 Code source's `thread`. */
@@ -437,7 +456,8 @@ proposed-design:
     GitHub source, `actorUsage` is the usage intake module's `actorUsage`,
     `listEscalations` is the escalations module's `list`, `thread` is the
     T3 Code source's `thread`, `tokenHolder` is the gates module's
-    `tokenHolder`, and `held` is whether the router's `held` answers for
+    `tokenHolder`, `accountUnit` reads the account's `unit` from usage
+    intake's `accounts()`, and `held` is whether the router's `held` answers for
     the actor.
   board-and-task-convergence: >-
     The tasks endpoints only read, so a request that runs twice answers
@@ -468,7 +488,8 @@ proposed-design:
     actuals on one account, and an open escalation raised for it with two
     choices and free text. The test opens the Board, checks the lanes and
     each card, opens the escalated task's page, checks its state,
-    blueprint, thread link, and estimate, actual, variance, and reserved,
+    blueprint, thread link, and estimate, actual, variance, and reserved
+    in dollars,
     answers the escalation with a choice from the panel, and checks the
     panel's answered outcome, the escalation in Recent after the page
     reads again, and the escalation answered once through channel `api`
@@ -1515,6 +1536,441 @@ proposed-design:
     commit>" at the new commit, and the field in the Visual tab; and `GET
     /api/declarations/source` answers the new text at that commit.
     Fixture values are generic and never drawn from Manifold's own domain.
+  portfolio-route: >-
+    The Portfolio screen is the route `portfolio` under `/console/`.
+    `PortfolioContent`, in `src/screens/portfolio/`, replaces the empty
+    screen; the navigation entry, its label, and its description are
+    unchanged. The route's search parameter `account` names the account
+    whose allocations the table shows and edits; with no `account`, or one
+    that names no listed account, the table shows the first account the
+    read lists. The screen reads `GET /api/portfolio` and `GET
+    /api/portfolio/source` through TanStack Query under the keys
+    `["portfolio"]` and `["portfolio-source"]`, which read again when the
+    window regains focus, when the screen opens, and from the ghost
+    "Refresh" icon button in the title row. No timer reads on a schedule.
+  portfolio-screen: >-
+    From top to bottom, as `DESIGN.md` lays out Portfolio: the title row,
+    with "Edit allocations" (outline) and "Add item" (primary); the budget
+    source cards; the account row; the status bar and the problems list
+    while they have content; the Portfolio table; and "Show archived (N)"
+    when an item is archived. The account row holds "Allocations for"
+    and a select of the listed accounts, shown when more than one account
+    is listed. With no account listed, the cards and the account row are
+    replaced by the info alert "No accounts are declared. Declare them in
+    accounts.yml." and the table shows its rows with every amount a muted
+    dash. A failed read shows an error alert with the message and "Try
+    again" in place of the screen's content under the title row.
+  budget-source-cards: >-
+    One card per account in the read's order, in a grid of cards 280px
+    wide. A card shows the account name and, on the same line, its kind as
+    a badge, "API" or "Subscription". Under it is one meter for the
+    account's window: the fill is `used` over the window's `capacity`,
+    warning at 85% or more; the value line is "<used> of <capacity>"; and
+    the reset line "Resets in about <duration>", from the window's
+    `closesAt`, truncates and never wraps. The window's length labels the
+    meter: "Daily" for one day or 24 hours, "Weekly" for seven days,
+    "Monthly" for one month, and otherwise "Every <n> <unit>". An account
+    with no window shows the meter empty and "No window yet" in muted
+    text, since the ledger holds a window from the first balance read,
+    reservation, or actual that needs it. An undeclared account shows a
+    "Not declared" warning badge in place of its kind and the muted line
+    "Declare it in accounts.yml", and no meter. The duration is from the
+    browser's clock: under an hour it is minutes, at least 1; under 48
+    hours it is hours; otherwise days, each rounded to the nearest whole
+    number.
+  portfolio-table: >-
+    `PortfolioTable` shows the read's items for the selected account. The
+    columns are those of `DESIGN.md` that the read answers, in its order:
+    Name, Allocation, Current usage, Lifetime cost, Active tasks, and an
+    Edit icon button. Name is the title with a muted line of the attached
+    projects: their binding names, GitHub Projects as `owner/number`, when
+    they fit, and otherwise counts, "2 GitHub Projects, 1 T3code project".
+    Allocation is the guarantee as a percentage with the guarantee amount
+    muted under it, and "up to N%" after the percentage when the
+    allocation declares a ceiling. Lifetime cost is the allocation's
+    `lifetime`. Active tasks is `activeTasks`, or a muted dash for 0.
+    Rows follow the read's order: each level's items, then its Other,
+    then its "Unallocated" row (muted, no Edit button) with the level's
+    `unallocated` percentage and amount for the account. A total row
+    closes the table: 100% and the window's capacity, the account's
+    `used`, and the sum of the top-level lifetimes. An item with sub-items
+    has a chevron; its sub-items, Other, and "Unallocated" row show as
+    indented rows on the `lane` surface; every chevron starts collapsed,
+    and the expanded items are kept in `localStorage` under
+    `manifold.portfolio.expanded` as a JSON list of item ids. Other items
+    have no Edit button. Archived items are absent from the table.
+  current-usage: >-
+    The Current usage cell reads the item's allocations for every account.
+    The first line names the account whose usage is the greatest share of
+    the item's guarantee amount, with the window's label, as "acct-a ·
+    Weekly", then its usage, `actual` plus `outstanding`, and the share as
+    a percentage. Under it is the meter of that share, warning with "Near
+    limit" at 85% or more, and "+N" for the other accounts with a
+    guarantee amount above 0, whose names and shares show in a tooltip on
+    hover and focus and in the cell's accessible description. The last
+    line is "Can reserve" and the allocation's `reservable`. An allocation
+    whose guarantee amount is 0 has no share: when every allocation of the
+    item has none, the cell shows the selected account's usage and "Can
+    reserve" with no meter.
+  portfolio-not-shown: >-
+    The screen shows only what the service holds. A granted reset, its
+    expiry, and an early reset are observations of a subscription's
+    provider, which Manifold does not read, so the cards show no
+    granted-reset badge and no early-reset note, and a subscription's
+    capacity is its declared capacity. The Completed tasks column is
+    absent, since the store keeps the snapshots of active actors only and
+    the ledger knows only actors that reserved or spent, so a count from
+    either misses tasks. The archived list shows no archive date, since
+    the declaration holds none.
+  edit-allocations: >-
+    "Edit allocations" opens the portfolio draft, or starts one from the
+    source, and turns the guarantee and ceiling of every item row and
+    Other row, sub-item rows included, into number inputs for the selected
+    account, with the inputs' step 0.01, minimum 0, and maximum 100. The
+    title row's buttons become "Cancel" and "Save allocations". Each input
+    change is one edit of the draft. The status bar above the table (info)
+    names each parent whose children's guarantees the draft changes, with
+    its unallocated remainder for the account, computed from the draft's
+    text; it is a display, and the lint's findings alone decide whether
+    the draft saves. While a draft exists the screen stays in this mode,
+    across a reload, and the row Edit buttons, "Add item", and "Restore"
+    are hidden. "Cancel" with no change leaves the mode; with changes it
+    asks first in the 400px alert dialog, "Discard changes to
+    portfolio.yml?", naming the number of edits, and removes the draft.
+  portfolio-findings: >-
+    The latest lint answer marks the draft. A `guarantee-limit` finding
+    gives an error border to the guarantee input of every child of the
+    parent its details name, the top level for `null`, for the account
+    its details name, makes the status bar error with the finding's
+    message, which names the parent and its sum, and disables "Save
+    allocations". An `invalid-portfolio` finding located at a guarantee,
+    a ceiling, a weight, or a burst gives that input an error border and
+    its message under it. Every finding and warning lists in the problems
+    list under the status bar: its kind in mono, the file and location in
+    mono, and the message, findings in error color and warnings in warning
+    color. The source's own findings and warnings list the same way when
+    no draft exists. When the source text has a `syntax` or `schema`
+    finding, "Edit allocations" and "Add item" are disabled and an error
+    alert reads "portfolio.yml at <short commit> cannot be edited here.
+    Fix it in the process repository." Pure functions in `findings.ts`
+    turn findings into input marks and status lines.
+  edit-item: >-
+    The row's Edit button opens `EditItemDialog`, the 480px dialog of
+    `DESIGN.md`, for the selected account: Name, the item's title;
+    Allocation and Ceiling, percentages; Weight, a positive integer,
+    empty for the default 1; a "Pacing" switch, which shows a Burst
+    percentage input while on; and Sub-items, one row per sub-item with
+    its title, its guarantee amount, and allocation and ceiling inputs,
+    with the sub-items' unallocated remainder next to the heading. "Add
+    sub-item" appends a row with a name field. A row's remove button
+    removes a row the dialog added, and archives an existing sub-item
+    under the archive rule below. The item id never changes, so a renamed
+    item keeps its history. The dialog's changes are edits of a candidate
+    draft, linted as the draft is; findings mark its inputs as on the
+    table, and "Save" is disabled while the latest answer has a finding.
+    "Save" writes the draft and saves it with the message "Update
+    portfolio item <id>". "Add item" opens the same dialog with only Name,
+    adds a top-level item, and saves with "Add portfolio item <id>". A new
+    item has no allocations, so it starts at 0% for every account. Its id
+    is the name in lower case with each run of characters other than
+    letters and digits replaced by `-`, leading and trailing `-` removed,
+    `item-` put before it when it does not start with a letter, cut to 64
+    characters, and `-2`, `-3`, and so on added while it equals an id in
+    the tree or `other`; the dialog shows it under the name in muted mono.
+  archive-and-restore: >-
+    The dialog's footer has "Archive item" on the left (error text,
+    outline) with the muted note "Its allocation returns to <parent>."
+    When a binding that is not archived names the item or an item under
+    it, the button is disabled and the note reads "Move its projects in
+    GitHub Projects first.", linking to GitHub Projects, since a
+    declaration in which a live binding names an archived item is refused
+    and the bindings are saved from that screen. Otherwise it asks in the
+    400px alert dialog, with a solid error confirm button, and saves the
+    draft with `archived: true` on the item and the message "Archive
+    portfolio item <id>". "Show archived (N)" lists each archived item
+    whose parent is not archived, with its title, its lifetime cost for
+    the selected account, and "Restore". "Restore" removes `archived` from
+    the item and sets the guarantee of every allocation of the item and
+    every item under it to 0, so the restored item comes back at 0% and
+    never breaks the guarantee limit, and saves with "Restore portfolio
+    item <id>".
+  portfolio-edits: |-
+    `src/screens/portfolio/edits.ts` holds the edits as data and one pure
+    function that applies them to a text. It parses the text with the
+    `yaml` library's document model, changes the nodes each edit names,
+    and prints the document, so comments, key order, and the style of
+    every untouched node stay as the document model round-trips them.
+
+    ```ts
+    export type PortfolioEdit =
+      | {
+          readonly kind: "allocation";
+          readonly item: string; // an item id, `other`, or `<parent>/other`
+          readonly account: string;
+          readonly guarantee?: number;
+          readonly ceiling?: number | null; // null removes it
+          readonly weight?: number | null;
+          readonly burst?: number | null; // null removes `pacing`
+        }
+      | { readonly kind: "title"; readonly item: string; readonly title: string }
+      | { readonly kind: "add"; readonly parent: string | null; readonly id: string; readonly title: string }
+      | { readonly kind: "archive"; readonly item: string }
+      | { readonly kind: "restore"; readonly item: string };
+
+    export function applyEdits(
+      text: string,
+      edits: readonly PortfolioEdit[],
+    ):
+      | { readonly ok: true; readonly text: string; readonly dropped: readonly PortfolioEdit[] }
+      | { readonly ok: false };
+    ```
+
+    An item is found by its id anywhere under `items`, since ids are
+    unique across the tree; an Other's allocations are under the key
+    `other` of its parent's `items` mapping, or of the top-level `items`
+    mapping for `other`. An allocation edit creates the `allocations`
+    mapping and the account's entry when absent and sets or removes each
+    field it carries. A title edit equal to the id removes `title`. An add
+    creates the parent's `items` mapping when absent and appends `<id>: {
+    title }`. Archive sets `archived: true`; restore removes it and sets
+    each `guarantee` present under the item to 0. Edits apply in order. An
+    edit whose item is not in the text, an add whose parent is not in it
+    or whose id is, is dropped and returned in `dropped`. A text that
+    does not parse as one YAML document whose root is a mapping or empty
+    answers `ok: false`. The empty text with an add gives `items:` with
+    the item.
+  portfolio-drafts: >-
+    The portfolio draft is the draft of `portfolio.yml`, kept in
+    `localStorage` under `manifold.portfolio-draft` as JSON `{ base,
+    baseText, edits, text, saveId?, message?, saved? }`, where `text` is
+    `applyEdits(baseText, edits)`. `src/screens/portfolio/draft.ts` holds
+    the pure functions that read, write, and change it; a value that does
+    not parse as that shape is removed and ignored. An edit appends to
+    `edits`, recomputes `text`, and removes `saveId`. The draft is removed
+    when its text equals `baseText` and it has no `saved`, and when it is
+    discarded. A save, a pending save, and the settling of a draft by a
+    source read follow `blueprint-drafts` and `pending-save` for the path
+    `portfolio.yml`: a `200` sets `saved` and keeps the draft; a source
+    read whose text equals the draft's removes it; when the answer had
+    `loaded` and the source's text differs, the draft becomes an ordinary
+    draft based on the source, with its edits applied again to the
+    source's text. A draft with `saved` and no `loaded` answer shows the
+    pending alert "Saved as <short commit>. The service has not loaded it
+    yet. Your changes are kept." with "Load saved version", which sends
+    the save again with the same `saveId`.
+  portfolio-save: >-
+    "Save allocations" is enabled when the draft's text differs from its
+    base text, the latest lint answer is for that text, and it has no
+    finding; warnings do not block it. It sends `POST /api/portfolio/save`
+    with the draft's base, text, message, "Update portfolio allocations"
+    when it has none, and `saveId`, which the editor sets first when the
+    draft has none, as `publish` states. The button shows a spinner while
+    the request runs. For `200` the screen shows "Saved as <short commit>",
+    "Already saved as <short commit>", or "No change to save" in a success
+    toast, and reads the portfolio and the source again. For `422` the
+    findings mark the draft. For `409` the conflict alert opens under the
+    title row in the error tint: "portfolio.yml changed on the branch at
+    <short head>. Your changes are kept." for `file-changed`, and "The
+    branch moved while saving, at <short head>. Your changes are kept."
+    for `branch-moved`, with "Apply my changes to the latest" and "Discard
+    changes". "Apply my changes to the latest" sets the draft's base to
+    the head and its base text to the conflict's text, the empty string
+    when absent, applies its edits again, and removes `saveId`; when an
+    edit drops, an info alert lists each dropped edit. For `502`, `503`, a
+    network failure, or a request whose answer never arrives, an error
+    alert shows the message with "Try again", which sends the same
+    request. The screen never discards the draft on its own.
+  portfolio-lint-as-you-change: >-
+    Each change of the draft's text, from the table or the dialog, starts
+    a 300 ms wait, the wait the Blueprints editor uses; a change during
+    the wait starts it again. When it ends, the screen sends `POST
+    /api/portfolio/lint` with the text and aborts the lint request still in
+    flight with its `AbortController`. An answer is applied only while the
+    text is still the text it was sent for. While a lint is pending the
+    status bar shows "Checking…" and the previous marks stay. A lint
+    request that fails shows "Cannot check these changes. Try again." with
+    "Try again", and saving stays disabled.
+  portfolio-client: >-
+    `src/api/portfolio.ts` exports `fetchPortfolio()`,
+    `fetchPortfolioSource()`, `lintPortfolioText(text, signal)`, and
+    `savePortfolio(request)`. Each sends its request without
+    authentication headers, with `Content-Type: application/json` for a
+    body, and turns the answer into a result as `blueprints-client` does:
+    `ok` with the body, a typed `conflict` or `invalid`, or `failed` with
+    the API's message or a generic message for a network error or a body
+    that does not match. The mapping from a status and a body to a result
+    is a pure function, and each body is checked at this boundary with the
+    guards of `@wyrd-company/manifold-shared/portfolio-api`. Lint and save
+    are mutations, never cached; when a save settles it marks
+    `["portfolio"]` and `["portfolio-source"]` stale.
+  amounts: |-
+    Every amount the console shows, on Portfolio and in the Task page's
+    Usage panel, is formatted in its account's unit by one module,
+    `@wyrd-company/manifold-shared/amounts`, a dependency-free subpath
+    export of pure functions.
+
+    ```ts
+    /** An amount as a person reads it: `$1.00`, `$0.0177`, `−$2.50`. */
+    export function formatAmount(
+      amount: number, // a safe integer in the unit, as the ledger holds it
+      unit: string | undefined,
+      options?: { readonly signed?: boolean },
+    ): string;
+    /** The amount at full precision: `$0.017734`. */
+    export function formatAmountExact(amount: number, unit: string | undefined): string;
+    /** A percentage with at most two decimals: `33.33%`, `50%`. */
+    export function formatPercent(percent: number): string;
+    ```
+
+    For `usd`, the amount is millionths of a dollar, and every step is
+    integer arithmetic on the magnitude, so every safe integer formats
+    exactly. A magnitude of at least 1,000,000 rounds half up to cents and
+    shows two decimals. A smaller magnitude rounds half up to
+    ten-thousandths and shows up to four decimals, trailing zeros removed
+    down to two; one that rounds to 10,000 ten-thousandths shows `$1.00`,
+    and one above 0 that rounds to 0 shows `<$0.0001`. Zero is `$0.00`.
+    Whole dollars group by three digits with `,`. A negative amount starts
+    with `−` (U+2212), and with `signed` a positive one starts with `+`.
+    `formatAmountExact` shows six decimals. An amount whose unit is
+    undefined, for an account the accounts declaration does not declare,
+    is the integer grouped by three digits with the same signs. Every
+    formatted amount carries `formatAmountExact` in its `title`. The Task
+    page's Usage panel formats estimate, actual, reserved, and the
+    variance, signed, with the entry's `unit` from `tasks-api`.
+  portfolio-endpoints: >-
+    `mountPortfolioApi(host, options)` mounts one listener at
+    `/api/portfolio` that implements `portfolio-api`, with the paths `""`
+    (the read), `/source`, `/lint`, and `/save` under the prefix. A pure
+    function, `portfolioRead(input)` in `read.ts`, builds the read's
+    answer from the declaration in force, the accounts in force, each
+    item's balance and the account's window and totals for each account,
+    and the active snapshots; the listener gathers them per request and
+    holds no cache. It reads balances through the portfolio whose ledger
+    is the capacity module's, so the first `balance` of a declared account
+    credits its current window as a gate's read does; it then reads the
+    window with `windowAt` and the totals with `totals`. The read's
+    `warnings` are `lintAllocatedAccounts` over `portfolio.yml` and
+    `accounts.yml` read through `processRepository.revisionAt` at the
+    commit of the declaration in force, kept for that one commit until
+    the commit changes. Source and lint read `bindings.yml` and
+    `accounts.yml` at the latest applied revision, `revisions.latest()`'s
+    commit, and run `lintPortfolioDeclaration` and
+    `lintAllocatedAccounts`. A save lints first, answers `422` for a
+    finding, and otherwise awaits `revisions.save` with the path
+    `portfolio.yml` and maps its result as `blueprints-endpoints` does,
+    with `loaded` true when the result carries its load. The request
+    checks are the blueprints API's pure checks in
+    `blueprints-api/request-checks.ts`, run before a body is read, and a
+    body is read up to 8 MiB. Any other error answers `500` and goes to
+    `log` with the path.
+  portfolio-public-interface: |-
+    `packages/service/src/portfolio-api/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { HttpHost } from "../http-host/index.ts";
+    import type { Store } from "../store/index.ts";
+    import type { Ledger } from "../ledger/index.ts";
+    import type { PortfolioInForce } from "../portfolio/index.ts";
+    import type { ProcessRepository } from "../process-repository/index.ts";
+    import type { Revisions } from "../service/index.ts";
+    import type { UsageAccount } from "@wyrd-company/manifold-shared";
+    import type { ServiceWiringPart } from "../service/index.ts";
+
+    export interface PortfolioApiOptions {
+      /** The portfolio whose ledger is the capacity module's. */
+      readonly portfolio: {
+        current(): PortfolioInForce;
+        readonly ledger: Pick<Ledger, "balance" | "windowAt" | "totals">;
+      };
+      /** The accounts declaration in force: usage intake's `accounts`. */
+      accounts(): Readonly<Record<string, UsageAccount>>;
+      readonly revisions: Pick<Revisions, "latest" | "save">;
+      readonly processRepository: Pick<ProcessRepository, "revisionAt">;
+      readonly store: Pick<Store, "activeSnapshots">;
+      /** The service clock. Defaults to Date.now. */
+      readonly now?: () => number;
+      readonly log: (entry: { level: "error"; path: string; error: string }) => void;
+    }
+
+    /** Mounts the portfolio endpoints at `/api/portfolio`. */
+    export function mountPortfolioApi(host: HttpHost, options: PortfolioApiOptions): void;
+
+    /** The service wiring part that mounts the portfolio endpoints. */
+    export const portfolioApiPart: ServiceWiringPart;
+    ```
+
+    `@wyrd-company/manifold-shared` adds the subpath export
+    `./portfolio-api`, which holds no lint and no YAML parser: the path
+    `portfolioApiPath` (`/api/portfolio`), the request and response types
+    of `portfolio-api`, and a guard for each response. It adds the subpath
+    export `./amounts` of `amounts`. In `packages/service/src/portfolio-api/`,
+    `index.ts` re-exports the public names, `listener.ts` holds the
+    routing, `read.ts` the pure read, `answers.ts` the pure mapping from a
+    lint or a save result to an answer, and `wiring.ts` the part. In
+    `packages/console`, `src/screens/portfolio/` holds `PortfolioContent.tsx`,
+    `BudgetSourceCards.tsx`, `PortfolioTable.tsx`, `CurrentUsageCell.tsx`,
+    `StatusBar.tsx`, `ProblemsList.tsx`, `EditItemDialog.tsx`,
+    `ArchivedList.tsx`, and the pure modules `edits.ts`, `draft.ts`,
+    `rows.ts` (the read to table rows for an account, the current-usage
+    choice, and the window labels), and `findings.ts`.
+  portfolio-wiring: >-
+    `portfolioApiPart` is the service wiring part named `portfolio-api`,
+    in `packages/service/src/portfolio-api/wiring.ts`, listed once in
+    `start.ts` after the blueprints API's entry. It starts by calling
+    `mountPortfolioApi` with the HTTP host, the portfolio whose ledger is
+    `capacity.ledger`, `usage.accounts`, the revision follower, the
+    process repository, the store, the service clock, and `log`, and stops
+    with nothing to release, since the host stops serving its mounts.
+  portfolio-convergence: >-
+    The read's one write is the credit of an account's current window,
+    which the capacity module writes once per account and window by its
+    key, so a read that runs twice credits once and answers twice from the
+    ledger as it is, and a read that crashes before the credit commits
+    leaves nothing for the next read to repeat. Source and lint only read.
+    A save converges as `process-repository` and `service-assembly` state:
+    a retry with the same `saveId` answers `already-saved` or pushes the
+    change once, and a crash after the push and before the browser reads
+    the answer leaves the draft with no `saved`, whose retry answers
+    `already-saved`. A draft is written whole on each edit, so a reload or
+    a crash of the browser leaves the last edit. Applying a draft's edits
+    to the same text twice gives the same text, since each edit sets
+    values rather than adding to them.
+  portfolio-tests: >-
+    Each behavior is red before green, and tests go through public
+    interfaces. The endpoints are tested as `portfolio-api`'s validation
+    criteria state. In `packages/shared`, tests of `amounts` show `$1.00`
+    for 1,000,000, `$0.0177` for 17,700, `$0.50` for 500,000, `$0.0012`
+    for 1,234, `<$0.0001` for 40, `$1.00` for 999,995, `$1,234.57` for
+    1,234,567,890, `−$2.50` and `+$2.50` signed, `$0.00` for 0,
+    `$0.017734` exact, and `17,734` with no unit; and the guards of
+    `./portfolio-api` against the OpenAPI document with fixtures that pass
+    and fail. In `packages/console`, unit tests cover the result mapping;
+    `applyEdits` on a text with comments, which stay, for each edit kind,
+    an Other's allocation, an add under a leaf, a restore setting
+    guarantees to 0, an edit dropped for a missing item, and a text that
+    does not parse; the draft functions as `tests` states them for the
+    blueprint draft, and a draft's edits applied again to a later text;
+    `rows.ts` on a nested read with an archived item; and `findings.ts`
+    for a `guarantee-limit` at the top level and under an item. The
+    browser test, `packages/service/src/portfolio-api/portfolio.browser.test.ts`,
+    starts the service with the built console on a fixture process
+    repository served over smart HTTP with push enabled, with accounts
+    `acct-a` and `acct-b` and items `alpha` and `beta` at 50% of each,
+    and a ledger on which one actor reserved and posted actuals on `alpha`
+    for `acct-a` and another on `beta` for `acct-b`, both settled. It opens
+    Portfolio, reads both cards with their used and capacity in dollars,
+    and `alpha`'s allocation, usage, and "Can reserve" in dollars; selects
+    `acct-b` and reads `beta`'s; opens "Edit allocations", sets `alpha` to
+    70% and `beta` to 40% for `acct-a`, and, once the lint answers, sees
+    the error borders, the error status bar naming the top level and 110%,
+    and "Save allocations" disabled; sets `beta` to 30%, sees the marks
+    clear, saves, and sees the toast; reloads and reads `alpha` at 70%
+    with its new amount; and finds one new commit on the fixture remote
+    whose `portfolio.yml` keeps the fixture's comment, and the read's
+    `commit` equal to it. The Board and Task page browser test checks the
+    estimate, actual, variance, and reserved of its settled task in
+    dollars, such as `$0.0177`.
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It
     takes the request's path, which the HTTP host passes unchanged,
@@ -1708,6 +2164,9 @@ proposed-design:
     layout engine `DESIGN.md` asks the Epics graph to share; and CodeMirror
     6: `@codemirror/state`, `@codemirror/view`, `@codemirror/commands`,
     `@codemirror/language`, `@codemirror/lang-yaml`, `@codemirror/lint`,
-    and `@codemirror/merge`. None of them evaluates generated code, so the
-    console's Content Security Policy holds. Renovate keeps them current
+    and `@codemirror/merge`. The Portfolio screen adds `yaml` (eemeli/yaml),
+    the YAML library the service and the host CLI already use, whose
+    document model edits a text and keeps its comments. None of them
+    evaluates generated code, so the console's Content Security Policy
+    holds. Renovate keeps them current
     with the rest.

@@ -80,7 +80,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **deadline** a time at which an actor in a state receives an event.
 - **deadline loop** the router's one timer that fires due deadlines into their actors' inboxes and re-arms at the earliest unfired deadline.
 - **decision model** a GoRules JDM graph in the process repository whose tables, expressions, and switches are JSONata, evaluated by the Zen engine.
-- **draft** the edited text of one blueprint in the console, with the commit it is based on, kept in the browser until it is published or discarded.
+- **draft** the edited text of one process repository file in the console, with the commit it is based on, kept in the browser until it is saved or discarded.
 - **drift** a change to a bound Project's owned configuration made on GitHub since Manifold last applied it, which the declaration in force does not hold.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **escalation** a question put to a person, with up to three choices or a free-text answer, by a blueprint state or by the service, closed by the first answer.

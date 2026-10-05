@@ -436,7 +436,14 @@ the actor page.
 - Budget source cards, one per account: name and kind on one line, a
   granted-reset badge with its expiry under it, one meter per window with
   its value and estimated reset (the reset text truncates, never wraps), and
-  a note when an early reset was detected.
+  a note when an early reset was detected. An account that an allocation
+  names and `accounts.yml` does not declare has a "Not declared" warning
+  badge in place of its kind, a muted line "Declare it in accounts.yml",
+  and no meter.
+- Account row, under the cards when there is more than one account:
+  "Allocations for" and an account select. Allocation, Lifetime cost, the
+  "Unallocated" row, the edits, and the dialog are for the selected
+  account.
 - Columns: Name (with a muted line under it for the projects attached to
   the item: their names when they fit, else counts such as "2 GitHub
   Projects, 1 T3code project"), Allocation (the guaranteed percentage of
@@ -478,10 +485,15 @@ While the allocations under one parent add up to more than 100%, their
 inputs have error borders, the status bar is error and names that parent
 and its sum, and "Save allocations" is disabled.
 
+Under the status bar, a problems list shows each lint finding and warning
+on one line: the kind in mono, the file and location in mono, and the
+message, findings in error color and warnings in warning color.
+
 #### Edit item
 
 A 480px dialog: Name, Allocation (percentage of the parent), Ceiling
-(optional percentage), a "Pacing" switch, and Sub-items. Each sub-item row
+(optional percentage), Weight (optional whole number), a "Pacing" switch
+that shows a Burst percentage input while on, and Sub-items. Each sub-item row
 has its name, its amount, an allocation input, a ceiling input, and a remove
 button. "Add sub-item" appends a row with a name field. The unallocated
 remainder of the sub-items shows next to the heading. While the sub-item
@@ -498,7 +510,8 @@ each project with a choice: "Move to <parent>" (it lands on the parent's
 project". The confirm button is solid error.
 
 "Add item" opens the same dialog with only a name and adds a top-level
-item. A new item starts at 0%.
+item. A new item starts at 0%. The item's id, made from the name, shows
+under the Name field in muted mono and never changes.
 
 ### Task page
 

@@ -119,10 +119,12 @@ description: |-
   - `usage`: `{ settled, accounts }` from the usage intake module's actor
     usage read for the actor id, which is the ledger's with the actor's
     late attributions counted. Each account entry is `{ account,
-    estimate, actual, variance, reserved }`: the sum of the actor's
+    estimate, actual, variance, reserved, unit }`: the sum of the actor's
     reservations, its posted actuals with the calls whose mapping arrived
     after they posted, actual less estimate, and its outstanding
-    reservation, each in the account's native unit. An actor with no
+    reservation, each in the account's native unit, and `unit`, that unit as the
+    accounts declaration in force declares it, absent for an account it
+    does not declare. An actor with no
     ledger entry and no late attribution has `accounts` empty.
   - `escalations`: `{ open, recent }`. `open` holds the task's open
     escalations, oldest raised first. `recent` holds its answered and
@@ -154,10 +156,12 @@ validation-criteria: >-
   router holds after a refused restore with no errored snapshot, one
   actor the router does not hold whose errored snapshot the store keeps
   after a successful release, one settled actor with actuals on two
-  accounts, a blueprint escalation, a
+  accounts, one declared with unit `usd` and one the accounts declaration
+  does not declare, a blueprint escalation, a
   `held-actor` escalation, an `intake-failed` escalation, and a
   `stranded-token` escalation of the task, and an escalation of another
-  actor. The test checks each field stated above, the order of projects,
+  actor. The test checks each field stated above, `unit` included and absent
+  for the undeclared account, the order of projects,
   tasks, and escalations, the `404` for an unknown id, a non-task id, and
   a sub-path, and the `405`. Fixture values are generic and never drawn
   from Manifold's own domain.
