@@ -91,7 +91,7 @@ test("canvas edits, dragged transition, expression findings, YAML toggle, layout
     expect(await page.getByRole("button", { name: "Publish", exact: true }).isDisabled()).toBe(
       true,
     );
-    expect(await page.locator(".canvas-edge-label.error").count()).toBeGreaterThan(0);
+    await page.locator(".canvas-edge-label.error").first().waitFor();
     await page.getByLabel("Expression", { exact: true }).fill("true");
     await page.waitForFunction(
       () =>
