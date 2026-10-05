@@ -227,3 +227,36 @@ test("answers unavailable before an applied revision", async () => {
     latest.mockRestore();
   }
 });
+test("shows non-string Project keys as written and adds a field by that key", async () => {
+  const { url } = await setup();
+  const request = (path: string, body: unknown) =>
+    fetch(url + path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const text =
+    'projects:\n  001:\n    lifecycle:\n      field: Stage\n      options: [Open]\n    fields:\n      002:\n        type: ""\n        storage:\n          kind: unknown\n';
+  const lint = await request("/lint", { path: "task-metadata.yml", text });
+  expect(await lint.json()).toMatchObject({
+    fields: [
+      { binding: "001", name: "Stage", location: "/projects/1/lifecycle" },
+      {
+        binding: "001",
+        name: "002",
+        type: "",
+        storage: "unknown",
+        location: "/projects/1/fields/2",
+      },
+    ],
+  });
+  const edit = await request("/task-fields/edit", {
+    text,
+    edit: { kind: "add-field", binding: "001" },
+  });
+  expect(edit.status).toBe(200);
+  expect(await edit.json()).toMatchObject({
+    location: "/projects/1/fields/field-1",
+    fields: [{ binding: "1" }, { binding: "1" }, { binding: "1", name: "field-1" }],
+  });
+});

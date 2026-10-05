@@ -13,7 +13,12 @@ export function taskFieldRows(text: string): TaskField[] | undefined {
   if (!isMap(projects)) return [];
   const rows: TaskField[] = [];
   for (const entry of projects.items) {
-    const binding = isScalar(entry.key) ? String(entry.key.value) : String(entry.key);
+    const binding = isScalar(entry.key)
+      ? typeof entry.key.value === "string"
+        ? entry.key.value
+        : (entry.key.source ?? String(entry.key.value))
+      : String(entry.key);
+    const bindingKey = isScalar(entry.key) ? String(entry.key.value) : String(entry.key);
     if (!isMap(entry.value)) continue;
     const lifecycle = entry.value.get("lifecycle", true);
     const fields = entry.value.get("fields", true);
@@ -74,13 +79,23 @@ export function taskFieldRows(text: string): TaskField[] | undefined {
       row(
         lifecycle,
         typeof lifecycle.get("field") === "string" ? (lifecycle.get("field") as string) : "",
-        `/projects/${pointer(binding)}/lifecycle`,
+        `/projects/${pointer(bindingKey)}/lifecycle`,
         true,
       );
     if (isMap(fields))
       for (const field of fields.items) {
-        const name = isScalar(field.key) ? String(field.key.value) : String(field.key);
-        row(field.value, name, `/projects/${pointer(binding)}/fields/${pointer(name)}`, false);
+        const name = isScalar(field.key)
+          ? typeof field.key.value === "string"
+            ? field.key.value
+            : (field.key.source ?? String(field.key.value))
+          : String(field.key);
+        const fieldKey = isScalar(field.key) ? String(field.key.value) : String(field.key);
+        row(
+          field.value,
+          name,
+          `/projects/${pointer(bindingKey)}/fields/${pointer(fieldKey)}`,
+          false,
+        );
       }
   }
   return rows;

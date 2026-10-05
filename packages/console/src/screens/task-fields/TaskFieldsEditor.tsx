@@ -49,19 +49,28 @@ export function TaskFieldsEditor() {
     refetchOnWindowFocus: false,
   });
   const result = query.data;
-  if (!result) return <p role="status">Loading task fields…</p>;
+  if (!result)
+    return (
+      <>
+        <h2>Task fields</h2>
+        <p role="status">Loading task fields…</p>
+      </>
+    );
   if (result.kind !== "ok")
     return (
-      <div role="alert" className="error-alert">
-        {"message" in result ? result.message : "Cannot read task fields."}
-        <Button
-          onClick={() => {
-            void query.refetch();
-          }}
-        >
-          Try again
-        </Button>
-      </div>
+      <>
+        <h2>Task fields</h2>
+        <div role="alert" className="error-alert">
+          {"message" in result ? result.message : "Cannot read task fields."}
+          <Button
+            onClick={() => {
+              void query.refetch();
+            }}
+          >
+            Try again
+          </Button>
+        </div>
+      </>
     );
   return <Editor source={result.body} />;
 }
