@@ -38,7 +38,8 @@ objective: >-
   YAML in a view the operator toggles to, with the service's own lint
   marking each finding as the draft changes, and publishes it as a commit
   pushed to the process repository, which the service then runs with no
-  redeploy.   keeps GitHub in step from GitHub Projects: sees each bound Project with
+  redeploy. It
+  keeps GitHub in step from GitHub Projects: sees each bound Project with
   its configuration state and card counts, reviews what an Apply would
   change, applies it, and binds a GitHub Project or a T3code project; and
   from Settings, Task fields: edits the task fields as a draft with the
@@ -1245,6 +1246,12 @@ proposed-design:
     list and the
     editor. The `blueprints-api` wiring part calls `mountBlueprintsApi`
     before the host listens, as `service-assembly` states.
+    The canvas changes no service code: the blueprints endpoints and the HTTP
+    host's request checks they use are unchanged. The editor calls the
+    draft functions and `PublishDialog` with their blueprint defaults, the
+    draft key prefix `manifold.blueprint-draft.` and the dialog's title,
+    width, and file list, so drafts written before the canvas open as
+    they are.
   implementation-catalog: |-
     `packages/shared/src/implementation-catalog.ts` is the one list of the
     implementations Manifold's service registers, and the subpath export
