@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: [task-metadata, service-assembly, github-event-source, actor-host]
 // ---
+import { childProcessLimit } from "../../../../test-support/limits.ts";
 import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { fork } from "node:child_process";
 import { join } from "node:path";
@@ -153,7 +154,7 @@ test.each([
                   if (child.exitCode !== null || child.signalCode !== null) throw new Error(stderr);
                   return ready;
                 },
-                { timeout: 15000 },
+                { timeout: childProcessLimit },
               )
               .toBe(true);
           },
@@ -170,7 +171,11 @@ test.each([
       }
       const first = worker(true);
       await first.ready();
-      await expect.poll(() => read("SELECT * FROM github_item WHERE present=1").length).toBe(1);
+      await expect
+        .poll(() => read("SELECT * FROM github_item WHERE present=1").length, {
+          timeout: childProcessLimit,
+        })
+        .toBe(1);
       first.child.send("start");
       expect(await first.exited, first.stderr()).toEqual({ code: null, signal: "SIGKILL" });
       expect(
@@ -210,6 +215,7 @@ test.each([
                   "snapshot"
                 ] as string,
               ).value,
+            { timeout: childProcessLimit },
           )
           .toBe("failed");
         expect(
@@ -231,7 +237,7 @@ test.each([
                 "snapshot"
               ] as string,
             ).value,
-          { timeout: 10000 },
+          { timeout: childProcessLimit },
         )
         .toBe("own");
       expect(
@@ -261,6 +267,7 @@ test.each([
                 "snapshot"
               ] as string,
             ).value,
+          { timeout: childProcessLimit },
         )
         .toBe("person");
       third.child.send("stop");
@@ -275,5 +282,5 @@ test.each([
       await f.close();
     }
   },
-  60000,
+  childProcessLimit * 3,
 );
