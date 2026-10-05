@@ -2,6 +2,7 @@
 // relationships:
 //   implements: live-github-environment
 // ---
+import { hookEvents, hookConfiguration } from "./hooks.ts";
 import { randomBytes } from "node:crypto";
 import { readFile, rename, rm, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -17,14 +18,6 @@ export type Resources = {
   project: { id: string; nodeId: string; name: string; number: number };
   hook: { id: number; name: string };
 };
-export const hookEvents = [
-  "issues",
-  "issue_dependencies",
-  "sub_issues",
-  "projects_v2_item",
-  "projects_v2",
-  "push",
-];
 type Options = {
   settings: Settings;
   directory: string;
@@ -325,12 +318,10 @@ export async function provision(
         name: "web",
         active: false,
         events: hookEvents,
-        config: {
-          url: `https://hook.invalid/webhooks/github?owner-marker=${encodeURIComponent(s.marker)}`,
-          content_type: "json",
-          insecure_ssl: "0",
-          secret: pending ?? secret,
-        },
+        config: hookConfiguration(
+          `https://hook.invalid/webhooks/github?owner-marker=${encodeURIComponent(s.marker)}`,
+          (pending ?? secret)!,
+        ),
       }),
     );
     report("Hook", "created");
@@ -341,12 +332,7 @@ export async function provision(
       hook = await write("hook.update", () =>
         g.updateHook(hook!.id, {
           events: hookEvents,
-          config: {
-            ...hook!.config,
-            content_type: "json",
-            insecure_ssl: "0",
-            ...(pending ? { secret: pending } : {}),
-          },
+          config: hookConfiguration(hook!.config.url, (pending ?? secret)!),
         }),
       );
       report("Hook", "updated");

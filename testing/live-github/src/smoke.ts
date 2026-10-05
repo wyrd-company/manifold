@@ -2,6 +2,7 @@
 // relationships:
 //   implements: live-github-environment
 // ---
+import { setHookState } from "./hooks.ts";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -111,11 +112,7 @@ async function main() {
       },
       actor: (issue) => hasTaskActor(status.serviceAddress!, issue),
       setHook: async (active) => {
-        await github.rest("set smoke hook active", "PATCH /orgs/{org}/hooks/{hook_id}", {
-          org: settings.organization,
-          hook_id: hook,
-          active,
-        });
+        await setHookState(github, directory, hook, active);
       },
       hookActive: async () => {
         const value = await github.rest<{ active: boolean }>(
@@ -180,20 +177,14 @@ async function main() {
   let interrupted = false;
   const restore = () => {
     interrupted = true;
-    void github
-      .rest("restore smoke hook", "PATCH /orgs/{org}/hooks/{hook_id}", {
-        org: settings.organization,
-        hook_id: hook,
-        active: true,
-      })
-      .then(
-        () => {
-          process.exitCode = 1;
-        },
-        () => {
-          process.exitCode = 1;
-        },
-      );
+    void setHookState(github, directory, hook, true).then(
+      () => {
+        process.exitCode = 1;
+      },
+      () => {
+        process.exitCode = 1;
+      },
+    );
   };
   process.once("SIGINT", restore);
   process.once("SIGTERM", restore);

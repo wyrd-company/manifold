@@ -2,6 +2,7 @@
 // relationships:
 //   implements: live-github-environment
 // ---
+import { setHookState } from "./hooks.ts";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { once } from "node:events";
@@ -167,8 +168,7 @@ export async function runStart() {
         [
           async () => {
             if (github && hookId) {
-              const hook = await github.hook(hookId);
-              if (hook.active) await github.updateHook(hookId, { active: false });
+              await setHookState(github, directory, hookId, false);
             }
           },
           () => ledger.stopAll(),
@@ -304,9 +304,7 @@ export async function runStart() {
     async function updateHook(url: string) {
       abort.signal.throwIfAborted();
       const expected = `${url}/webhooks/github?owner-marker=${encodeURIComponent(settings.marker)}`;
-      const hook = await github!.hook(hookId!);
-      if (hook.config.url !== expected || !hook.active)
-        await github!.updateHook(hookId!, { active: true, config: { url: expected } });
+      await setHookState(github!, directory, hookId!, true, expected);
     }
     let reconnecting = false;
     let initialized = false;

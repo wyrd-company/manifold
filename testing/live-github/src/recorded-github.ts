@@ -14,10 +14,15 @@ export function recordedGitHub() {
     commits = new Map<string, { tree: { sha: string } }>(),
     heads = new Map<string, string>();
   const calls: { op: string; write: boolean }[] = [];
+  const hookPatches: Record<string, unknown>[] = [];
   let id = 1;
   const record = (op: string, write: boolean) => calls.push({ op, write });
   const digest = (s: string) => createHash("sha1").update(s).digest("hex");
   const blob = (s: string) => digest(`blob ${Buffer.byteLength(s)}\0${s}`);
+  const publicHook = (hook: Hook) => {
+    const { secret: _secret, ...config } = hook.config;
+    return { ...hook, config };
+  };
   const api: GitHubPort = {
     async rest<T>(op: string, route: string, params: Record<string, unknown> = {}) {
       record(op, !route.startsWith("GET "));
@@ -87,6 +92,12 @@ export function recordedGitHub() {
           heads.set(String(params["repo"]), String(params["sha"]));
           result = {};
           break;
+        case "GET /orgs/{org}/hooks":
+          result = [...hooks.values()].map(publicHook);
+          break;
+        case "GET /orgs/{org}/hooks/{hook_id}":
+          result = publicHook(hooks.get(Number(params["hook_id"]))!);
+          break;
         case "POST /orgs/{org}/hooks": {
           const hook = {
             id: id++,
@@ -95,13 +106,22 @@ export function recordedGitHub() {
             config: params["config"] as Hook["config"],
           };
           hooks.set(hook.id, hook);
-          result = hook;
+          result = publicHook(hook);
           break;
         }
         case "PATCH /orgs/{org}/hooks/{hook_id}": {
+          hookPatches.push(structuredClone(params));
           const hook = hooks.get(Number(params["hook_id"]))!;
-          Object.assign(hook, { ...params, id: hook.id });
-          result = hook;
+          const config = params["config"] as Partial<Hook["config"]> | undefined;
+          hook.active = params["active"] === undefined ? hook.active : Boolean(params["active"]);
+          hook.events = (params["events"] as string[] | undefined) ?? ["push"];
+          hook.config = {
+            url: config?.url ?? hook.config.url,
+            content_type: config?.content_type ?? "form",
+            insecure_ssl: config?.insecure_ssl ?? "0",
+            ...(config?.secret === undefined ? {} : { secret: config.secret }),
+          };
+          result = publicHook(hook);
           break;
         }
         case "DELETE /orgs/{org}/hooks/{hook_id}":
@@ -178,11 +198,11 @@ export function recordedGitHub() {
     },
     async listHooks() {
       record("list hooks", false);
-      return structuredClone([...hooks.values()]);
+      return structuredClone([...hooks.values()].map(publicHook));
     },
     async hook(hookId) {
       record("hook read", false);
-      return structuredClone(hooks.get(hookId)!);
+      return structuredClone(publicHook(hooks.get(hookId)!));
     },
     async updateHook(hookId, patch) {
       return api.rest("hook update", "PATCH /orgs/{org}/hooks/{hook_id}", {
@@ -198,6 +218,7 @@ export function recordedGitHub() {
     projects,
     hooks,
     calls,
+    hookPatches,
     writes: () => calls.filter((c) => c.write),
     unmarked: () => [
       ...[...repositories.values()].filter((r) => !r.description?.includes("test-owned")),

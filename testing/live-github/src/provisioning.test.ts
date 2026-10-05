@@ -261,7 +261,7 @@ describe("provisioning convergence", () => {
       expect(hook.config.url).toBe(
         "https://example.invalid/webhooks/github?owner-marker=test-owned",
       );
-      expect(hook.config.secret).toBe(secret);
+      expect(hook.config.secret === secret).toBe(true);
     } finally {
       await f.dispose();
     }
