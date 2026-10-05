@@ -74,6 +74,7 @@ proposed-design:
       /** Absolute; resolved against the configuration file's directory. */
       readonly directory: string;
       readonly pullTimeoutMs: number;
+      readonly commitAuthor: { readonly name: string; readonly email: string };
     }
 
     export interface Credentials {

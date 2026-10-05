@@ -1,0 +1,155 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - operator-console
+    - process-repository
+    - service-assembly
+    - blueprint
+    - host-cli-blueprint-lint
+    - lint-console-edits-on-the-service
+description: >-
+  Defines the blueprints endpoints of Manifold's API: the list of every
+  blueprint at the latest applied revision with its lint result, one
+  blueprint's text with its findings and graph, the lint of edited text,
+  and the save of edited text as a commit pushed to the process repository.
+  `docs/specifications/blueprints-api.openapi.yml` is the machine-readable
+  definition. The Blueprints screen of the operator console reads and
+  writes through them, and any automation may.
+
+  The endpoints are mounted with the HTTP host's `mount` at the prefix
+  `/api/blueprints` and are always served without authentication. Access
+  control belongs to the deployment. A path under the prefix that is not
+  one of the four below answers `404`. A method an endpoint does not take
+  answers `405` with `Allow` naming the one it takes.
+
+  **Blueprint paths.** A repository blueprint's path is a process
+  repository path under `blueprints/` that ends in `.yml` or `.yaml`, with
+  the path rules of `ProcessRepositoryRevision`: `/`-separated segments,
+  none empty, `.`, or `..`, and no `\`. A bundled blueprint's path is the
+  name intake gives a blueprint Manifold bundles. Every response names a
+  blueprint by its path.
+
+  **Findings.** A finding is the blueprint lint's finding, as `blueprint`
+  specifies it, without its `path`, and with `range` when the finding has
+  a place in the text. `range` holds `from` and `to`, offsets into the text
+  in UTF-16 code units with `from` at most `to`, and `line` and `column`,
+  1-based, of `from`. A `yaml` finding's range runs from its line and
+  column to the end of that line. A finding located by a JSON Pointer has
+  the range of the deepest YAML node on the pointer's path that the text
+  holds; when that node is the value of a mapping entry, the range runs
+  from the entry's key to the end of its value. The empty pointer has the
+  range of the text's first line. `findings` and `warnings` are separate
+  lists in the lint's order: `warnings` holds the `token-potential` and
+  `token-unknown` findings, and `findings` holds every other. A text lints
+  with the same function, implementation names, and configuration bound as
+  the service's blueprint loader and `manifold-host blueprint lint`, so
+  the three report the same findings for the same text and path.
+
+  **Graph.** A blueprint's graph holds its state nodes and transitions,
+  present whenever the text parses as YAML, passes the blueprint shape, and
+  its machine resolves. A state is named by its state path, the keys from
+  the machine's root joined with `.`; the root is not a state. Each state
+  has its `key`, the `parent` state path for a nested state, its `type`
+  (`atomic`, `compound`, `parallel`, `final`, or `history`), `initial` when
+  it is its parent's initial state or the machine's, the `invokes`
+  sources in declaration order, `gated` when it declares a gate, its
+  `location`, the JSON Pointer of the state node, and its `range` by the
+  rule for findings. Each transition has its `source` and `target` state
+  paths, resolved as XState resolves them, its `trigger` (`event`,
+  `always`, `after`, `done`, or `error`), its `label`: the event type, the
+  delay, or the invoke id the `done` or `error` belongs to, `guarded` when
+  it has a guard, and its `location`, the JSON Pointer of the transition.
+  A transition with several targets is one transition per target; a
+  targetless transition has no `target`. States are listed in document
+  order, depth first, and transitions in document order.
+
+  **List.** `GET /api/blueprints` answers `200` with `repository`, the
+  configured URL and branch; `commit`, the commit of the latest revision
+  the revision follower applied, absent before the first; and `blueprints`.
+  It lists each repository blueprint of that revision, sorted by code
+  point, then each bundled blueprint, sorted by code point. An item holds
+  its `path`; its `source`, `repository` or `bundled`; for a repository
+  blueprint the `commit` of its version; its `status`, `loaded` or
+  `invalid`; the count of its `findings` and of its `warnings`; its
+  `description` when it loaded and declares one; and `activeActors`, the
+  count of active snapshots whose machine key is a blueprint version key
+  with that path, at any commit.
+
+  **Source.** `GET /api/blueprints/source?path=<path>` answers `200` with
+  the blueprint's `path`, `source`, `commit` for a repository blueprint,
+  the commit of the latest applied revision, `text`, `findings`,
+  `warnings`, and `graph` when it has one. A path that is neither a
+  repository blueprint at that revision nor a bundled blueprint answers
+  `404`. A repository path before the first applied revision answers `503`.
+
+  **Lint.** `POST /api/blueprints/lint` takes `{ path, text }` and answers
+  `200` with `findings`, `warnings`, and `graph` when the text has one. It
+  reads and writes nothing else. `path` names the file the findings
+  belong to and need not exist.
+
+  **Save.** `POST /api/blueprints/save` takes `{ path, base, text, message,
+  saveId }`. `path` is a repository blueprint path. `base` is the commit
+  the edit started from. `message` is the commit message, 1 to 4096 UTF-16
+  code units with at least one character that is not white space.
+  `saveId` is 32 lower-case hexadecimal characters that the caller chooses
+  once for one text and sends again with every retry of that text. The
+  service lints `text` first: a text with a finding answers `422` with
+  `findings` and `warnings`, and nothing is written. Otherwise the revision
+  follower pulls, commits `text` at `path` on top of the branch's commit,
+  pushes it, pulls it, and applies it, as `process-repository` and
+  `service-assembly` state. The answer is `200` with `outcome`, `commit`,
+  and `blueprint`:
+
+  - `saved`: the commit was pushed; `commit` is the new commit.
+  - `already-saved`: a commit on the branch carries this `saveId`;
+    `commit` is that commit, and nothing new is pushed.
+  - `unchanged`: the file at the branch's commit already equals `text`;
+    `commit` is the branch's commit, and nothing is pushed.
+
+  `blueprint` is the path's item in the list as it stands after the
+  answer's commit is applied, absent when that commit is not yet applied
+  because the pull after the push failed. A save whose base file differs
+  from the file on the branch answers `409` with `head`, the branch's
+  commit, and `text`, the file's text there, absent when the file is not
+  there; nothing is pushed. A save the remote refuses answers `502` with
+  `error` `rejected` and the remote's reason; an authentication the remote
+  refuses answers `502` with `error` `authentication`; any other failure to
+  reach the remote, its pull timeout included, answers `502` with `error`
+  `remote`. Before the first applied revision, and while the service
+  stops, a save answers `503`. The service never force-pushes.
+
+  **Requests.** `lint` and `save` take `Content-Type: application/json`
+  and answer `415` for any other type. A request with an `Origin` header
+  whose host and port differ from its `Host` header answers `403`, and so
+  does one with `Sec-Fetch-Site: cross-site`, so that a page on another
+  site cannot drive these endpoints from the operator's browser. A body
+  over 8 MiB answers `413`. A body that is not JSON or not of the stated
+  shape, and a path that breaks the path rules, answers `400` with the
+  first problem. Every answer is JSON with `Cache-Control: no-store`, and
+  every error answer holds `error` and `message`. The query string of the
+  list, lint, and save endpoints is ignored.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/blueprints-api.openapi.yml` is a valid OpenAPI 3.1
+  document. Tests in `packages/service` serve a fixture process repository
+  over smart HTTP with push enabled, start the service on it, and call each
+  endpoint without authentication through the service's HTTP host. They
+  check that each body validates against its response schema; that the list
+  holds a loaded blueprint, an invalid one with its finding count, and the
+  active actor count of a fixture snapshot; that `source` and `lint` answer,
+  for each token-lint fixture of `token-lint` and each `host-cli-blueprint-lint`
+  fixture, the findings and warnings whose lines equal those
+  `manifold-host blueprint lint` prints for the same text, each with the
+  range stated; that a graph lists nested, parallel, and final states and
+  `event`, `always`, `after`, `done`, and `error` transitions; that a save
+  answers `saved`, the remote branch holds one new commit whose parent is
+  the previous head, whose author and message are those of
+  `process-repository`, and the list then shows the new commit; that the
+  same save again answers `already-saved` with that commit and pushes
+  nothing; that a save whose base file changed on the remote answers `409`
+  with the remote's text, and one whose base is behind only on other files
+  answers `saved` on top of the remote's commit; that a text with a finding
+  answers `422`; and the `400`, `403`, `404`, `405`, `413`, `415`, and `503`
+  answers.

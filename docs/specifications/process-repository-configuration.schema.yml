@@ -40,7 +40,28 @@ properties:
   pullTimeoutMs:
     description: >-
       The most time in milliseconds a pull's requests to the remote may
-      take, measured from the start of the pull.
+      take, measured from the start of the pull, and a save's push from
+      the start of the push.
     type: integer
     minimum: 1
     default: 60000
+  commitAuthor:
+    description: The author and committer of every commit a save writes.
+    type: object
+    additionalProperties: false
+    default:
+      name: Manifold
+      email: manifold@manifold.invalid
+    properties:
+      name:
+        $ref: "#/$defs/identity-part"
+        default: Manifold
+      email:
+        $ref: "#/$defs/identity-part"
+        default: manifold@manifold.invalid
+$defs:
+  identity-part:
+    type: string
+    minLength: 1
+    maxLength: 256
+    pattern: "^[^<>\\r\\n]+$"

@@ -1,0 +1,50 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - operator-console
+    - blueprints-api
+description: >-
+  The console's blueprint editor marks the lint's findings as the operator
+  types, and those findings must equal what the service reports when it
+  loads the text and what `manifold-host blueprint lint` prints. The lint is
+  `lintBlueprint` in `packages/shared`. It compiles every schema a
+  blueprint declares with Ajv, which builds each validator with `new
+  Function`, and it takes the implementation names and the token lint's
+  configuration bound, which the service holds in code and in service
+  configuration. The console runs under a Content Security Policy of
+  `default-src 'self'`, which forbids evaluating generated code.
+considered-options:
+  "1": >-
+    The service lints. The editor sends the text to `POST
+    /api/blueprints/lint` a short wait after the last change, and the
+    service runs `lintBlueprint` with its own names and configured bound,
+    and adds each finding's range and the graph.
+  "2": >-
+    The browser lints. The console bundles `lintBlueprint` and its
+    dependencies, runs it in a web worker on each change, and reads the
+    configuration bound from an endpoint. The Content Security Policy
+    gains `'unsafe-eval'` for Ajv.
+  "3": >-
+    The browser lints with precompiled validators. Ajv's standalone code
+    replaces runtime compilation for the blueprint schema, and the
+    schemas a blueprint declares are checked on the service at save.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 is the only one where one function with one set of inputs
+    produces every result, so the editor, the loader, and the host CLI
+    cannot drift. It keeps the console's policy free of `'unsafe-eval'` and
+    keeps the lint's dependencies, XState, Ajv, JSONata, and the token
+    lint, out of the console's bundle. Option 2 weakens the policy for
+    every screen to serve one. Option 3 cannot check the schemas a
+    blueprint declares while the operator types, since those are only
+    known at run time, so the editor would miss findings the service
+    reports.
+expected-outcomes:
+  positive:
+    - The editor, the service, and the host CLI report the same findings for the same text.
+    - The console's Content Security Policy forbids generated code on every screen.
+    - The console's bundle carries no lint, schema compiler, or state machine library.
+  negative:
+    - Each pause in typing costs one request and one lint on the service process.
+    - The editor cannot lint while the service is unreachable.

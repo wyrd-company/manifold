@@ -12,9 +12,11 @@ relationships:
   # specification; `references` is the best fit.
   references:
     - actors-api
+    - blueprints-api
     - blueprint-version
     - tasks-api
     - escalation-contract
+    - lint-console-edits-on-the-service
 objective: >-
   Give the operator console one package that builds into static files, one
   place in the service that serves them and the API the console reads, and a
@@ -23,7 +25,11 @@ objective: >-
   between every screen `DESIGN.md` lists, sees every active actor with
   its blueprint, current state, and environment, sees where every task
   of each bound Project is, and reads and answers a task's escalations,
-  state, threads, and usage on its Task page.
+  state, threads, and usage on its Task page. It changes a process
+  from the Blueprints screen: sees each blueprint as a graph of its states
+  and transitions, edits its YAML with the service's own lint marking each
+  finding as the text changes, and publishes it as a commit pushed to the
+  process repository, which the service then runs with no redeploy.
 background:
   current-design: >-
     `packages/console` holds a `package.json` and a README, and no framework.
@@ -39,6 +45,10 @@ background:
     - >-
       The service has no listener that serves the console's files, and no
       endpoint that answers which actors are running.
+    - >-
+      A blueprint changes only by a push to the process repository from a
+      host with a clone, and its author sees the lint's findings only after
+      running `manifold-host blueprint lint` or after the service loads it.
 design-challenges:
   client-routes: >-
     The console's routes exist only in the browser. A reload or a pasted
@@ -52,6 +62,18 @@ design-challenges:
     Most screens are built in later tasks. The shell must give
     each its route, its navigation entry, and its title now, so that a later
     task replaces one component and touches nothing else.
+  lint-parity: >-
+    The editor must mark the same findings, at the same places, as the
+    service reports when it loads the text and as `manifold-host blueprint
+    lint` prints, token findings included, while the operator types.
+  graph-from-text: >-
+    The graph is a view of the YAML. It must follow the text as it changes,
+    resolve every target as XState resolves it, and hold its place while
+    the text is mid-edit and does not parse.
+  edit-durability: >-
+    An edit must survive a reload, a failed save, a service restart, and a
+    branch that moved under it, and must reach the branch at most once
+    however many times its save is retried.
   browser-proof: >-
     The console is proved only when a browser renders it from the service.
     The test must run inside `task check` on a developer machine and in CI.
@@ -72,9 +94,14 @@ proposed-design:
     task's open escalations through `POST /api/escalations/{id}/answer`.
     The tasks read model, `packages/service/src/tasks/`, specified in
     `tasks-api`, is mounted by service assembly under `/api/tasks` with
-    `mount`. Every other screen shows its title row and an empty state.
-    The console and API are served without authentication; access control
-    belongs to the deployment.
+    `mount`. The Blueprints screen reads and writes through the
+    blueprints endpoints of `blueprints-api`. The service module
+    `packages/service/src/blueprints-api/` exports
+    `mountBlueprintsApi(host, options)` and mounts those endpoints under
+    `/api/blueprints` with `mount`. It lints with `lintBlueprint` and
+    saves through the revision follower. Every other screen shows its
+    title row and an empty state. The console and API are served without
+    authentication; access control belongs to the deployment.
   console-package: >-
     `packages/console` holds `index.html`, `vite.config.ts`, `src/`, and
     `public/`. Its scripts are `build` (`vp build`, after building
@@ -137,7 +164,7 @@ proposed-design:
     stylesheet, sets the class from the kept choice before the first paint,
     so that a reload in dark theme does not flash light.
   empty-screens: >-
-    Overview, Epics, Portfolio, Blueprints, GitHub Projects,
+    Overview, Epics, Portfolio, GitHub Projects,
     Environments, and every Settings tab show
     their title row and the empty state from `DESIGN.md`: a dashed border,
     the screen's icon, the title "Nothing here yet", and the line "This
@@ -418,6 +445,380 @@ proposed-design:
     answers it through `POST /api/escalations/{id}/answer` with text, and
     answers it from the panel with a choice; the panel shows the text
     answer as the one recorded, and the module holds that answer only.
+  blueprints-routes: >-
+    The Blueprints screen has two routes: `blueprints`, the list, and
+    `blueprints/$`, the editor, whose splat is the blueprint's path as the
+    API names it, such as `/console/blueprints/blueprints/review.yml`. Both
+    render `BlueprintsContent`, which shows the list or the editor by
+    route, as `DESIGN.md` states. The breadcrumb shows "Blueprints / <path>"
+    on the editor. The navigation entry, its label, and its description
+    are unchanged.
+  blueprints-list: >-
+    `BlueprintsContent` on `blueprints` reads `GET /api/blueprints`. Its
+    title row is "Blueprints" with its description, and it has no primary
+    action. Under it, one row holds the blueprint count, right-aligned, and
+    a ghost "Refresh" icon button. The table columns, in percent widths as
+    `DESIGN.md` states for tables, are Name, Version, Lint, Active actors,
+    and an Edit button. Name is the path in mono with the description
+    muted under it, and a "Draft" badge on its own line when the browser
+    holds a draft for the path. Version is the version's commit, first
+    seven characters, in mono, for a repository blueprint, and a "Bundled"
+    badge for a bundled one. Lint is a success dot and "Loaded" with no
+    finding or warning, an error dot and "N errors" for an invalid
+    blueprint, and a warning dot and "N warnings" for a loaded one with
+    warnings. Active actors is the count, or a muted dash for zero. Edit,
+    or the name, opens the editor; for a bundled blueprint the button
+    reads "View". With no blueprint, the table is replaced by the empty
+    state "No blueprints", "Blueprints appear here when the process
+    repository holds files under blueprints/." Before the first applied
+    revision the list shows the bundled blueprints and the info alert
+    "The process repository has not been read yet." A failed read shows an
+    error alert with the message and "Try again".
+  blueprint-editor: >-
+    `BlueprintEditor`, under `src/screens/blueprints/`, is the editor
+    route's content. It reads `GET /api/blueprints/source?path=` and opens
+    the browser's draft for the path when one exists, or the source's text
+    when none does. The header (56px) holds the path in mono, "Based on
+    <short commit>" in muted mono, a "Draft · N changes" warning badge when
+    the text differs from the base text, where N is the count of changed
+    lines, then "Discard draft" (ghost) and "Publish" (primary). A bundled
+    blueprint shows a "Bundled · read only" badge in place of the draft
+    badge and neither button, and its editor is read only. Under the
+    header, the Source pane and the Graph pane sit side by side, each half
+    the width; under 1024px of content width they become the tabs "Source"
+    and "Graph". The Problems strip runs under both panes. Editing the
+    graph is absent: the graph is a view of the text.
+  source-pane: >-
+    The Source pane is a CodeMirror 6 editor over the text, with line
+    numbers, `@codemirror/lang-yaml`, the console's theme built from the
+    `DESIGN.md` code colors, and the findings as `@codemirror/lint`
+    diagnostics: each finding with a `range` is an error diagnostic and
+    each warning with a `range` a warning diagnostic, over that range. A
+    line that differs from the base text has the 3px warning bar in the
+    gutter and the faint warning background `DESIGN.md` gives the Source
+    tab, computed with `@codemirror/merge`'s diff of the base text and the
+    text. A toolbar (48px) shows the file path, the legend for changed
+    lines, and "Copy".
+  lint-as-you-type: >-
+    Each change to the text starts a 300 ms wait; a change during the wait
+    starts it again. When the wait ends, the editor sends `POST
+    /api/blueprints/lint` with the path and the text, and aborts the lint
+    request still in flight, if any, with its `AbortController`. An answer
+    is applied only when the text is still the text it was sent for, so
+    the marks always belong to the text on screen. The source's own
+    findings mark the text on open with no request. While a lint is
+    pending, the Problems header shows "Checking…" in muted text and the
+    previous marks stay. A lint request that fails shows "Cannot check
+    this text. Try again." in the Problems header with a "Try again"
+    button, and Publish stays disabled.
+  graph-pane: >-
+    The Graph pane is a ReactFlow canvas on the dotted grid, read only:
+    nodes do not drag or connect, and the canvas pans and zooms, with the
+    zoom controls at the bottom left. It draws the graph of the latest
+    lint answer, or of the source on open. Each state is a `StateNode`,
+    200×56 as `DESIGN.md` states, with its key in mono and its first
+    invoke source under it, a "Gate" badge when gated, and a double border
+    when final. A compound or parallel state is a group node holding its
+    children, titled with its key, with a dashed border between a parallel
+    state's regions. The initial state of each level has an incoming
+    marker from a small filled dot. Each transition is an edge from its
+    source to its target with its label as a mono pill, a guard icon in
+    the pill when guarded, and the `graph-edge` style; a targetless
+    transition is a pill on a short self loop. The layout is elkjs's
+    `layered` algorithm, top to bottom, with `hierarchyHandling`
+    `INCLUDE_CHILDREN`, run on the main thread with `elk.bundled.js`, so
+    edges between levels route through their groups. Layout runs again
+    when the set of states or transitions changes, and the viewport keeps
+    its pan and zoom. When the latest lint answer has no graph, the pane
+    keeps the last graph, dimmed, with the muted line "Showing the last
+    text that parsed." Selecting a state draws its incoming and outgoing
+    transitions in primary and moves the editor's cursor to the start of
+    the state's range; moving the cursor into a state's range selects the
+    deepest state whose range holds it. A state with a finding or warning
+    whose location is the state's location or under it, and not under a
+    child state's location, has the 16px "!" badge, error colored when any
+    is a finding.
+  problems-strip: >-
+    The Problems strip is `DESIGN.md`'s: a 36px header with the error count
+    in error color and the warning count in warning color, collapsible,
+    and the list of findings then warnings, each with its kind in mono,
+    its message, its state path when it falls in a state, and its line.
+    Choosing one moves the editor's cursor to its range and selects its
+    state. A finding with no range lists with its location in mono.
+  blueprint-drafts: >-
+    A draft is the edited text of one blueprint, with the commit it is
+    based on, kept in the browser. It lives in `localStorage` under
+    `manifold.blueprint-draft.<path>` as JSON `{ base, baseText, text,
+    saveId? }`. The editor writes the draft on each change to the text, and
+    removes it when the text equals `baseText`, when "Discard draft" is
+    confirmed, and when a save answers `200`. A draft whose `base` is
+    older than the source's commit keeps its base, and the header shows
+    the info line "A newer version exists. Publishing keeps changes made
+    since, unless they changed this file." "Discard draft" asks first, in
+    the 400px alert dialog `DESIGN.md` gives, naming the number of changed
+    lines and the version that stays. `src/screens/blueprints/draft.ts`
+    holds the pure functions that read, write, and change a draft, and a
+    draft that does not parse as that shape is removed and ignored.
+  publish: >-
+    "Publish" is enabled when the text differs from the base text, the
+    latest lint answer is for the text on screen, and it has no finding;
+    warnings do not block it. It opens `PublishDialog`, the 480px dialog of
+    `DESIGN.md`: the file with its git status letter, `A` when the base has
+    no file at the path and `M` otherwise, and its path in mono; a commit
+    message field, prefilled with "Update <path>", or "Add <path>" for
+    `A`; and the repository URL and branch from the list endpoint. "Commit
+    and push" sends `POST /api/blueprints/save` with the path, the base,
+    the text, the message, and the draft's `saveId`. When the draft has no
+    `saveId`, the editor first sets one: 16 bytes from
+    `crypto.getRandomValues` as 32 lower-case hexadecimal characters,
+    written to the draft before the request, so a retry of the same text
+    after a reload sends the same `saveId`. Any change to the text removes
+    the `saveId`. The button shows a spinner and the dialog cannot close
+    while the request runs. For `200`, the editor removes the draft, reads
+    the list and the source again, and shows "Saved as <short commit>" in a
+    success toast for `saved`, "Already saved as <short commit>" for
+    `already-saved`, and "No change to save" for `unchanged`; the editor
+    then shows the new source with its base at the new commit. For `422`,
+    the dialog closes and the findings mark the text. For `409`, the
+    dialog closes and the conflict alert opens. For `502`, `503`, a
+    network failure, or a request whose answer never arrives, the dialog
+    shows the message in an error alert with "Try again", which sends the
+    same request.
+  conflict: >-
+    The conflict alert sits under the editor header in the error tint:
+    "<path> changed on <branch> at <short head>. Your text is kept." with
+    three buttons. "Compare" opens a 920px dialog with a `@codemirror/merge`
+    `MergeView`: the branch's text on the left, read only, and the draft's
+    text on the right, editable, so the operator can take changes across.
+    "Use latest as base" sets the draft's base to the head and its base
+    text to the branch's text, keeps the draft's text, and removes its
+    `saveId`, so the next Publish replaces the branch's change with the
+    draft's text by the operator's choice. "Discard draft" removes the
+    draft after the alert dialog, and the editor reads the source again.
+    The editor never discards the draft's text on its own.
+  blueprints-client: >-
+    `src/api/blueprints.ts` exports `fetchBlueprints()`,
+    `fetchBlueprintSource(path)`, `lintBlueprintText(path, text, signal)`,
+    and `saveBlueprint(request)`. Each sends its request without
+    authentication headers, with `Content-Type: application/json` for a
+    body, and turns the answer into a result: `ok` with the body, a typed
+    `conflict`, `invalid`, or `failed` with the API's message, or `failed`
+    with a generic message for a network error or a body that does not
+    match. The mapping from a status and a body to a result is a pure
+    function, and each body is checked at this boundary with the guards of
+    `@wyrd-company/manifold-shared/blueprints-api`. Reads go through
+    TanStack Query as the Actors screen's do; lint and save are mutations,
+    never cached.
+  blueprints-endpoints: >-
+    `mountBlueprintsApi(host, options)` mounts one listener at
+    `/api/blueprints` that implements `blueprints-api`, with the paths
+    `""` (the list), `/source`, `/lint`, and `/save` under the prefix. The
+    list reads `revisions.latest()`: each path in `blueprints` is `loaded`
+    with its warnings counted and its document's `description`, and each
+    path in `failures` is `invalid` with its findings and warnings counted
+    apart; it counts active actors per path from `store.activeSnapshots()`
+    with `parseBlueprintVersionKey`; and it adds each bundled blueprint
+    with the lint of its text. Source reads the text through
+    `processRepository.revisionAt(latest.commit)` or from the bundled
+    blueprints, and lints it. Every lint, of source, lint, and save, calls
+    `lintBlueprint(path, text, manifoldImplementationNames, {
+    configurationBound })` with `blueprintLint.configurationBound`, then
+    `findingRanges` and `blueprintGraph`, so the endpoint answers what the
+    loader and the host CLI report. A save lints first, answers `422` for a
+    finding, and otherwise awaits `revisions.save` and maps its result to
+    the answer: `saved`, `already-saved`, and `unchanged` to `200` with the
+    path's list item from the result's load, `conflict` to `409`,
+    `ProcessRepositorySaveError` and `ProcessRepositoryPullError` to `502`
+    with their kind (a pull error of kind `authentication` as
+    `authentication`, `branch-missing` and `incomplete` as `remote`), a
+    follower that is closed to `503`. Bodies are read up to 8 MiB, the
+    usage endpoint's limit. The request checks of `blueprints-api` run
+    before a body is read: method, `Content-Type`, then `Origin` and
+    `Sec-Fetch-Site`. Any other error answers `500`, and goes to `log`
+    with the path.
+  blueprint-graph: >-
+    `blueprintGraph(text)` in `packages/shared` returns the graph of
+    `blueprints-api`, or `undefined` when the text does not parse as a
+    blueprint document or its machine does not resolve. It parses the text
+    as `lintBlueprint` does, validates the shape, builds the machine with
+    XState's `createMachine` over a stub for every referenced name, as the
+    lint does, and walks the state nodes depth first in document order.
+    It reads each transition's targets from XState's resolved transition,
+    so a sibling key, a `.child`, and a `#id` target resolve as they run.
+    `after` transitions are labelled with their delay as written, and
+    `onDone` and `onError` of an invoke with the invoke's id. It is pure.
+  finding-ranges: >-
+    `findingRanges(text, findings)` in `packages/shared` returns each
+    finding with the `range` of `blueprints-api`. It parses the text once
+    with the `yaml` package's document model and a `LineCounter`, walks
+    each JSON Pointer through the document's nodes, and reads the node's
+    `range`; for a `yaml` finding it converts its line and column. It is
+    pure, and `blueprintGraph` uses it for each state's range.
+  bundled-blueprints: >-
+    `BlueprintsApiOptions.bundled` lists the blueprints Manifold bundles,
+    each with its path as intake names it and its text. Until the bundled
+    blueprints module of the default blueprint design merges, the option is
+    a structural stand-in of that shape, which the service passes as an
+    empty list. A bundled blueprint is listed, read, and linted as a
+    repository blueprint is, has no `commit`, and is never saved: its path
+    is not a repository blueprint path.
+  blueprints-public-interface: |-
+    `packages/service/src/blueprints-api/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { HttpHost } from "../http-host/index.ts";
+    import type { Store } from "../store/index.ts";
+    import type { ProcessRepository } from "../process-repository/index.ts";
+    import type { Revisions } from "../service/index.ts";
+
+    export interface BlueprintsApiOptions {
+      readonly revisions: Pick<Revisions, "latest" | "save">;
+      readonly processRepository: Pick<ProcessRepository, "revisionAt">;
+      readonly store: Pick<Store, "activeSnapshots">;
+      /** The followed repository, for the list and the publish dialog. */
+      readonly repository: { readonly url: string; readonly branch: string };
+      /** `blueprintLint.configurationBound`. */
+      readonly configurationBound: number;
+      /** The blueprints Manifold bundles. */
+      readonly bundled: () => Promise<readonly BundledBlueprint[]>;
+      readonly log: (entry: { level: "error"; path: string; error: string }) => void;
+    }
+
+    export interface BundledBlueprint {
+      readonly path: string;
+      readonly text: string;
+    }
+
+    /** Mounts the blueprints endpoints at `/api/blueprints`. */
+    export function mountBlueprintsApi(host: HttpHost, options: BlueprintsApiOptions): void;
+    ```
+
+    `@wyrd-company/manifold-shared` exports `blueprintGraph`,
+    `findingRanges`, and their types from its root, and adds the subpath
+    export `./blueprints-api`, which holds no lint and no YAML parser so
+    the console's bundle stays small: the paths, the request and response
+    types of `blueprints-api`, and a guard for each response.
+
+    ```ts
+    export const blueprintsApiPath = "/api/blueprints";
+
+    export interface FindingRange {
+      readonly from: number;
+      readonly to: number;
+      readonly line: number;
+      readonly column: number;
+    }
+
+    export interface ApiFinding {
+      readonly kind: string;
+      readonly location: string;
+      readonly message: string;
+      readonly range?: FindingRange;
+      readonly [detail: string]: unknown;
+    }
+
+    export interface BlueprintGraph {
+      readonly states: readonly GraphState[];
+      readonly transitions: readonly GraphTransition[];
+    }
+
+    export interface GraphState {
+      readonly path: string;
+      readonly key: string;
+      readonly parent?: string;
+      readonly type: "atomic" | "compound" | "parallel" | "final" | "history";
+      readonly initial: boolean;
+      readonly invokes: readonly string[];
+      readonly gated: boolean;
+      readonly location: string;
+      readonly range?: FindingRange;
+    }
+
+    export interface GraphTransition {
+      readonly source: string;
+      readonly target?: string;
+      readonly trigger: "event" | "always" | "after" | "done" | "error";
+      readonly label: string;
+      readonly guarded: boolean;
+      readonly location: string;
+    }
+
+    export interface BlueprintItem {
+      readonly path: string;
+      readonly source: "repository" | "bundled";
+      readonly commit?: string;
+      readonly status: "loaded" | "invalid";
+      readonly findings: number;
+      readonly warnings: number;
+      readonly description?: string;
+      readonly activeActors: number;
+    }
+
+    export interface BlueprintsResponse {
+      readonly repository: { readonly url: string; readonly branch: string };
+      readonly commit?: string;
+      readonly blueprints: readonly BlueprintItem[];
+    }
+
+    export interface BlueprintSourceResponse {
+      readonly path: string;
+      readonly source: "repository" | "bundled";
+      readonly commit?: string;
+      readonly text: string;
+      readonly findings: readonly ApiFinding[];
+      readonly warnings: readonly ApiFinding[];
+      readonly graph?: BlueprintGraph;
+    }
+
+    export interface LintResponse {
+      readonly findings: readonly ApiFinding[];
+      readonly warnings: readonly ApiFinding[];
+      readonly graph?: BlueprintGraph;
+    }
+
+    export interface SaveBlueprintRequest {
+      readonly path: string;
+      readonly base: string;
+      readonly text: string;
+      readonly message: string;
+      readonly saveId: string;
+    }
+
+    export interface SaveBlueprintResponse {
+      readonly outcome: "saved" | "already-saved" | "unchanged";
+      readonly commit: string;
+      readonly blueprint?: BlueprintItem;
+    }
+
+    export interface SaveConflictResponse {
+      readonly error: "conflict";
+      readonly message: string;
+      readonly head: string;
+      readonly text?: string;
+    }
+
+    export function isBlueprintsResponse(value: unknown): value is BlueprintsResponse;
+    export function isBlueprintSourceResponse(value: unknown): value is BlueprintSourceResponse;
+    export function isLintResponse(value: unknown): value is LintResponse;
+    export function isSaveBlueprintResponse(value: unknown): value is SaveBlueprintResponse;
+    export function isSaveConflictResponse(value: unknown): value is SaveConflictResponse;
+    ```
+  blueprints-module-layout: >-
+    In `packages/service/src/blueprints-api/`, `index.ts` re-exports the
+    public names and nothing else, `listener.ts` holds the routing and
+    request checks, `answers.ts` the pure functions from a load, a lint, or
+    a save result to an answer, and `request-checks.ts` the pure
+    cross-site, type, and shape checks. In `packages/console`,
+    `src/screens/blueprints/` holds `BlueprintsList.tsx`,
+    `BlueprintEditor.tsx`, `SourcePane.tsx`, `GraphPane.tsx`,
+    `ProblemsStrip.tsx`, `PublishDialog.tsx`, `DiscardDialog.tsx`,
+    `ConflictAlert.tsx`, `StateNode.tsx`, and the pure modules `draft.ts`,
+    `graph-layout.ts` (graph to elkjs input, elkjs output to ReactFlow
+    nodes and edges), and `problems.ts` (findings to states and badges).
+    `src/screens/BlueprintsContent.tsx` switches between the list and the
+    editor. The service's `start.ts` calls `mountBlueprintsApi` in step 11
+    with the parts it already holds.
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It
     takes the request's path, which the HTTP host passes unchanged,
@@ -432,7 +833,9 @@ proposed-design:
     `Content-Security-Policy: default-src 'self'; style-src 'self'
     'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'`,
     `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`,
-    so that the page runs only the console's own scripts. Other methods
+    so that the page runs only the console's own scripts. The Blueprints
+    screen lints on the service, so the page evaluates no generated code
+    and the policy holds no `'unsafe-eval'`. Other methods
     answer `405`. A path that leaves the
     directory answers `404`. `/console` without the slash redirects to
     `/console/`.
@@ -511,7 +914,13 @@ proposed-design:
     developer machine has it after one install. CI installs it with its
     system dependencies before `task check`.
   convergence: >-
-    The endpoint and the console listener only read, so a request that
+    A save is the one write of the API, and converges as
+    `process-repository` and `service-assembly` state: a retry with the
+    same `saveId` answers `already-saved` or pushes the change once. The
+    list, source, and lint endpoints only read. A draft is the operator's
+    latest text for a path, written whole on each change, so a reload or a
+    crash of the browser leaves the last written text. The actors
+    endpoint and the console listener only read, so a request that
     runs twice answers twice from the current store and files. A console
     build that runs twice empties `dist/` and writes the same files; a
     build that stopped halfway leaves a `dist/` that the next build
@@ -528,7 +937,27 @@ proposed-design:
     keeps working.
   tests: >-
     Each behavior is red before green, and tests go through public
-    interfaces. In `packages/service/src/console/`, `mountConsole` uses the
+    interfaces. The blueprints endpoints are tested as `blueprints-api`'s
+    validation criteria state; `blueprintGraph` and `findingRanges` are
+    tested in `packages/shared` on fixture texts, including a pointer to a
+    missing key, a flow-style mapping, and a multi-byte character before
+    the finding. In `packages/console`, unit tests cover the blueprints
+    result mapping, the draft functions (write, base text equality removes,
+    malformed removed, `saveId` kept across a reload and removed by a
+    change), `problems.ts`, and `graph-layout.ts` on a nested and a
+    parallel graph. `packages/service/src/blueprints-api/blueprints.browser.test.ts`
+    starts the service on a fixture process repository served over smart
+    HTTP with push enabled, launches headless Chromium, opens Blueprints,
+    and sees every fixture blueprint with its version and lint; opens one
+    and sees its states in the graph; types a transition target that names
+    no state and, once the lint answers, sees an error diagnostic on that
+    line, the "!" badge on the state, and Publish disabled; fixes it and
+    sees the marks clear; publishes with a message; sees the success toast;
+    returns to the list and sees the new commit as the version; and finds
+    one new commit on the fixture remote with that message. A second case
+    commits a change to the same file on the remote while the editor holds
+    a draft, publishes, sees the conflict alert, reloads, and still holds
+    the draft's text. In `packages/service/src/console/`, `mountConsole` uses the
     production HTTP host on a loopback port with no credentials: the actors
     endpoint behaviors in `actors-api`'s validation criteria; a client
     route under `/console/` answers `index.html`; a hashed asset answers
@@ -557,5 +986,13 @@ proposed-design:
     T3 Code does not use; it is the most adopted React data-fetching
     library and holds every API read the later screens make. The service
     adds `sirv`, the static file listener Vite's preview server uses, and
-    `playwright` as a development dependency for the browser test. Renovate
-    keeps them current with the rest.
+    `playwright` as a development dependency for the browser test. The
+    Blueprints screen adds `@xyflow/react`, the graph library `DESIGN.md`
+    names; `elkjs`, the Eclipse Layout Kernel compiled to JavaScript, whose
+    layered algorithm lays out nested graphs, chosen as the one automatic
+    layout engine `DESIGN.md` asks the Epics graph to share; and CodeMirror
+    6: `@codemirror/state`, `@codemirror/view`, `@codemirror/commands`,
+    `@codemirror/language`, `@codemirror/lang-yaml`, `@codemirror/lint`,
+    and `@codemirror/merge`. None of them evaluates generated code, so the
+    console's Content Security Policy holds. Renovate keeps them current
+    with the rest.

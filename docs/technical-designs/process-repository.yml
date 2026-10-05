@@ -12,7 +12,10 @@ objective: >-
   at one commit through one read-only seam, so that loaders never see a
   half-pulled tree, a file read at a commit reads the same text after any
   later pull, and a crash during a pull leaves the last complete commit
-  current.
+  current; and save one changed file as one commit pushed to the
+  followed branch, so that a process changes from the console with no
+  redeploy, a retried save never pushes its change twice, and a branch that
+  moved under an edit is answered as a conflict, never overwritten.
 background:
   current-design: >-
     The concept's `process-repository` is a user-supplied git repository
@@ -37,6 +40,12 @@ background:
     - >-
       An actor started at one commit keeps reading that commit's files while
       later pulls advance the repository.
+    - >-
+      The operator console edits a blueprint's text, and the edit reaches
+      the loaders only as a commit on the followed branch. The service
+      process can die after it writes the commit and before it pushes, or
+      after it pushes and before it answers, and the console then retries a
+      save whose outcome it never received.
 design-challenges:
   convergence: >-
     A pull that runs twice, or after a crashed pull, must end with the same
@@ -48,6 +57,10 @@ design-challenges:
     Loaders in the service, and tools that read a working tree, must read
     files through the same small interface, testable with an in-memory
     fixture.
+  save-convergence: >-
+    A save that runs twice, or after a crash at any point, must leave the
+    branch with the change in exactly one commit, and must never replace a
+    change another writer pushed to the same file.
 proposed-design:
   high-level-overview: >-
     The process repository module is
@@ -59,9 +72,12 @@ proposed-design:
     fetched commit's tree, and replaces the pointer file atomically.
     `current()` and `revisionAt(commit)` return a `ProcessRepositoryRevision`
     that reads blobs and trees at that commit straight from the object
-    database, with no working tree. The `ProcessRepositoryRevision`
-    interface lives in `packages/shared` so that any reader of declared
-    files implements it.
+    database, with no working tree. `save(request)` writes one file as a
+    commit on top of the current commit and pushes it to the branch
+    without force; the revision follower then pulls it, so a saved commit
+    reaches the loaders by the same path as any pushed commit. The
+    `ProcessRepositoryRevision` interface lives in `packages/shared` so
+    that any reader of declared files implements it.
   revision-seam: |-
     `packages/shared/src/process-repository-revision.ts` defines the seam
     and an in-memory implementation, both exported from the shared
@@ -115,6 +131,8 @@ proposed-design:
       readonly credentials: Credentials;
       /** Called at each step of a pull, after the step completes. */
       readonly probe?: PullProbe;
+      /** Called at each step of a save, after the step completes. */
+      readonly saveProbe?: SaveProbe;
     }
 
     export interface ProcessRepository {
@@ -124,6 +142,35 @@ proposed-design:
       revisionAt(commit: string): Promise<ProcessRepositoryRevision | undefined>;
       /** Moves the current commit to the remote branch's commit. */
       pull(request?: PullRequest): Promise<PullOutcome>;
+      /** Commits one file on top of the current commit and pushes it to the branch. */
+      save(request: SaveRequest): Promise<SaveOutcome>;
+    }
+
+    export interface SaveRequest {
+      /** A repository path under `blueprints/` ending in `.yml` or `.yaml`. */
+      readonly path: string;
+      /** The commit the edit started from. */
+      readonly base: string;
+      readonly text: string;
+      /** The commit message the caller gives; the save appends its trailer. */
+      readonly message: string;
+      /** 32 lower-case hexadecimal characters, the same for every retry of one text. */
+      readonly saveId: string;
+    }
+
+    export type SaveOutcome =
+      | { readonly kind: "pushed"; readonly commit: string; readonly parent: string }
+      | { readonly kind: "already-saved"; readonly commit: string }
+      | { readonly kind: "unchanged"; readonly commit: string }
+      | { readonly kind: "conflict"; readonly head: string; readonly text: string | undefined };
+
+    export type SaveStep = "committed" | "pushed";
+    export type SaveProbe = (step: SaveStep, commit: string) => void;
+
+    export class ProcessRepositorySaveError extends Error {
+      readonly kind: "authentication" | "rejected" | "remote";
+      /** The current commit the save built on. */
+      readonly head: string;
     }
 
     export interface PullRequest {
@@ -154,14 +201,17 @@ proposed-design:
     client the module gives isomorphic-git. `recover.ts` holds the open-time
     recovery. `pull.ts` holds the fetch, verification, and publication.
     `revision.ts` implements `ProcessRepositoryRevision` over the object
-    database. Tests import only `index.ts`. The module adds `isomorphic-git`
+    database. `save.ts` holds the save, and `save-message.ts` the pure
+    functions that build a save's commit message and read its trailer.
+    Tests import only `index.ts`. The module adds `isomorphic-git`
     as a service dependency, and passes it the `git-fs.ts` client, the
     `git-http.ts` client, and one object cache per open repository.
   library: >-
     Git runs in process through isomorphic-git, per
     `use-isomorphic-git-for-the-process-repository`. The module calls
-    `init`, `fetch`, `readCommit`, `readTree`, `readBlob`, `resolveRef`, and
-    `writeRef` with an explicit `gitdir`, so the clone is bare and has no
+    `init`, `fetch`, `readCommit`, `readTree`, `readBlob`, `resolveRef`,
+    `writeRef`, and, for a save, `writeBlob`, `writeTree`, `writeCommit`,
+    and `push`, with an explicit `gitdir`, so the clone is bare and has no
     working tree. isomorphic-git speaks git's smart HTTP protocol, so
     `processRepository.url` is an `http://` or `https://` URL.
   directory-layout: >-
@@ -276,7 +326,10 @@ proposed-design:
     `repositories` set to the repository name taken from the URL's last path
     segment without `.git`, and `permissions` set to `{ contents: "read" }`,
     and returns `{ username: "x-access-token", password: token.reveal() }`.
-    `onAuthFailure` returns `{ cancel: true }`. The token reaches
+    `onAuthFailure` returns `{ cancel: true }`. A save's `push` mints its
+    own token the same way with `permissions` set to
+    `{ contents: "write" }`, so only a push holds a token that can write,
+    and a pull's token stays read-only. The token reaches
     isomorphic-git and nothing else: the module writes no token to a file,
     the store, an error message, or a log line, and errors name the URL
     without user info, the branch, and the credential name.
@@ -303,7 +356,73 @@ proposed-design:
     arrives and with no request at each sweep. Both calls go through the
     service's revision follower, which after each pull loads the current
     revision into the blueprint loader and applies it to the portfolio, as
-    `service-assembly` states.
+    `service-assembly` states. `save` is called only by the follower too,
+    right after a pull in the same job.
+  save: >-
+    `save(request)` runs in five steps. Saves and pulls are serialized
+    together: a save waits for a running pull or save, and a pull for a
+    running save. Let H be the current commit; a save with no current
+    commit throws a `TypeError`, since the follower pulls first. (1) It
+    walks H's first parents from H until it reaches `base` or a root
+    commit, and when one of the commits it walks carries the trailer
+    `Manifold-Save: <saveId>`, it returns `already-saved` with that commit.
+    (2) It reads `path` at H and at `base`. When `revisionAt(base)` is
+    `undefined`, or the two differ, it returns `conflict` with H and the
+    text at H. Two absent files are equal, so a save of a new path
+    conflicts only when another commit created it, and a branch that moved
+    only in other files takes the save on top of its new commit. (3) When
+    `text` equals the file at H, it returns `unchanged` with H. (4) It
+    writes the file's blob, a tree for each directory from the file's up to
+    the root with every other entry as H holds it, and a commit whose only
+    parent is H, with the identity and message of save-identity. It writes
+    `refs/manifold/save` naming the commit, and calls the save probe with
+    `committed`. (5) It calls `push` with the configured `url`, `ref`
+    `refs/manifold/save`, `remoteRef` `refs/heads/<branch>`, and `force:
+    false`, calls the save probe with `pushed`, and returns `pushed` with
+    the commit and H as `parent`. The save never moves the pointer: the
+    follower pulls the pushed commit, so it is verified, published, and
+    applied as any pushed commit is. isomorphic-git refuses a push that is
+    not a fast-forward, and git's receive-pack refuses a ref update whose
+    old value is no longer the branch's, so a branch that moves between
+    the pull and the push fails the push and is never overwritten. A push
+    the remote refuses fails with `ProcessRepositorySaveError` kind
+    `rejected` and the remote's reason, an authentication the remote
+    refuses with kind `authentication`, and any other failure with kind
+    `remote`; each carries H as `head`. The follower decides what a
+    refused push means, as `service-assembly` states. `path` and `saveId`
+    are checked against the shapes of `SaveRequest`, and `save` throws a
+    `TypeError` for any other value, since the API checks them first.
+  save-identity: >-
+    The commit's author and committer are both `commitAuthor` from the
+    `processRepository` section: `name` default `Manifold`, and `email`
+    default `manifold@manifold.invalid`, a reserved domain that names no
+    GitHub account, so a saved commit is attributed to no person. The time
+    is the time of step 4, with offset `+0000`. The message is `message`
+    with trailing white space removed, a blank line, and the trailer line
+    `Manifold-Save: <saveId>`, ending in a newline. The commit is not
+    signed.
+  save-timeout: >-
+    `pullTimeoutMs` also bounds a save's network work. Step 5 creates
+    `AbortSignal.timeout(pullTimeoutMs)` and passes it to every request of
+    the push and to `installationToken`. A save whose signal has aborted
+    fails with kind `remote` and a message naming the timeout, the URL, and
+    the branch. Steps 1 to 4 read and write only the clone and run to their
+    end.
+  save-convergence: >-
+    Every object a save writes goes through the file system client of
+    object-writes, so a crash leaves each object absent or complete, and an
+    object written twice is kept as it is. A crash before `committed` leaves
+    at most unreferenced objects and a `refs/manifold/save` ref that the
+    next pull's step 2 deletes with every other ref. A crash after
+    `committed` and before the push leaves the remote branch unchanged; the
+    commit is reachable from no branch, and a retried save with the same
+    `saveId` finds no trailer on the branch, writes a new commit, and pushes
+    it, so the branch holds the change once. A crash after the push leaves
+    the commit on the branch; the next start's pull publishes and applies
+    it, and a retried save with the same `saveId` finds its trailer at step
+    1 and returns `already-saved` with no new commit. A save run twice in a
+    row likewise returns `already-saved` the second time, once the
+    follower's pull has taken the first commit.
   tests: >-
     Tests serve fixture repositories over smart HTTP from an in-test
     `node:http` server that runs `git http-backend` as a CGI program on a
@@ -346,4 +465,23 @@ proposed-design:
     `ProcessRepositoryOpenError`. A credential test serves a repository that
     requires basic authentication, mints from the in-test GitHub API, and
     asserts the token appears in no error, no file under `directory`, and
-    no row of a store opened beside it.
+    no row of a store opened beside it. Save tests serve the fixture with
+    `git http-backend` and `http.receivepack` enabled, and drive `save`
+    after a `pull`. A save pushes one commit whose parent is the previous
+    branch commit, whose tree differs from it only at the path, and whose
+    author, committer, and message are those of save-identity; a new path
+    is created with its directories. A save whose text equals the branch's
+    file returns `unchanged` and pushes nothing. After a pull of the pushed
+    commit, the same request returns `already-saved` with it. A remote
+    commit that changes the same file returns `conflict` with its text; a
+    remote commit that changes another file takes the save on top of it.
+    A remote that moves between the save's pull and its push fails the
+    push with kind `rejected`, and the branch keeps the other commit. A
+    remote that refuses the token fails with kind `authentication`, and a
+    server that stops during the push fails with kind `remote` after a
+    `pullTimeoutMs` of 200. The token request for a push asks for
+    `contents: write` and the one for a pull for `contents: read`. Crash
+    tests run a save in a child process killed at the save probe's
+    `committed` and at `pushed`; after reopening, a pull and the same
+    request leave exactly one new commit on the remote branch with the
+    change.

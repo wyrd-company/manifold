@@ -83,6 +83,8 @@ proposed-design:
       PullOutcome,
       PullProbe,
       PullRequest,
+      SaveProbe,
+      SaveRequest,
     } from "../process-repository/index.ts";
     import type { GitHubSource } from "../github-source/index.ts";
     import type { T3CodeSource } from "../t3code-source/index.ts";
@@ -112,6 +114,8 @@ proposed-design:
       readonly delivery?: DeliveryProbe;
       /** Called after the revision follower applies a revision. */
       readonly applied?: (applied: AppliedRevision) => void;
+      /** Passed to the process repository as its save probe. */
+      readonly save?: SaveProbe;
     }
 
     export type ServiceStep =
@@ -159,7 +163,18 @@ proposed-design:
       pull(request?: PullRequest): Promise<PullOutcome>;
       /** Queues the apply of the current commit; resolves when it is applied. */
       follow(): Promise<void>;
+      /** Queues a pull, a save, and the pull and apply of the saved commit as one job. */
+      save(request: SaveRequest): Promise<SavedRevision>;
     }
+
+    export type SavedRevision =
+      | {
+          readonly outcome: "saved" | "already-saved" | "unchanged";
+          readonly commit: string;
+          /** The blueprint load in which the commit is applied; undefined when it is not yet applied. */
+          readonly blueprints: RevisionLoad | undefined;
+        }
+      | { readonly outcome: "conflict"; readonly head: string; readonly text: string | undefined };
 
     export interface AppliedRevision {
       readonly commit: string;
@@ -236,7 +251,7 @@ proposed-design:
     owners when they start. (3) `portfolio-opened`: `openPortfolio` with
     the store's connection. (4) `process-repository-opened`:
     `openProcessRepository` with the `processRepository` section, the
-    credentials, and the `pull` probe, then `openTaskMetadata` as
+    credentials, the `pull` probe, and the `save` probe, then `openTaskMetadata` as
     `task-metadata` states, then `createBlueprintLoader` with
     `serviceImplementations()`, the repository's `revisionAt`,
     `onStateEntry: recordStateEntry`, and an
@@ -262,7 +277,9 @@ proposed-design:
     `t3code-token` credential's file, and a `logger` that writes to the
     log. (11) `listening`: creates the HTTP host from the `http` section,
     mounts the GitHub source's `requestListener` at `githubWebhookPath`
-    with `mount`, awaits `listen`, and logs `started` with the address.
+    with `mount`, mounts the blueprints API with `mountBlueprintsApi`, as
+    `operator-console` states, awaits `listen`, and logs `started` with the
+    address.
     Sources start after the router returns, and the host listens after the
     sources start, so no source and no request holds the router before
     resume ends. After each step completes, `startService` checks
@@ -328,7 +345,26 @@ proposed-design:
     findings of a rejected result, awaits `taskMetadata.apply(revision)`,
     logs `task-metadata-rejected` with the findings of a rejected result,
     sets `followed` to the commit, logs
-    `revision-applied`, and calls the `applied` probe. No other pull runs
+    `revision-applied`, and calls the `applied` probe. A save job runs the
+    apply step, then `processRepository.pull()` and the apply step, as a
+    pull job does, and rejects with the pull's error when that pull
+    rejects, so a save always builds on the branch as just fetched. It then
+    awaits `processRepository.save(request)`. For `pushed`, it awaits
+    `processRepository.pull({ commit })` and the apply step, and resolves
+    `saved` with the commit and `latest` when `followed` is that commit,
+    or with no load when that pull rejected, since the commit is on the
+    branch and the next pull applies it. For `already-saved` and
+    `unchanged`, it resolves with that outcome, the commit, and `latest`
+    when `followed` is the commit, and for `conflict` with the head and
+    its text. When the save rejects with `ProcessRepositorySaveError`, the
+    job pulls and applies again; when the current commit is then the
+    error's `head`, nothing else moved the branch and the job rejects with
+    the error; otherwise it calls `save` once more with the same request,
+    which finds the first push by its trailer, takes the save on top of a
+    branch that moved in other files, or answers `conflict`, and the job
+    handles that second result as the first, rejecting with its error. A
+    branch that moves under a save is therefore answered by what it
+    changed, and no save is retried more than once. No other pull runs
     between a pull and its apply step, and no pull starts while the current
     commit is unapplied, so at most one published commit is ever unapplied,
     and it is the current commit. Every commit a pull publishes is
@@ -345,7 +381,10 @@ proposed-design:
     taking the blueprint load from the loader's cache. A crash after a pull publishes and before the
     portfolio applies leaves that commit current in the repository and the
     previous declaration in force in the store; the next start's step 5
-    applies it once. A crash after the portfolio's row commits leaves the
+    applies it once. A crash during a save job leaves the saved commit on
+    the remote branch or nowhere, as `process-repository` states; the next
+    start's pull takes it when it is there, and a retried save with the
+    same `saveId` answers `already-saved` or pushes it once. A crash after the portfolio's row commits leaves the
     new declaration in force, and step 5 finds it equal and writes nothing.
     `startService` twice on the same files, with a stop or a crash between,
     resumes the same router, inbox, clone, and declaration, as each
@@ -467,7 +506,20 @@ proposed-design:
     `SIGKILL` at `published` for the pushed commit; the parent asserts the
     kill signal, starts the service again on the same files without the
     probe, and finds that commit's declaration in force and exactly one
-    `portfolio` declaration row for it. Entry point: the compiled
+    `portfolio` declaration row for it. Save: with the fixture server
+    accepting pushes, `revisions.save` of a changed blueprint resolves
+    `saved`, and `latest()` holds the new blueprint version at the pushed
+    commit; a signed `push` delivery for that commit then pulls
+    `unchanged`. A save after another commit changed the same file resolves
+    `conflict`; with the fixture server moving the branch in another file
+    between the save's pull and its push, the job pulls, saves once more,
+    and resolves `saved` on top of the moved branch. Save crash: a child
+    process runs `startService` with a `save` probe that sends the process
+    `SIGKILL` at `committed`, and in a second run at `pushed`; the parent
+    starts the service again on the same files, saves the same request
+    with the same `saveId`, and finds `saved` and `already-saved`
+    respectively, exactly one new commit on the remote branch holding the
+    change, and that commit's blueprint version in `latest()`. Entry point: the compiled
     `main.js` with no argument exits 2; with an invalid file exits 1 and
     prints each issue; with a valid file it logs `started`, and on
     `SIGTERM`, and in a second run on `SIGINT`, logs `stopped` once and
