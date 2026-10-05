@@ -207,6 +207,6 @@ it("renames history targets, in guards and gate state paths", () => {
 
 it("rejects a splice whose YAML value does not match the requested value", () => {
   expect(
-    applyBlueprintEdit(text, { kind: "set", pointer: "/machine/id", value: undefined }),
+    applyBlueprintEdit(text, { kind: "set", pointer: "/machine/id", value: "first\nlast\n" }),
   ).toMatchObject({ ok: false, reason: "unsafe" });
 });
