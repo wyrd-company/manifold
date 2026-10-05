@@ -30,16 +30,9 @@ export const githubSource = wiringPart({
     members: Required<
       Pick<
         Service,
-        | "configuration"
-        | "store"
-        | "router"
-        | "portfolio"
-        | "revisions"
-        | "gates"
-        | "log"
-        | "githubMirror"
+        "configuration" | "store" | "router" | "portfolio" | "revisions" | "gates" | "log"
       >
-    > & { http: HttpHost },
+    > & { http: HttpHost; githubMirror: ReturnType<typeof createMirror> },
     context,
   ): { github: GitHubSource } => {
     const { configuration, store, router, portfolio, revisions, gates, http, log, githubMirror } =

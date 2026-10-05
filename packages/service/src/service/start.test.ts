@@ -153,7 +153,12 @@ test("abort at a startup boundary unwinds resources without starting sources", a
       },
     }),
   ).rejects.toMatchObject({ name: "AbortError" });
-  expect(steps).toEqual([...startSteps.slice(0, 5), "escalations-stopped", "store-closed"]);
+  expect(steps).toEqual([
+    ...startSteps.slice(0, 5),
+    "http-closed",
+    "escalations-stopped",
+    "store-closed",
+  ]);
 });
 
 test("restores and drains a populated inbox before sources start", async () => {
