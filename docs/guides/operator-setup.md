@@ -366,6 +366,25 @@ Use the private service URL chosen in section 6 and the environment's declared
 name. The service attributes actuals to the task's thread. Late pushes delay
 actuals; repeated pushes converge without counting calls twice.
 
+A push reads the session files of every provider it finds and maps each
+session to its thread through the T3 Code server's database. Point each at the
+directories this environment's T3 Code server and providers use:
+
+| Source             | Read from                                           |
+| ------------------ | --------------------------------------------------- |
+| T3 Code thread map | `--t3-home`, else `T3CODE_HOME`, else `~/.t3`       |
+| Claude             | `CLAUDE_CONFIG_DIR`, else `~/.claude`               |
+| Codex              | `CODEX_HOME`, else `~/.codex`                       |
+| Cursor             | `~/.cursor`                                         |
+| Grok               | `GROK_HOME`, else `~/.grok`                         |
+| OpenCode           | `OPENCODE_DATA_DIR`, else `$XDG_DATA_HOME/opencode` |
+
+A session pushed before its thread is in that database is not attributed to a
+task. Run the push with the same homes as the T3 Code server, the first time
+too. `--state-dir` keeps what the push has sent, by default
+`$XDG_STATE_HOME/manifold-host`; use one per environment on a host that runs
+more than one.
+
 An operator-managed systemd timer can run it every ten minutes. Adapt the
 binary path, provider user's working directory, URL, and environment name:
 
