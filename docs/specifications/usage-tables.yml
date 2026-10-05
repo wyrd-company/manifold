@@ -10,6 +10,7 @@ relationships:
     - usage-record
 terms:
   - call
+  - late-attribution
   - state-visit
 description: >-
   Defines the tables the usage intake module holds in Manifold's store
@@ -64,8 +65,18 @@ description: >-
   `pending` with a `reason`, `unaccounted` with no `account`, `unpriced`,
   or `no-window`, or `posted` with its `account`, its `amount` in the
   account's unit, its `ledger_key`, and `posted_at`. A pending posting
-  changes only to `posted`, or to pending with another reason and
-  account; a posted one never changes.
+  changes only to `posted`, to pending with another reason and account,
+  or, while its `actor` is its session's ledger actor, to the
+  attribution its session's mapping gives; a posted one never changes.
+
+  Late attributions. `usage_late_attributions` holds, for a posted
+  posting whose session's mapping arrived after it posted under the
+  session's ledger actor, the `actor`, `item`, and `visit` that mapping
+  gives, and the time it was recorded. `seq` is the posting's. The
+  ledger keeps the posting's actual under the posting's own `actor` and
+  `item`; the module's actor usage read counts its amount for the late
+  attribution's actor instead. A trigger aborts every `UPDATE` and
+  `DELETE`.
 
   Source errors. `usage_source_errors` holds the latest source error
   record of each code for each source of an environment.
@@ -78,6 +89,6 @@ validation-criteria: >-
   with the rows this file produces on a second empty database, with each
   run of whitespace in `sql` read as one space; they are equal. An
   `UPDATE` or `DELETE` on `usage_declarations` fails with its append-only
-  message. A posted posting without a ledger key, a pending posting
-  without a reason, and an unaccounted posting with an account each fail
+  message, and so does one on `usage_late_attributions`. A posted
+  posting without a ledger key, a pending posting without a reason, and an unaccounted posting with an account each fail
   a CHECK constraint.

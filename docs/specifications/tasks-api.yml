@@ -20,11 +20,12 @@ terms:
   - estimate
   - actual
   - variance
+  - late-attribution
 description: |-
   Defines the tasks read endpoints of Manifold's API: `GET /api/tasks`,
   which lists the tasks of every bound Project with their lifecycle status,
   and `GET /api/tasks/{actorId}`, which reads one task with its actor, its
-  threads, its usage from the ledger, and its escalations.
+  threads, its usage, and its escalations.
   `docs/specifications/tasks-api.openapi.yml` is the machine-readable
   definition. The Board and the Task page of the operator console read
   them, and any automation may.
@@ -115,12 +116,14 @@ description: |-
     latest turn's state, `running`, `completed`, `interrupted`, or
     `error`, or absent when the thread has no turn. `archived` is true
     when T3 Code has archived or deleted the thread.
-  - `usage`: `{ settled, accounts }` from the ledger's actor usage read
-    for the actor id. Each account entry is `{ account, estimate, actual,
-    variance, reserved }`: the sum of the actor's reservations, its posted
-    actuals, actual less estimate, and its outstanding reservation, each
-    in the account's native unit. An actor with no ledger entry has
-    `accounts` empty.
+  - `usage`: `{ settled, accounts }` from the usage intake module's actor
+    usage read for the actor id, which is the ledger's with the actor's
+    late attributions counted. Each account entry is `{ account,
+    estimate, actual, variance, reserved }`: the sum of the actor's
+    reservations, its posted actuals with the calls whose mapping arrived
+    after they posted, actual less estimate, and its outstanding
+    reservation, each in the account's native unit. An actor with no
+    ledger entry and no late attribution has `accounts` empty.
   - `escalations`: `{ open, recent }`. `open` holds the task's open
     escalations, oldest raised first. `recent` holds its answered and
     withdrawn escalations, newest closed first, at most 20. Each is an

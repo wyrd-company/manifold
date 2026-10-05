@@ -116,6 +116,27 @@ CREATE INDEX usage_postings_pending ON usage_postings (seq) WHERE status = 'pend
 
 CREATE INDEX usage_postings_by_actor ON usage_postings (actor, visit);
 
+-- The late attribution of a posted posting: the actor, item, and visit
+-- its session's mapping gives when the mapping arrives after the posting
+-- posted under the session's ledger actor. The ledger keeps the posting's
+-- actual where it posted; the actor usage read counts it for this actor.
+CREATE TABLE usage_late_attributions (
+  seq INTEGER PRIMARY KEY REFERENCES usage_postings (seq),
+  actor TEXT NOT NULL CHECK (length(actor) > 0),
+  item TEXT NOT NULL CHECK (length(item) > 0),
+  visit INTEGER,
+  attributed_at INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX usage_late_attributions_by_actor ON usage_late_attributions (actor);
+
+CREATE TRIGGER usage_late_attributions_no_update
+  BEFORE UPDATE ON usage_late_attributions
+  BEGIN SELECT RAISE(ABORT, 'usage_late_attributions is append-only'); END;
+CREATE TRIGGER usage_late_attributions_no_delete
+  BEFORE DELETE ON usage_late_attributions
+  BEGIN SELECT RAISE(ABORT, 'usage_late_attributions is append-only'); END;
+
 -- The latest source error record of each code for each source.
 CREATE TABLE usage_source_errors (
   environment TEXT NOT NULL CHECK (length(environment) > 0),

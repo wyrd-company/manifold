@@ -1,0 +1,9 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - usage-intake
+title: Late attribution
+description: >-
+  The actor, portfolio item, and state visit a call is counted for when the thread of its provider session reaches the service after the call posted; the ledger keeps the call's actual where it posted.

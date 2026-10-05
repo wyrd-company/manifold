@@ -19,10 +19,12 @@ relationships:
     - usage-tables
     - usage-record
     - host-cli-usage
+    - tasks-api
 terms:
   - actual
   - call
   - estimate
+  - late-attribution
   - reservation
   - settlement
   - state-visit
@@ -63,6 +65,11 @@ background:
     - >-
       Two providers report one running total for a session, which grows
       after it is first posted.
+    - >-
+      A session's mapping can reach the service after its calls: a push
+      that read another T3 Code home, or ran before T3 Code recorded the
+      session, sends calls with no mapping, and a later push that skips
+      the unchanged sources sends no mapping for them.
 design-challenges:
   exactly-once: >-
     A record crosses a process boundary that either side can leave at any
@@ -74,6 +81,11 @@ design-challenges:
   late-facts: >-
     A call can arrive before its account, its price, or a ledger window
     exists, and it must wait without being dropped or posted wrong.
+  late-mapping: >-
+    A call that arrives before its mapping counts against its account at
+    once, so capacity stays right, but the ledger never moves an actual,
+    so the task the mapping names must gain the call without a second
+    charge.
 proposed-design:
   high-level-overview: >-
     `manifold-host usage push` runs one decode on the environment and sends
@@ -88,20 +100,33 @@ proposed-design:
     which are `accounts.yml` and `prices.yml` in the process repository.
     An actor's save hook keeps the first two and settles the actor when it
     ends. A call that lacks an account, a price, or a ledger window waits
-    as a pending posting and posts when the missing fact arrives. The
+    as a pending posting and posts when the missing fact arrives. A call
+    whose mapping arrives after it is attributed then, by a late
+    attribution that the module's actor usage read counts. The
     push protocol is `usage-push`, the declarations are
     `accounts-declaration` and `price-table`, the tables are
     `usage-tables`, the command is `host-cli-usage`, and the evidence for
     the session-to-thread mapping is the `t3code-session-mapping` spike.
   push-run: >-
-    One `usage push` run decodes with `decodeUsageBatches` of the usage
+    One `usage push` run first sends the mappings the service has not
+    acknowledged. It reads the session mappings from T3 Code's database
+    once, keeps each whose provider and provider session the push state's
+    mapping acknowledgements do not hold with the same thread and provider
+    instance, and sends them in requests of at most 1000 mappings and no
+    records, in the order the read gives. After each 200 it records the
+    request's mappings as acknowledged. With nothing to send, it sends no
+    request. So a mapping reaches the service on the first run after T3
+    Code records it, whether or not the session's sources changed, and a
+    call already held without it is attributed then. The run then
+    decodes with `decodeUsageBatches` of the usage
     decoder, passing a `skip` predicate that answers true for a source
     whose stamp equals the stamp the host's push state holds for it. For
     each batch it splits the records into requests of at most 1000
     records, in batch order. Before each request it reads the session
     mappings from T3 Code's database and includes the mapping of every
     provider session among the request's call records that has one. It
-    sends each request and waits for its response before the next. When
+    sends each request and waits for its response before the next. After
+    each 200 it records the request's mappings as acknowledged. When
     every request of a batch answers 200, it writes into the push state
     the stamps of the sources the batch names, except a source with a
     source error record of code `unreadable` or `decoder-failed`, whose
@@ -116,25 +141,42 @@ proposed-design:
     state as the last completed batch left it. The mapping is read after
     the records it covers were decoded, so a session whose calls are in a
     request has its mapping in that request whenever T3 Code holds it.
+  mapping-cost: >-
+    The host already reads the whole `provider_session_runtime` table for
+    every request; the mapping step adds one more read per run. T3 Code
+    holds one row per thread, so the first run against a service, or
+    after the mapping acknowledgements are lost, sends every mapping: one
+    request for each 1000 threads, about 200 bytes a mapping, and the
+    service looks each up by its primary key. Every later run sends only
+    the mappings T3 Code added or changed since, which is none on a run
+    where no thread started or resumed a session. The acknowledgements
+    file grows by one entry, about 200 bytes, per thread.
   push-state: >-
-    The push state is one JSON file,
-    `<state-dir>/usage-push/<sha256 of the service URL, the environment
-    name, and the decoder revision>.json`, holding the source stamps keyed by provider and source
-    path. `<state-dir>` is `--state-dir`, else `XDG_STATE_HOME/manifold-host`,
-    else `<home>/.local/state/manifold-host`. The host writes it to a
+    The push state is two JSON files under `<state-dir>/usage-push/`, each
+    named by `<sha256 of the service URL, the environment name, and the
+    decoder revision>`: `<name>.json` holds the source stamps keyed by
+    provider and source path, and `<name>.mappings.json` holds the mapping
+    acknowledgements, the thread and provider instance of each mapping
+    the service answered 200 for, keyed by provider and provider session.
+    `<state-dir>` is `--state-dir`, else `XDG_STATE_HOME/manifold-host`,
+    else `<home>/.local/state/manifold-host`. The host writes each file to a
     temporary file in the same directory and renames it over the old one,
     so a reader sees the old file or the new one. A missing or unparsable
-    file is an empty state. The decoder revision is a constant the host
-    CLI build embeds: the SHA-256 of the decoder's golden output
-    `fixtures/expected.jsonl`. A change to what the decoder yields changes
+    file is an empty state of its kind. The host writes the mapping
+    acknowledgements after each request that carried mappings answers
+    200, and the source stamps as `push-run` states; neither waits for the
+    other. A mapping that the service answered as `conflicting` is
+    acknowledged, so it is not sent again until T3 Code changes it. The
+    decoder revision is a constant the host CLI build embeds: the SHA-256
+    of the decoder's golden output `fixtures/expected.jsonl`. A change to what the decoder yields changes
     that file, so a host CLI that decodes differently starts from an empty
     state and decodes every source again, including sources an earlier
     build decoded with `unknown-record` or `malformed-record` errors. The
-    file only saves work: an empty state
-    decodes and pushes every source, and the service replays every call
-    it already holds. Two runs at once each write a complete state; the
-    one that renames last wins, and a source it does not name is pushed
-    again by the next run.
+    files only save work: an empty state decodes and pushes every source
+    and sends every mapping, and the service replays every call and
+    mapping it already holds. Two runs at once each write a complete
+    state; the one that renames last wins, and a source or mapping it
+    does not name is sent again by the next run.
   session-mapping-read: >-
     The host opens `<t3-home>/userdata/state.sqlite` with `node:sqlite`
     `DatabaseSync` and `readOnly: true`, where `<t3-home>` is `--t3-home`,
@@ -172,7 +214,8 @@ proposed-design:
     past the listener validates the request again.
   push-transaction: >-
     `push` runs in one `connection.transaction`. It records each mapping
-    first, then each record in request order. A source error record
+    first, then gives each mapping of the request its late attribution,
+    then records each record in request order. A source error record
     replaces the row for its environment, provider, source, and code. A
     call record of granularity `call` whose key the environment already
     holds is replayed and writes nothing. A new one is stored with its
@@ -206,9 +249,53 @@ proposed-design:
     thread, under the ledger actor `thread:<environment>:<thread id>`. A
     call whose session has no mapping posts on `other` under the ledger
     actor `session:<environment>:<provider>:<provider session id>`. The
-    attribution is fixed when the posting is made. The ledger actors of
-    unowned usage take actuals only and are never settled, so an operator
-    can later move their usage to an item or a task.
+    attribution is fixed when the posting is made, except that the
+    session's mapping, when it arrives later, attributes the posting
+    again as `late-attribution` states. The ledger actors of unowned
+    usage take actuals only and are never settled, so an operator can
+    later move their usage to an item or a task.
+  late-attribution: >-
+    After `push` records the mappings of a request, it takes, for each
+    mapping, the session's mapping the service holds, which is the
+    request's unless an earlier one conflicts, and finds the postings of
+    that session made without a mapping: those under the ledger actor
+    `session:<environment>:<provider>:<provider session id>` that have no
+    late attribution, in `seq` order. It attributes each by `attribution`
+    with that mapping, the thread's actor and its visits, and the thread's
+    T3code project, as they stand in the transaction: the same reads a
+    new posting makes. A pending posting has no ledger entry, so it takes
+    the new actor, item, and visit in place and is resolved again as
+    `posting` states. Its account may now resolve through the mapping's
+    provider instance, and when it posts, the ledger holds it under the
+    task's actor and item, where it consumes the actor's hold as any
+    actual does. A posted posting keeps its ledger entry, its account,
+    its amount, and its window, since the ledger moves no actual. Its new
+    actor, item, and visit are recorded as its late attribution, one row
+    per posting that is never changed. So what a call counts against
+    before its mapping arrives does not change: the account and window of
+    its actual, which capacity reads, and the item `other`, which
+    balances read. The late attribution changes only whose usage the call
+    is, which `actor-usage` reads. A mapping replayed or sent again finds
+    no posting left under the session's ledger actor without a late
+    attribution, and writes nothing. A mapping for a session with no held
+    calls finds none. Postings made after the mapping is held are
+    attributed by it when they are made, and need none.
+  actor-usage: >-
+    `actorUsage(actor)` answers in the shape of `ledger.actorUsage`, and
+    starts from it. It adds to the actual of each account the amounts of
+    the posted postings whose late attribution names the actor, subtracts
+    the amounts of the posted postings whose ledger actor is the actor
+    and that have a late attribution, and sets each variance to the
+    actual less the estimate. An account the actor gains only through
+    late attributions appears with estimate 0 and outstanding 0, after
+    the ledger's accounts, in account name order. The estimate, the
+    outstanding reservation, and `settled` are the ledger's: a late
+    attribution consumes no hold, so a running actor's hold stays
+    outstanding on its item until the actor settles, as the ledger holds
+    it. The same read serves a running and a settled actor, and the
+    ledger actors of unowned usage. The tasks read model's `actorUsage`
+    is this read, so `GET /api/tasks/{actorId}` shows the task's usage
+    with its late calls. The read writes nothing.
   thread-ownership: >-
     The module's save hook runs inside every snapshot save, as the actor
     host's save hooks do. It reads `context.manifold` from the snapshot,
@@ -237,8 +324,10 @@ proposed-design:
     held actor, which has not ended, and settles nothing. A call that
     reaches the service after its actor ended posts to that actor in full,
     as the ledger posts an actual for a settled actor, so the actor's
-    actual and variance include it. `ledger.actorUsage(actor)` reads the task's estimate,
-    actual, and variance.
+    actual and variance include it. A call whose mapping reaches the
+    service after its actor ended counts in the actor's actual and
+    variance through its late attribution. `actorUsage(actor)` reads the
+    task's estimate, actual, and variance.
   posting: >-
     A posting resolves its account, then its amount, then posts. The
     account is the one the accounts declaration in force gives the call's
@@ -318,10 +407,13 @@ proposed-design:
     ledger, the portfolio, and the T3 Code environment source through the
     structural members it uses, as the ledger takes `LedgerConnection`.
     `index.ts` holds the public surface. `usage.ts` holds `openUsage`,
-    `listener.ts` the endpoint, `push.ts` the push transaction,
+    `listener.ts` the endpoint, `push.ts` the push transaction and its
+    late attribution, `actor-usage.ts` the actor usage read,
     `attribution.ts` and `pricing.ts` pure functions, `hooks.ts` the save
-    hook, and `migrations.ts` the steps, whose step 1 is the script of
-    `docs/specifications/usage-tables.sql`.
+    hook, and `migrations.ts` the steps. Step 1 creates every table of
+    `docs/specifications/usage-tables.sql` but `usage_late_attributions`,
+    and step 2 creates `usage_late_attributions`, its index, and its
+    triggers, so the steps together produce that file's schema.
 
     ```ts
     /** Migration steps for owner `usage`, applied by the store's migrate. */
@@ -343,7 +435,7 @@ proposed-design:
 
     export function openUsage(options: {
       connection: LedgerConnection;
-      ledger: Pick<Ledger, "postActual" | "settle">;
+      ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage">;
       portfolio: Pick<Portfolio, "t3codeProject">;
       threadProject(environment: string, threadId: string): string | undefined;
       environments: ReadonlySet<string>;
@@ -357,6 +449,8 @@ proposed-design:
       apply(revision: UsageRevision): Promise<UsageApplyResult>;
       retryPending(): UsageRetryResult;
       accounts(): UsageDeclaration["accounts"];
+      /** The ledger's actor usage, with the actor's late attributions counted. */
+      actorUsage(actor: string): LedgerActorUsage;
     }
 
     export type UsageApplyResult =
@@ -374,6 +468,8 @@ proposed-design:
     response body of `usage-push`. `UsageActorSave` is the part of the
     actor host's save the hook reads; the actor host's save satisfies it,
     and the service registers `usage.saveHook` with the actor host.
+    Service assembly gives the tasks read model `usage.actorUsage` as its
+    `actorUsage`, in place of the ledger's.
     `threadProject` reads the T3code project id the T3 Code environment
     source holds for a thread; the T3 Code environment source exports it
     from its `index.ts` as `readThreadProject(connection, environment,
@@ -401,14 +497,30 @@ proposed-design:
     environment, every ledger write is keyed, and a session total posts
     only what raises its charged tokens. A service killed before its transaction commits
     holds nothing of the request, and the host, which saw no 200, sends
-    it again on its next run. A service killed after the commit and before
+    it again on its next run. A request whose calls committed with no
+    mapping leaves them under their session's ledger actor; a later
+    request that carries the mapping, sent by the next run because the
+    host holds no acknowledgement for it, gives each its late attribution
+    once, and the same mapping sent again finds nothing left to attribute.
+    A host killed after a mapping request is answered and before it
+    writes the acknowledgement sends the mapping again, and the service
+    replays it. A service killed after the commit and before
     its answer holds the request, and the host's next run replays it. A
     host killed before it writes the push state decodes the same sources
     again and the service replays them. `apply` twice with one revision
     writes once. The save hook run twice for one save inserts no second
     visit and no second ownership, and `ledger.settle` retires nothing the
     second time. `retryPending` twice posts each pending posting at most
-    once, by its ledger key. A crash inside any of these rolls its
+    once, by its ledger key. A late attribution is one row per posting,
+    and a posting that has one, or that took its attribution in place
+    while pending, is no longer under its session's ledger actor without
+    one, so a session's postings are attributed once whichever of the
+    posting and the mapping arrives first, and the ledger receives no
+    second actual. A store that holds calls under a session's ledger
+    actor while it already holds the session's mapping is attributed
+    when that mapping arrives again, which a host with no mapping
+    acknowledgements sends on its first run. A crash inside any of these
+    rolls its
     transaction back whole.
   tests: |-
     Service tests live in `packages/service/src/usage/usage.test.ts` and
@@ -473,6 +585,45 @@ proposed-design:
 
     - Late usage: a call posted after `actor-1` ended counts in its actual.
 
+    - Late mapping, posted: `actor-1` reserves 10 on `alpha` and owns
+      `thread-1`; a request carries a call on `session-1` priced 15 and no
+      mapping, which posts on `other` under
+      `session:env-one:codex:session-1`; a request with only the mapping
+      of `session-1` to `thread-1` gives it a late attribution in the
+      visit its timestamp falls in. `actorUsage("actor-1")` reads
+      estimate 10, actual 15, variance 5, outstanding 10, and the
+      session's ledger actor reads actual 0. The account window's actual
+      and `other`'s balance are what they were before the mapping
+      arrived. The same mapping pushed again changes nothing.
+
+    - Late mapping, pending: with `accounts.yml` declaring `acct` only for
+      the provider instance `instance-1`, a call on `session-1` with no
+      mapping is pending `unaccounted`; the mapping of `session-1` to
+      `thread-1` with `instance-1` makes it post to `actor-1` on `alpha`
+      on `acct`, where the ledger's own `actorUsage("actor-1")` holds it
+      and it consumes the actor's hold.
+
+    - Late mapping, settled: as the posted case, after a save with status
+      `done` settles `actor-1`; the actual and variance include the call
+      and `settled` is true.
+
+    - Late mapping, crash: a request that carries the mapping of
+      `session-1` and a new call, through a ledger whose `postActual`
+      throws an error other than `no-window` on that call, answers 500 and
+      holds neither the mapping nor any late attribution; the same request
+      again, through a working ledger, attributes each held call once.
+
+    - Late mapping, no actor: a mapping to `thread-2`, which no actor owns,
+      in `t3-project-1`, gives a held call a late attribution to
+      `thread:env-one:thread-2` on `beta`.
+
+    - Task read: on one store, the usage module, a `Ledger`, and the tasks
+      read model with `actorUsage` from the usage module and the tracked
+      issue and snapshot stand-ins of the tasks tests. Calls pushed with
+      no mapping, then a request with only their mapping, are read
+      through `GET /api/tasks/{actorId}` with the actual and variance
+      that include them, for a running actor and again after it settles.
+
     - No window: through a ledger with no window, a call is pending
       `no-window`; after a credit opens a window that covers it,
       `retryPending` posts it.
@@ -514,5 +665,12 @@ proposed-design:
     with the database's size and modification time unchanged, and runs
     again: the second run decodes the database and pushes its calls. A
     second build revision, given to `runUsagePush` in place of the
-    embedded one, starts from an empty push state. Shared tests cover `lintUsageDeclaration` and check
-    the bundled price table against its schema.
+    embedded one, starts from an empty push state. A mapping test runs a
+    push that stores a source's stamp while the T3 Code database has no
+    row for its session, adds the row, and runs again with the source
+    unchanged: the second run sends one request with the mapping and no
+    records, and a third run sends none. A run whose mapping request
+    answers 500 writes no acknowledgement and ends with exit 1, and the
+    next run sends the mapping again. An empty acknowledgements file
+    sends every mapping in requests of at most 1000. Shared tests cover
+    `lintUsageDeclaration` and check the bundled price table against its schema.

@@ -37,9 +37,13 @@ description: >-
   `--environment`, by the `usage-push` protocol, with the T3 Code thread of
   each provider session read from T3 Code's database under `--t3-home`. It
   sends no authentication credential. Deployment controls access to the
-  service API. It keeps the
-  stamps of the sources the service has acknowledged in its push state
-  under `--state-dir`, and decodes only sources whose stamps changed. A
+  service API. It first sends, in requests with no records, every
+  session mapping T3 Code holds that the service has not acknowledged
+  with the same thread and provider instance, so a session whose calls
+  the service already holds is mapped even when its sources have not
+  changed. It keeps the mappings and the stamps of the sources the
+  service has acknowledged in its push state under `--state-dir`, and
+  decodes only sources whose stamps changed. A
   source whose decode was `unreadable` or `decoder-failed` keeps no new
   stamp, so the next run decodes it again. It
   sends one request at a time and stops at the first that does not answer
@@ -89,7 +93,9 @@ validation-criteria: >-
   server and a T3 Code database built from SQL, and checks that every
   request validates against `docs/specifications/usage-push.schema.yml`,
   that the summary on standard output is one JSON object, and that a run
-  with no credential succeeds and sends no Authorization header.
+  with no credential succeeds and sends no Authorization header. A
+  second run with an unchanged source and a mapping T3 Code added since
+  the first sends that mapping in a request with no records.
   The binary test runs `manifold-host usage lint` from a directory with no
   `node_modules`. It observes exit 0 and no output for a clean checkout
   and for an empty directory; exit 1 with an `invalid-capacity` line at

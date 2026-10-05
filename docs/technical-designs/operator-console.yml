@@ -351,7 +351,7 @@ proposed-design:
       boundProjects(): readonly TasksBoundProject[];
       /** The GitHub source's `trackedIssueIds` and `trackedIssue`. */
       readonly github: TasksGitHub;
-      /** The ledger's `actorUsage`. */
+      /** The usage intake module's `actorUsage`. */
       actorUsage(actorId: string): TasksActorUsage;
       /** The escalations module's `list`. */
       listEscalations(filter: { readonly status?: "open" | "answered" | "withdrawn" }): readonly TasksEscalation[];
@@ -403,7 +403,7 @@ proposed-design:
     bindings of `portfolio.current()` that are not archived, each with the
     lifecycle field the process repository revision in force declares for
     it, as the lifecycle field declaration specifies. `github` is the
-    GitHub source, `actorUsage` is `portfolio.ledger.actorUsage`,
+    GitHub source, `actorUsage` is the usage intake module's `actorUsage`,
     `listEscalations` is the escalations module's `list`, `thread` is the
     T3 Code source's `thread`, `tokenHolder` is the gates module's
     `tokenHolder`, and `held` is whether the router's `held` answers for

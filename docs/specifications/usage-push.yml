@@ -26,7 +26,9 @@ description: |-
   error records, in the order the decoder yielded them. `threads` holds
   at most 1000 session mappings: each names a `provider`, a
   `providerSessionId`, the T3 Code `threadId` that runs that session, and,
-  when T3 Code records one, the `providerInstance` that runs it.
+  when T3 Code records one, the `providerInstance` that runs it. A
+  request may carry mappings and no records, to map sessions whose calls
+  the service already holds.
 
   ```json
   {
@@ -99,7 +101,12 @@ description: |-
   `session-total` posts only the classes it carries above the greatest
   count any earlier copy of its key carried.
   A mapping is held once per environment, provider, and provider session.
-  The host sends a request again whenever it did not see its 200.
+  The calls the service already holds for a session with no mapping are
+  attributed by the session's mapping when it arrives, in any later
+  request, each once: the account, window, and item their usage counts
+  against do not change, and the task's actor usage counts them. A
+  mapping sent again attributes nothing more. The host sends a request
+  again whenever it did not see its 200.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/usage-push.schema.yml` is a valid JSON Schema
