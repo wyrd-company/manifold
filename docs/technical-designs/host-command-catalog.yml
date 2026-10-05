@@ -1,0 +1,139 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - service-distribution
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  references:
+    - host-cli
+    - host-cli-blueprint-lint
+    - host-cli-comparator-lint
+    - host-cli-expressions-lint
+    - host-cli-manifest-lint
+    - host-cli-mcp
+    - host-cli-portfolio-lint
+    - host-cli-task-metadata-lint
+    - host-cli-usage
+objective: >-
+  Make the host CLI explain itself from its specifications: every command
+  and group answers `--help` with text rendered from the CLI assets in
+  `docs/specifications/`, an unknown command or flag is refused with the
+  usage, and a command is added by declaring it and giving it a handler.
+background:
+  current-design: >-
+    `packages/host-cli/src/cli.ts` compares `process.argv[2]` and
+    `process.argv[3]` with each command's name in an `if` chain, imports the
+    matched command's module lazily, and passes it the remaining arguments.
+    Any other invocation prints `manifold-host: placeholder` from `banner()`
+    and exits 0. Each command parses its own arguments by hand, or with
+    `parseArgs` for `mcp`, and refuses an unknown option with its own
+    message and exit code 2. Each command's CLI asset in
+    `docs/specifications/` describes its arguments, options, exit codes,
+    and examples, and nothing in the binary reads it.
+  problems:
+    - >-
+      `manifold-host`, `manifold-host --help`, and `manifold-host help`
+      print a placeholder, so an operator cannot discover the commands from
+      the binary, and the operator guide's install check proves nothing.
+    - >-
+      Each command refuses `--help` as an unknown option, so its flags are
+      found only in the specifications.
+    - >-
+      The command names live in the `if` chain and in the assets, and
+      nothing makes the two agree.
+design-challenges:
+  one-source: >-
+    The help must come from the CLI assets that specify the commands, so a
+    specification change changes the help, and the binary must not read
+    `docs/` at run time: it is copied to machines with no checkout.
+  startup: >-
+    A command must not load another command's modules, and the entry point
+    must stay off package barrels, so that each invocation stays fast on a
+    cold start.
+  completeness: >-
+    A declared command with no handler, or a handler with no declared
+    command, must fail before a binary is built.
+  extension: >-
+    Other tasks add commands to the same binary at the same time. Adding a
+    command must not edit another command's code or the resolution.
+proposed-design:
+  high-level-overview: >-
+    A generator reads every `docs/specifications/host-cli*.cli.yml`
+    asset, merges their command trees as `host-cli` states, and writes the
+    merged tree to a committed TypeScript module in the host CLI. The
+    command catalog joins each runnable command of that tree with a
+    handler from a typed map, whose keys TypeScript checks against the
+    tree's runnable paths. A pure function resolves the arguments against
+    the tree and answers help, a refusal, or the command to run, and a pure
+    renderer writes the help. `cli.ts` is a thin shell that runs the
+    resolution, writes its text, and calls the handler.
+  assets: >-
+    Every CLI asset of the host CLI is named
+    `docs/specifications/host-cli*.cli.yml`, so that one pattern finds them;
+    `host-cli-usage` and `host-cli-mcp` name theirs that way.
+    `host-cli.cli.yml` declares the tool, its `-h` and `--help` flag, and
+    the `help` command.
+  generated-tree: >-
+    `packages/host-cli/scripts/generate-command-tree.mjs` reads the assets
+    in path order and merges them with one function, `mergeCommandTrees`,
+    which fails on an asset whose `tool` differs from `host-cli.cli.yml`'s,
+    a group declared with two summaries, a runnable command declared twice,
+    a name that is both a group and a runnable command, a command that
+    declares `-h` or `--help`, a `help` below the root, and a field the
+    renderer reads that is absent or of the wrong type: a command's `name`
+    and `summary`, an option's `flags`. It writes
+    `packages/host-cli/src/catalog/command-tree.generated.ts`, with the
+    tool, the tree as a `const` value holding only the fields help reads
+    (names, summaries, positional arguments, options, exit codes,
+    examples), and `RunnablePath`, the union of the runnable paths such as
+    `"usage push"`. The package script `generate:command-tree` runs it and
+    formats the module. An agreement test merges the assets with the same
+    function and expects the committed tree to equal the result, so an
+    asset changed without regenerating fails `task check`.
+  catalog: >-
+    `HostCommandCatalog` is the list of `HostCommand` values, one for each
+    runnable command: its `path` (the names from the root), `summary`,
+    `arguments` (its positional arguments), `flags` (its options), and
+    `handler`. `packages/host-cli/src/catalog/catalog.ts` builds it from
+    the generated tree and the handler map, and holds the pure functions
+    `resolve(tree, args)` and `renderHelp(node)` and `renderUsage(node)`.
+    `resolve` answers one of `{ kind: "help", text }`,
+    `{ kind: "refusal", text }`, and `{ kind: "run", path, args }`, as the
+    resolution of `host-cli` states, with `help` resolved to help. The
+    catalog imports no command module and nothing from
+    `@wyrd-company/manifold-shared`.
+  handlers: >-
+    `packages/host-cli/src/commands.ts` exports `commandHandlers`, typed
+    `Record<Exclude<RunnablePath, "help">, CommandHandler>`, where a
+    `CommandHandler` takes the remaining arguments and the process's
+    standard output, standard error, environment, and home directory, and
+    answers the exit code. Each handler imports its command module lazily
+    and adapts it, as `cli.ts` does today; command modules keep their own
+    parsing and refusals. A declared command with no entry, or an entry with
+    no declared command, is a type error.
+  entry-point: >-
+    `cli.ts` passes `process.argv.slice(2)` to `resolve`. For help it
+    writes the text to standard output and sets exit code 0; for a refusal
+    it writes the text to standard error and sets exit code 2; for a run it
+    awaits the handler and sets its exit code. `banner()` and the
+    placeholder are removed.
+  adding-a-command: >-
+    A task that adds a command declares it in its specification's CLI
+    asset, a new `host-cli-<slug>.cli.yml` or the existing asset of the
+    group it joins, runs `generate:command-tree`, and adds one entry to
+    `commandHandlers`. It does not edit `cli.ts`, `catalog.ts`, or another
+    command's entry.
+  tests: >-
+    Unit tests of `resolve` and `renderHelp` use a generic tree written in
+    the test, not the generated one, and cover what `host-cli`'s validation
+    criteria list. The compiled-binary test, `src/help.test.ts`, joins the
+    `host-children` project in `vite.config.ts`. It runs the binary for the
+    root forms, for `--help` and `-h` on every group and runnable command
+    of the generated tree, comparing standard output with `renderHelp` of
+    that node, and for each refusal. `index.test.ts`, which tests the
+    placeholder, is removed.
+  convergence: >-
+    Nothing in this design changes state. Help and refusals write text and
+    exit. Running the generator twice writes the same module; a generator
+    run that stopped halfway leaves a module the agreement test refuses
+    until it is run again.

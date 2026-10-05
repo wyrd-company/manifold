@@ -12,7 +12,7 @@ relationships:
 description: >-
   Defines the `usage` commands of the host CLI, `manifold-host`, the Bun
   binary installed on each environment.
-  `docs/specifications/host-cli-usage.spec.yml` is the machine-readable
+  `docs/specifications/host-cli-usage.cli.yml` is the machine-readable
   command definition.
 
   `manifold-host usage decode` reads the provider session files on the
@@ -70,7 +70,7 @@ description: >-
 format: cli
 validation-criteria: >-
   The command surface conforms to
-  `docs/specifications/host-cli-usage.spec.yml`. The binary test in
+  `docs/specifications/host-cli-usage.cli.yml`. The binary test in
   `packages/host-cli` compiles the binary, runs `manifold-host usage decode`
   with a `--root` for each fixture provider, and checks that every line of
   standard output validates against

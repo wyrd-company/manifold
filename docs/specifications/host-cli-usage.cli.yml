@@ -1,10 +1,10 @@
-# yaml-language-server: $schema=https://commonclischema.org/draft/2026-04/schema
 # ---
 # relationships:
 #   # GAP-EDGE: no schema declares an edge from an asset to its
 #   # specification; `asset-of` names it.
 #   asset-of: host-cli-usage
 # ---
+$schema: https://commonclischema.org/draft/2026-04/schema
 tool:
   name: manifold-host
   mode: non-interactive

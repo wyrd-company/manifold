@@ -9,7 +9,7 @@ terms:
 description: |-
   Defines the `mcp` command of the host CLI, `manifold-host`, which is the
   harness plugin, and how it is registered in each provider T3 Code runs.
-  `docs/specifications/host-cli-mcp.spec.yml` is the machine-readable
+  `docs/specifications/host-cli-mcp.cli.yml` is the machine-readable
   command definition.
 
   `manifold-host mcp --service <url> --environment <name>` serves the
@@ -87,7 +87,7 @@ description: |-
 format: cli
 validation-criteria: >-
   The command surface conforms to
-  `docs/specifications/host-cli-mcp.spec.yml`. The binary test in
+  `docs/specifications/host-cli-mcp.cli.yml`. The binary test in
   `packages/host-cli` compiles the binary, runs `manifold-host mcp` with an
   MCP client over its standard input and output against a test HTTP server,
   and checks that `tools/list` returns exactly `agentToolDefinitions`; that

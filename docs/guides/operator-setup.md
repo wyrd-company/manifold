@@ -117,7 +117,8 @@ printed in a terminal, copied into a URL, committed, or placed in a task note.
 Install the host CLI first. Copy the binary for each machine from
 `packages/host-cli/dist/linux-x64/manifold-host`, `linux-arm64/manifold-host`,
 `darwin-arm64/manifold-host`, or `windows-x64/manifold-host.exe` to its `PATH`.
-The build uses `task build:targets`. Check `manifold-host --help`.
+The build uses `task build:targets`. Check that `manifold-host --help` lists
+the commands, and that `manifold-host usage push --help` lists its flags.
 
 Copy the checkout's `examples/starter/` into a new process repository owned by
 your organization. Keep credentials out of it. Create the test GitHub Project,
