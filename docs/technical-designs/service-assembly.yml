@@ -10,13 +10,22 @@ relationships:
     - github-event-source
     - t3code-environment-source
     - task-metadata
+    - actor-host
+    - agent-threads
+    - agent-tools
+    - escalations
+    - intake
+    - gate-runtime
+    - operator-console
 objective: >-
   Run the service as one process from one service configuration file, with
   one HTTP host that every module mounts its endpoints on, a start order
   that resumes durable delivery before any source publishes, a stop order
-  that leaves every module closed, and a path by which each new process
+  that leaves every module closed, a start list in which each module joins
+  through its own wiring part, and a path by which each new process
   repository commit reaches the blueprint loader and the portfolio, so that
-  a pushed commit takes effect with no restart and a crash at any point
+  a pushed commit takes effect with no restart, a task adds a module
+  without editing another module's wiring, and a crash at any point
   converges on the next start.
 background:
   current-design: >-
@@ -40,12 +49,16 @@ background:
     - >-
       Modules of later waves serve HTTP endpoints and start beside these
       ones, and each needs one place to join.
+    - >-
+      When every module's start, stop, endpoints, and late references are
+      written in one function, two tasks that each add a module edit the
+      same lines, and a reader traces one module through all of them.
 design-challenges:
   order: >-
     Every live event must reach an actor after its pending rows, so no
-    source may hold the router before `startRouter` returns. Stop must run
-    the reverse, so no source publishes into a stopped router or a closed
-    store.
+    source may hold the router before `startRouter` returns. Stop must stop
+    every source before the router and the store, so no source publishes
+    into a stopped router or a closed store.
   convergence: >-
     The commit in force for the loaders must catch up with the current
     commit whatever ran before: a crash after publish, a failed read, a
@@ -54,29 +67,61 @@ design-challenges:
     One listener serves signed webhooks and operator endpoints under
     prefixes owned by different modules. Access control belongs to the
     deployment.
+  joining: >-
+    A module joins by adding its own wiring and one entry to the start
+    list, and never edits another module's wiring. A part listed before a
+    member it reads, or one that gives a member name another part already
+    gives, must fail to compile rather than at start.
+  late-references: >-
+    Modules call each other in both directions: the GitHub source calls
+    intake, which starts after it; the escalations module answers through
+    intake, the gates, and the actor host, which all open after it. A part
+    must read such a module when it calls it, with one typed mechanism,
+    and fail by name when the module has not started.
+  stop-order: >-
+    The stop order is not the reverse of any start order that keeps the
+    start steps. Intake starts after the GitHub source and must stop after
+    it and after the revision follower, which both call it; the follower
+    must drain before the router stops; the escalations module starts its
+    delivery before the GitHub source and must stop after it. Stop needs a
+    rule that gives this order and still lets a new part stop before the
+    part listed before it.
 proposed-design:
   high-level-overview: >-
-    `packages/service/src/service/` is the assembly. `startService` loads
-    the service configuration, opens the store, the portfolio, the process
-    repository, and the blueprint loader, brings the loaders up to the
-    current commit and pulls, opens the actor host, starts the router, starts the GitHub and T3
-    Code sources, mounts the GitHub source's listener, and listens.
-    `Service.stop` undoes the same steps in reverse. The revision follower
-    sits between every pull and the loaders: after each pull it loads the
-    current revision into the blueprint loader and applies it to the
-    portfolio, one revision at a time. `packages/service/src/http-host/`
-    is the HTTP host: one `node:http` server whose request handler
-    dispatches by path prefix to the listeners mounted on it.
-    `packages/service/src/main.ts` is the process entry point: it starts the service from the file named on its
-    command line and stops it on `SIGTERM` and `SIGINT`.
+    `packages/service/src/service/` is the assembly. `startService` is a
+    start list: one entry for each wiring part, in start order, with the
+    start steps between them. A wiring part lives in its module's
+    directory, opens that module from the members of the parts listed
+    before it, mounts the module's endpoints, and registers what stop must
+    close. The assembly runs the list, checks the start signal at each
+    step, and on stop runs the registered stops by stop stage. The
+    revision follower sits between every pull and the loaders: after each
+    pull it loads the current revision into the blueprint loader and
+    applies it to the portfolio, one revision at a time.
+    `packages/service/src/http-host/` is the HTTP host: one `node:http`
+    server whose request handler dispatches by path prefix to the
+    listeners mounted on it. `packages/service/src/main.ts` is the process
+    entry point: it starts the service from the file named on its command
+    line and stops it on `SIGTERM` and `SIGINT`.
   public-interface: |-
     `packages/service/src/service/index.ts` exports exactly these names.
 
     ```ts
+    import type { AgentTools } from "../agent-tools/index.ts";
+    import type { AgentThreads } from "../agent-threads/index.ts";
+    import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
+    import type { Intake, IntakeRevision } from "../intake/index.ts";
     import type { DeliveryProbe, JsonValue, Store } from "../store/index.ts";
     import type { Router } from "../router/index.ts";
     import type { ActorHost } from "../actor-host/index.ts";
-    import type { BlueprintLoader, RevisionLoad } from "../blueprint-loader/index.ts";
+    import type {
+      BlueprintLoader,
+      ImplementationRegistry,
+      RevisionLoad,
+    } from "../blueprint-loader/index.ts";
+    import type { CapacityCredit } from "../capacity/index.ts";
+    import type { Usage } from "../usage/index.ts";
+    import type { Gates } from "../gates/index.ts";
     import type { Portfolio } from "../portfolio/index.ts";
     import type {
       ProcessRepository,
@@ -86,12 +131,70 @@ proposed-design:
       SaveProbe,
       SaveRequest,
     } from "../process-repository/index.ts";
-    import type { GitHubSource } from "../github-source/index.ts";
+    import type { CardMove, GitHubSource } from "../github-source/index.ts";
     import type { T3CodeSource } from "../t3code-source/index.ts";
     import type { HttpListener } from "../http-host/index.ts";
     import type { ServiceConfiguration } from "../service-configuration/index.ts";
 
     export function startService(options: StartServiceOptions): Promise<Service>;
+
+    /** An empty start list over `options`, whose first member is `log`. */
+    export function assembleService(
+      options: StartServiceOptions,
+    ): ServiceAssembly<{ readonly log: (entry: ServiceLogEntry) => void }>;
+
+    /** Returns `part`, so that its needs and members are inferred from `start`. */
+    export function wiringPart<Needs extends object, Gives extends object>(
+      part: ServiceWiringPart<Needs, Gives>,
+    ): ServiceWiringPart<Needs, Gives>;
+
+    export interface ServiceWiringPart<Needs extends object, Gives extends object> {
+      /** Kebab-case and unique in a start list; names the part in errors and `stop-failed` entries. */
+      readonly name: string;
+      /** Opens the module from members of the parts listed before it; resolves with the members it adds. */
+      readonly start: (members: Needs, context: ServiceWiringContext) => Gives | Promise<Gives>;
+    }
+
+    export interface ServiceWiringContext {
+      /** The options the start list was assembled with: probes and test factories. */
+      readonly options: StartServiceOptions;
+      /** Runs `stop` in `stage` when the service stops, also when a later entry fails or aborts the start. */
+      onStop(stage: ServiceStopStage, stop: () => void | Promise<void>): void;
+      /** The members of a part in the same start list, for a read that runs after that part starts. */
+      later<Gives extends object>(part: ServiceWiringPart<never, Gives>): Later<Gives>;
+      /** Adds a module's implementations to the registry the `blueprint-loader` part binds. */
+      addImplementations(registry: ImplementationRegistry): void;
+    }
+
+    export interface Later<Gives extends object> {
+      /** The part's members; undefined until its `start` resolves. */
+      current(): Gives | undefined;
+      /** The part's members; throws a TypeError naming the part until its `start` resolves. */
+      get(): Gives;
+      /** Resolves with the part's members once its `start` resolves; rejects with the signal's reason when the signal has aborted or aborts first. */
+      ready(signal?: AbortSignal): Promise<Gives>;
+    }
+
+    export interface ServiceAssembly<Members extends object> {
+      /** Adds a part; its needs must be members of the entries before it, and its members new names. */
+      part<Gives extends object>(part: ServiceWiringPart<Members, Gives>): ServiceAssembly<Members & Gives>;
+      /** Adds a start step: logs `start-step`, calls the `step` probe, and checks the signal. */
+      step(step: ServiceStep): ServiceAssembly<Members>;
+      /** Runs the entries in order; resolves with every member and the service's `stop`. */
+      start(): Promise<{ readonly members: Members; stop(): Promise<void> }>;
+    }
+
+    /** In stop order. */
+    export type ServiceStopStage =
+      | "requests"
+      | "commands"
+      | "sources"
+      | "notifications"
+      | "pulls"
+      | "intake"
+      | "delivery"
+      | "timers"
+      | "store";
 
     export interface StartServiceOptions {
       /** Path of the service configuration file. */
@@ -100,22 +203,32 @@ proposed-design:
       readonly signal?: AbortSignal;
       /** Builds the router's actor host from the parts started before the router. */
       readonly actorHost?: (parts: Omit<ServiceParts, "actorHost">) => ActorHost | Promise<ActorHost>;
+      /** Builds gates before revision following. Defaults to the service gate runtime. */
+      readonly gates?: (
+        parts: Pick<
+          ServiceParts,
+          "configuration" | "store" | "portfolio" | "processRepository" | "blueprints" | "log"
+        >,
+      ) => Gates | Promise<Gates>;
       /** Receives every log entry. Defaults to one JSON line per entry on stderr. */
       readonly log?: (entry: ServiceLogEntry) => void;
       readonly probes?: ServiceProbes;
+      /** The gate runtime supplies the handler for returning stranded tokens. */
+      readonly strandedTokenHandler?: ServiceEscalationHandler;
     }
 
     export interface ServiceProbes {
+      readonly capacityCredited?: (credit: CapacityCredit) => void;
       /** Called after each start and stop step completes. */
       readonly step?: (step: ServiceStep) => void;
+      readonly cardMove?: (move: CardMove) => void;
       /** Passed to the process repository. */
       readonly pull?: PullProbe;
+      readonly save?: SaveProbe;
       /** Passed to the store. */
       readonly delivery?: DeliveryProbe;
       /** Called after the revision follower applies a revision. */
       readonly applied?: (applied: AppliedRevision) => void;
-      /** Passed to the process repository as its save probe. */
-      readonly save?: SaveProbe;
     }
 
     export type ServiceStep =
@@ -126,21 +239,31 @@ proposed-design:
       | "revision-followed"
       | "pulled"
       | "actor-host-opened"
+      | "escalations-opened"
+      | "escalations-started"
+      | "escalations-stopped"
       | "router-started"
       | "github-started"
+      | "intake-started"
       | "t3code-started"
       | "listening"
       | "http-closed"
       | "sources-stopped"
       | "revisions-idle"
+      | "intake-stopped"
       | "router-stopped"
       | "store-closed";
 
     export interface ServiceParts {
+      readonly gates?: Gates;
+      readonly escalations: Escalations;
       readonly actorHost: ActorHost;
+      readonly agentThreads: AgentThreads;
+      readonly agentTools?: AgentTools;
       readonly configuration: ServiceConfiguration;
       readonly store: Store;
       readonly portfolio: Portfolio;
+      readonly usage: Usage;
       readonly processRepository: ProcessRepository;
       readonly blueprints: BlueprintLoader;
       readonly revisions: Revisions;
@@ -148,6 +271,7 @@ proposed-design:
     }
 
     export interface Service extends ServiceParts {
+      readonly intake: Intake;
       readonly router: Router;
       readonly github: GitHubSource;
       readonly t3code: T3CodeSource;
@@ -157,7 +281,9 @@ proposed-design:
     }
 
     export interface Revisions {
-      /** The blueprint load of the latest revision the follower applied. */
+      /** One publication after blueprint loading and portfolio application finish. */
+      current(): IntakeRevision | undefined;
+      /** The latest blueprint load, available before portfolio application finishes. */
       latest(): RevisionLoad | undefined;
       /** Queues a pull and the apply of its commit as one job; resolves after both. */
       pull(request?: PullRequest): Promise<PullOutcome>;
@@ -186,6 +312,7 @@ proposed-design:
       readonly commit: string;
       readonly blueprints: RevisionLoad;
       readonly portfolio: "applied" | "unchanged" | "rejected";
+      readonly usage: "applied" | "unchanged" | "rejected";
     }
 
     export interface ServiceHttp {
@@ -234,79 +361,158 @@ proposed-design:
     ```
   module-layout: >-
     In `packages/service/src/service/`, `index.ts` re-exports the public
-    names and nothing else. `start.ts` implements `startService` and
-    `stop`: the start steps and their reverse, as one ordered list.
-    `revisions.ts` implements the revision follower. `log.ts` holds the
-    default log sink. In `packages/service/src/http-host/`, `index.ts`
-    re-exports the public names, `routes.ts` holds the pure prefix
-    validation and longest-prefix match over the mounts, and `host.ts`
-    implements `createHttpHost` over `node:http`.
+    names and nothing else. `start.ts` implements `startService`: the
+    start list and the `Service` it returns, and nothing else. `wiring.ts`
+    implements `assembleService`, `wiringPart`, the stop stages, and
+    `Later`. `types.ts` holds the public types. `revisions.ts` implements
+    the revision follower, and `revisions-wiring.ts` its two parts. `log.ts`
+    holds the default log sink. Every other part is in `wiring.ts` in its
+    module's directory, as the start list names it. A module's `index.ts`
+    does not export its `wiring.ts`, so a module never imports the
+    assembly through its barrel; `start.ts` and other wiring files import
+    a wiring file by its path, and a wiring file imports
+    `../service/wiring.ts` and `../service/types.ts`, never
+    `../service/index.ts`. In `packages/service/src/http-host/`,
+    `index.ts` re-exports the public names, `routes.ts` holds the pure
+    prefix validation and longest-prefix match over the mounts, and
+    `host.ts` implements `createHttpHost` over `node:http`.
     `packages/service/src/main.ts` is the entry point and holds no logic
     beyond the argument, the signals, and the exit code. The service
     package's `build` emits it as `dist/main.js`, and the package's
     `start` script runs `node dist/main.js`. Tests import only each
     module's `index.ts`, and the entry point test runs the compiled file.
-  start: >-
-    `startService` runs these steps in order and calls the `step` probe
-    after each. (1) `configuration-loaded`: `loadServiceConfiguration` with
-    the file, then `configureBlueprintExpressions` with its `expressions`
-    section. (2) `store-opened`: creates the directory of `store.file`
-    when absent, calls `openStore` with the file and the `delivery` probe,
-    and applies `ledgerMigrationSteps`, `portfolioMigrationSteps`, and
-    `taskMetadataMigrationSteps` with the store's `migrate`; the router and each source migrate their own
-    owners when they start. (3) `portfolio-opened`: `openPortfolio` with
-    the store's connection. (4) `process-repository-opened`:
-    `openProcessRepository` with the `processRepository` section, the
-    credentials, the `pull` probe, and the `save` probe, then `openTaskMetadata` as
-    `task-metadata` states, then `createBlueprintLoader` with
-    `serviceImplementations()`, the repository's `revisionAt`,
-    `onStateEntry: recordStateEntry`, and an
-    `onExpressionError` that logs `expression-error`. (5)
-    `revision-followed`: creates the revision follower and awaits
-    `follow()`, so a commit published before a crash is in force before
-    anything reads the portfolio or the blueprints. (6) `pulled`: awaits
-    `revisions.pull()`; a pull that fails logs `pull-failed` and start
-    continues on the current commit, or with no revision when there is
-    none, since every sweep pulls again. (7) `actor-host-opened`: awaits
-    the `actorHost` factory, defaulting to `createServiceActorHost`, with
-    `Omit<ServiceParts, "actorHost">` from steps 1 to 6. (8)
-    `router-started`: calls `startRouter` with the store, the opened actor
-    host, and an `onHeld` that logs
-    `actor-held`. `startRouter` restores and drains every stored actor and
-    returns. (9) `github-started`: `startGitHubSource` with the `github`
-    section, the credentials, the store, the router, `boundProjects` read
-    from `portfolio.current()`, a `processRepository` trigger whose `url`
-    and `branch` are the section's and whose `pull` is `revisions.pull`,
-    and an `onError` that logs `github-error`. (10) `t3code-started`:
-    `startT3CodeSource` with the store, the router, the `environments`
-    section, a `tokenFile` that resolves the credential name to its
-    `t3code-token` credential's file, and a `logger` that writes to the
-    log. (11) `listening`: creates the HTTP host from the `http` section,
-    mounts the GitHub source's `requestListener` at `githubWebhookPath`
-    with `mount`, mounts the blueprints API with `mountBlueprintsApi`, as
-    `operator-console` states, awaits `listen`, and logs `started` with the
-    address.
-    Sources start after the router returns, and the host listens after the
-    sources start, so no source and no request holds the router before
-    resume ends. After each step completes, `startService` checks
-    `signal`: when it has aborted, start stops every step already started,
-    in the stop order, and rejects with the signal's `reason`. A step in
-    progress runs to its end first, since each step is bounded only by the
-    work it does, such as a pull by `pullTimeoutMs`.
+  wiring-part: >-
+    A wiring part is a `name` and a `start`. `start` receives the members
+    it names from the parts listed before it, and the part's context, and
+    resolves with the members it adds, or with `{}`. Its needs are the type
+    of its first parameter, so `wiringPart` infers them and its members
+    without annotations. A member is named for its module in camel case,
+    such as `processRepository` or `githubMirror`; `ServiceParts` and
+    `Service` name the members other modules read. A part's start opens
+    its module, mounts the module's endpoints with `members.http.mount`,
+    adds the module's implementations with `addImplementations` when a
+    blueprint binds them, and calls `onStop` right after it opens each
+    thing stop must close, so a later line of the same part that throws
+    still leaves it closed. It reads a module that starts after it only
+    through `later`. The part holds the glue a module's own options name:
+    which members fill them, how errors become log entries, and which
+    probe reaches the module. It holds no business logic.
+  later: >-
+    `later(part)` names a part by its object, so the members it answers are
+    typed from that part, and no list of names is shared. It throws a
+    TypeError naming the part when the start list does not hold that part.
+    `current()` answers `undefined` until the part's `start` resolves, for
+    a call that does nothing before then, such as `inputChanged` on the
+    gates. `get()` throws a TypeError naming the part until then, for a
+    call that cannot run before the part starts, such as the router in an
+    agent tool. `ready(signal)` resolves when the part's `start` resolves,
+    and rejects with the signal's reason when the signal has aborted or
+    aborts first, for a wait such as the environment source a thread
+    command needs. Without a signal it waits until the part starts.
+  start: |-
+    `startService` assembles this list, runs it, logs `started` with the
+    host's address, and returns the members `Service` names with the
+    assembly's `stop`. Before the first entry the assembly checks the
+    signal. Each step entry logs `start-step`, calls the `step` probe, and
+    then checks the signal: when it has aborted, start stops every part
+    already started, as `stop` states, and rejects with the signal's
+    `reason`. An entry in progress runs to its end first, since each is
+    bounded only by the work it does, such as a pull by `pullTimeoutMs`.
+
+    | Entry | Wiring | Start | Members | Stops in |
+    |---|---|---|---|---|
+    | `configuration` | `service-configuration/wiring.ts` | `loadServiceConfiguration` with the file, then `configureBlueprintExpressions` with its `expressions` section. | `configuration` | |
+    | step `configuration-loaded` | | | | |
+    | `http-host` | `http-host/wiring.ts` | `createHttpHost` with the `http` section and an `onError` that logs `http-listener-error`. It does not listen. | `http` | |
+    | `store` | `store/wiring.ts` | Creates the directory of `store.file` when absent, `openStore` with the file and the `delivery` probe, and migrates `metadata`, `ledger`, `portfolio`, `usage`, `intake`, `gates`, and `bundle`. | `store` | `store` |
+    | `bundles` | `bundle/wiring.ts` | `openBundles` with the store. | `bundles` | |
+    | step `store-opened` | | | | |
+    | `github-mirror` | `github-source/wiring.ts` | Migrates `github` and creates the GitHub mirror over the store. | `githubMirror` | |
+    | `portfolio` | `portfolio/wiring.ts` | `openPortfolio`, then `openCapacity` over its ledger with the usage module's accounts, a `credited` that logs `capacity-credited` and calls its probe, and a follow-up that retries pending usage and tells the gates their input changed. The member is the portfolio with the capacity's ledger. | `portfolio`, `capacity` | `timers` |
+    | step `portfolio-opened` | | | | |
+    | `usage` | `usage/wiring.ts` | `openUsage` over the portfolio's ledger, telling the gates their input changed after each posting and settlement, with the T3 Code source's thread map and the configured environments; mounts its listener at `/api/usage`. | `usage` | |
+    | `process-repository` | `process-repository/wiring.ts` | `openProcessRepository` with the `processRepository` section, the credentials, and the `pull` and `save` probes. | `processRepository` | |
+    | `agent-threads` | `agent-threads/wiring.ts` | `openAgentThreads` with the environments, their `t3code-token` files, the actor host's `actorOf`, `bindingArchived` as `binding-archived` states, and the environment source's `ready` and `write`; adds its implementations. | `agentThreads` | `commands` |
+    | `task-metadata` | `task-metadata/wiring.ts` | `openTaskMetadata` as `task-metadata` states, with the GitHub source once it starts and `bindingOf` answered by the portfolio's `githubProject`; adds its implementations. | `taskMetadata` | |
+    | `agent-tools` | `agent-tools/wiring.ts` | `openAgentTools` as `agent-tools` states; mounts its listener at `/api/agent-tools`. | `agentTools` | `commands` |
+    | `escalations` | `escalations/wiring.ts` | `openEscalations` with its `ntfy-token` files and the handlers of `intake-failed`, `comparator-failed`, `agent-question`, `held-actor`, and `stranded-token`, the last from the `strandedTokenHandler` option when it is set; adds its implementations; `mountEscalations`. | `escalations` | `notifications` |
+    | step `escalations-opened` | | | | |
+    | `blueprint-loader` | `blueprint-loader/wiring.ts` | `createBlueprintLoader` with `serviceImplementations` of every registry added before it, `onStateEntry: recordStateEntry`, the configured lint bound, the repository's `revisionAt`, and an `onExpressionError` that logs `expression-error`. | `blueprints` | |
+    | step `process-repository-opened` | | | | |
+    | `gates` | `gates/wiring.ts` | The `gates` option, or `createGates` with the comparator sandbox, the token lint, and `trackedIssue` read from the GitHub mirror over the Projects the portfolio's `githubProject` binds. | `gates` | `timers` |
+    | `revisions` | `service/revisions-wiring.ts` | `createRevisions`, with an `applied` that tells intake once it starts and calls the `applied` probe; awaits `follow()`, then retries pending usage. | `revisions` | `pulls` |
+    | step `revision-followed` | | | | |
+    | `pull` | `service/revisions-wiring.ts` | Awaits `revisions.pull()`; a pull that fails logs `pull-failed` and start continues on the current commit, or with no revision when there is none, since every sweep pulls again. | | |
+    | step `pulled` | | | | |
+    | `gates-prepare` | `gates/wiring.ts` | Awaits the gates' `prepare`. | | |
+    | `actor-host` | `actor-host/wiring.ts` | Awaits the `actorHost` option, defaulting to `createServiceActorHost`, with `Omit<ServiceParts, "actorHost">`. | `actorHost` | |
+    | step `actor-host-opened` | | | | |
+    | `router` | `router/wiring.ts` | `startRouter` with the store, the actor host, the gates' `afterDrain`, and an `onHeld` that logs `actor-held` and raises a `held-actor` escalation. `startRouter` restores and drains every stored actor and returns. | `router` | `delivery` |
+    | step `router-started` | | | | |
+    | `escalations-delivery` | `escalations/wiring.ts` | The escalations module's `start`. | | |
+    | `agent-tools-delivery` | `agent-tools/wiring.ts` | The agent tools module's `start`. | | |
+    | step `escalations-started` | | | | |
+    | `github-source` | `github-source/wiring.ts` | `startGitHubSource` with the `github` section, the credentials, the store, the router, `boundProjects` read from `portfolio.current()`, a `processRepository` trigger whose `url` and `branch` are the section's and whose `pull` is `revisions.pull`, the `cardMove` probe, an `onTracked` and an `onMirrorChanged` that tell intake once it starts and the gates, and an `onError` that logs `github-error`; mounts its `requestListener` at `githubWebhookPath`. | `github` | `sources` |
+    | step `github-started` | | | | |
+    | `intake` | `intake/wiring.ts` | `startIntake` as `intake` states, with the GitHub source as `tracked`, and an `onFailed` and `onError` that log `intake-failed` and `intake-error`. | `intake` | `intake` |
+    | step `intake-started` | | | | |
+    | `t3code-source` | `t3code-source/wiring.ts` | `startT3CodeSource` with the store, the router, the `environments` section, a `tokenFile` that resolves the credential name to its `t3code-token` credential's file, the agent tools' `messagePlaced`, and a `logger` that writes `t3code-log`. | `t3code` | `sources` |
+    | step `t3code-started` | | | | |
+    | `console` | `console/wiring.ts` | `mountConsole`, logging `console-read-failed`. | | |
+    | `blueprints-api` | `blueprints-api/wiring.ts` | `mountBlueprintsApi`, as `operator-console` states, logging `blueprints-api-failed`. | | |
+    | `tasks` | `tasks/wiring.ts` | `openTasks`, as `operator-console` states for the Tasks API, logging `tasks-read-failed`; mounts its listener at `/api/tasks`. | | |
+    | `listen` | `http-host/wiring.ts` | Registers the host's `close`, then awaits `listen`. | | `requests` |
+    | step `listening` | | | | |
+
+    Sources start after the router returns, and the host listens after
+    the sources start, so no source and no request holds the router before
+    resume ends. A listener mounted before `listen` takes no request until
+    then.
+  binding-archived: >-
+    The `agent-threads` part answers `bindingArchived(project)` from two
+    reads, each at the time of the call. `project` is the Project node id
+    that intake writes at `manifold.project`. The part finds that
+    Project's row in the GitHub mirror, the row the GitHub source's
+    `project` reads, so the answer holds before the source starts; it
+    then passes the row's owner and number to the portfolio's
+    `githubProject`, which answers the binding in force, the owner
+    compared without regard to case. The binding is archived when that
+    answer's `archived` is true. A Project with no mirror row, or a row no
+    binding names, is not archived. The `task-metadata` part's
+    `bindingOf` and the `gates` part's bound Projects use the same
+    `githubProject`, so one read decides which binding a Project has.
   start-failure: >-
-    A step that throws or rejects stops every step already started, in the
-    stop order, and `startService` rejects with the step's error. A
-    configuration error is a `ServiceConfigurationError` with every issue;
-    an address in use is the `listen` error with its system code. A failed
-    start therefore leaves no timer, socket, or open database behind.
+    An entry that throws or rejects runs `stop`, and start rejects with the
+    entry's error once stop settles. Stop runs only the stops registered so
+    far, so a failed start leaves no timer, socket, or open database
+    behind. A configuration error is a `ServiceConfigurationError` with
+    every issue; an address in use is the `listen` error with its system
+    code. The assembly keeps no stored state of its own: each part's open
+    converges as its module states, and a start that fails at any entry
+    stops what it registered, so the next start on the same files begins
+    from what the modules stored.
   joining: >-
-    A module joins the service by adding its start to `start.ts` at the
-    step its dependencies fix, its stop at the mirrored point of the stop
-    order, its member to `Service` when other modules read it, and its
-    endpoints with `mount` before step 11's `listen`. A
-    module that publishes starts after step 8. A module whose state the
-    actor host reads, such as the implementations a blueprint binds, is
-    built before step 7 and reaches the host through `ServiceParts`.
+    A task adds a module in two places: a `wiring.ts` in the module's
+    directory that exports the module's part, made with `wiringPart`, and
+    one `.part(...)` entry in the start list in `start.ts`, after the
+    parts whose members it needs and before `listen`. It edits no other
+    part. A module that publishes starts after `router`. A module that
+    serves endpoints mounts them in its own part. A module whose
+    implementations a blueprint binds adds them with `addImplementations`
+    before `blueprint-loader`. A module whose stored tables it opens
+    migrates them itself, as the router, the escalations module, and the
+    sources do. A module with something to close registers it with
+    `onStop` at the stage that fits what it stops: `requests` for what
+    takes requests, `commands` for what sends commands out, `sources` for
+    what publishes, `notifications` for what notifies people, `timers` for
+    a timer, and `store` only for the store. A module whose members start
+    at two points of the order gives one part for each point, as the
+    escalations and agent tools modules give a part that opens them and a
+    part that starts their delivery after the router. A module the actor
+    host reads, such as one whose state a save hook writes, joins
+    `ServiceParts`, which `actor-host` passes in full; a module other code
+    reads from the running service joins `Service`, which `start.ts`
+    returns.
   actor-host: >-
     The default factory opens the actor host described in `actor-host`,
     with the store, blueprint loader, log, and `serviceSaveHooks(parts)`.
@@ -314,22 +520,31 @@ proposed-design:
     parts and may return a promise. Both are awaited before the router
     restores any actor. `ServiceParts.actorHost` exposes `start`, `actorOf`,
     and `release` to modules that start after the router.
-  stop: >-
-    `stop` runs these steps in order, each after the one before it
-    resolves, and calls the `step` probe after each. (1) `http-closed`:
-    closes the HTTP host, which stops accepting connections and waits for
-    the requests in progress. (2) `sources-stopped`: awaits the GitHub
-    source's and the T3 Code source's `stop` together. (3)
-    `revisions-idle`: closes the revision follower and awaits its queue. A
-    pull and its apply are one job, queued when `pull` is called, so the
-    queue holds every pull a source started, including one the GitHub
-    source called and did not await, and no pull or apply is running when
-    the router stops and the store closes. (4) `router-stopped`: `router.stop()`.
-    (5) `store-closed`: `store.close()`, and logs `stopped`. The first call
-    starts the steps, and every later call returns the same promise, so a
-    second stop does nothing more. A step that rejects is logged and the
-    remaining steps still run, and the promise rejects with the first
-    error once the store is closed.
+  stop: |-
+    `stop` runs the stop stages in this order. In a stage it runs each stop
+    registered in it one at a time, the latest registered first, so a
+    part stops before every part listed before it in the same stage. A
+    stop that throws or rejects logs `stop-failed` with the message
+    `Failed stop step: <name>`, where the name is the stage's step, or the
+    part's name in a stage with no step, and the other stops still run.
+    When every stop of a stage resolves and the stage has a step, stop
+    logs `stop-step` and calls the `step` probe with it; a probe that
+    throws counts as a failed stop. A stage with no registered stop logs
+    nothing. After the `store` stage stop logs `stopped`, and rejects with
+    the first error when any stop failed. The first call starts the
+    stages, and every later call returns the same promise.
+
+    | Stage | Step | Parts that stop in it | Why here |
+    |---|---|---|---|
+    | `requests` | `http-closed` | `listen` | The host stops accepting and waits for the requests in progress, so no request reaches a module that stops. |
+    | `commands` | | `agent-tools`, `agent-threads` | Waits and retries on T3 Code end before the source they wait on stops. |
+    | `sources` | `sources-stopped` | `t3code-source`, `github-source` | No source publishes into the router or calls intake or the follower after this. |
+    | `notifications` | `escalations-stopped` | `escalations` | Delivery to ntfy ends. |
+    | `pulls` | `revisions-idle` | `revisions` | The follower's queue holds every pull a source started, including one the GitHub source called and did not await; it drains before intake, the router, and the store stop. |
+    | `intake` | `intake-stopped` | `intake` | Intake outlives every caller: the sources, the follower, and the escalations module. |
+    | `delivery` | `router-stopped` | `router` | No module publishes after this. |
+    | `timers` | | `gates`, `portfolio` | The gates' and the capacity's timers stop once nothing they wake can deliver. |
+    | `store` | `store-closed` | `store` | Last. |
   revision-follower: >-
     The follower is the only caller of the process repository's `pull`. It
     keeps one serial queue and one in-memory `followed` commit, unset at
@@ -563,6 +778,37 @@ proposed-design:
     started steps logged, `revisions-idle` and `store-closed`, and no
     `started` entry; a second signal
     sent during that start logs nothing more.
+    Wiring: through `assembleService` with fixture parts and no
+    configuration part, a part `second` listed after a part `first` reads
+    `first`'s member in its `start`, starts after it, and, with both
+    registering a stop in one stage, stops before it; a stop registered in
+    an earlier stage runs first whatever the list order; a part that
+    registers a stop and then throws makes `start` reject with its error
+    after that stop runs, and no later entry runs; a stop that rejects
+    logs `stop-failed` with the part's name and the next stop still runs;
+    `later` of a part the list does not hold throws a TypeError naming it;
+    until the part starts, `current()` is undefined and `get()` throws a
+    TypeError naming it; `ready()` resolves once it starts, and
+    `ready(signal)` rejects with the reason of a signal aborted before it
+    starts; `addImplementations` from a part listed after
+    `blueprint-loader` throws a TypeError. Type tests hold
+    `@ts-expect-error` lines for a part listed before a member it needs
+    and for a part that repeats a member name. The start, stop, abort, and
+    crash tests above pass with no assertion changed.
+    Binding archived: through `startService`, with one environment served
+    by the T3 Code fake the agent threads tests use, a fixture repository
+    whose `bindings.yml` binds Project `example-org` number 1 to item
+    `alpha` at commit A, the GitHub API fake serving that Project so a
+    sweep mirrors its row, and a test actor host whose `actorOf` answers an
+    actor with that environment and the Project's node id at
+    `manifold.project`. `thread-create` through
+    `service.agentThreads.implementations` creates the thread at A. After a
+    signed push of commit B, which archives the binding, and the `applied`
+    probe for B, `thread-create` fails with kind `archived` and the T3 Code
+    fake receives no command. An actor whose `manifold.project` is a node
+    id with no mirror row creates the thread at B. The archived case is
+    written first, and fails until the `agent-threads` part reads the
+    mirror.
     `foundation.integration.test.ts` keeps every behaviour it proves. Its
     SIGKILL worker starts through `startService` with a configuration file,
     a test actor host built from `ServiceParts`, and the `delivery` probe,

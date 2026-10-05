@@ -357,10 +357,12 @@ proposed-design:
     so an invoke in an initial state reads the same answer as any other.
     `bindingArchived` is answered by the service wiring from the portfolio
     module's bindings at the current revision. `manifold.project` is the
-    Project node id, so the wiring maps it to its mirror row with the GitHub
-    source's `project` and the row to its binding, as `github-card-move`
-    does in `task-metadata`; an actor with no `project`, or whose Project
-    has no mirror row or no binding, is not archived.
+    Project node id, so the wiring maps it to its row in the GitHub mirror,
+    the row the GitHub source's `project` reads, and the row to its binding
+    with the portfolio's `githubProject`, as `service-assembly` states, so
+    the answer holds before the GitHub source starts; an actor with no
+    `project`, or whose Project has no mirror row or no binding, is not
+    archived.
   service-reads-and-turns: >-
     The agent tools module identifies a tool call and sends an answer
     through this module's clients, so every T3 Code read and command goes

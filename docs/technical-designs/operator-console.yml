@@ -882,8 +882,8 @@ proposed-design:
     `graph-layout.ts` (graph to elkjs input, elkjs output to ReactFlow
     nodes and edges), and `problems.ts` (findings to states and badges).
     `src/screens/BlueprintsContent.tsx` switches between the list and the
-    editor. The service's `start.ts` calls `mountBlueprintsApi` in step 11
-    with the parts it already holds.
+    editor. The `blueprints-api` wiring part calls `mountBlueprintsApi`
+    before the host listens, as `service-assembly` states.
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It
     takes the request's path, which the HTTP host passes unchanged,

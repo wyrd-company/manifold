@@ -118,6 +118,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **state machine** a declarative stateful actor, built from a blueprint.
 - **state machine actor** an actor running a blueprint.
 - **state visit** one run of a state machine actor's saves with the same state value, from the save that entered it until the next save with another value.
+- **stop stage** one of the ordered points at which the service's stop closes what wiring parts registered, the latest registered first within a stage.
 - **subscription** (events) the topics an actor hears and the event types it takes, derived from its snapshot and its blueprint.
 - **T3code project** means an environment-local workspace record rooted at a directory.
 - **sweep** a periodic comparison of bound GitHub Projects and tracked issue relationships with the GitHub mirror.
@@ -134,6 +135,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **webhook delivery** one signed HTTP request from a GitHub webhook, identified by its GUID across hooks and redeliveries.
 - **weight** a portfolio item's share of the unallocated remainder among its siblings with waiting work.
 - **window** the period from one reset of an account's capacity to the next.
+- **wiring part** the code in a module's directory that opens the module inside the service from the members of the parts listed before it, mounts its endpoints, and registers what stop closes; the service's start list names it once.
 - **you** means the agent reading this file and changing Manifold Code.
 
 ## Thar be dragons
