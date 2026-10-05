@@ -68,6 +68,7 @@ tasks:
     env:
       ANSWERS: '{{.ANSWERS | default "0"}}'
       OVERLAY: '{{.OVERLAY | default ""}}'
+      SERVICE_PORT: '{{.SERVICE_PORT | default ""}}'
 
   live:stop:
     desc: Stop the live environment or recover its recorded children

@@ -19,7 +19,7 @@ import {
   stateDirectory,
   writeIfChanged,
 } from "./settings.ts";
-import { writeConfiguration } from "./configuration.ts";
+import { servicePort, writeConfiguration } from "./configuration.ts";
 import { GitHub, installationAccess } from "./github.ts";
 import { readResources } from "./provisioning.ts";
 import { createForwarder } from "./forwarder.ts";
@@ -252,6 +252,7 @@ export async function runStart() {
         throw Error("Configuration overlay must be a mapping");
       overlay = value as Record<string, unknown>;
     }
+    const port = servicePort(process.env["SERVICE_PORT"]);
     const tunnelDirectory = join(directory, "tunnel");
     const serviceDirectory = join(directory, "service");
     await mkdir(tunnelDirectory, { recursive: true, mode: 0o700 });
@@ -270,6 +271,7 @@ export async function runStart() {
       await writeConfiguration(settings, directory, resources, app, {
         url,
         answers: status.answers,
+        ...(port ? { port } : {}),
         ...(overlay ? { overlay } : {}),
       });
       const child = await ledger.launch(

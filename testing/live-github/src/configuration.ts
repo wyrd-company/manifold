@@ -6,7 +6,12 @@ import { resolve } from "node:path";
 import { stringify } from "yaml";
 import { writeIfChanged } from "./settings.ts";
 import type { Settings } from "./settings.ts";
-type Options = { url?: string; answers?: boolean; overlay?: Record<string, unknown> };
+type Options = {
+  url?: string;
+  answers?: boolean;
+  port?: number;
+  overlay?: Record<string, unknown>;
+};
 export function serviceConfiguration(
   settings: Settings,
   directory: string,
@@ -24,7 +29,7 @@ export function serviceConfiguration(
       directory: resolve(directory, "service/clone"),
     },
     store: { file: resolve(directory, "service/manifold.sqlite") },
-    http: { host: "127.0.0.1", port: 0 },
+    http: { host: "127.0.0.1", port: options.port ?? 0 },
     credentials: {
       ...overlayCredentials,
       "live-app": {
@@ -46,6 +51,13 @@ export function serviceConfiguration(
   if (options.answers && options.url)
     config["escalations"] = { ...record(overlay["escalations"]), publicUrl: options.url };
   return config;
+}
+export function servicePort(value: string | undefined): number | undefined {
+  if (value === undefined || value === "") return undefined;
+  const port = /^[0-9]+$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error("SERVICE_PORT must be a port number from 1 to 65535");
+  return port;
 }
 function record(value: unknown): Record<string, unknown> {
   if (value === undefined) return {};

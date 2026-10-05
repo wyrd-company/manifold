@@ -35,6 +35,7 @@ configuration overlays. Scripts read them at run time and report no values.
 | `task live:provision CONTENT=/path/to/content`           | Use other process content; point all GitHub Project bindings at the test Project       |
 | `task live:start`                                        | Build and run service plus restricted tunnel in the foreground                         |
 | `task live:start ANSWERS=1 OVERLAY=/path/to/overlay.yml` | Also pass escalation answers; merge extra service sections                             |
+| `task live:start SERVICE_PORT=<port>`                    | Listen on that loopback port on every start, so clients keep one service URL           |
 | `task live:smoke`                                        | Verify delivery, intake, sweep, tunnel paths, and credential scan                      |
 | `task live:stop`                                         | Ask the supervisor to stop; recover recorded children after supervisor failure         |
 | `task live:teardown`                                     | Remove marked resources; refuse while a supervisor answers                             |
@@ -74,7 +75,8 @@ passes `GET /escalations/{id}` including its key query and
 `POST /escalations/{id}/answer`, for a 22-character URL-safe id. All other paths
 and methods are refused with `404` and `x-live-forwarder: refused`, including the
 API, console, extra segments, encoded paths, and escalation lists. The service
-listens on loopback. Forwarder logs omit query strings.
+listens on loopback, on an ephemeral port unless `SERVICE_PORT` names one.
+Forwarder logs omit query strings.
 
 `task check` runs the tooling tests against a recorded stateful GitHub fake and
 local HTTP servers and child programs, with no credentials or GitHub calls.
