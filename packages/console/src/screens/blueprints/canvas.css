@@ -309,3 +309,11 @@ relationships:
 .canvas-placement-ghost.final {
   border-style: double;
 }
+
+.canvas-history-key {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}

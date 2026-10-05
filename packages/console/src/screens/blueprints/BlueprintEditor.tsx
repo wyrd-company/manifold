@@ -2,7 +2,9 @@
 // relationships:
 //   implements: operator-console
 // ---
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { blueprintGraph } from "@wyrd-company/manifold-shared/blueprint-graph";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { diff } from "@codemirror/merge";
 import type {
@@ -33,7 +35,7 @@ import { ProblemsStrip } from "./ProblemsStrip.tsx";
 import { PublishDialog } from "./PublishDialog.tsx";
 import { DiscardDialog } from "./DiscardDialog.tsx";
 import { CompareDialog } from "./ConflictAlert.tsx";
-import { findingSelection, stateAtCursor } from "./problems.ts";
+import { findingSelection, cursorForSelection, selectionAtCursor } from "./problems.ts";
 export function BlueprintEditor({ path }: { path: string }) {
   const query = useQuery({
     queryKey: ["blueprint-source", path],
@@ -107,7 +109,18 @@ function Editor({
   const [conflict, setConflict] = useState<SaveConflictResponse>();
   const [later, setLater] = useState<string>();
   const [toast, setToast] = useState<string>();
-  const [tab, setTab] = useState("canvas");
+  const search = useSearch({ strict: false });
+  const navigate = useNavigate();
+  const tab = search.view === "yaml" ? "yaml" : "canvas";
+  const graph = useMemo(() => blueprintGraph(draft.text), [draft.text]);
+  const setTab = (next: "canvas" | "yaml") => {
+    if (next === "yaml") setCursor(cursorForSelection(selected, draft.text));
+    void navigate({
+      to: "/blueprints/$",
+      params: { _splat: path },
+      search: (previous) => ({ ...previous, view: next === "yaml" ? "yaml" : undefined }),
+    });
+  };
   const update = (next: BlueprintDraft) => {
     if (next.text === lint.text) {
       setRetry(0);
@@ -218,7 +231,15 @@ function Editor({
     setSelected(lint.body.graph ? findingSelection(finding, lint.body.graph) : undefined);
   };
   return (
-    <div className="blueprint-editor">
+    <div
+      className="blueprint-editor"
+      onKeyDown={(event) => {
+        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "y") {
+          event.preventDefault();
+          setTab(tab === "canvas" ? "yaml" : "canvas");
+        }
+      }}
+    >
       <header className="blueprint-editor-header">
         <span className="mono">{path}</span>
         <span className="mono muted">
@@ -336,7 +357,7 @@ function Editor({
             onChange={change}
             cursor={cursor}
             onCursor={(position) =>
-              setSelected(stateAtCursor(position, lint.body.graph?.states ?? []))
+              setSelected(graph ? selectionAtCursor(position, draft.text, graph) : undefined)
             }
           />
         ) : null}

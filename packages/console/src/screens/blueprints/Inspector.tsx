@@ -2,6 +2,7 @@
 // relationships:
 //   implements: operator-console
 // ---
+import { transitionField } from "./editor-selection.ts";
 import { useState, useEffect, useRef } from "react";
 import { parse, stringify } from "yaml";
 import { manifoldImplementationCatalog } from "@wyrd-company/manifold-shared/implementation-catalog";
@@ -116,6 +117,11 @@ export function Inspector({
   };
   const fieldFindings = (at: string) =>
     findings.filter((f) => f.location === at || f.location.startsWith(at + "/"));
+  const addSchema = (kind: "actors" | "events", name: string, schema: unknown) => {
+    const schemas = obj(atPointer(document, "/schemas"));
+    set("/schemas", { ...schemas, [kind]: { ...obj(schemas[kind]), [name]: schema } });
+  };
+  const candidate = edge ? transitionField(document, edge) : undefined;
   const allFields = inspectorModel(type, value, pointer);
   const focusLocation = findings.find(
     (f) => f.location === pointer || f.location.startsWith(pointer + "/"),
@@ -461,7 +467,7 @@ export function Inspector({
                     variant="outline"
                     disabled={disabled}
                     onClick={() =>
-                      set("/schemas/actors/" + pointerKey(src), {
+                      addSchema("actors", src, {
                         ...(entry.input ? { input: entry.input } : {}),
                         ...(entry.output ? { output: entry.output } : {}),
                       })
@@ -499,6 +505,12 @@ export function Inspector({
       </div>
     );
   };
+  if (raw === undefined)
+    return (
+      <aside className="canvas-inspector">
+        <p>The selection is no longer present.</p>
+      </aside>
+    );
   if (initial)
     return (
       <aside className="canvas-inspector">
@@ -545,12 +557,12 @@ export function Inspector({
       {edge ? (
         <TextField
           label="Event or delay"
-          value={pointerPartsLabel(edge)}
+          value={candidate!.label}
           disabled={disabled}
           onChange={(key) => {
             const parts = edge.split("/");
             if (parts.includes("on") || parts.includes("after"))
-              onEdit({ kind: "rename-key", pointer: edge.replace(/\/\d+$/, ""), key });
+              onEdit({ kind: "rename-key", pointer: candidate!.pointer, key });
           }}
         />
       ) : null}
@@ -687,23 +699,26 @@ export function Inspector({
           </Button>
           {transitionLocations(value, pointer).map((at) => (
             <Button key={at} variant="ghost" className="mono" onClick={() => onSelect(at)}>
-              {pointerPartsLabel(at)} →{" "}
+              {transitionField(document, at).label} →{" "}
               {String(obj(atPointer(document, at))["target"] ?? atPointer(document, at))}
             </Button>
           ))}
         </section>
-      ) : /\/\d+$/.test(edge) ? (
+      ) : candidate?.index !== undefined ? (
         <section>
+          <span className="mono muted">
+            {candidate.index + 1} of {candidate.count}
+          </span>
           <Button
             variant="outline"
-            disabled={disabled}
+            disabled={disabled || candidate.index === 0}
             onClick={() => onEdit({ kind: "move-candidate", pointer: edge, direction: -1 })}
           >
             Earlier
           </Button>
           <Button
             variant="outline"
-            disabled={disabled}
+            disabled={disabled || candidate.index === candidate.count - 1}
             onClick={() => onEdit({ kind: "move-candidate", pointer: edge, direction: 1 })}
           >
             Later
@@ -743,16 +758,14 @@ export function Inspector({
           <Button
             variant="outline"
             disabled={disabled || !schemaName}
-            onClick={() => set("/schemas/events/" + pointerKey(schemaName), true)}
+            onClick={() => addSchema("events", schemaName, true)}
           >
             Add event schema
           </Button>
           <Button
             variant="outline"
             disabled={disabled || !schemaName}
-            onClick={() =>
-              set("/schemas/actors/" + pointerKey(schemaName), { input: true, output: true })
-            }
+            onClick={() => addSchema("actors", schemaName, { input: true, output: true })}
           >
             Add actor schema
           </Button>
@@ -797,9 +810,6 @@ export function Inspector({
       ) : null}
     </aside>
   );
-}
-function pointerPartsLabel(pointer: string) {
-  return pointer.split("/").at(-1)?.replaceAll("~1", "/").replaceAll("~0", "~") ?? "";
 }
 function transitionLocations(value: Record<string, unknown>, pointer: string): string[] {
   const rows: string[] = [];

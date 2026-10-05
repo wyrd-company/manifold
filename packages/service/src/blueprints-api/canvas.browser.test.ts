@@ -21,7 +21,11 @@ test("canvas edits, dragged transition, expression findings, YAML toggle, layout
       machine: {
         id: "sample",
         initial: "waiting",
-        states: { waiting: {}, complete: { type: "final" } },
+        states: {
+          waiting: { on: { NEXT: ["complete", "complete"] } },
+          complete: { type: "final" },
+          remembered: { type: "history", history: "deep" },
+        },
       },
       schemas: { input: true, output: true, context: true, events: { NEXT: true } },
     },
@@ -40,6 +44,12 @@ test("canvas edits, dragged transition, expression findings, YAML toggle, layout
     );
     await page.locator(".canvas-state").getByText("waiting", { exact: true }).waitFor();
     expect(await page.locator(".blueprint-source").count()).toBe(0);
+    expect(await page.locator('.react-flow__node[data-id="remembered"]').innerText()).toContain(
+      "H*",
+    );
+    expect(
+      await page.locator('.react-flow__node[data-id="remembered"] .canvas-history-key').innerText(),
+    ).toBe("remembered");
 
     await page.getByLabel("Add state", { exact: true }).selectOption("atomic");
     await page
@@ -60,6 +70,12 @@ test("canvas edits, dragged transition, expression findings, YAML toggle, layout
       .getByRole("button", { name: "Add transition", exact: true })
       .click();
     await page.locator(".canvas-event-picker").waitFor();
+    expect(
+      await page.getByLabel("Transition trigger").locator('option[value="error"]').count(),
+    ).toBe(0);
+    expect(
+      await page.getByLabel("Transition trigger").locator('option[value="done"]').count(),
+    ).toBe(0);
     await page
       .locator(".canvas-event-picker")
       .getByRole("button", { name: "Cancel", exact: true })
@@ -78,6 +94,8 @@ test("canvas edits, dragged transition, expression findings, YAML toggle, layout
       .getByRole("button", { name: "Add transition", exact: true })
       .click();
 
+    expect(await page.getByLabel("Event or delay", { exact: true }).inputValue()).toBe("NEXT");
+    expect(await page.locator(".canvas-inspector").innerText()).toContain("3 of 3");
     await page.getByLabel("Guard kind").selectOption("expression");
 
     await page.getByLabel("Expression", { exact: true }).fill("(");
@@ -101,13 +119,24 @@ test("canvas edits, dragged transition, expression findings, YAML toggle, layout
     const screenshots = join(tmpdir(), "manifold-canvas-evidence");
     await fs.mkdir(screenshots, { recursive: true });
     await page.screenshot({ path: join(screenshots, "canvas-transition.png"), fullPage: true });
-    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page.keyboard.press("Control+Shift+Y");
+    await page.waitForURL("**?view=yaml");
+    await page.locator(".blueprint-source .cm-content").waitFor();
+    expect(await page.locator(".blueprint-source .cm-activeLine").innerText()).toContain("target");
+    await page.reload();
+    await page.locator(".blueprint-source .cm-content").waitFor();
     expect(await page.locator(".blueprint-source .cm-content").innerText()).toContain("NEXT");
     expect(
       parse(await page.locator(".blueprint-source .cm-content").innerText()).machine.states.waiting
-        .on.NEXT.guard.params.expression,
+        .on.NEXT[2].guard.params.expression,
     ).toBe("true");
-    await page.getByRole("button", { name: "Canvas", exact: true }).click();
+    await page
+      .locator(".blueprint-source .cm-line")
+      .filter({ hasText: /^\s*waiting:/ })
+      .click();
+    await page.keyboard.press("Control+Shift+Y");
+    await page.waitForURL((url) => !url.searchParams.has("view"));
+    await page.locator('.react-flow__node.selected[data-id="waiting"]').waitFor();
 
     await page.getByRole("button", { name: "Fit", exact: true }).click();
     await page.evaluate(

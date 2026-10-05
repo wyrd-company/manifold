@@ -89,6 +89,7 @@ function Canvas({
   const [connectionSource, setConnectionSource] = useState<string>();
   const [event, setEvent] = useState("");
   const [trigger, setTrigger] = useState<"event" | "always" | "after" | "done" | "error">("event");
+  const [invokeChoice, setInvokeChoice] = useState("");
   const [showInspector, setShowInspector] = useState(true);
   const history = useRef<CanvasHistory>({ undo: [], redo: [] });
   const expected = useRef(text);
@@ -98,6 +99,18 @@ function Canvas({
   const flow = useReactFlow<CanvasNode, CanvasEdge>();
   const locked = readOnly || !graph;
   const doc = useMemo(() => canvasDocument(text), [text]);
+  const sourcePointer = statePointer(connect?.source ?? "");
+  const sourceInvoke = atPointer(doc, sourcePointer + "/invoke");
+  const sourceInvokes =
+    sourceInvoke === undefined ? [] : Array.isArray(sourceInvoke) ? sourceInvoke : [sourceInvoke];
+  const sourceChildren = atPointer(doc, sourcePointer + "/states");
+  const hasChildren = !!sourceChildren && Object.keys(sourceChildren).length > 0;
+  const completionNeedsChoice =
+    (trigger === "error" || trigger === "done") && (sourceInvokes.length > 1 || hasChildren);
+  const canConnect =
+    !locked &&
+    ((trigger !== "event" && trigger !== "after") || !!event) &&
+    (!completionNeedsChoice || invokeChoice !== "");
   const pinned = atPointer(doc, "/layout") as BlueprintLayout | undefined;
   useEffect(() => {
     if (expected.current !== text) history.current = { undo: [], redo: [] };
@@ -167,6 +180,7 @@ function Canvas({
     setConnect({ source, target, basis: editBasis });
     setEvent("");
     setTrigger("event");
+    setInvokeChoice("");
     setTool("select");
     setConnectionSource(undefined);
   };
@@ -557,10 +571,36 @@ function Canvas({
                 <option value="event">Event</option>
                 <option value="always">always</option>
                 <option value="after">after</option>
-                <option value="done">done</option>
-                <option value="error">error</option>
+                {sourceInvokes.length || hasChildren ? <option value="done">done</option> : null}
+                {sourceInvokes.length ? <option value="error">error</option> : null}
               </select>
             </label>
+            {completionNeedsChoice ? (
+              <label>
+                Completion owner
+                <select
+                  aria-label="Completion owner"
+                  value={invokeChoice}
+                  onChange={(e) => setInvokeChoice(e.target.value)}
+                >
+                  <option value="">Choose owner</option>
+                  {trigger === "done" && hasChildren ? (
+                    <option value="state">Child states</option>
+                  ) : null}
+                  {sourceInvokes
+                    .map((row, index) => ({
+                      row,
+                      index,
+                      location: sourcePointer + "/invoke/" + index,
+                    }))
+                    .map(({ row, index, location }) => (
+                      <option key={location} value={String(index)}>
+                        Invoke {index + 1}: {String((row as { src?: unknown }).src)}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            ) : null}
             <label>
               Event or delay
               <input
@@ -571,7 +611,7 @@ function Canvas({
                 list="blueprint-events"
                 onChange={(e) => setEvent(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (e.key === "Enter" && canConnect) {
                     commit(
                       {
                         kind: "add-transition",
@@ -579,6 +619,9 @@ function Canvas({
                         target: connect.target,
                         trigger,
                         event,
+                        ...(invokeChoice && invokeChoice !== "state"
+                          ? { invoke: Number(invokeChoice) }
+                          : {}),
                       },
                       connect.basis,
                     );
@@ -593,7 +636,7 @@ function Canvas({
               ))}
             </datalist>
             <Button
-              disabled={locked || ((trigger === "event" || trigger === "after") && !event)}
+              disabled={!canConnect}
               onClick={() => {
                 commit(
                   {
@@ -602,6 +645,9 @@ function Canvas({
                     target: connect.target,
                     trigger,
                     event,
+                    ...(invokeChoice && invokeChoice !== "state"
+                      ? { invoke: Number(invokeChoice) }
+                      : {}),
                   },
                   connect.basis,
                 );

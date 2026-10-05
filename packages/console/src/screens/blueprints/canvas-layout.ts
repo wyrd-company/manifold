@@ -138,8 +138,8 @@ export async function layoutCanvas(
       for (const node of rows.filter((node) => node.id.startsWith("@initial:"))) {
         const state = initialStates.find((state) => state.parent === parent);
         const child = rows.find((row) => row.id === state?.path);
-        node.x = (child?.x ?? 48) - 32;
-        node.y = (child?.y ?? 48) - 32;
+        node.x = Math.max(parent ? 8 : 0, (child?.x ?? 48) - 32);
+        node.y = Math.max(parent ? 8 : 0, (child?.y ?? 48) - 32);
       }
       if (parent) {
         const node = groups.get(parent)!;

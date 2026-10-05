@@ -210,3 +210,102 @@ it("rejects a splice whose YAML value does not match the requested value", () =>
     applyBlueprintEdit(text, { kind: "set", pointer: "/machine/id", value: "first\nlast\n" }),
   ).toMatchObject({ ok: false, reason: "unsafe" });
 });
+
+it("rejects field writes through missing state, candidate, or property ancestors", () => {
+  for (const pointer of [
+    "/machine/states/gone/description",
+    "/machine/states/waiting/on/NEXT/2/guard",
+    "/schemas/actors/new/input",
+  ]) {
+    expect(applyBlueprintEdit(text, { kind: "set", pointer, value: true })).toMatchObject({
+      ok: false,
+      reason: "missing",
+    });
+  }
+});
+it("attaches completion transitions only to the selected owner", () => {
+  expect(
+    applyBlueprintEdit(text, {
+      kind: "add-transition",
+      source: "waiting",
+      target: "ready",
+      trigger: "error",
+    }),
+  ).toMatchObject({ ok: false, reason: "missing" });
+  expect(
+    applyBlueprintEdit(text, {
+      kind: "add-transition",
+      source: "waiting",
+      target: "ready",
+      trigger: "done",
+    }),
+  ).toMatchObject({ ok: false, reason: "missing" });
+  const basis = text.replace(
+    "waiting: # keep this too",
+    "waiting:\n      states: { child: {} }\n      invoke: [{ src: one }, { src: two }]",
+  );
+  expect(
+    applyBlueprintEdit(basis, {
+      kind: "add-transition",
+      source: "waiting",
+      target: "ready",
+      trigger: "error",
+    }),
+  ).toMatchObject({ ok: false, reason: "missing" });
+  expect(
+    parse(
+      edit({ kind: "add-transition", source: "waiting", target: "ready", trigger: "done" }, basis),
+    ).machine.states.waiting.onDone,
+  ).toBe("ready");
+  expect(
+    parse(
+      edit(
+        { kind: "add-transition", source: "waiting", target: "ready", trigger: "error", invoke: 1 },
+        basis,
+      ),
+    ).machine.states.waiting.invoke,
+  ).toEqual([{ src: "one" }, { src: "two", onError: "ready" }]);
+});
+
+it("adds a candidate to a block sequence without joining the next state onto it", () => {
+  const basis = text.replace(
+    "NEXT: ready # reference",
+    "NEXT:\n          - ready\n          - ready",
+  );
+  const result = edit(
+    { kind: "add-transition", source: "waiting", target: "ready", trigger: "event", event: "NEXT" },
+    basis,
+  );
+  expect(parse(result).machine.states.waiting.on.NEXT).toEqual(["ready", "ready", "ready"]);
+});
+
+it("rejects a missing array slot and a scalar parent without hiding the stale edit as unsafe", () => {
+  const basis = text.replace("NEXT: ready # reference", "NEXT: [ready]");
+  expect(
+    applyBlueprintEdit(basis, {
+      kind: "set",
+      pointer: "/machine/states/waiting/on/NEXT/2",
+      value: "ready",
+    }),
+  ).toMatchObject({ ok: false, reason: "missing" });
+  expect(
+    applyBlueprintEdit(text, {
+      kind: "set",
+      pointer: "/machine/states/waiting/entry/type/description",
+      value: "sample",
+    }),
+  ).toMatchObject({ ok: false, reason: "missing" });
+});
+it("rejects completion transitions when the chosen invoke is missing", () => {
+  for (const trigger of ["done", "error"] as const) {
+    expect(
+      applyBlueprintEdit(text, {
+        kind: "add-transition",
+        source: "waiting",
+        target: "ready",
+        trigger,
+        invoke: 0,
+      }),
+    ).toMatchObject({ ok: false, reason: "missing" });
+  }
+});

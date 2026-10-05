@@ -74,3 +74,15 @@ it("routes the bundled task blueprint with measured labels", async () => {
   for (const edge of drawing.edges.filter((edge) => edge.label))
     expect(edge.data?.labelPosition).toBeDefined();
 });
+
+it("keeps pinned initial markers inside their parent without moving stored children", async () => {
+  const layout = await layoutCanvas(
+    graph,
+    { states: { "work.first": { x: 24, y: 48 } } },
+    () => 40,
+  );
+  const marker = layout.nodes.find((node) => node.type === "initial" && node.parentId === "work")!;
+  expect(marker.position.x).toBeGreaterThanOrEqual(0);
+  expect(marker.position.y).toBeGreaterThanOrEqual(0);
+  expect(layout.nodes.find((node) => node.id === "work.first")!.position).toEqual({ x: 24, y: 48 });
+});

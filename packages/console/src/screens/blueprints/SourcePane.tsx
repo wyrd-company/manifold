@@ -4,7 +4,13 @@
 // ---
 import { useEffect, useRef, useEffectEvent } from "react";
 import { EditorState, Compartment } from "@codemirror/state";
-import { EditorView, lineNumbers, highlightActiveLineGutter, keymap } from "@codemirror/view";
+import {
+  EditorView,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  keymap,
+} from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { yaml } from "@codemirror/lang-yaml";
 import { setDiagnostics, lintGutter } from "@codemirror/lint";
@@ -45,6 +51,7 @@ export function SourcePane({
           doc: text,
           extensions: [
             lineNumbers(),
+            highlightActiveLine(),
             highlightActiveLineGutter(),
             history(),
             keymap.of([...defaultKeymap, ...historyKeymap]),

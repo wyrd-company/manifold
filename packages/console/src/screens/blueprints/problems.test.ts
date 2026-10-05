@@ -66,3 +66,17 @@ test("selects the deepest transition before its owning state and the deepest ins
     ]),
   ).toBe(finding.location);
 });
+
+test("hands the YAML cursor to the containing transition before its state", async () => {
+  const { selectionAtCursor, cursorForSelection } = await import("./problems.ts");
+  const { blueprintGraph } = await import("@wyrd-company/manifold-shared/blueprint-graph");
+  const text =
+    "schemas: { input: true, output: true, context: true, events: {} }\nmachine:\n  id: sample\n  initial: waiting\n  states:\n    waiting:\n      on:\n        NEXT: { target: waiting }\n";
+  const graph = blueprintGraph(text)!;
+  const edge = "/machine/states/waiting/on/NEXT";
+  expect(selectionAtCursor(text.indexOf("target"), text, graph)).toBe(edge);
+  expect(selectionAtCursor(text.indexOf("waiting:"), text, graph)).toBe("waiting");
+  expect(selectionAtCursor(text.indexOf("NEXT:"), text, graph)).toBe(edge);
+  expect(selectionAtCursor(text.indexOf("on:"), text, graph)).toBe("waiting");
+  expect(cursorForSelection(edge, text)).toBe(text.indexOf("{ target"));
+});

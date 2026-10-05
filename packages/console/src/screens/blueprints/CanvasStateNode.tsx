@@ -18,6 +18,9 @@ export function CanvasStateNode({ data, selected }: NodeProps<CanvasNode>) {
         {data.changed ? <i className="canvas-changed" /> : null}
         {data.problem ? <span className={`blueprint-problem ${data.problem}`}>!</span> : null}
       </div>
+      {state.type === "history" ? (
+        <small className="canvas-history-key mono muted">{state.key}</small>
+      ) : null}
       {state.invokes[0] ? (
         <small className="mono muted">
           {state.invokes[0]}

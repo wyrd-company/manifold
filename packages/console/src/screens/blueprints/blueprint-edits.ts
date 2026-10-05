@@ -69,10 +69,14 @@ function setAt(value: unknown, pointer: string, next: unknown, remove = false) {
   let parent = value;
   for (const part of keys) {
     const container = object(parent);
-    if (!(part in container) && !Array.isArray(parent)) container[part] = {};
+    if (Array.isArray(parent) ? !Object.hasOwn(parent, part) : !Object.hasOwn(container, part))
+      fail("missing", "The parent property is no longer present.");
     parent = Array.isArray(parent) ? parent[Number(part)] : container[part];
   }
+  if (parent === null || typeof parent !== "object")
+    fail("missing", "The parent property is no longer present.");
   if (Array.isArray(parent)) {
+    if (!Object.hasOwn(parent, key)) fail("missing", "The candidate is no longer present.");
     if (remove) parent.splice(Number(key), 1);
     else parent[Number(key)] = next;
   } else if (remove) delete object(parent)[key];
@@ -199,12 +203,17 @@ function editData(value: unknown, edit: BlueprintEdit, graph?: BlueprintGraph) {
             : edit.type === "parallel"
               ? { type: "parallel", states: { "region-1": {}, "region-2": {} } }
               : { type: edit.type };
-      setAt(value, parentPointer + "/states/" + key, child);
+      setAt(value, parentPointer + "/states", { ...siblings, [key]: child });
       if (object(parent)["type"] !== "parallel" && !object(parent)["initial"])
         setAt(value, parentPointer + "/initial", key);
       select = [edit.parent, key].filter(Boolean).join(".");
       if (object(value)["layout"] && edit.position)
-        setAt(value, "/layout/states/" + pointerKey(select), edit.position);
+        setAt(value, "/layout", {
+          states: {
+            ...(object(object(value)["layout"])["states"] as object),
+            [select]: edit.position,
+          },
+        });
       break;
     }
     case "rename-state":
@@ -318,8 +327,15 @@ function editData(value: unknown, edit: BlueprintEdit, graph?: BlueprintGraph) {
         fail("missing", "The connected state is no longer present.");
       const target = shortestTarget(edit.source, edit.target, String(machine["id"] ?? "(machine)"));
       const invoke = atPointer(value, source + "/invoke");
-      const invokePath =
-        source + "/invoke" + (Array.isArray(invoke) ? "/" + (edit.invoke ?? 0) : "");
+      const rows = invoke === undefined ? [] : Array.isArray(invoke) ? invoke : [invoke];
+      const hasChildren = Object.keys(object(atPointer(value, source + "/states"))).length > 0;
+      const invokeIndex = edit.invoke ?? (rows.length === 1 && !hasChildren ? 0 : undefined);
+      if (
+        (edit.trigger === "error" || (edit.trigger === "done" && !hasChildren)) &&
+        invokeIndex === undefined
+      )
+        fail("missing", "Choose an existing invoke for this transition.");
+      const invokePath = source + "/invoke" + (Array.isArray(invoke) ? "/" + invokeIndex : "");
       const pointer =
         edit.trigger === "event"
           ? source + "/on/" + pointerKey(edit.event ?? "EVENT")
@@ -329,9 +345,14 @@ function editData(value: unknown, edit: BlueprintEdit, graph?: BlueprintGraph) {
               ? source + "/always"
               : edit.trigger === "error"
                 ? invokePath + "/onError"
-                : invoke
+                : invokeIndex !== undefined
                   ? invokePath + "/onDone"
                   : source + "/onDone";
+      if (
+        (edit.trigger === "event" || edit.trigger === "after") &&
+        atPointer(value, pointer.slice(0, pointer.lastIndexOf("/"))) === undefined
+      )
+        setAt(value, source + (edit.trigger === "event" ? "/on" : "/after"), {});
       const existing = atPointer(value, pointer);
       setAt(
         value,
@@ -523,7 +544,11 @@ export function applyBlueprintEdit(text: string, edit: BlueprintEdit, graph?: Bl
           text:
             ((isMap(rendered) || isSeq(rendered)) && !rendered.flow && isScalar(node)
               ? "\n" + " ".repeat(indent)
-              : "") + replacement,
+              : "") +
+            replacement +
+            ((isMap(node) || isSeq(node)) && !node.flow && text[node.range[1] - 1] === "\n"
+              ? "\n"
+              : ""),
         });
       }
     }

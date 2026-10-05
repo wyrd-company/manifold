@@ -68,6 +68,8 @@ const routes = navigation.map((item, index) => {
 const blueprintEditorRoute = createRoute({
   getParentRoute: () => root,
   path: "/blueprints/$",
+  validateSearch: (search: Record<string, unknown>): { view?: "yaml" } =>
+    search["view"] === "yaml" ? { view: "yaml" } : {},
   component: () => (
     <>
       <PageTitle title="Blueprints" description="Blueprints / editor" />

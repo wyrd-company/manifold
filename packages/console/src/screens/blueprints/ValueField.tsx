@@ -2,6 +2,7 @@
 // relationships:
 //   implements: operator-console
 // ---
+import { expressionRange } from "./editor-selection.ts";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { EditorState, Compartment, Annotation } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -113,11 +114,10 @@ export function ValueField({
         setDiagnostics(
           editor.state,
           findings.map((f) => ({
-            from:
-              "position" in f && typeof f["position"] === "number"
-                ? Math.min(f["position"], editor.state.doc.length)
-                : 0,
-            to: editor.state.doc.length,
+            ...expressionRange(
+              editor.state.doc.length,
+              "position" in f && typeof f["position"] === "number" ? f["position"] : undefined,
+            ),
             severity: f.severity ?? "error",
             message: f.message,
           })),
