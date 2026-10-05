@@ -18,9 +18,13 @@ description: >-
   definition: the schema that the module's migration steps produce. The
   module's owner name is `usage`, and every table, index, and trigger it
   creates is named `usage_<name>`. Its steps are applied by the store's
-  `migrate("usage", steps)`; the module never runs DDL itself. Step 1 is
-  this file's script. Steps are append-only: a change to the tables is a
-  new step, and this file is rewritten to the schema all steps produce.
+  `migrate("usage", steps)`; the module never runs DDL itself. This file
+  is the schema all steps produce together. Step 1 creates every table,
+  index, and trigger here but those of `usage_late_attributions`, and
+  step 2 creates `usage_late_attributions`, its index, and its triggers.
+  Steps are append-only: an applied step never changes, a change to the
+  tables is a new step, and this file is rewritten to the schema all
+  steps produce.
 
   Declarations. `usage_declarations` holds one row per accepted
   declaration of `accounts.yml` and `prices.yml` whose content differs
