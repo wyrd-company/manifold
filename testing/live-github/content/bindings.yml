@@ -1,0 +1,8 @@
+# relationships:
+#   implements: live-github-environment
+githubProjects:
+  board:
+    owner: example-org
+    number: 1
+    item: sample
+    environment: local

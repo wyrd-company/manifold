@@ -1,0 +1,4 @@
+# relationships:
+#   implements: live-github-environment
+intake:
+  decisionModel: decision-models/intake.yml

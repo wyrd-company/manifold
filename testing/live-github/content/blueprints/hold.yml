@@ -1,0 +1,16 @@
+# relationships:
+#   implements: live-github-environment
+machine:
+  id: hold
+  initial: waiting
+  context: {}
+  states:
+    waiting: {}
+    done:
+      type: final
+schemas:
+  input: true
+  output: true
+  context:
+    type: object
+  events: {}

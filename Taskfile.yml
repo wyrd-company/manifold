@@ -53,3 +53,30 @@ tasks:
       - task: lint
       - task: typecheck
       - task: test
+
+  live:provision:
+    desc: Provision the isolated live GitHub test environment
+    cmds: [node testing/live-github/src/provision.ts]
+    env:
+      CONTENT: '{{.CONTENT | default ""}}'
+
+  live:start:
+    desc: Start the live GitHub service and restricted tunnel in the foreground
+    cmds:
+      - task: build
+      - node testing/live-github/src/start.ts
+    env:
+      ANSWERS: '{{.ANSWERS | default "0"}}'
+      OVERLAY: '{{.OVERLAY | default ""}}'
+
+  live:stop:
+    desc: Stop the live environment or recover its recorded children
+    cmds: [node testing/live-github/src/stop.ts]
+
+  live:smoke:
+    desc: Check live GitHub delivery, intake, sweep, and tunnel paths
+    cmds: [node testing/live-github/src/smoke.ts]
+
+  live:teardown:
+    desc: Remove only marked live GitHub test resources
+    cmds: [node testing/live-github/src/teardown.ts]

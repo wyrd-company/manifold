@@ -1,0 +1,20 @@
+# relationships:
+#   implements: live-github-environment
+nodes:
+  - id: input
+    type: inputNode
+  - id: assign
+    type: customNode
+    content:
+      kind: jsonataExpression
+      config:
+        expression: '{"blueprint":"blueprints/hold.yml","portfolioItem":"sample"}'
+  - id: output
+    type: outputNode
+edges:
+  - id: input-to-assign
+    sourceId: input
+    targetId: assign
+  - id: assign-to-output
+    sourceId: assign
+    targetId: output

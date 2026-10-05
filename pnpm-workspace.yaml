@@ -4,6 +4,7 @@
 # ---
 packages:
   - packages/*
+  - testing/*
 
 # One exact version per shared tool, referenced as `catalog:` by every package.
 catalog:

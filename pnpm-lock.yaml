@@ -220,6 +220,34 @@ importers:
         specifier: 'catalog:'
         version: 0.3.3(@types/node@24.19.0)(jiti@2.7.0)(typescript@6.0.3)(yaml@2.9.1)
 
+  testing/live-github:
+    dependencies:
+      '@octokit/auth-app':
+        specifier: ^8.3.1
+        version: 8.3.1
+      '@octokit/graphql':
+        specifier: ^9.0.5
+        version: 9.0.5
+      '@octokit/request':
+        specifier: ^10.0.16
+        version: 10.0.16
+      '@wyrd-company/manifold-shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.0
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.3.3(@types/node@24.19.0)(jiti@2.7.0)(typescript@6.0.3)(yaml@2.9.1)
+
 packages:
 
   '@babel/code-frame@7.29.7':
