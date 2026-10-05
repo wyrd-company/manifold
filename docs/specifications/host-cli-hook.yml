@@ -27,8 +27,7 @@ description: |-
   `POST {service}/api/agent-tools/notices` with the body
   `#/$defs/notice-request` of `docs/specifications/agent-tools.schema.yml`:
   the environment `--environment` names, the thread when the mapping holds
-  the session, and the call id when the input holds one. It waits for the
-  response at most `--timeout-ms` milliseconds, default 2000. When the
+  the session, and the call id when the input holds one. When the
   response is `200` with a notice, it writes the notice to standard output
   in the provider's hook output format:
 
@@ -43,9 +42,23 @@ description: |-
   is not a JSON object, an absent database, a session the mappings do not
   hold with no call id, a refused connection, a timeout, and a response
   that is not a notice response each end the run with nothing on standard
-  output and exit code 0, and one line on standard error. A hook never
-  fails the tool call it runs after, and never delays it more than its
-  bound and the time to start the binary. An invalid command line exits 2
+  output and exit code 0, and one line on standard error.
+
+  Bound. `--timeout-ms`, default 2000, bounds the whole run, from the
+  moment the command line is parsed to the moment the process exits:
+  reading standard input, the session mapping, and the request together.
+  The command fixes one deadline when its command line is valid. The main
+  thread does only work that yields to its timers, reading standard input
+  and waiting, and runs the session mapping, whose SQLite read blocks the
+  thread it runs on, and the request in a worker thread. When the deadline
+  passes before the worker answers, the main thread ends the process at
+  once with nothing on standard output and exit code 0, whatever the
+  standard input, the database, or the service is doing; standard input
+  still open, a database held under a lock, and a service that does not
+  answer each end the run at the deadline. A hook therefore never fails
+  the tool call it runs after, and never delays it more than its bound
+  and the time to start the binary and parse its command line. An invalid
+  command line exits 2
   before reading standard input; a provider shows the agent the standard
   error of a hook that exits 2, so this happens only for a registration
   that is wrong.
@@ -149,9 +162,13 @@ validation-criteria: >-
   the thread and the call id, and no Authorization header; that a notice
   response gives the provider's output and exit 0; that a `null` notice, an
   unmapped session with no call id, input that is not JSON, an absent
-  database, a refused connection, a response held past `--timeout-ms`, and
-  a body that is not a notice response each give no standard output and
-  exit 0; and that an unknown option, a missing required option, an
+  database, a refused connection, and a body that is not a notice response
+  each give no standard output and exit 0; that with `--timeout-ms 500`,
+  standard input held open, the database held under an exclusive lock, and
+  a response held, each past the bound, give no standard output and exit
+  0, and that the time from the process's start to its exit stays below
+  the bound plus the time the same binary takes to start and exit on an
+  invalid command line, measured in the same test, plus 250 ms; and that an unknown option, a missing required option, an
   unknown provider, and a timeout out of range exit 2 with nothing on
   standard output. A test runs the OpenCode plugin's `tool.execute.after`
   against the same server and checks the request and the appended notice.

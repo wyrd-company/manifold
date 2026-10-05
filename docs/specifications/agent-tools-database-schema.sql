@@ -55,13 +55,18 @@ CREATE TABLE agenttool_message (
   noticed_at INTEGER,
   read_at INTEGER,
   read_turn_id TEXT CHECK (read_turn_id IS NULL OR length(read_turn_id) > 0),
+  read_position INTEGER CHECK (read_position IS NULL OR read_position > 0),
   CHECK ((delivered_at IS NULL) = (delivered_to IS NULL)),
   CHECK (noticed_at IS NULL OR delivered_at IS NOT NULL),
   CHECK (read_at IS NULL OR delivered_at IS NOT NULL),
-  CHECK ((read_at IS NULL) = (read_turn_id IS NULL))
+  CHECK ((read_at IS NULL) = (read_turn_id IS NULL)),
+  CHECK ((read_at IS NULL) = (read_position IS NULL))
 ) STRICT;
 
 CREATE INDEX agenttool_message_thread ON agenttool_message (environment, thread_id, sequence);
+
+CREATE UNIQUE INDEX agenttool_message_read ON agenttool_message (environment, thread_id, read_position)
+  WHERE read_position IS NOT NULL;
 
 CREATE INDEX agenttool_message_unnoticed ON agenttool_message (environment, thread_id)
   WHERE delivered_at IS NOT NULL AND read_at IS NULL AND noticed_at IS NULL;

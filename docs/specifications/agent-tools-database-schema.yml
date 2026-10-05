@@ -50,9 +50,11 @@ description: |-
   its `agent.message`. `delivered_at` and `delivered_to` are set together,
   in the save of the first following actor that takes the event, to when
   and to the actor that took it. `noticed_at` is when a mail notice first
-  told the thread's agent of the message. `read_at` and `read_turn_id`
-  are set together, by the `get-messages` call that read it and the turn
-  that made the call. A message is noticed and read only once delivered,
+  told the thread's agent of the message. `read_at`, `read_turn_id`, and
+  `read_position` are set together, by the `get-messages` call that read
+  it: when, the turn that made the call, and the message's place among
+  the thread's read messages, unique in the thread, which orders every
+  answer. A message is noticed and read only once delivered,
   and each column is set once.
 format: sql-ddl
 validation-criteria: >-
@@ -67,7 +69,8 @@ validation-criteria: >-
   steps. A second question row for one turn, a sent answer without a
   sequence, a failed answer without an error, and a turn id on an
   unplaced answer each fail. A message delivered without the actor
-  that took it, a message read without its turn, and a message noticed or
+  that took it, a message read without its turn or its read position, two
+  messages of one thread at one read position, and a message noticed or
   read before it is delivered each fail. The step that adds
   `agenttool_message` is step 2 of the owner `agenttool`, and a store
   file at step 1 that holds question and answer rows migrates with every

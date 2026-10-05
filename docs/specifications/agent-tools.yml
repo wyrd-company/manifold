@@ -312,11 +312,13 @@ description: |-
   that takes it remains.
 
   Reading. `get-messages` marks read, in the calling turn, every delivered
-  message of the calling thread that is not yet read, and answers every
-  message read in that turn, in the order the messages were sent. A
-  repeated call in the same turn answers the same messages, followed by
-  any delivered since the earlier call. A message is read once, in one
-  turn. The response's `message` is:
+  message of the calling thread that is not yet read, giving each the
+  thread's next read position, in the order the messages were sent, and
+  answers every message read in that turn, in read position order. A
+  repeated call in the same turn answers the same messages in the same
+  order, followed by any delivered since the earlier call, even a message
+  sent before them that was delivered late. A message is read once, in
+  one turn. The response's `message` is:
 
   ```text
   You have 2 messages.

@@ -70,8 +70,10 @@ commands:
             flags: [--timeout-ms]
             kind: option
             description: >-
-              The most time in milliseconds the hook waits for the service.
-              Default 2000; from 100 to 10000.
+              The most time in milliseconds the whole run takes, from the
+              parsed command line to exit: reading standard input, the
+              session mapping, and the request. Default 2000; from 100 to
+              10000.
             required: false
             repeatable: false
             value:

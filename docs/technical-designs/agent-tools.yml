@@ -433,14 +433,21 @@ proposed-design:
     `get-messages` takes `{ thread? }` and is identified as `handoff` is,
     with the same refusals: `not-followed` for a thread no active actor
     follows, and `caller-unidentified` and `environment-unavailable` as for
-    every tool. In one transaction the module sets `read_at` and
-    `read_turn_id`, to the call's turn, on every delivered message of the
-    thread that is not read, and selects the messages whose `read_turn_id`
-    is the call's turn, in `sequence` order. The call answers them with
-    the text `agent-tools` gives. A repeated call in the turn, a provider
-    retry, or a call the plugin made again after `service-unreachable`
-    answers the same messages, and any delivered since; a message read in
-    one turn is never answered in another. Reading publishes no event and
+    every tool. In one transaction the module takes every delivered message
+    of the thread that is not read, in `sequence` order, and sets on each
+    `read_at`, `read_turn_id`, to the call's turn, and `read_position`, the
+    thread's highest read position plus one, so the messages one call
+    reads take consecutive positions after every message read before. It
+    then selects the messages whose `read_turn_id` is the call's turn, in
+    `read_position` order, and answers them with the text `agent-tools`
+    gives. Positions are fixed when a message is read, so an answer is
+    always the previous answer of the turn followed by what was read since:
+    a message sent before others but delivered late, as when its follower
+    was held, comes after the messages already answered. A repeated call
+    in the turn, a provider retry, or a call the plugin made again after
+    `service-unreachable` answers the same messages in the same order, and
+    any delivered since; a message read in one turn is never answered in
+    another. Reading publishes no event and
     starts nothing.
   mail-notice: >-
     The hook tells the agent of new mail after a tool call, inside the
@@ -469,10 +476,14 @@ proposed-design:
     Cursor. It reads the hook input, maps its provider session to the T3
     Code thread with `readSessionMappings`, the read `usage push` makes of
     T3 Code's database under `--t3-home`, and posts `{ environment,
-    threadId, callId }` with the bound `--timeout-ms`, default 2000. It
-    writes the notice in the provider's output format and exits 0 in every
-    case once its command line is valid, so a hook never fails a tool call
-    and delays it at most its bound. The session mapping identifies a
+    threadId, callId }`, all within one total bound, `--timeout-ms`,
+    default 2000, fixed when its command line is parsed. The mapping's
+    SQLite read and the request run in a worker thread, so the main
+    thread, which reads standard input and holds the deadline, ends the
+    process at the deadline whatever is still running. It writes the
+    notice in the provider's output format and exits 0 in every case once
+    its command line is valid, so a hook never fails a tool call and
+    delays it at most its bound and the binary's start. The session mapping identifies a
     Cursor call, whose tool call id T3 Code does not record; the call id
     identifies an OpenCode call, whose plugin cannot read T3 Code's
     database without a second implementation of the mapping. The OpenCode
@@ -771,7 +782,11 @@ proposed-design:
     re-entry sends a new one; three messages are answered in the order
     they were sent; two `get-messages` calls in one turn answer the same
     messages, a message delivered between them is added to the second, and
-    a call in the next turn answers only messages delivered since; a call
+    a call in the next turn answers only messages delivered since; with an
+    older message whose only follower is held and a newer one a second
+    follower takes, a first call answers the newer message, the held
+    follower is restored and delivers the older one, and a second call in
+    the turn answers the newer message and then the older one; a call
     from a thread no actor follows is refused with `not-followed`; a notice
     request with a followed thread answers the notice once and `null`
     after, one with a call id the fake server records on a candidate
