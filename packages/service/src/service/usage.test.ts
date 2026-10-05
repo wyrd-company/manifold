@@ -262,31 +262,57 @@ test("the registered usage hook settles a real actor only after it reaches done"
   });
 });
 
-test("service accepts capacity declarations without prices when no account needs pricing", async () => {
-  const f = await fixture();
-  await f.commit(60, {
-    accounts: {
+test.each([false, true])(
+  "service accepts capacity declarations without prices when no account needs pricing (startup pull fails: %s)",
+  async (failStartupPull) => {
+    const f = await fixture();
+    const commit = await f.commit(60, {
       accounts: {
-        acct: {
-          unit: "usd",
-          kind: "subscription",
-          capacity: { amount: 10, reset: "2026-01-01T00:00:00Z", every: { days: 7 } },
+        accounts: {
+          acct: {
+            unit: "usd",
+            kind: "subscription",
+            capacity: { amount: 10, reset: "2026-01-01T00:00:00Z", every: { days: 7 } },
+          },
         },
       },
-    },
-  });
-  const logs: string[] = [];
-  const service = await startService({
-    configurationFile: f.file,
-    log: (entry) => logs.push(entry.event),
-  });
-  cleanup.push(service.stop);
-  expect(logs).not.toContain("usage-rejected");
-  expect(service.usage.accounts()["acct"]).toMatchObject({
-    kind: "subscription",
-    capacity: { amount: 10 },
-  });
-  expect(
-    service.portfolio.ledger.balance({ item: "alpha", account: "acct", waiting: [] }).allocation,
-  ).toBe(6000000);
-});
+    });
+    if (failStartupPull) f.remote.state.refuseNextFetch = true;
+    let held: ReturnType<typeof f.remote.holdNext> | undefined;
+    let applied!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      applied = resolve;
+    });
+    const logs: string[] = [];
+    const service = await startService({
+      configurationFile: f.file,
+      log: (entry) => logs.push(entry.event),
+      probes: {
+        step: (step) => {
+          if (failStartupPull && step === "pulled") held = f.remote.holdNext();
+        },
+        applied: (revision) => {
+          if (revision.commit === commit) applied();
+        },
+      },
+    });
+    cleanup.push(service.stop);
+    if (held) {
+      await held.reached;
+      const account = service.usage.accounts()["acct"];
+      held.release();
+      expect(account).toBeUndefined();
+    }
+    // Startup can continue without a revision after a failed pull.
+    await ready;
+    if (failStartupPull) expect(logs).toContain("pull-failed");
+    expect(logs).not.toContain("usage-rejected");
+    expect(service.usage.accounts()["acct"]).toMatchObject({
+      kind: "subscription",
+      capacity: { amount: 10 },
+    });
+    expect(
+      service.portfolio.ledger.balance({ item: "alpha", account: "acct", waiting: [] }).allocation,
+    ).toBe(6000000);
+  },
+);
