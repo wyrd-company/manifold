@@ -43,8 +43,11 @@ description: |-
   `Math.round(amount × 1000000)`, which is at least 1 and at most
   `Number.MAX_SAFE_INTEGER`. `reset` is an RFC 3339 date-time with a
   `Z` or a numeric offset: an instant at which one of the account's
-  windows opens. `every` is the length of a window, exactly one of
-  `hours`, `days`, or `months`, a positive integer. Hours and days are
+  windows opens, from `0001-01-01T00:00:00.000Z` to
+  `9999-12-31T23:59:59.999Z` once its offset is applied. `every` is the
+  length of a window, exactly one of `hours` from 1 to 87,600, `days`
+  from 1 to 3,650, or `months` from 1 to 120, so no window is longer than
+  ten calendar years. Hours and days are
   fixed lengths of 3,600,000 and 86,400,000 milliseconds. A month length
   counts calendar months in UTC, so each window opens on the day of the
   month and at the time of day of `reset` in UTC; with `months`, the day
@@ -135,8 +138,10 @@ description: |-
     refuse: an `amount` that converts to less than 1 or more than
     `Number.MAX_SAFE_INTEGER` millionths, or that has more than six
     fractional digits; a `reset` that is not an RFC 3339 date-time with a
-    `Z` or a numeric offset; or a `months` length with a `reset` on a day
-    after the 28th in UTC. The location is the offending `amount` or
+    `Z` or a numeric offset; a `reset` before `0001-01-01T00:00:00.000Z` or
+    after `9999-12-31T23:59:59.999Z` once its offset is applied; or a
+    `months` length with a `reset` on a day after the 28th in UTC. A
+    length outside its range is a `schema` finding at that length. The location is the offending `amount` or
     `reset`.
 format: json-schema
 validation-criteria: >-
@@ -146,7 +151,15 @@ validation-criteria: >-
   document, each finding kind with its location, a digit-leading account
   name as a `schema` finding, an account with no `capacity` as a `schema`
   finding at `/accounts/<name>/capacity`, each `invalid-capacity` rule with its location,
-  and the account a call resolves to with and without an instance entry.
+  each length at its maximum passing and one above it as a `schema`
+  finding at `/accounts/<name>/capacity/every/<unit>`, a `reset` of
+  `0001-01-01T00:00:00Z` and of `9999-12-31T23:59:59.999Z` passing, a
+  `reset` of `0001-01-01T00:00:00+01:00` as an `invalid-capacity` finding
+  at its `reset`, and the account a call resolves to with and without an
+  instance entry.
   Tests of the window series show, for each length, the window that holds
   an instant before, at, and after `reset`, a `months` series across a
-  year end and a 28th, and a `reset` with a numeric offset.
+  year end and a 28th, a `reset` with a numeric offset, and, with each
+  length at its maximum, the windows that hold `0011-01-01T00:00:00.000Z`
+  and `9989-12-31T23:59:59.999Z` lying inside the representable range
+  with four-digit-year keys.

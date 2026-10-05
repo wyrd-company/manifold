@@ -175,7 +175,8 @@ proposed-design:
     the gap to its own series with one clipped window. The window's key is
     its open time as an ISO 8601 UTC string, and the credit's idempotency
     key is `capacity:<account>:<window key>`, so a window is credited once
-    whatever runs twice. A credited window keeps its capacity and its
+    whatever runs twice, on one connection or on two connections to the
+    file. A credited window keeps its capacity and its
     bounds, so a changed amount applies from the next window credited. A
     window credited for a past time, such as the window of usage decoded
     from before Manifold ran, takes the declaration in force when it is
@@ -199,6 +200,7 @@ proposed-design:
     };
 
     export function openCapacity(options: {
+      connection: LedgerConnection; // the store's connection, which the ledger holds
       ledger: Ledger;
       accounts(): Readonly<Record<string, CapacityAccount>>; // the declaration in force
       now?: () => number; // defaults to Date.now; the ledger's clock
@@ -226,26 +228,58 @@ proposed-design:
     export type CapacityEnsureResult =
       | { status: "covered"; window: string }
       | { status: "credited"; credit: CapacityCredit; replayed: boolean }
-      | { status: "undeclared" };
+      | { status: "undeclared" }
+      | { status: "out-of-range" };
     ```
 
+    `connection` is the `LedgerConnection` the ledger was created with, the
+    store's. Its `transaction` runs `BEGIN IMMEDIATE` at the outermost call
+    and a savepoint inside an open transaction, so the module encloses each
+    read of the windows and the write it decides on in one transaction, and
+    that transaction joins the caller's when one is open. `BEGIN IMMEDIATE`
+    takes the database's write lock before the read, so no other
+    connection on the file credits between the read and the credit.
+
+    `ensure` runs in one `connection.transaction`: it reads the account
+    from `accounts()`, reads the windows around `at` with the ledger's
+    `windowAt`, and calls `credit` when no window covers `at`. `credited` is
+    called after the transaction returns: after its commit when `ensure`
+    is the outermost transaction, and inside the caller's transaction when
+    it joins one.
+
     `capacity.ledger` is the ledger it is given with three members
-    wrapped. `balance` and `reserve` call `ensure` with the request's
-    account and `now()` and then the ledger. `postActual` reads the windows
-    around `usedAt` with the ledger's `windowAt`; when a window covers it,
-    it calls the ledger. Otherwise it records the account and `usedAt`,
-    schedules a credit, and throws `LedgerError` with code `no-window` and
-    details `{ account, at }`, as the ledger does for a time before every
-    window, so usage intake keeps the posting pending. Every other
-    member is the ledger's. The scheduled callback, one `setImmediate` per
-    turn of the event loop, calls `ensure` for each recorded time, in its
-    own transaction since no transaction is open, then calls `followUp`
-    when any credit was written since the last follow-up. `ensure` reads
-    the account from `accounts()`, reads the windows around `at` with the
-    ledger's `windowAt`, and calls `credit` when no window covers `at`;
-    `credited` is called after `credit` returns: after its commit for a
-    credit in its own transaction, and inside the caller's transaction for
-    a credit that joins one. `windows.ts` holds the
+    wrapped, each in one `connection.transaction`:
+
+    - `reserve` runs `ensure` with the request's account and `now()`, then
+      the ledger's `reserve`, so the credit and the reservation commit or
+      roll back together, alone or inside a gate's grant.
+
+    - `balance` runs `ensure` with the request's account and `now()`, then
+      the ledger's `balance`, so the read sees the window the credit wrote.
+
+    - `postActual` reads the windows around `usedAt` with `windowAt`, and
+      calls the ledger's `postActual` when a window covers it. Otherwise it
+      records the account and `usedAt`, schedules a credit, and throws
+      `LedgerError` with code `no-window` and details `{ account, at }`, as
+      the ledger does for a time before every window, so usage intake keeps
+      the posting pending.
+
+    Every other member is the ledger's. The scheduled callback, one
+    `setImmediate` per turn of the event loop, calls `ensure` for each
+    recorded time, each its own outermost transaction, then calls
+    `followUp` when any credit was written since the last follow-up.
+
+    The series is computed only inside the representable range, the
+    instants from `0001-01-01T00:00:00.000Z` to
+    `9999-12-31T23:59:59.999Z`, where every instant is a `Date` and its
+    `toISOString()` is a window key with a four-digit year. Lint holds the
+    reset inside that range and a length at most 87,600 hours, 3,650
+    days, or 120 months, as `accounts-declaration` states, none longer than
+    ten calendar years, so every window that holds a time from
+    `0011-01-01T00:00:00.000Z` to `9989-12-31T23:59:59.999Z` lies wholly
+    inside the range. For any other time, `ensure` returns `out-of-range` and credits nothing: a balance
+    read or a reserve then meets the ledger's windows as they are, and an
+    actual stays pending `no-window`. `windows.ts` holds the
     series and the clipping as pure functions of the declared capacity,
     the time, and the neighbouring windows; `capacity.ts` holds
     `openCapacity`. The amount converts as `accounts-declaration` states,
@@ -253,7 +287,8 @@ proposed-design:
     convert, so the module trusts it.
   capacity-wiring: >-
     The service opens the capacity module after the portfolio and before
-    usage intake, with `portfolio.ledger`, the service clock, `accounts`
+    usage intake, with the store's connection, `portfolio.ledger`, the
+    service clock, `accounts`
     reading `usage.accounts()`, `credited` as the service's probe and log
     entry `capacity-credited`, and `followUp` running `usage.retryPending()`
     and then the gates' `inputChanged()`. It gives usage intake
@@ -308,7 +343,25 @@ proposed-design:
 
     - Reserve: a reserve at 10 minutes with no window credits it in the
       reserve's transaction; a reserve inside the caller's `transaction`
-      whose work then throws leaves no window and no credit.
+      whose work then throws leaves no window and no credit; a standalone
+      reserve with no window for an item the portfolio does not hold throws
+      `invalid-input` and leaves no window, no credit, and no operation.
+
+    - Two connections: a second `DatabaseSync` on the same file, with its
+      own savepoint `LedgerConnection`, `Ledger`, and capacity module whose
+      declaration in force has amount 2. The first module runs `ensure` at
+      10 minutes inside a caller `transaction` that is still open; the
+      second's `ensure` at 10 minutes cannot begin its transaction, writes
+      nothing, and rethrows the database's busy error. After the first
+      commits, the second's `ensure` returns `covered`, and the file holds
+      one credit for the window, of 1,000,000.
+
+    - Range: with every `days: 3650` and reset `0001-01-01T00:00:00Z`, a
+      read at `0001-06-01` returns `out-of-range` and credits nothing; with
+      reset `2026-01-01T00:00:00Z`, `ensure` at `9989-12-31T00:00:00Z`
+      credits a window whose close is at most `9999-12-31T23:59:59.999Z`,
+      and at `9995-01-01` returns `out-of-range`; an actual at that time
+      stays pending `no-window`.
 
     - Waiting actual: a push of a call at 10 minutes with no window answers
       `pending` 1; after the next turn of the event loop the window is
