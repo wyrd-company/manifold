@@ -524,7 +524,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           .current()
           .declaration.githubProjects.filter((binding) => !binding.archived)
           .map((binding) => {
-            const lifecycle = options.declaredLifecycleOptions?.(binding.name);
+            const lifecycle = taskMetadata.current()?.projects[binding.name]?.lifecycle;
             return {
               binding: binding.name,
               owner: binding.owner,

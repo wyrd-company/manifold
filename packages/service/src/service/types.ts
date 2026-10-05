@@ -26,10 +26,6 @@ import type { HttpListener } from "../http-host/index.ts";
 import type { ServiceConfiguration } from "../service-configuration/index.ts";
 
 export interface StartServiceOptions {
-  /** Structural stand-in for the task-metadata declaration accessor until its owner merges. */
-  readonly declaredLifecycleOptions?: (
-    binding: string,
-  ) => { readonly field: string; readonly options: readonly string[] } | undefined;
   /** Path of the service configuration file. */
   readonly configurationFile: string;
   /** Aborting it stops the start at the next step boundary. */
