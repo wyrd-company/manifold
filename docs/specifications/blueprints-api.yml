@@ -121,10 +121,14 @@ description: >-
   stops, a save answers `503`. The service never force-pushes.
 
   **Requests.** `lint` and `save` take `Content-Type: application/json`
-  and answer `415` for any other type. A request with an `Origin` header
-  whose host and port differ from its `Host` header answers `403`, and so
-  does one with `Sec-Fetch-Site: cross-site`, so that a page on another
-  site cannot drive these endpoints from the operator's browser. A body
+  and answer `415` for any other type. A request with
+  `Sec-Fetch-Site: cross-site` answers `403`, and so does one with an
+  `Origin` header whose host and port equal neither its `Host` header nor
+  its `X-Forwarded-Host` header, so that a page on another site cannot
+  drive these endpoints from the operator's browser, and a proxy that
+  rewrites `Host` keeps the console working. A page cannot set
+  `X-Forwarded-Host` on a cross-site request without a preflight the host
+  never grants. A body
   over 8 MiB answers `413`. A body that is not JSON or not of the stated
   shape, and a path that breaks the path rules, answers `400` with the
   first problem. Every answer is JSON with `Cache-Control: no-store`, and

@@ -45,8 +45,9 @@ status: open
 # signature, and `/escalations`, where an answer needs the escalation's key.
 # A page on another site cannot drive the save from the operator's browser:
 # the save takes only `application/json`, so a cross-site request needs a
-# preflight the host never grants, and a request whose `Origin` differs
-# from its `Host`, or marked `Sec-Fetch-Site: cross-site`, answers `403`.
+# preflight the host never grants, and a request marked
+# `Sec-Fetch-Site: cross-site`, or whose `Origin` matches neither its
+# `Host` nor its `X-Forwarded-Host`, answers `403`.
 # A DNS-rebinding page, whose origin and `Host` agree, is not stopped by
 # that check. A save never force-pushes, so every saved change is a commit
 # on the branch that `git revert` undoes.
