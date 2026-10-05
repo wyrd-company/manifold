@@ -73,10 +73,4 @@ export const manifoldImplementationCatalog: readonly ImplementationEntry[] = [
     group: "Expressions",
     description: "Take a transition when its JSONata expression is true.",
   },
-  {
-    name: "expression.map",
-    kind: "action",
-    group: "Expressions",
-    description: "Map an input or output with JSONata.",
-  },
 ];
