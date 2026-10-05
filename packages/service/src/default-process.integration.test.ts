@@ -2,15 +2,13 @@
 // relationships:
 //   verifies: [default-process, service-assembly, intake, gate-runtime, agent-threads, usage-intake]
 // ---
-import { afterEach, beforeAll, expect, it } from "vite-plus/test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { afterEach, expect, it } from "vite-plus/test";
+import { readFile, writeFile } from "node:fs/promises";
 import * as fs from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { fork, execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { fork } from "node:child_process";
 import git from "isomorphic-git";
-import { turnId } from "@wyrd-company/t3code-client";
+import { schemas } from "@wyrd-company/t3code-client";
 import { parse, stringify } from "yaml";
 import { serviceFixture } from "./service/test-fixtures/repository.ts";
 import { commandServer } from "./agent-threads/test-fixtures/commands.ts";
@@ -19,52 +17,33 @@ import { serve, readRequest } from "./escalations/test-support.ts";
 import { openStore } from "./store/index.ts";
 import { openPortfolio } from "./portfolio/index.ts";
 import { shippedBundle } from "./bundle/index.ts";
+import { childArtifacts } from "../../../test-support/child-process.ts";
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
-});
-beforeAll(async () => {
-  const root = fileURLToPath(new URL("../", import.meta.url));
-  const directory = join(root, "node_modules/.cache");
-  await mkdir(directory, { recursive: true });
-  const configuration = join(directory, "default-process-tsconfig.json");
-  await writeFile(
-    configuration,
-    JSON.stringify({
-      extends: join(root, "tsconfig.build.json"),
-      compilerOptions: {
-        rootDir: join(root, "src"),
-        outDir: join(root, "dist/default-process-fixture"),
-      },
-      include: [
-        join(root, "src/test-fixtures/default-process-worker.ts"),
-        join(root, "src/expression-worker.ts"),
-        join(root, "src/expression-worker-supervisor.ts"),
-      ],
-      exclude: [],
-    }),
-  );
-  await promisify(execFile)("pnpm", ["exec", "tsc", "-p", configuration], { cwd: root });
 });
 async function fixture(refuseMove = false) {
   const f = await serviceFixture();
   cleanup.push(f.close);
   const t3 = await commandServer();
   cleanup.push(t3.close);
-  const moves: string[] = [];
-  let refuse = refuseMove;
-  const mover = await serve((request, response) => {
-    void readRequest(request).then((body) => {
-      const { status } = JSON.parse(body) as { status: string };
-      if (refuse) {
-        response.writeHead(503).end();
-        return;
-      }
-      if (moves.at(-1) !== status) moves.push(status);
-      response.writeHead(200).end("{}");
-    });
+  f.api.fields.splice(0, f.api.fields.length, {
+    id: "F_status",
+    name: "Status",
+    options: [
+      { id: "O_todo", name: "Todo" },
+      { id: "O_progress", name: "In Progress" },
+      { id: "O_done", name: "Done" },
+    ],
   });
-  cleanup.push(mover.close);
+  if (refuseMove) f.api.failWrite("FORBIDDEN");
+  const moves = () =>
+    f.api.log
+      .filter((entry) => entry.operation === "GitHubCardMove")
+      .map(
+        (entry) =>
+          f.api.fields[0]!.options.find((option) => option.id === entry.variables["option"])!.name,
+      );
   const notifications: { message: string }[] = [];
   const ntfy = await serve((request, response) => {
     void readRequest(request).then((body) => {
@@ -113,11 +92,6 @@ async function fixture(refuseMove = false) {
     t3codeProjects: ["project"],
   });
   files.set("bindings.yml", stringify(bindings));
-  // Capacity is owned by a pending task: its stand-in credits through the public ledger.
-  const accounts = parse(files.get("accounts.yml")!);
-  delete accounts.accounts.agents.kind;
-  delete accounts.accounts.agents.capacity;
-  files.set("accounts.yml", stringify(accounts));
   files.set(
     "prices.yml",
     stringify({ unit: "usd", models: { "example-model": { standard: { input: 2, output: 8 } } } }),
@@ -177,13 +151,8 @@ async function fixture(refuseMove = false) {
     force: true,
   });
   const worker = fork(
-    fileURLToPath(
-      new URL(
-        "../dist/default-process-fixture/test-fixtures/default-process-worker.js",
-        import.meta.url,
-      ),
-    ),
-    [JSON.stringify({ file: f.file, moveUrl: mover.url })],
+    join(childArtifacts().service, "test-fixtures/default-process-worker.js"),
+    [JSON.stringify({ file: f.file })],
     { silent: true, execArgv: [] },
   );
   let stderr = "";
@@ -215,14 +184,11 @@ async function fixture(refuseMove = false) {
   const portfolio = openPortfolio({ connection: store.connection });
   const snapshot = () => store.loadSnapshot("task:I_A")?.snapshot;
   const state = () => snapshot()?.value;
-  let eventId = 0;
-  const agentEvent = async (event: Record<string, unknown>) =>
+  const agentCall = async (tool: string, args: Record<string, unknown>, meta = {}) =>
     fetch(url + "/api/agent-tools/calls", {
       method: "POST",
-      body: JSON.stringify({
-        id: `agent-${eventId++}`,
-        event: { environment: "workstation", ...event },
-      }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ environment: "workstation", tool, arguments: args, meta }),
     });
   async function add() {
     f.api.addItem("item-one", "I_A");
@@ -266,14 +232,29 @@ async function fixture(refuseMove = false) {
     }
   }
   async function handoff(threadId = [...t3.threads.keys()].at(-1)!) {
+    const thread = t3.threads.get(threadId)!;
+    const callId = "handoff-" + thread.latestTurn!.turnId;
+    thread.activities.push(
+      schemas.orchestrationReadModel.OrchestrationThreadActivity.parse({
+        id: callId,
+        tone: "tool",
+        summary: "Tool started",
+        kind: "tool.started",
+        turnId: thread.latestTurn!.turnId,
+        createdAt: new Date().toISOString(),
+        payload: { toolCallId: callId },
+      }),
+    );
     expect(
       (
-        await agentEvent({
-          type: "agent.handoff",
-          threadId,
-          turnId: t3.threads.get(threadId)!.latestTurn!.turnId,
-          handoff: { summary: "Parcel packed" },
-        })
+        await agentCall(
+          "handoff",
+          {
+            thread: threadId,
+            handoff: { summary: "Parcel packed" },
+          },
+          { callId },
+        )
       ).status,
     ).toBe(200);
     await expect.poll(state).toBe("done");
@@ -293,18 +274,15 @@ async function fixture(refuseMove = false) {
     state,
     add,
     waiting,
-    agentEvent,
+    agentCall,
     handoff,
-    allowMove: () => {
-      refuse = false;
-    },
   };
 }
 it("runs the bundled starter from intake through card moves and one thread to settled usage", async () => {
   const f = await fixture();
   await f.add();
   await f.waiting();
-  expect(f.moves).toEqual(["In Progress"]);
+  expect(f.moves()).toEqual(["In Progress"]);
   expect(f.snapshot()).toMatchObject({ status: "active" });
   expect(f.store.loadSnapshot("task:I_A")!.machine).toBe(
     `${f.commit}:blueprints/task.yml@${shippedBundle.digest}`,
@@ -322,16 +300,14 @@ it("runs the bundled starter from intake through card moves and one thread to se
   });
   expect(
     (
-      await f.agentEvent({
-        type: "agent.handoff",
-        threadId: thread.id,
-        turnId: thread.latestTurn!.turnId,
+      await f.agentCall("handoff", {
+        thread: thread.id,
         handoff: {},
       })
     ).status,
-  ).toBe(400);
+  ).toBe(422);
   await f.handoff();
-  expect(f.moves).toEqual(["In Progress", "Done"]);
+  expect(f.moves()).toEqual(["In Progress", "Done"]);
   expect(f.snapshot()).toMatchObject({
     status: "done",
     output: { outcome: "done", handoff: { summary: "Parcel packed" } },
@@ -379,7 +355,7 @@ it("runs the bundled starter from intake through card moves and one thread to se
   });
   f.worker.send("stop");
   expect(await f.exited).toBe(0);
-}, 60000);
+});
 it("retries a settled turn in the same thread and creates a replacement after a stalled thread is deleted", async () => {
   const f = await fixture();
   await f.add();
@@ -426,7 +402,7 @@ it("retries a settled turn in the same thread and creates a replacement after a 
   await f.waiting();
   expect(f.t3.commands.filter((c) => c.type === "thread.create")).toHaveLength(2);
   await f.handoff();
-}, 60000);
+});
 it.each(["new", "joined", "unknown"] as const)(
   "tracks an agent escalation's %s answer turn",
   async (mode) => {
@@ -435,66 +411,88 @@ it.each(["new", "joined", "unknown"] as const)(
     await f.waiting();
     const thread = [...f.t3.threads.values()][0]!;
     const asking = thread.latestTurn!.turnId;
-    expect(
-      (
-        await f.agentEvent({
-          type: "agent.escalated",
-          threadId: thread.id,
-          turnId: asking,
-          escalationId: "question-1",
-          title: "Parcel question",
-          question: "Use the large box?",
-          choices: [],
-          freeText: true,
-        })
-      ).status,
-    ).toBe(200);
+    const questionResponse = await f.agentCall("escalate", {
+      thread: thread.id,
+      title: "Parcel question",
+      question: "Use the large box?",
+      freeText: true,
+    });
+    expect(questionResponse.status).toBe(200);
+    const question = (await questionResponse.json()) as { escalationId: string };
     await expect.poll(f.state).toEqual({ active: { working: "escalated" } });
+    await expect.poll(() => f.notifications.length).toBe(1);
     if (mode === "new") {
       f.t3.settle(thread.id);
       await expect.poll(() => f.store.pendingInbox("task:I_A").length).toBe(0);
       expect(f.state()).toEqual({ active: { working: "escalated" } });
-      thread.latestTurn = {
-        ...thread.latestTurn!,
-        turnId: turnId("answer-turn"),
-        state: "running",
-        completedAt: null,
+    } else {
+      const dispatch = f.t3.hooks.dispatch!;
+      f.t3.hooks.dispatch = (raw) => {
+        const command = schemas.orchestrationCommands.ClientOrchestrationCommand.parse(raw);
+        if (command.type !== "thread.turn.start") return dispatch(raw);
+        if (mode === "unknown") throw new Error("Fixture answer refused");
+        const message = schemas.orchestrationReadModel.OrchestrationMessage.parse({
+          id: command.message.messageId,
+          role: "user",
+          turnId: null,
+          streaming: false,
+          text: command.message.text,
+          attachments: [],
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        });
+        thread.messages.push(message);
+        f.t3.change(thread, "thread.message-sent", {
+          threadId: thread.id,
+          ...message,
+          messageId: message.id,
+        });
+        return { sequence: f.t3.log.length };
       };
-      thread.session = {
-        ...thread.session!,
-        status: "running",
-        activeTurnId: thread.latestTurn.turnId,
-      };
-      f.t3.change(thread);
     }
-    expect(f.notifications).toEqual([]);
-    const answered = mode === "unknown" ? null : thread.latestTurn!.turnId;
     expect(
       (
-        await f.agentEvent({
-          type: "agent.escalation.answered",
-          threadId: thread.id,
-          escalationId: "question-1",
-          answer: { text: "Use it" },
-          channel: "api",
-          messageId: "answer-message",
-          turnId: answered,
+        await fetch(f.url + "/api/escalations/" + question.escalationId + "/answer", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: "Use it" }),
         })
       ).status,
     ).toBe(200);
     await f.waiting();
+    const context = f.snapshot()!["context"] as { answerTurn: string | null };
+    if (mode === "unknown") expect(context.answerTurn).toBeNull();
+    else {
+      expect(context.answerTurn).toBe(thread.latestTurn!.turnId);
+      if (mode === "joined") expect(context.answerTurn).toBe(asking);
+      else expect(context.answerTurn).not.toBe(asking);
+      expect(thread.messages).toHaveLength(2);
+      expect(thread.messages[1]!.text).toContain("Use it");
+    }
     f.t3.settle(thread.id);
     if (mode === "unknown") {
       await expect.poll(() => f.store.pendingInbox("task:I_A").length).toBe(0);
       expect(f.state()).toEqual({ active: { working: "waiting" } });
-      expect(f.notifications).toEqual([]);
+      expect(
+        f.store.connection.database
+          .prepare("SELECT COUNT(*) AS n FROM escalation WHERE kind IS NULL AND status = 'open'")
+          .get()?.["n"],
+      ).toBe(0);
     } else {
       await expect.poll(f.state).toEqual({ active: "stalled" });
-      await expect.poll(() => f.notifications.length).toBe(1);
+      await expect
+        .poll(
+          () =>
+            f.store.connection.database
+              .prepare(
+                "SELECT COUNT(*) AS n FROM escalation WHERE kind IS NULL AND status = 'open'",
+              )
+              .get()?.["n"],
+        )
+        .toBe(1);
     }
     await f.handoff();
   },
-  60000,
 );
 it("holds a refused card move and retries from the saved moving state", async () => {
   const f = await fixture(true);
@@ -515,7 +513,6 @@ it("holds a refused card move and retries from the saved moving state", async ()
   const escalation = f.store.connection.database
     .prepare("SELECT escalation_id FROM escalation WHERE kind = 'held-actor' AND status = 'open'")
     .get()!;
-  f.allowMove();
   expect(
     (
       await fetch(f.url + `/api/escalations/${escalation["escalation_id"]}/answer`, {
@@ -527,6 +524,6 @@ it("holds a refused card move and retries from the saved moving state", async ()
   ).toBe(200);
   await f.waiting();
   await f.handoff();
-  expect(f.moves).toEqual(["In Progress", "Done"]);
+  expect(f.moves()).toEqual(["In Progress", "In Progress", "Done"]);
   expect(f.t3.threads.size).toBe(1);
-}, 60000);
+});

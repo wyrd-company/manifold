@@ -49,6 +49,11 @@ export async function serviceFixture() {
       fs,
       gitdir: remote.gitdir,
       tree: [
+        // These assembly fixtures run their own process instead of the shipped default.
+        await blob("task.yml", {
+          machine: { initial: "idle", states: { idle: {}, done: { type: "final" } } },
+          schemas: { input: true, output: true, context: true, events: {} },
+        }),
         await blob(
           "counter.yml",
           document ?? {
@@ -62,18 +67,11 @@ export async function serviceFixture() {
         ),
       ],
     });
-    // This fixture runs its own blueprint; leave the shipped default's gate idle.
-    const comparators = await git.writeTree({
-      fs,
-      gitdir: remote.gitdir,
-      tree: [await blob("estimate.ts", "export default () => null;", true)],
-    });
     const tree = await git.writeTree({
       fs,
       gitdir: remote.gitdir,
       tree: [
         { path: "blueprints", mode: "040000", type: "tree", oid: blueprints },
-        { path: "comparators", mode: "040000", type: "tree", oid: comparators },
         await blob("portfolio.yml", {
           items: {
             alpha: { allocations: { acct: { guarantee } } },

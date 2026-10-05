@@ -15,6 +15,7 @@ const children = [
   "src/console/board.browser.test.ts",
   "src/escalations/recovery.test.ts",
   "src/foundation.integration.test.ts",
+  "src/default-process.integration.test.ts",
   "src/gates/crash.test.ts",
   "src/github-source/recovery.test.ts",
   "src/intake/crash.test.ts",

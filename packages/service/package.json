@@ -18,7 +18,7 @@
     "start": "node dist/main.js",
     "test:live": "node src/agent-threads/live/receipt-check.ts",
     "test:live:agent-tools": "node src/agent-tools/live/provider-check.ts",
-    "generate:bundle": "node scripts/generate-bundle.mjs && vp fmt src/bundle/bundle.generated.ts"
+    "generate:bundle": "node scripts/generate-bundle.mjs && pnpm --filter @wyrd-company/manifold-shared exec vp fmt src/bundle.generated.ts"
   },
   "dependencies": {
     "@gorules/zen-engine": "2.0.2",

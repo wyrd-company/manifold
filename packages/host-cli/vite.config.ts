@@ -10,6 +10,7 @@ const children = [
   "src/blueprint-lint/repository.test.ts",
   "src/comparator-lint/index.test.ts",
   "src/foundation.integration.test.ts",
+  "src/starter.test.ts",
   "src/manifest-lint/command.test.ts",
   "src/mcp-command.test.ts",
   "src/portfolio-lint/command.test.ts",

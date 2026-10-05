@@ -2,71 +2,47 @@
 // relationships:
 //   verifies: default-process
 // ---
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { parse, stringify } from "yaml";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { parse, stringify } from "yaml";
-import { expect, it, vi } from "vite-plus/test";
-import { lintUsageDeclaration } from "@wyrd-company/manifold-shared";
-import { manifestLintCommand } from "./manifest-lint/command.ts";
-import { portfolioLintCommand } from "./portfolio-lint/command.ts";
-import { comparatorLintCommand } from "./comparator-lint/command.ts";
-import { blueprintLintCommand } from "./blueprint-lint/command.ts";
-// Vite does not implement Bun's text imports; load the same declaration texts.
-vi.mock("./comparator-lint/library.generated.ts", async () => {
-  const { readFileSync } = await import("node:fs");
-  const { createRequire } = await import("node:module");
-  const { dirname, join } = await import("node:path");
-  const ts = (await import("typescript")).default;
-  const directory = dirname(createRequire(import.meta.url).resolve("typescript"));
-  const libFiles = new Map<string, string>();
-  function collect(name: string) {
-    if (libFiles.has(name)) return;
-    const text = readFileSync(join(directory, name), "utf8");
-    libFiles.set(name, text);
-    for (const ref of ts.preProcessFile(text).libReferenceDirectives)
-      collect(`lib.${ref.fileName}.d.ts`);
-  }
-  collect("lib.es2022.d.ts");
-  return {
-    comparatorLintLibrary: {
-      contract: readFileSync(new URL("../../shared/src/comparator.d.ts", import.meta.url), "utf8"),
-      libFiles,
-    },
-  };
-});
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { expect, it } from "vite-plus/test";
+import { childArtifacts } from "../../../test-support/child-process.ts";
 const starter = fileURLToPath(new URL("../../../examples/starter", import.meta.url));
-it("passes the shipped host lints and pending seam declaration checks", async () => {
-  expect(await manifestLintCommand([starter])).toBe(0);
-  expect(await portfolioLintCommand([starter])).toBe(0);
-  expect(await comparatorLintCommand([join(starter, "comparators/estimate.ts")])).toBe(0);
-  expect(
-    await blueprintLintCommand([
+it("passes every shipped host lint on the starter repository", async () => {
+  for (const args of [
+    ["manifest", "lint", starter],
+    ["portfolio", "lint", starter],
+    ["usage", "lint", starter],
+    ["task-metadata", "lint", starter],
+    ["comparator", "lint", join(starter, "comparators/estimate.ts")],
+    ["blueprint", "lint", "--repository", starter],
+    [
+      "expressions",
+      "lint",
       fileURLToPath(new URL("../../service/bundle/blueprints/task.yml", import.meta.url)),
-    ]),
-  ).toBe(0);
-  // Structural stand-ins for usage lint and task-metadata lint until their owners merge.
-  const accounts = parse(await readFile(join(starter, "accounts.yml"), "utf8"));
-  expect(accounts.accounts.agents).toMatchObject({
-    kind: "api",
-    unit: "usd",
-    capacity: { amount: 100, reset: "2026-01-01T00:00:00Z", every: { months: 1 } },
-  });
-  const { kind: _kind, capacity: _capacity, ...usage } = accounts.accounts.agents;
-  expect(
-    lintUsageDeclaration({
-      accounts: stringify({ accounts: { agents: usage } }),
-      prices: undefined,
-    }).ok,
-  ).toBe(true);
-  const metadata = parse(await readFile(join(starter, "task-metadata.yml"), "utf8"));
-  const bindings = parse(await readFile(join(starter, "bindings.yml"), "utf8"));
-  for (const [name, value] of Object.entries(metadata.projects) as [
-    string,
-    { lifecycle: { field: string; options: string[] } },
-  ][]) {
-    expect(bindings.githubProjects[name]).toBeDefined();
-    expect(value.lifecycle.field).toBe("Status");
-    expect(value.lifecycle.options).toEqual(["Todo", "In Progress", "Done"]);
+    ],
+  ]) {
+    const { stdout, stderr } = await promisify(execFile)(childArtifacts().host, args);
+    expect(stdout, args.join(" ")).toBe("");
+    expect(stderr, args.join(" ")).toBe("");
+  }
+});
+
+it("checks the shipped default against the repository lifecycle declaration", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "starter-lint-"));
+  try {
+    await writeFile(join(directory, "bindings.yml"), await readFile(join(starter, "bindings.yml")));
+    const metadata = parse(await readFile(join(starter, "task-metadata.yml"), "utf8"));
+    metadata.projects["work-board"].lifecycle.options = ["Todo", "In Progress"];
+    await writeFile(join(directory, "task-metadata.yml"), stringify(metadata));
+    await expect(
+      promisify(execFile)(childArtifacts().host, ["blueprint", "lint", "--repository", directory]),
+    ).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining("lifecycle-option") });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });

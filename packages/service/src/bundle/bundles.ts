@@ -2,10 +2,9 @@
 // relationships:
 //   implements: [default-process, bundle-tables]
 // ---
-import { bundleDigest } from "@wyrd-company/manifold-shared";
+import { bundleDigest, bundledFiles } from "@wyrd-company/manifold-shared";
 import type { Store } from "../store/index.ts";
 import type { Bundle, BundleSource } from "../blueprint-loader/index.ts";
-import { bundledFiles } from "./bundle.generated.ts";
 export const shippedBundle: Bundle = {
   files: new Map(Object.entries(bundledFiles)),
   digest: bundleDigest(new Map(Object.entries(bundledFiles))),

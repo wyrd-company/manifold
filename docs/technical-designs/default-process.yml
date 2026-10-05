@@ -118,7 +118,7 @@ proposed-design:
     The bundled blueprints are YAML files under `packages/service/bundle/`,
     at their paths: `packages/service/bundle/blueprints/task.yml`.
     `packages/service/scripts/generate-bundle.mjs` writes
-    `src/bundle/bundle.generated.ts`, which holds each file's text by
+    `packages/shared/src/bundle.generated.ts`, which holds each file's text by
     path, as the shared package generates its price table and schemas, so
     the service reads no file at run time and a build carries its bundle
     in its code. A test shows the generated module equals the files.

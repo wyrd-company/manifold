@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: default-task-blueprint
 // ---
+import { stringify } from "yaml";
 import { readFile } from "node:fs/promises";
 import { expect, it } from "vite-plus/test";
 import { createActor, createMachine, fromCallback, fromPromise } from "xstate";
@@ -9,7 +10,25 @@ import { memoryRevision } from "@wyrd-company/manifold-shared";
 import { createBlueprintLoader } from "../blueprint-loader/index.ts";
 async function fixture(failure?: "opening" | "prompting") {
   const text = await readFile(new URL("../../bundle/blueprints/task.yml", import.meta.url), "utf8");
-  const revision = memoryRevision("a".repeat(40), { "blueprints/task.yml": text });
+  const revision = memoryRevision("a".repeat(40), {
+    "blueprints/task.yml": text,
+    "bindings.yml": stringify({
+      githubProjects: {
+        board: {
+          owner: "example-org",
+          number: 1,
+          item: "work",
+          environment: "station",
+          t3codeProjects: ["project"],
+        },
+      },
+    }),
+    "task-metadata.yml": stringify({
+      projects: {
+        board: { lifecycle: { field: "Status", options: ["Todo", "In Progress", "Done"] } },
+      },
+    }),
+  });
   const calls = { opening: 0, prompting: 0, escalation: 0, moves: [] as string[] };
   const loader = createBlueprintLoader({
     revisionAt: async () => revision,

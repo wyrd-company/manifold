@@ -455,7 +455,14 @@ it("resumes the same revision after SIGKILL across repository, sources, inbox an
     const blueprints = await git.writeTree({
       fs,
       gitdir: remote.gitdir,
-      tree: [await blob("oven.yml", blueprint)],
+      tree: [
+        await blob("oven.yml", blueprint),
+        // This fixture declares its own process in place of the shipped default.
+        await blob("task.yml", {
+          machine: { initial: "idle", states: { idle: {}, done: { type: "final" } } },
+          schemas: { input: true, output: true, context: true, events: {} },
+        }),
+      ],
     });
     const tree = await git.writeTree({
       fs,
