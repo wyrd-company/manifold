@@ -5,23 +5,17 @@
 import {
   lintBlueprint,
   manifoldImplementationNames,
-  findingRanges,
-  blueprintGraph,
   parseBlueprintVersionKey,
 } from "@wyrd-company/manifold-shared";
 import type { BlueprintItem, LintResponse } from "@wyrd-company/manifold-shared/blueprints-api";
+import { lintAnswer, listAnswer } from "./answers.ts";
 import type { RevisionLoad } from "../blueprint-loader/index.ts";
 import type { BlueprintsApiOptions } from "./types.ts";
 async function inspectText(options: BlueprintsApiOptions, path: string, text: string) {
   const lint = await lintBlueprint(path, text, manifoldImplementationNames, {
     configurationBound: options.configurationBound,
   });
-  const graph = blueprintGraph(text);
-  const response: LintResponse = {
-    findings: findingRanges(text, lint.ok ? [] : lint.findings),
-    warnings: findingRanges(text, lint.warnings),
-    ...(graph ? { graph } : {}),
-  };
+  const response = lintAnswer(text, lint);
   return { response, description: lint.ok ? lint.blueprint.description : undefined };
 }
 export async function lintText(
@@ -88,7 +82,7 @@ export async function catalog(options: BlueprintsApiOptions, load = options.revi
       activeActors: counts.get(path) ?? 0,
     });
   }
-  return { repository: options.repository, ...(load ? { commit: load.commit } : {}), blueprints };
+  return listAnswer(options.repository, load?.commit, blueprints);
 }
 export async function sourceText(
   options: BlueprintsApiOptions,
