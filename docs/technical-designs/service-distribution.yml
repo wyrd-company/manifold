@@ -167,7 +167,12 @@ proposed-design:
     `install-and-upgrade` with the same archive, and checks that neither
     is present, that the tree equals a fresh extraction, and that the
     service starts again; and it runs them again after stopping a run
-    between the two renames of step 3, with the same result. The smoke
+    between the two renames of step 3, with the same result. It checks
+    rollback: it upgrades to an archive copy whose `dist/main.js` exits 1
+    at once, sees the start fail, runs the rollback steps, and checks that
+    `manifold-service/` equals the old tree, that the service starts and
+    logs `started`, and that the deployment directory's configuration and
+    `state/` files are unchanged byte for byte. The smoke
     removes its temporary directory when it ends. It is a
     Node script in `packages/service/scripts/` and is not part of
     `task check`, so `task check` stays free of a package build.
@@ -322,8 +327,13 @@ proposed-design:
     is present, and rename `manifold-service.next/manifold-service/` to
     `manifold-service/`; (4) start the service and check the `started`
     line; (5) remove `manifold-service.old/` and `manifold-service.next/`.
-    Rollback before step 5 is stopping the service, renaming
-    `manifold-service.old/` back, and starting it. An upgrade interrupted
+    Rollback before step 5 is: stop the service; remove
+    `manifold-service/`, the new install, whole; rename
+    `manifold-service.old/` to `manifold-service/`; and start the service.
+    The new install must be removed first, since a directory cannot be
+    renamed onto a directory that is not empty. A rollback interrupted
+    after the removal converges by running it again: with no
+    `manifold-service/`, it only renames. An upgrade interrupted
     at any point converges by running all five steps again: step 1
     rebuilds the new tree from the archive, and step 3 finds either the
     old install, which it moves aside, or no `manifold-service/` (an
@@ -333,29 +343,29 @@ proposed-design:
     archives.
   t3code-token: >-
     The scopes approved for Manifold 0.1.0's T3 Code token are
-    `orchestration:read` and `orchestration:operate`, the whole set. The T3 Code CLI and server of version
-    0.0.42 define two ways to get a bearer token. `t3 auth session issue`
-    takes no scope flag and issues the administrative scope set:
-    `orchestration:read`, `orchestration:operate`, `terminal:operate`,
-    `review:write`, `relay:read`, `access:read`, `access:write`, and
-    `relay:write`. `t3 auth pairing create` issues a one-time pairing token
-    (default lifetime 5 minutes) whose grant holds the standard client
-    scopes, and `POST /oauth/token` on the server exchanges it, with
-    `grant_type` `urn:ietf:params:oauth:grant-type:token-exchange`,
-    `subject_token_type` `urn:t3:params:oauth:token-type:environment-bootstrap`,
+    `orchestration:read` and `orchestration:operate`, the whole set, and
+    the guide gives the one way that issues exactly those. On each
+    environment the operator runs `t3 auth pairing create --json`, which
+    issues a one-time pairing token (default lifetime 5 minutes), and
+    exchanges it at the server's `POST /oauth/token` with `grant_type`
+    `urn:ietf:params:oauth:grant-type:token-exchange`, `subject_token` the
+    pairing token, `subject_token_type`
+    `urn:t3:params:oauth:token-type:environment-bootstrap`,
     `requested_token_type` `urn:ietf:params:oauth:token-type:access_token`,
-    and `scope` `orchestration:read orchestration:operate`, for a bearer
-    token that holds exactly the scopes requested; the server refuses a
-    scope the grant does not hold. A bearer token from either way expires
-    after 30 days by default; `session issue` accepts `--ttl`, and the
-    exchange takes no lifetime. The server listens on port 3773 by
-    default. Which way the guide gives is a decision reserved to the user;
-    the guide pipes the token from the command's JSON output into its file
-    with a mode of 0600 so that it is never shown. The source rereads the
-    file at each connection attempt, so renewing is replacing the file.
-    The implementer confirms these facts against the T3 Code version the
-    service's development dependency names before the guide states them,
-    without issuing a token outside a test environment.
+    and `scope` `orchestration:read orchestration:operate`; the server
+    issues a bearer token holding exactly the scopes requested and refuses
+    a scope the pairing grant does not hold. The guide pipes the pairing
+    token from the first command's JSON into the exchange, and the access
+    token from the exchange's JSON into its file with mode 0600, so that
+    neither is shown. The guide does not use `t3 auth session issue`,
+    which takes no scope flag and issues the administrative scope set. The
+    bearer token expires after 30 days by default, and the exchange takes
+    no lifetime; the source rereads the file at each connection attempt,
+    so renewing is running the same two commands into the same file. The
+    server listens on port 3773 by default. These are the facts of T3 Code
+    0.0.42's CLI and server; the implementer confirms them against the T3
+    Code version the service's development dependency names before the
+    guide states them, without issuing a token outside a test environment.
   github-app-permissions: >-
     The guide's permission table lists what the modules of this release
     use, each with its reason, and nothing more: repository `Metadata:
@@ -427,5 +437,7 @@ proposed-design:
     archive packed without `files` fields (it finds `src/` and test
     files), and against one built for the other architecture (the engine
     binding fails to load), and against an upgrade that extracts over the
-    old `manifold-service/` (the added file survives). `task check` runs the example test; CI's
+    old `manifold-service/` (the added file survives), and against a
+    rollback that renames the old install without removing the new one
+    (the rename fails). `task check` runs the example test; CI's
     `package` job runs the build and the smoke on both architectures.

@@ -44,7 +44,7 @@ credentials:
   workstation-token:
     # A T3 Code access token.
     kind: t3code-token
-    # The file holding the token from `t3 auth session issue`. Mode 0600.
+    # The file holding the token exchanged for orchestration:read and orchestration:operate. Mode 0600.
     tokenFile: credentials/workstation.token
   ntfy-token:
     # An ntfy access token that may publish to the destination's topic.
