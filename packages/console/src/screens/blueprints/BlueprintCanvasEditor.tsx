@@ -23,7 +23,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { diff } from "@codemirror/merge";
-import { parseDocument } from "yaml";
+import { canvasDocument } from "./canvas-document.ts";
 import { blueprintGraph } from "@wyrd-company/manifold-shared/blueprint-graph";
 import type { ApiFinding, BlueprintGraph } from "@wyrd-company/manifold-shared/blueprints-api";
 import { Button } from "../../ui/button.tsx";
@@ -97,7 +97,7 @@ function Canvas({
   const dragStart = useRef<{ x: number; y: number } | undefined>(undefined);
   const flow = useReactFlow<CanvasNode, CanvasEdge>();
   const locked = readOnly || !graph;
-  const doc = useMemo(() => parseDocument(text).toJS() as unknown, [text]);
+  const doc = useMemo(() => canvasDocument(text), [text]);
   const pinned = atPointer(doc, "/layout") as BlueprintLayout | undefined;
   useEffect(() => {
     if (expected.current !== text) history.current = { undo: [], redo: [] };
