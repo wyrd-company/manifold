@@ -930,27 +930,29 @@ proposed-design:
     removeUndeclared, digest)`, which send `GET /api/projects`, `GET
     /api/projects/{binding}/plan`, and `POST /api/projects/{binding}/apply`
     with `{ removeUndeclared, digest }`, the binding percent-encoded and
-    `digest` the reviewed plan's digest. Each turns the answer into `ok`
-    with the body, `missing` for `404`, or `failed` with the API's
-    message, or a generic message for a network error or a body that does
-    not validate; `applyProject` turns the stale-plan `409` into `stale`
-    with the configuration state and the current plan's digest the answer
-    holds. Each mapping is a pure function. Bodies are checked at this
-    boundary with the guards the Project configuration API exports from
-    `@wyrd-company/manifold-shared`. The console reads these members of
-    its answers: a list entry's `binding`, `owner`, `number`, `item`,
-    `environment`, and configuration state (`in-sync`, `drift` with its
-    count, or `not-applied`), and its title, URL, and last Apply time when
-    the API answers them; a plan's digest and changes, each change with
-    its action (`create`, `change`, or `remove`), its storage kind, where
-    it applies, its target, what happens, and whether it undoes drift, and
-    the count of issues whose front matter does not match, with a link to
-    them, when the API answers it; an Apply's resulting configuration
-    state and how many writes it made; and a stale-plan answer's state and
-    digest. Reads go through TanStack Query under the keys `["projects"]`
-    and `["project-plan", binding]`. An Apply is a mutation; when it
-    settles it marks both keys and `["tasks"]` stale. No timer reads on a
-    schedule.
+    `digest` the reviewed plan's digest, as `projects-api` specifies them.
+    Each turns the answer into a result: `ok` with the body; `missing` for
+    `404` of kind `unknown-binding`; `unresolved` for `409` of kind
+    `unresolved-project`; for an Apply, `stale` for `409` of kind
+    `plan-stale`, and `failed` with the error's message, its `writes`, and
+    each change's outcome for `502`; and `failed` with the error's
+    `message` for any other error, or a generic message for a network
+    error or a body that does not validate. Each mapping is a pure
+    function, and each body is checked at this boundary with
+    dependency-free guards in the same module, which a console test checks
+    against `projects-api.openapi.yml` with fixtures that pass and fail.
+    The console reads these members: a list entry's `binding`, `owner`,
+    `number`, `portfolioItem`, `environment`, `configuration` (`state`,
+    one of `in-sync`, `drift`, `pending`, and `not-applied`, with `count`
+    for `drift` and `pending`), and `lastApplied`; a plan's
+    `configuration`, `observation`, `observedAt`, `digest`, and `changes`,
+    each change with its `id`, `storage`, `description`, `target`
+    (`field`, `option`, `lifecycle`, and `taskField`), `action`, `side`,
+    `drift`, and `requiresRemoval`; and an Apply's `outcome`, `writes`,
+    and `configuration`. Reads go through TanStack Query under the keys
+    `["projects"]` and `["project-plan", binding]`. An Apply is a mutation;
+    when it settles it marks both keys and `["tasks"]` stale. No timer
+    reads on a schedule.
   declarations-client: >-
     `src/api/declarations.ts` exports
     `fetchDeclarationSource(path)`, `lintDeclarationText(path, text,
@@ -977,15 +979,14 @@ proposed-design:
     button that reads all three again. The table's columns, in percent
     widths, are Project (26), Portfolio item (16), Active cards (10),
     Completed cards (10), Environment (14), Configuration (12), and an
-    action (12). Project is the title over `<owner>/<number>` in mono, or
-    `<owner>/<number>` alone while the API answers no title, linked to the
-    Project's URL in a new tab when the API answers one. Portfolio item is
-    the item's title from the bindings read, or its id. Active cards and
+    action (12). Project is `<owner>/<number>` in mono. Portfolio item is
+    the title of the entry's `portfolioItem` from the bindings read, or
+    its id. Active cards and
     Completed cards count the tasks of the binding in the tasks list whose
     issue is open and closed, or show a muted dash when the tasks read
     failed or does not list the binding. Environment is in mono.
     Configuration is the badge `DESIGN.md` gives: "In sync" (success),
-    "Drift · N" (warning), or "Not applied" (info). The action is "View"
+    "Drift · N" (warning), "Pending · N" (info), or "Not applied" (info). The action is "View"
     (outline) for `in-sync` and "Review changes" (outline) otherwise, and
     opens the Project's page. Rows follow the API's order. With no bound
     Project, the table is replaced by the empty state "No bound Projects",
@@ -1030,8 +1031,8 @@ proposed-design:
     that no binding holds, its title and workspace root in mono, or the
     muted line "Manifold has not read the projects of <environment> yet."
     when they are not known. Under the fields, the warning note: "Manifold
-    takes control of this Project's fields and status options, and of the
-    labels, issue types, issue fields, and milestones the task fields use.
+    takes control of the fields of this Project that the task fields
+    declare, and of their options.
     Nothing changes on GitHub until you apply." and the checkbox "I
     understand". The dialog associates existing T3code projects and
     creates none. "Bind and review changes"
@@ -1084,12 +1085,11 @@ proposed-design:
     `projects/$binding`. It reads `fetchProjects()` for the Project's
     entry, `fetchProjectPlan(binding)`, `fetchBindings()`, and
     `fetchDeclarationSource("task-metadata.yml")` for the task fields
-    version. The header holds the "All Projects" back link; the title over
-    `<owner>/<number>` in mono, with a GitHub link icon when the API
-    answers a URL; the Configuration badge; and a meta line with the
-    portfolio item, the environment in mono, "Task fields <short commit>"
-    in mono, and "Applied <time>" when the API answers the last Apply's
-    time, or "Never applied" for `not-applied`. On the right are "Task
+    version. The header holds the "All Projects" back link;
+    `<owner>/<number>` in mono; the Configuration badge; and a meta line
+    with the portfolio item, the environment in mono, "Task fields <short
+    commit>" in mono, and "Applied <time>" from `lastApplied.at`, or
+    "Never applied" when it is `null`. On the right are "Task
     fields" (ghost) and the one primary action, "Apply N changes", or
     "Nothing to apply", disabled, when the plan counts no change. Under
     the header, the "T3code projects" card has the count and "Associate
@@ -1097,45 +1097,51 @@ proposed-design:
     project, its title and workspace root in mono and its active threads;
     with none, it says "No T3code projects are associated with this
     Project." Then the plan card. A binding the list does not hold, and a
-    plan that answers `404`, show the empty state "Project not bound",
+    plan that answers `missing`, show the empty state "Project not bound",
     "No bound Project has the name <binding>.", with a link to All
-    Projects. A failed read shows an error alert with the message and "Try
+    Projects. A plan that answers `unresolved` shows the info alert
+    "Manifold has not found this Project on GitHub yet." with "Try again"
+    in place of the plan card. A plan whose `observation` is `stale` shows
+    the warning alert "Cannot read this Project from GitHub: <message>.
+    The plan uses what Manifold read <time of observedAt>." above the
+    groups. A failed read shows an error alert with the message and "Try
     again".
   plan-card: >-
     The plan card is "What Apply will change", with the switch "Also
     remove what the task fields do not define" in its header, off each
-    time the page opens. The groups, in this order, are Project fields,
-    Labels, Org issue types, Org issue fields, Milestones, and Front
-    matter, one per storage kind; a group shows when it holds a change,
-    and Front matter when issues' front matter does not match. A group's
-    header names where its changes apply and sums them: "2 to create · 1
+    time the page opens. Its one group is Project fields, the storage kind
+    `project-field` of every change; the group's header names where its
+    changes apply, "On <owner>/<number>", and sums them: "2 to create · 1
     to change · 1 to remove". A change row has the 18px mark (`+` create
     in success, `~` change in warning, `−` remove in error), the target in
-    mono, and what happens, and a "Drift" badge when the change undoes
-    drift. With the switch off, a remove row is dimmed with a "Kept" badge
-    and does not count. Front matter has nothing to apply; it says "N
-    issues hold front matter that does not match the task fields." with a
-    link to them when the API answers one. With no change, the card says
-    "Nothing to apply. The Project matches the task fields." The pure
-    function `planGroups(changes, removeUndeclared)` in
-    `src/screens/projects/plan.ts` gives the groups, their rows and sums,
-    and the count the Apply button names.
+    mono, `field` or `field / option`, with a lock icon for the lifecycle
+    field, and the change's `description`; a "Drift" badge when `drift`
+    is true; and a "Into task fields" badge when `side` is `declaration`,
+    a change Apply makes to `task-metadata.yml`. With the switch off, a
+    row whose `requiresRemoval` is true is dimmed with a "Kept" badge and
+    does not count. With no change, the card says "Nothing to apply. The
+    Project matches the task fields." The pure function
+    `planGroups(changes, removeUndeclared)` in
+    `src/screens/projects/plan.ts` gives the groups by `storage`, their
+    rows and sums, and the count the Apply button names.
   apply: >-
     "Apply N changes" sends `applyProject(binding, removeUndeclared,
     digest)` with the switch's value and the digest of the plan on screen,
     so the service applies only the plan the operator reviewed. With the
-    switch on and a remove counted, it first opens a 400px alert dialog,
+    switch on and a change whose `requiresRemoval` is true counted, it
+    first opens a 400px alert dialog,
     "Remove from GitHub?": "This Apply also removes N things the task
     fields do not define: <up to five targets>, and M more. Manifold does
     not restore them." with "Cancel" and "Apply and remove" (solid error),
-    naming the removals of the plan on screen. While the request runs, the
+    naming the targets of those changes in the plan on screen. While the request runs, the
     button shows a spinner and the button and the switch are disabled.
-    For `ok`, a success toast says "Applied N changes" when the answer
-    made writes, or "Already in sync" when it made none; the header's
-    badge shows the configuration state the answer holds at once, and the
-    list, the plan, and the tasks read again. For `stale`, the plan
-    changed after the operator reviewed it: the badge shows the answer's
-    state, the plan reads again, and an info alert above the groups reads
+    For `ok`, a success toast says "Applied N changes", N being the
+    changes whose `outcome` is `applied`, when the answer's `outcome` is
+    `applied`, or "Already in sync" when it is `in-sync`; the header's
+    badge shows the answer's `configuration` at once, and the list, the
+    plan, and the tasks read again. For `stale`, the plan changed after
+    the operator reviewed it: the list and the plan read again, the badge
+    shows the list's state, and an info alert above the groups reads
     "The plan changed since you reviewed it. Review the changes, then
     apply again." When the new plan counts no change and the state is
     `in-sync`, another channel finished the changes first, and the alert
@@ -1143,8 +1149,10 @@ proposed-design:
     "Nothing to apply". The next Apply sends the new plan's digest, and
     asks again before removing, naming the new plan's removals. For
     `missing`, the page shows "Project not bound". For `failed`, an error
-    alert in the plan card shows the message with "Try again", which sends
-    the same request with the same digest; an Apply converges on the
+    alert in the plan card shows the message, and for a `502` the count of
+    writes made and the change that failed, with "Try again", which sends
+    the same request with the same digest; the list and the plan read
+    again; an Apply converges on the
     service, so a second send writes only what is still to change, and
     answers `stale` when the plan changed meanwhile.
   task-fields-editor: >-
@@ -1173,45 +1181,43 @@ proposed-design:
     The Visual tab is the fields table and, on its right, the field panel
     (320px) for the selected field. The table lists the latest answer's
     `fields` grouped by Project, each group row holding the binding name
-    and `<owner>/<number>` in mono and "Add field" (ghost) on its right.
-    Columns, in percent widths: Field (36), Type (22), Stored as (24),
-    Required (10), and a remove icon button (8, `aria-label` "Remove
+    and `<owner>/<number>` in mono and "Add field" (ghost) on its right;
+    each group lists the lifecycle field first, then the task fields in
+    document order. Columns, in percent widths: Field (40), Type (26),
+    Stored as (26), and a remove icon button (8, `aria-label` "Remove
     field"). Field is the name, with the 20px lock icon after the
     lifecycle field's name (tooltip and label "Set by Manifold") and a
     red "!" on a row that a finding locates at or under it. Type is a
-    select of the types the row's storage kind holds, with the row's type
-    kept as a choice; Stored as is a select of the storage kinds, by the
-    names Project field, Label, Org issue type, Org issue field,
-    Milestone, and Front matter; and Required is a checkbox. A nested row
-    shows "in parent" in Stored as. A finding at the field's type or
-    storage gives both selects a red border. The lifecycle field's name,
-    Required, and Stored as are disabled, and it has no remove button.
-    Selecting a row selects it in the field panel and moves the YAML
-    cursor to the start of its range; moving the YAML cursor into a
-    field's range selects its row. The field panel shows the field's
-    name, as a text field; "Stored as", with the line "Can hold <type>"
-    in success text or "Cannot hold <type>" in error text; the storage
-    kind's settings, each a text field with the label the kind gives it:
-    the Project field or issue field name, the label prefix, or the front
-    matter key; the options, for a type with options, each a text field
-    with a remove button and "Add option" under them; what exists on
-    GitHub for it, from the impact's field observations: "On GitHub",
-    "Missing on GitHub", or "Differs on GitHub" with its detail, or "Not
-    read from GitHub yet"; its scope, from its storage kind: "On
-    <owner>/<number>" for a Project field, "On the <owner> organization"
-    for an org issue type or field, "In each repository with issues on
-    <owner>/<number>" for a label or milestone, and "In each issue's
-    body" for front matter; and "When changed on GitHub", a two-option
-    segmented control, Revert or Accept. With no field, the table shows
-    the empty state "No task fields", "Add a field to a bound Project." with
-    a group row per bound Project. While the latest answer has no
-    `fields`, because the text does not parse, the tab keeps the last
-    fields, dimmed and disabled, with the muted line "Fix the YAML to
-    edit fields here."
+    select of the types the row's storage kind holds, from
+    `storageKinds`, with the row's type kept as a choice; Stored as is a
+    select of the storage kinds, Project field being the one. A finding
+    at the field's type or storage gives both selects a red border. The
+    lifecycle field's name, Type, and Stored as are disabled, and it has
+    no remove button. Selecting a row selects it in the field panel and
+    moves the YAML cursor to the start of its range; moving the YAML
+    cursor into a field's range selects its row. The field panel shows
+    the field's name, as a text field; "Stored as", with the line "Can
+    hold <type>" in success text or "Cannot hold <type>" in error text;
+    the storage kind's settings from `storageKinds`, each a text field:
+    for a Project field, "Project field name", with the field's name as
+    its placeholder; the options, for a single-select field, each a text
+    field with a remove button and "Add option" under them; what exists
+    on GitHub for it, from the row's `onGitHub`: "On GitHub", "Missing on
+    GitHub", or "Differs on GitHub" with its detail, or "Not read from
+    GitHub yet"; its scope, "On <owner>/<number>"; and, for a task field,
+    "When changed on GitHub", a two-option segmented control, Revert or
+    Accept, Revert when the row has no `whenChanged`. The lifecycle field
+    has no "When changed on GitHub": its drift is always reverted. With no
+    task field, a group holds its lifecycle field alone; with no Project,
+    the table shows the empty state "No task fields", "Declare a bound
+    Project in task-metadata.yml to add its fields." While the latest
+    answer has no `fields`, because the text does not parse, the tab
+    keeps the last fields, dimmed and disabled, with the muted line "Fix
+    the YAML to edit fields here."
   task-field-edits: >-
     A change in the Visual tab is a field edit of the draft's text, made
-    on the service. A select, the checkbox, the segmented control, "Add
-    field", "Add option", and a remove button send at once; a text field
+    on the service. A select, the segmented control, "Add field", "Add
+    option", and a remove button send at once; a text field
     sends when it loses focus or on Enter, when its value changed. Each
     sends `editTaskFields({ text, edit })` with the draft's text and one
     edit of `declarations-api`: `add-field` with the binding, `set-field`
@@ -1279,12 +1285,12 @@ proposed-design:
     the edited file its range; its parameter takes any finding with
     `kind`, `location`, and `message`. A task metadata text that parses
     answers `fields` from the pure `taskFieldRows(text)`, which reads the
-    rows from the document, and `storageKinds` from the declaration's
-    storage kind table; a clean one answers `impact` from
-    `options.planDeclaration`, one entry per GitHub Project binding that
-    is not archived, with no counts when it answers none for the binding,
-    and each row's GitHub observation from the entry's field
-    observations. A field edit applies `editTaskFields` and answers as a
+    rows from the document, and `storageKinds` from `taskFieldStorageKinds`;
+    a clean one answers `impact` from `options.planDeclaration`, one entry
+    per GitHub Project binding that is not archived, with the counts of
+    its changes by `action` and no counts when it answers none for the
+    binding, and each row's `onGitHub` from the entry's field status of
+    the same task field, or of the lifecycle field. A field edit applies `editTaskFields` and answers as a
     lint of the result. A save lints first and answers `422` for a
     finding, then awaits `revisions.save` and maps its result as the
     blueprints endpoint's `saveAnswer` does, with `loaded` true when the
@@ -1294,7 +1300,9 @@ proposed-design:
     of `options.environments` with `options.t3codeProjects(name)`. A
     binding save reads `bindings.yml` at `base`, answering `400` when
     `revisionAt(base)` holds no revision, applies `editBindings`, and
-    saves the result as a save of `bindings.yml`. The same-site and
+    saves the result as a save of `bindings.yml`. `Revisions.save` takes
+    any path, so the listener's path check is what keeps every save to the
+    three declaration paths. The same-site and
     content-type checks are the blueprints endpoints'; they move from
     `blueprints-api/request-checks.ts` to
     `http-host/request-checks.ts`, which both listeners import, and the
@@ -1319,19 +1327,24 @@ proposed-design:
   task-field-edit: >-
     `editTaskFields(text, edit)` in `declarations-api/task-field-edit.ts`
     is pure. It parses the text as `editBindings` does and writes the
-    members `task-metadata-declaration` gives a field. `add-field` adds,
-    at the end of the binding's fields, a front-matter field of type
-    string named `field-<n>`, the lowest `n` from 1 that no field of the
-    binding uses, with that name as its front matter key, adding the
-    binding's entry when absent. `set-field` sets each value the edit
-    names on the field at the location and keeps its other members and
-    its place; a changed storage kind removes the settings the new kind
-    does not take. `remove-field` deletes the field's entry. It refuses,
-    with no change, a text that does not parse, a location that names no
-    field (`field-missing`), and a change of the lifecycle field's name,
-    required, or storage, or its removal (`field-locked`). It writes the
-    document as `editBindings` does and answers the edited field's
-    location.
+    members `task-metadata-declaration` gives a task field. `add-field`
+    adds, at the end of the binding's `fields`, a `text` field named
+    `field-<n>`, the lowest `n` from 1 that no field of the binding uses,
+    with no `storage`, so it is stored as the Project field of its name,
+    adding the `fields` mapping when absent. `set-field` sets each value
+    the edit names on the field at the location and keeps its other
+    members and its place: `name` renames the field's key; `storage`
+    writes the `storage` mapping, removing the settings the new kind does
+    not take; `options` writes the option names in order, keeping the
+    other members of each option whose name stays, and of the one option
+    renamed in place; and a `type` other than `single-select` removes
+    `options`. On the lifecycle field, `name` sets `lifecycle.field` and
+    `options` sets `lifecycle.options`. `remove-field` deletes the field's
+    entry. It refuses, with no change, a text that does not parse, a
+    location that names no field (`field-missing`), and a change of the
+    lifecycle field's type, storage, or `whenChanged`, or its removal
+    (`field-locked`). It writes the document as `editBindings` does and
+    answers the edited field's location.
   declarations-public-interface: |-
     `packages/service/src/declarations-api/index.ts` exports exactly these
     names.
@@ -1363,18 +1376,14 @@ proposed-design:
       readonly activeThreads: number;
     }
 
+    /** The members read of the task-metadata module's `DeclarationImpact`; a Project not yet read from GitHub has no entry. */
     export interface DeclarationImpact {
       readonly binding: string;
-      /** Absent while the Project has not been observed on GitHub. */
-      readonly counts?: {
-        readonly creates: number;
-        readonly changes: number;
-        readonly removes: number;
-      };
-      /** What GitHub holds for each declared field, by the field's location. */
-      readonly fields?: readonly {
-        readonly location: string;
-        readonly onGitHub: "present" | "missing" | "differs";
+      readonly changes: readonly { readonly action: "create" | "change" | "remove" }[];
+      readonly fields: readonly {
+        readonly taskField: string | null;
+        readonly lifecycle: boolean;
+        readonly github: "present" | "missing" | "differs";
         readonly detail: string;
       }[];
     }
@@ -1447,7 +1456,8 @@ proposed-design:
     result mappings, the stale-plan answer included; `projectRows` and
     `t3codeRows`, with an associated project, a project the environment
     does not hold, and an unknown environment; `planGroups` with the
-    switch off and on, a drift change, and front matter;
+    switch off and on, a drift change, a change that requires removal,
+    and a declaration-side change;
     `parseProjectReference` and `bindingName`; `fieldGroups`,
     `fieldAtCursor`, `rowFindings`, and `fieldScope`; and `readDraft` and
     `writeDraft` with the Task fields prefix beside a blueprint draft of a
@@ -1473,10 +1483,10 @@ proposed-design:
     Project's page with "Not applied", and the remote holds the binding
     with the earlier change and every comment. In Settings, Task fields,
     it adds a field in the Visual tab and reads it selected in the field
-    panel; sets its storage to a kind that cannot hold its type and reads
-    the "!", the red selects, the finding in the Problems strip, and
-    Publish disabled; sets a type the storage holds and reads the marks
-    clear and the impact; switches to YAML and reads the new field in the
+    panel; sets its type to single-select and reads the "!", the red
+    selects, the `schema` finding for its missing options in the Problems
+    strip, and Publish disabled; adds an option and reads the marks clear
+    and the impact "Pending · 1" for the Project; switches to YAML and reads the new field in the
     text; publishes and reads the success toast, "Published <short
     commit>" at the new commit, and the field in the Visual tab; and `GET
     /api/declarations/source` answers the new text at that commit.

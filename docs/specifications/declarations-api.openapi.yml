@@ -331,8 +331,7 @@ components:
           description: The storage kind as written; a StorageKindName in a valid draft.
         type:
           type: string
-        required:
-          type: boolean
+          description: The type as written; text, number, date, or single-select in a valid draft.
         settings:
           type: object
           additionalProperties:
@@ -341,9 +340,6 @@ components:
           type: array
           items:
             type: string
-        parent:
-          type: string
-          description: The location of the field a nested field belongs to.
         lifecycle:
           type: boolean
         whenChanged:
@@ -363,7 +359,9 @@ components:
         range:
           $ref: "#/components/schemas/Range"
     StorageKindName:
-      enum: [project-field, label, issue-type, issue-field, milestone, front-matter]
+      enum: [project-field]
+    TaskFieldType:
+      enum: [text, number, date, single-select]
     StorageKind:
       type: object
       additionalProperties: false
@@ -374,7 +372,7 @@ components:
         types:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/TaskFieldType"
         settings:
           type: array
           items:
@@ -491,11 +489,9 @@ components:
                     name:
                       type: string
                     type:
-                      type: string
+                      $ref: "#/components/schemas/TaskFieldType"
                     storage:
                       $ref: "#/components/schemas/StorageKindName"
-                    required:
-                      type: boolean
                     settings:
                       type: object
                       additionalProperties:

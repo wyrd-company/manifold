@@ -731,8 +731,9 @@ branch. "Commit and push" commits and pushes.
   (the item it attaches to), Active cards, Completed cards, Environment (the
   environment for its threads), Configuration, and an action.
 - Configuration is a badge: "In sync" (success), "Drift · N" (warning; the
-  configuration was changed outside Manifold), or "Not applied" (info; bound
-  but never applied). The action is "View" when in sync and "Review
+  configuration was changed outside Manifold), "Pending · N" (info; the task
+  fields changed since the last Apply), or "Not applied" (info; bound but
+  never applied). The action is "View" when in sync and "Review
   changes" otherwise.
 
 #### T3code projects
@@ -757,8 +758,8 @@ and "Bind a T3code project" (outline) on the right of the heading.
 A 480px dialog: Project (`org/number` or the Project's URL), Name (the
 binding name, prefilled from the Project), Environment, Portfolio item (the
 item the Project attaches to), T3code projects, and a warning note that Manifold takes
-control of the Project's fields and status options and of the labels, issue
-types, issue fields, and milestones the task fields use. T3code projects
+control of the Project's fields and status options that the task fields
+declare. T3code projects
 has a "Create one from the templates" checkbox, which shows the name and
 path templates in mono with the name and path they give, and under it
 "Associate existing T3code projects", one checkbox per T3code project of
@@ -777,17 +778,18 @@ Project's page with its first Apply.
   (outline) in its header, and one row per associated T3code project: name
   and path in mono, and its active threads. With none it says that Manifold
   adds one each time it creates a T3code project for the Project.
-- Apply on this page is for Projects with drift or never applied.
+- Apply on this page is for Projects with drift, pending changes, or never
+  applied.
 - One card, "What Apply will change", with a switch "Also remove what the
-  task fields do not define" (off by default). Groups, one per storage kind:
-  Project fields, Labels, Org issue types, Org issue fields, Milestones,
-  Front matter. Each group names where it applies and sums its changes.
+  task fields do not define" (off by default). Groups, one per storage kind;
+  Project fields is the one kind. Each group names where it applies and sums
+  its changes.
 - A change row: a 18px mark (`+` create in success, `~` change in warning,
   `−` remove in error), the target in mono, and what happens. A change that
-  undoes drift has a "Drift" badge. With the switch off, a removal row is
-  dimmed with a "Kept" badge and does not count.
-- Front matter has nothing to apply. When issues hold front matter that does
-  not match the task fields, the group says how many, with a link to them.
+  undoes drift has a "Drift" badge, and a change Apply writes into the task
+  fields, for a field set to Accept, has an "Into task fields" badge. With
+  the switch off, a change that needs a removal is dimmed with a "Kept"
+  badge and does not count.
 - With the switch on, "Apply N changes" first asks in a 400px alert dialog
   that names what will be removed; the confirm button is solid error.
 
@@ -812,18 +814,20 @@ changes, with "Review impact".
   bound Projects.
 - The schema editor, in storage mode: rows are called fields, a "Stored as"
   column follows Type, and Visual has a field panel (320px) on the right for
-  the selected field. "Add field" adds a front-matter string field and
-  selects it.
+  the selected field. Columns: Field, Type, Stored as, and a remove button.
+  "Add field" adds a text field stored as a Project field and selects it.
 - Lifecycle state, the field Manifold sets, has a 20px lock icon after the
-  name (tooltip and label "Set by Manifold"). Its name, Required box, and
-  storage are shown disabled, and it has no remove button.
-- A nested row shows "in parent" in the Stored as column.
+  name (tooltip and label "Set by Manifold"). Its name, type, and storage
+  are shown disabled, it has no "When changed on GitHub", and it has no
+  remove button.
 - Selecting a row shows it in the field panel: "Stored as", whether that storage
-  can hold the type, the kind's settings (project or issue field name, label
-  prefix, front matter key), what exists on GitHub for it, its scope, and
-  "When changed on GitHub", a two-option segmented control: Revert or Accept.
-- A field whose type its storage cannot hold is an error: a red "!" on the
-  row, red borders on Type and Stored as, and a Problems box under the table.
+  can hold the type, the kind's settings (the Project field name), a
+  single-select field's options, what exists on GitHub for it, its scope,
+  and "When changed on GitHub", a two-option segmented control: Revert or
+  Accept.
+- A field with a finding is an error: a red "!" on the row, red borders on
+  Type and Stored as when the finding is at either, and a Problems box under
+  the table.
   Publish is disabled while there are errors.
 
 #### Accounts and budget sources
