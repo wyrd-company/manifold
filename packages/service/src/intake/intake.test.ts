@@ -362,13 +362,14 @@ it("does not decide again after a start exception, and refuses decision changes 
   const declared = new DatabaseSync(":memory:");
   try {
     declared.exec(readFileSync("../../docs/specifications/intake-records-table.sql", "utf8"));
-    const columns = (connection: DatabaseSync) =>
+    const schema = (connection: DatabaseSync) =>
       connection
-        .prepare("PRAGMA table_info(intake_record)")
+        .prepare(
+          "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name GLOB 'intake_*' ORDER BY name",
+        )
         .all()
-        .map(({ cid: _cid, ...column }) => column)
-        .sort((a, b) => String(a["name"]).localeCompare(String(b["name"])));
-    expect(columns(db)).toEqual(columns(declared));
+        .map((row) => ({ ...row, sql: String(row["sql"]).replace(/\s+/g, " ").trim() }));
+    expect(schema(db)).toEqual(schema(declared));
     expect(() =>
       db.prepare("UPDATE intake_record SET issue_digest=NULL WHERE issue_node_id='I1'").run(),
     ).toThrow();
@@ -415,6 +416,7 @@ it("preserves the recorded version and item through input-invalid and unavailabl
   });
   const inputNotice = s.escalations.list({ status: "open" })[0]!;
   expect(inputNotice.question).toContain("Start failure: input-invalid");
+  expect(inputNotice.question).toContain("Issue: example-org/widgets#7");
   s.tracked.delete("I1");
   s.intake.mirrorChanged();
   await s.intake.idle();
@@ -451,6 +453,9 @@ it("preserves the recorded version and item through input-invalid and unavailabl
     reason: "commit",
   });
   expect(s.escalations.list({ status: "open" })[0]?.question).toContain("version-unavailable");
+  expect(s.escalations.list({ status: "open" })[0]?.question).toContain(
+    "Issue: example-org/widgets#7",
+  );
   await unavailable.stop();
   s.tracked.set("I1", issue());
   const revision = memoryRevision(second, files());

@@ -39,6 +39,9 @@ it("raises one current failure, retries a changed field once, and withdraws on s
   expect(s.escalations.list({ status: "open" })).toMatchObject([
     { title: "Intake failed", raiser: { kind: "intake-failed", subject: { issue: "I1" } } },
   ]);
+  expect(s.escalations.list({ status: "open" })[0]?.question).toContain(
+    "Issue: example-org/widgets#7",
+  );
   s.intake.mirrorChanged();
   s.intake.discovered(["I1"]);
   await s.intake.idle();

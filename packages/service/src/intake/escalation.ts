@@ -3,12 +3,19 @@
 //   implements: intake
 // ---
 import type { ServiceEscalationHandler, ServiceEscalationRequest } from "../escalations/index.ts";
+import type { GitHubIssue } from "../github-source/index.ts";
 import type { Store } from "../store/index.ts";
 import type { IntakeRecord } from "./types.ts";
 import { records } from "./records.ts";
-export function intakeFailureQuestion(record: IntakeRecord): ServiceEscalationRequest {
+export function intakeFailureQuestion(
+  record: IntakeRecord,
+  issue: GitHubIssue | undefined,
+): ServiceEscalationRequest {
   const failure = record.failure ?? record.startFailure!;
-  const header = `Issue: ${record.issueNodeId}\nProject: ${record.project?.nodeId ?? "unknown"}\nBinding: ${record.binding ?? "unknown"}\nCommit: ${record.commit}\n${record.failure ? "Decision" : "Start"} failure: ${failure.kind}\n${failure.message}\n\n\`\`\`json\n`;
+  const identity = issue
+    ? `${issue.repository}#${issue.number} (${record.issueNodeId})`
+    : record.issueNodeId;
+  const header = `Issue: ${identity}\nProject: ${record.project?.nodeId ?? "unknown"}\nBinding: ${record.binding ?? "unknown"}\nCommit: ${record.commit}\n${record.failure ? "Decision" : "Start"} failure: ${failure.kind}\n${failure.message}\n\n\`\`\`json\n`;
   const detail = JSON.stringify(failure.detail, null, 2);
   const closing = "\n```";
   const cut = "\n```\nDetail was cut.";

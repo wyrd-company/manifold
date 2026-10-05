@@ -2,6 +2,7 @@
 // relationships:
 //   implements: intake
 // ---
+import type { GitHubIssue } from "../github-source/index.ts";
 import { ActorStartError } from "../actor-host/index.ts";
 import { parseBlueprintVersionKey } from "@wyrd-company/manifold-shared";
 import { IntakeError } from "./types.ts";
@@ -31,11 +32,15 @@ export function startIntake(options: IntakeOptions): Intake {
   function withdraw(id: string) {
     options.escalations.withdraw({ kind: "intake-failed", subject: { issue: id } });
   }
-  function raise(record: IntakeRecord, previous: IntakeRecord | undefined) {
+  function raise(
+    record: IntakeRecord,
+    previous: IntakeRecord | undefined,
+    issue: GitHubIssue | undefined,
+  ) {
     const before = previous?.failure ?? previous?.startFailure;
     const after = record.failure ?? record.startFailure!;
     if (before && before.kind !== after.kind) withdraw(record.issueNodeId);
-    options.escalations.raise(intakeFailureQuestion(record));
+    options.escalations.raise(intakeFailureQuestion(record, issue));
   }
   function started(id: string) {
     options.store.connection.transaction(() => {
@@ -47,7 +52,7 @@ export function startIntake(options: IntakeOptions): Intake {
     options.store.connection.transaction(() => {
       const previous = rows.get(id);
       rows.failedStart(id, value);
-      raise(rows.get(id)!, previous);
+      raise(rows.get(id)!, previous, options.tracked.trackedIssue(id)?.issue);
     });
     notifyFailure("start-failed", id);
   }
@@ -172,7 +177,7 @@ export function startIntake(options: IntakeOptions): Intake {
         const currentIssue = options.tracked.trackedIssue(id);
         if (!currentIssue) withdraw(id);
         else if (issueDigest(currentIssue) !== digest) changed = true;
-        else raise(failed, previous);
+        else raise(failed, previous, currentIssue.issue);
       });
       if (changed) {
         queued.add(id);
