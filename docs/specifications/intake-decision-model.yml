@@ -46,8 +46,10 @@ description: |-
   Decision input. The model evaluates over one object:
 
   - `task`: the task facts on the Project of the chosen binding.
-  - `binding`: `name`, `item`, and `environment` of the GitHub Project
-    binding intake chose.
+  - `binding`: the binding facts of the GitHub Project binding intake
+    chose: `name`, `item`, `environment`, and `t3codeProjects`, the ids of
+    the T3code projects on that environment associated with the Project,
+    in the declaration's order.
   - `portfolio`: `items`, every item of the portfolio declaration in force
     in the subtree of the binding's item, that item included, that is not
     archived, each with `id`, `parent`, `title`, and `other`, in the
@@ -65,7 +67,7 @@ description: |-
     blocking: []
     subIssues: []
     parent: null
-  binding: { name: widgets, item: alpha, environment: env-one }
+  binding: { name: widgets, item: alpha, environment: env-one, t3codeProjects: [workspace-1] }
   portfolio:
     items:
       - { id: alpha, parent: null, title: Alpha, other: false }
@@ -86,7 +88,10 @@ description: |-
   output fields `blueprint` and `portfolioItem` returns this shape.
 
   Resolution. The blueprint is the version at the intake's commit:
-  `blueprint` is a path the blueprint loader loaded at that commit. The
+  `blueprint` is a path the blueprint loader loaded at that commit, the
+  process repository's file at the path or, when the repository holds
+  none, the blueprint Manifold bundles there, as `blueprint` states under
+  Bundled blueprints. The
   portfolio item is resolved against the portfolio declaration in force:
 
   1. An absent `portfolioItem` is the binding's item.
@@ -109,11 +114,14 @@ description: |-
     `portfolioItem`, the resolved item; and `blueprintPath`. The actor
     host places it at `context.manifold`.
   - `task`: the task facts, read from the mirror when the actor starts.
+  - `binding`: the binding facts of the decision input, as the intake
+    record's evaluation holds them, so an actor started after a restart
+    starts with the binding its decision saw.
   - `intake`: the output's `data`, or `{}`.
 
   The host validates `manifold` against actor identity and places it at
   `context.manifold`. The blueprint's `schemas.input` describes the machine
-  input: `task` and `intake`. Intake and the host validate these partitions
+  input: `task`, `binding`, and `intake`. Intake and the host validate these partitions
   with the same validator. A refused identity or machine input is
   `input-invalid`. A blueprint reads the issue's state at start from `task`.
 

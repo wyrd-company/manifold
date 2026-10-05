@@ -1,0 +1,41 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables these are.
+  realizes:
+    - default-process
+  references:
+    - store-database-schema
+    - blueprint
+terms:
+  - bundle
+description: >-
+  Defines the tables the bundle module holds in Manifold's store database.
+  `docs/specifications/bundle-tables.sql` is the machine-readable
+  definition: the schema that the module's migration steps produce. The
+  module's owner name is `bundle`, and every table it creates is named
+  `bundle` or `bundle_<name>`. Its steps are applied by the store's
+  `migrate("bundle", steps)`; the module never runs DDL itself. Step 1 is
+  this file's script. Steps are append-only: a change to a table is a new
+  step, and this file is rewritten to the schema all steps produce.
+
+
+  `bundle` holds one row per bundle the service has run with, keyed by
+  its digest, as `blueprint` defines it, with the time it was first
+  recorded in epoch milliseconds. `bundle_file` holds each bundled
+  blueprint of a bundle, keyed by the digest and the path, with its text.
+  A bundle's rows are written together in one transaction and never
+  change, and no row is deleted, so every version key that names a bundle
+  this store recorded resolves to the same texts for the life of the
+  store.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/bundle-tables.sql` runs without error on an empty
+  SQLite database. A test applies the module's exported migration steps
+  in order to an empty database and compares the `type`, `name`,
+  `tbl_name`, and `sql` of every `sqlite_schema` row whose name is
+  `bundle` or starts with `bundle_` with the rows this file produces on a
+  second empty database, with each run of whitespace in `sql` read as one
+  space; they are equal. An `UPDATE` and a `DELETE` of each table fail
+  with the table's message, and a digest that is not 64 lowercase
+  hexadecimal digits and a path outside `blueprints/` are refused.

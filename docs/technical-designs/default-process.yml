@@ -1,0 +1,303 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - blueprint-loader
+    - intake
+    - gates
+    - gate-runtime
+    - agent-threads
+    - escalations
+    - usage-intake
+    - store
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  references:
+    - default-task-blueprint
+    - bundle-tables
+    - blueprint
+    - intake-decision-model
+    - comparator-contract
+    - accounts-declaration
+    - bindings-declaration
+    - portfolio-declaration
+objective: >-
+  Ship the process a new user runs first: a task blueprint Manifold
+  bundles, which releases each task on budget, starts one agent thread on
+  it, moves its card as the agent works, and ends on the agent's handoff,
+  and a starter process repository that binds a first Project to it, so
+  that a user who copies the starter and binds a Project sees an issue go
+  from Todo to Done with its usage settled, and changes any part of that
+  process by committing a file.
+background:
+  current-design: >-
+    Every module a task crosses exists: intake chooses a blueprint by path
+    from the process repository's revision, a gate releases a task through
+    its comparator with a reservation, agent threads create a thread and
+    start a turn from a template, the harness plugin's `handoff` reaches
+    the actor as `agent.handoff`, `github-card-move` sets the lifecycle
+    field, escalations ask a person, and usage intake settles the actor at
+    its end. The blueprint loader loads only the files of the process
+    repository.
+  problems:
+    - >-
+      No blueprint joins the modules, so a new user must write a state
+      machine before Manifold runs anything.
+    - >-
+      Manifold bundles no blueprint, so a default has no name intake can
+      give, no version identity, and no rule for a repository file at the
+      same path.
+    - >-
+      A blueprint's version is its commit and path, which does not pin a
+      text that a Manifold build ships and a later build changes.
+design-challenges:
+  bundled-versions: >-
+    An actor started on a bundled blueprint must restore into the same
+    machine after Manifold is upgraded to a build whose bundle differs,
+    and must read its comparator, templates, and schemas from the process
+    repository commit it started at.
+  a-starting-point: >-
+    The default must run with nothing but the starter's files, and every
+    part of it must be replaceable from the process repository, while
+    nothing in the service depends on its states, statuses, or files.
+  proved-gate: >-
+    The default's gate must lint `proved`, so a token it grants is
+    returned on every run.
+  thread-failure: >-
+    A thread command that fails, a turn that ends without a handoff, a
+    failed session, and a removed thread must each reach a person once,
+    with a way to retry, finish, or stop, and a handoff that arrives after
+    its turn has settled must still finish the task.
+  end-to-end: >-
+    The default must be shown running from intake to its end through the
+    assembled service, with the card moves, the thread, the turn, and the
+    task's estimate, actual, and variance read from what the service
+    wrote.
+proposed-design:
+  high-level-overview: >-
+    Manifold bundles one blueprint, `blueprints/task.yml`, the default
+    task blueprint of `default-task-blueprint`. A bundled blueprint is
+    named by its path, and at a commit the repository's file at that path
+    replaces it, as `blueprint` specifies under Bundled blueprints. The
+    bundle module, `packages/service/src/bundle/`, holds the bundle of
+    the build and records it in the store, so every bundle the service has
+    run with stays loadable; the blueprint loader takes it as its
+    `bundles` option and loads bundled versions keyed
+    `<commit>:<path>@<bundle>`. Intake names the default like any
+    blueprint, and the task input gains the binding facts, so the default
+    finds the T3code project to create its thread in. The starter process
+    repository, `examples/starter/`, holds the manifest, an intake
+    decision model naming `blueprints/task.yml`, the portfolio, the
+    binding, the lifecycle field declaration, an account with capacity,
+    the comparator, the prompt template, and the handoff schema, and every
+    host CLI lint passes on it in `task check`. One service test runs the
+    default from intake to `done` against the fake GitHub API and the fake
+    T3 Code server.
+  public-interface: |-
+    `packages/service/src/bundle/index.ts` exports exactly these names.
+
+    ```ts
+    import type { Store } from "../store/index.ts";
+    import type { Bundle, BundleSource } from "../blueprint-loader/index.ts";
+
+    /** Migration steps for owner `bundle`, applied by the store's migrate. */
+    export const bundleMigrationSteps: readonly string[];
+
+    /** The bundle of this build: the files of `packages/service/bundle/`, by path. */
+    export const shippedBundle: Bundle;
+
+    /** Records `current` in the store unless it holds its digest, and reads every bundle it holds. */
+    export function openBundles(options: { readonly store: Store; readonly current?: Bundle }): BundleSource;
+    ```
+
+    `current` defaults to `shippedBundle`; tests pass a fixture bundle.
+  module-layout: >-
+    The bundled blueprints are YAML files under `packages/service/bundle/`,
+    at their paths: `packages/service/bundle/blueprints/task.yml`.
+    `packages/service/scripts/generate-bundle.mjs` writes
+    `src/bundle/bundle.generated.ts`, which holds each file's text by
+    path, as the shared package generates its price table and schemas, so
+    the service reads no file at run time and a build carries its bundle
+    in its code. A test shows the generated module equals the files.
+    `index.ts` re-exports the public names, `bundles.ts` implements
+    `openBundles`, and `migrations.ts` holds the steps; step 1 is the
+    script of `bundle-tables`. `bundleDigest` is in `packages/shared`,
+    beside the version key functions. Tests import only `index.ts`.
+  bundle-module: >-
+    `openBundles` runs in one `store.connection.transaction`: when the
+    store holds no `bundle` row for `current.digest`, it inserts the row
+    with the store's clock time and one `bundle_file` row per path. It
+    then answers `current` with the given bundle and `at(digest)` from the
+    store, reading a bundle's rows once and keeping it for the life of the
+    process. A bundle is written whole or not at all, and its rows never
+    change, so `at` answers one set of texts for a digest. The service
+    calls it after it migrates the store and before it creates the
+    blueprint loader, so every bundle a stored snapshot names was recorded
+    by the service that started that actor.
+  bundled-versions: >-
+    A bundled version is `{ commit, path, bundle }`: the commit of the
+    revision it was loaded with, the path, and the bundle digest. Its key
+    is `<commit>:<path>@<bundle>`. The commit is what the version reads
+    from the process repository: the gate's comparator, the templates of
+    `thread-create` and `turn-start`, and the handoff schema are read at
+    it, as for a repository version, through the identity's version
+    commit that the actor host's `actorOf` already answers. The text is
+    the bundle's, from the store, so a Manifold upgrade that changes
+    `blueprints/task.yml` leaves running actors on the text they started
+    on and starts new actors on the new text. A version whose bundle the
+    store does not hold is `missing` with reason `bundle`, and the actor
+    host holds the actor as it holds one whose commit is missing. Since
+    gates key their population by blueprint path, tasks on every bundled
+    and repository version at `blueprints/task.yml` share the gate
+    `blueprints/task.yml#todo`, whose comparator comes from the newest
+    loaded version, as `gates` states.
+  intake: >-
+    Intake is unchanged but for the binding facts. Its decision step
+    checks that the output's `blueprint` is a key of the revision's
+    `RevisionLoad`, which holds the bundled versions at paths the
+    repository does not hold, and records that `LoadedBlueprint`'s key; the
+    start step parses the key and loads the version, bundled or not. The
+    decision input's `binding` gains `t3codeProjects`, and the task input
+    gains `binding`, read at start from the decision input the record's
+    evaluation holds, as `intake-decision-model` states. `inputs.ts`
+    builds both. The process manifest is unchanged: it names the intake
+    decision model, and a bundled blueprint is named where the model
+    names any blueprint.
+  default-blueprint: >-
+    `default-task-blueprint` specifies the blueprint whole. It uses only
+    implementations that exist: the gate, `github-card-move`,
+    `thread-create`, `turn-prepare`, `turn-start`, `follow-thread`, and
+    `escalate`, and the `agent.handoff` event. It adds no implementation.
+    Its gate returns its token on exit from `todo`, and every transition
+    out of `todo` leaves it, so no held configuration is a trap and the
+    token lint's verdict is `proved`. It names no runtime mode, so its
+    thread runs with `full-access`, the default of `agent-threads`. It
+    declares no deadline: a turn that runs long waits for its handoff, and
+    a turn that ends without one is a stall. Its card moves have no
+    `onError`: a move that fails holds the actor, and the `held-actor`
+    escalation's `retry` runs the move again from the last good snapshot.
+    Its statuses are `In Progress` and `Done`. Nothing in the service
+    reads its states, statuses, or files.
+  estimates: >-
+    The estimate is the comparator's. The starter's comparator,
+    `comparators/estimate.ts`, reads the task's `Estimate` field, a number
+    field of the Project in US dollars, and reserves it, in millionths of
+    a dollar, the ledger unit of a `usd` account, against the account
+    `agents` for the task's item; a task with no `Estimate` reserves the
+    comparator's default of one dollar. It visits the population oldest
+    first, by `age` then by `id`, skips a `blocked` task, and returns the
+    first task whose estimate its item can reserve now, or `null`. A task
+    whose estimate exceeds what its item can reserve waits while smaller
+    tasks behind it go. The ledger keeps the reservation until the actor
+    ends, and settlement then gives the task's estimate, actual, and
+    variance.
+
+    ```ts
+    import type { Comparator } from "manifold:comparator";
+
+    const account = "agents";
+    const defaultEstimate = 1;
+
+    const comparator: Comparator = ({ population, balances }) => {
+      const oldestFirst = [...population].sort(
+        (a, b) => b.age - a.age || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
+      for (const task of oldestFirst) {
+        if (task.dependencies === "blocked") continue;
+        const field = task.fields["Estimate"] as { number?: unknown } | null | undefined;
+        const dollars = typeof field?.number === "number" && field.number > 0 ? field.number : defaultEstimate;
+        const amount = Math.round(dollars * 1_000_000);
+        if (amount <= (balances[task.item]?.[account] ?? 0))
+          return { task: task.id, reservations: [{ account, amount }] };
+      }
+      return null;
+    };
+    export default comparator;
+    ```
+  starter-repository: |-
+    `examples/starter/` is a process repository a user copies, binds, and
+    edits. Each value a user must change is a generic placeholder with a
+    YAML comment naming what to put there.
+
+    | File | Holds |
+    | --- | --- |
+    | `manifold.yml` | `intake.decisionModel: decision-models/intake.yml` |
+    | `decision-models/intake.yml` | an input node, one decision table with hit policy `first` and one rule with no input column, whose output columns write `blueprint` `"blueprints/task.yml"`, `data.model.instanceId` `"codex"`, and `data.model.model`, and an output node; no `portfolioItem`, so the task takes its binding's item |
+    | `portfolio.yml` | one item, `work`, with the allocation `agents: { guarantee: 100 }` |
+    | `bindings.yml` | one GitHub Project binding, `work-board`: `owner: example-org`, `number: 1`, `environment: workstation`, `item: work`, `t3codeProjects: [example-project-id]` |
+    | `task-metadata.yml` | for `work-board`, the lifecycle field `Status` with the options `Todo`, `In Progress`, and `Done`, in the card move's declaration |
+    | `accounts.yml` | the account `agents`: `unit: usd`, `kind: api`, `capacity: { amount: 100, reset: 2026-01-01T00:00:00Z, every: { months: 1 } }`, and `usage: [{ environment: workstation, provider: codex }]` |
+    | `comparators/estimate.ts` | the comparator above |
+    | `templates/task.njk` | the prompt: the issue as `{{ issue.repository }}#{{ issue.number }}`, an instruction to read it, do the work, and call the `handoff` tool with a summary when done, and the `Estimate` when `fields.Estimate` is set |
+    | `schemas/handoff.yml` | `{ type: object, required: [summary], additionalProperties: false, properties: { summary: { type: string, minLength: 1 } } }` |
+
+    The starter holds no blueprint, so it runs the bundled default, and no
+    `prices.yml`, since the bundled price table prices the models a new
+    user's providers report; a process adds `prices.yml` for a model the
+    bundled table does not price. The intake decision model's comment
+    states that `blueprints/task.yml` is bundled and that a file committed
+    at that path replaces it.
+  starter-checks: >-
+    `packages/host-cli/src/starter.test.ts` runs, through each command's
+    exported function, the lints the host CLI ships over
+    `examples/starter/`: `manifest lint` on the directory, `portfolio
+    lint` on the directory, `usage lint` on `accounts.yml` with no
+    `prices.yml`, `task-metadata lint` with the portfolio's bindings, and
+    `comparator lint` on `comparators/estimate.ts`, and expects no
+    finding from any of them. It also compiles `schemas/handoff.yml` with
+    Ajv for draft 2020-12, renders `templates/task.njk` against a fixture
+    `{ issue, fields }` with an undefined value an error, and runs
+    `blueprint lint --repository examples/starter` on
+    `packages/service/bundle/blueprints/task.yml`, so the bundled
+    blueprint's literal statuses are checked against the starter's
+    declared options. `task check` runs it with the host CLI's tests.
+  convergence: >-
+    `openBundles` twice with one bundle writes it once; a crash inside its
+    transaction writes nothing, and the next start writes the bundle
+    whole. Two builds with one bundle digest share its rows. The default
+    blueprint converges through what it invokes: the gate grants one
+    token per entry of `todo`, `github-card-move` resolves once GitHub
+    holds the status however often it runs, the thread and turn commands
+    carry ids derived from their state entries, so a restart re-sends the
+    same command and the server answers its first receipt, and an
+    escalation raised again for the same entry is the same escalation. A
+    restart while `turn-start` runs sends no second turn. A `retry`
+    answer enters `preparing` again, which is a new entry with a new
+    message id, so it starts one new turn.
+  tests: >-
+    Behaviours proved, each written red before green, with values that are
+    generic and never drawn from Manifold's own domain. In
+    `packages/shared`: the bundled blueprint lints with no finding and no
+    warning, and its gate's verdict is `proved`. In the bundle module,
+    against a real store file: `openBundles` records the current bundle
+    once across two opens, a second open with another bundle keeps both
+    and `at` answers each, and the generated module equals the files under
+    `packages/service/bundle/`. In `foundation.integration.test.ts`, the
+    assembled service in a child process takes the files of
+    `examples/starter/`, with `bindings.yml`, `task-metadata.yml`, and
+    `accounts.yml` set to the fixture's owner, Project, environment, and
+    provider, committed to the fixture remote, and an issue added to the
+    fake GitHub Project with `Estimate` 0.00001, 10 millionths: intake
+    records `blueprints/task.yml` as a bundled version whose key ends in
+    the shipped bundle's digest; the gate reserves 10 against `work`; the
+    fake GitHub API records the move to `In Progress`; the fake T3 Code
+    server holds one thread in `example-project-id` with the title
+    `<repository>#<number>` and one turn whose prompt names the issue; a
+    scripted `handoff` call for the thread, through the harness plugin's
+    tool endpoint, reaches the actor as `agent.handoff`; the fake GitHub
+    API records the move to `Done`; the snapshot is `done` with the handoff in its output; and after the host
+    CLI pushes the fixture call for the thread, the ledger gives the task
+    `estimate` 10, `actual` 8, and `variance` -2, settled. A second run of
+    the same test shape shows a turn that the fake server settles with no
+    handoff raising the `Agent thread stopped` escalation, whose `retry`
+    starts a second turn in the same thread, and a handoff then finishing
+    the task. A third shows a card move the fake GitHub API refuses
+    holding the actor with a `held-actor` escalation whose `retry` moves
+    the card. The live check runs the starter, bound to the test Project
+    of the GitHub test environment, from intake through both card moves
+    and records which steps ran against real GitHub.
+  dependencies: >-
+    No new third-party library. The default blueprint uses the agent
+    tools' `agent.handoff` event and handoff schema declaration, the card
+    move's `github-card-move` and lifecycle field declaration in
+    `task-metadata.yml`, and the account capacity declaration in
+    `accounts.yml`, each as its owner specifies it.

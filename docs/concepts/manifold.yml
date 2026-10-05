@@ -25,7 +25,9 @@ properties:
     is referenced by name, so the file is serializable and diffable. Every
     blueprint declares an input schema and an output schema and ends at a
     final state. A blueprint is the only source of a state machine; the
-    defaults Manifold ships are blueprints it bundles.
+    defaults Manifold ships are blueprints it bundles, each at a path
+    under `blueprints/` that a file of the process repository at the same
+    path replaces.
   actor: >-
     A running instance of actor logic. A state machine actor runs a
     blueprint: Manifold spawns one per issue on a bound Project, in any
@@ -60,10 +62,12 @@ properties:
     errored snapshot over a good one.
   migration: >-
     A blueprint version is a blueprint at one process repository commit,
-    named by the commit and the blueprint's path, so one commit pins the
-    blueprint and every file it names. State names are identity. Migration
-    is from a version at a parent commit to the same path at a child
-    commit, only in states that are waiting on events, with
+    named by the commit and the blueprint's path, and for a bundled
+    blueprint also by the bundle its text came from, so one version key
+    pins the blueprint and every file it names. State names are identity.
+    Migration is from a version to a later version at the same path, at a
+    child commit or from a later bundle, the repository's file or the
+    bundled one, only in states that are waiting on events, with
     version-specific migration paths where schemas changed.
   task: >-
     A GitHub issue on a bound Project. Its metadata lives on GitHub in six

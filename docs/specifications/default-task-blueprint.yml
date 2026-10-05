@@ -1,0 +1,377 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` names the design that ships this blueprint.
+  realizes:
+    - default-process
+  references:
+    - blueprint
+    - agent-threads
+    - escalation-contract
+    - comparator-contract
+    - intake-decision-model
+    - github-events
+    - t3code-thread-events
+terms:
+  - bundle
+  - gate
+  - comparator
+  - estimate
+  - reservation
+  - token
+  - escalation
+description: |-
+  Defines the default task blueprint, the blueprint Manifold bundles at
+  `blueprints/task.yml`: what it runs, the input it takes, the files of the
+  process repository it reads, the lifecycle statuses it moves a card to,
+  and its machine. The file is
+  `packages/service/bundle/blueprints/task.yml`, a blueprint document of
+  `blueprint`, and it lints with no finding and no warning under
+  `manifoldImplementationNames`, its one gate `proved`.
+
+  Process. A task waits in `todo` until its gate grants it a token. On the
+  token the card moves to `In Progress`, the actor creates one agent
+  thread in the binding's T3code project and starts one turn in it from
+  the prompt template. When the agent hands off, the card moves to `Done`
+  and the actor ends. When the thread fails, the actor raises an
+  escalation and waits for the answer: `retry` starts a new turn, `done`
+  moves the card to `Done` and ends, and `stop` ends with the card where
+  it is. An issue closed while it waits in `todo` ends the actor with no
+  card move and no reservation. An issue closed after the token is left
+  to the handoff, since the agent's own pull request may close the issue
+  before the agent hands off.
+
+  Input. The machine input is the task input of `intake-decision-model`:
+
+  - `task`: the task facts. The blueprint reads `task.issue` and
+    `task.fields`.
+  - `binding`: the binding facts. The thread is created in the T3code
+    project `binding.t3codeProjects[0]`.
+  - `intake`: the intake decision model's `data`. `intake.model`,
+    required, is the model selection of `agent-threads` that the thread
+    runs: `{ instanceId, model }` and optional `options`.
+
+  `schemas.input` requires `task`, `binding` with a `t3codeProjects` array,
+  and `intake` with `model`, so an intake whose decision model gives no
+  model fails as `input-invalid` and no actor starts.
+
+  Repository files. The blueprint names these paths, read from the process
+  repository at its version's commit:
+
+  - `comparators/estimate.ts`: the comparator of the `todo` gate, of
+    `comparator-contract`.
+  - `templates/task.njk`: the prompt of the turn, a Nunjucks template
+    rendered against `{ issue, fields }`, the task's issue reference and
+    its current field values.
+  - `schemas/handoff.yml`: the handoff schema, a JSON Schema in YAML that
+    the agent's `handoff` argument validates against before it reaches the
+    actor as `agent.handoff`. The blueprint names it as the harness
+    plugin's handoff schema declaration specifies.
+
+  A process that runs the blueprint holds these files; the starter process
+  repository holds all three. A missing comparator stops the gate, as
+  `gate-runtime` states. A missing template fails the turn with
+  `template`, which the blueprint escalates.
+
+  Statuses. The card moves to the options `In Progress` and `Done` of the
+  lifecycle field the process repository declares for the actor's
+  Project, through `github-card-move`. These are the default options of a
+  GitHub Project's Status field, after `Todo`. A Project whose lifecycle
+  field names them otherwise runs a copy of this blueprint, as `blueprint`
+  states under Bundled blueprints.
+
+  Gate. `todo` carries the gate `blueprints/task.yml#todo` with
+  `comparator: comparators/estimate.ts`, `reservation: true`, and
+  `return: exit`. The comparator reserves the task's estimate against its
+  portfolio item. The token returns as the actor leaves `todo`, so the
+  gate limits what is reserved, not how many tasks run; the reservation
+  stays until the actor settles at its end. `context.fields` holds the
+  task's field values, set from `task.fields` at start and updated by
+  every `github.project-item.field-changed` of the actor's Project, so the
+  comparator reads a field set after the issue was added. No
+  `dependencies` region is declared, so every task is `clear` to the
+  comparator.
+
+  Thread failures. The actor takes these as the thread failing, each into
+  `active.stalled` with `context.stall` naming it:
+
+  - an `onError` of `thread-create` or `turn-start`, with the agent thread
+    error's `kind` and `message`;
+  - `t3.turn.settled` of its own turn, guarded on the thread and message
+    ids it holds, in any `state`, since an agent that finishes its turn
+    without a handoff has stopped;
+  - `t3.session.failed` of its thread;
+  - `t3.thread.archived` or `t3.thread.deleted` of its thread, which also
+    clears `context.thread`, so a `retry` creates a new thread.
+
+  `active.stalled` invokes `escalate` with the title `Agent thread
+  stopped`, a question naming the issue and the stall, and the choices
+  `retry` (`Retry`), `done` (`Mark done`), and `stop` (`Stop`), to the
+  `default` destination. `retry` enters `active.working.preparing` when
+  the actor holds a thread, so the new turn runs in the same thread, and
+  `active.working` otherwise. An `agent.handoff` of its thread is taken in
+  `active.working` and in `active.stalled`, so a handoff that arrives
+  after its turn settled ends the escalation and finishes the task.
+
+  Card move failures. A `github-card-move` that fails has no `onError`.
+  The actor's snapshot goes to status `error`, the service holds the
+  actor and raises its `held-actor` escalation, and `retry` restores the
+  last good snapshot, in which the moving state is active, so the move
+  runs again.
+
+  Machine. Expression references are shown in full.
+
+  ```yaml
+  machine:
+    id: task
+    initial: todo
+    context:
+      task: {}
+      fields: {}
+      project: ""
+      model: {}
+      thread: ""
+      turn: ""
+      stall: null
+      handoff: null
+    on:
+      github.project-item.field-changed:
+        guard:
+          type: expression.guard
+          params:
+            expression: event.project.nodeId = context.manifold.project
+        actions:
+          - type: expression.assign
+            params:
+              expression: '{ "fields": $merge([context.fields, { event.field.name: event.to }]) }'
+    states:
+      todo:
+        entry:
+          - type: expression.assign
+            params:
+              expression: >-
+                { "task": event.input.task, "fields": event.input.task.fields,
+                  "project": event.input.binding.t3codeProjects[0],
+                  "model": event.input.intake.model }
+        meta:
+          gate:
+            comparator: comparators/estimate.ts
+            return: exit
+            reservation: true
+        on:
+          token: starting
+          github.issue.closed:
+            target: closed
+            guard:
+              type: expression.guard
+              params:
+                expression: event.issue.nodeId = context.manifold.issue
+      starting:
+        invoke:
+          id: move-in-progress
+          src: github-card-move
+          input: { status: In Progress }
+          onDone: active
+      active:
+        initial: working
+        on:
+          agent.handoff:
+            target: finishing
+            guard:
+              type: expression.guard
+              params:
+                expression: event.threadId = context.thread
+            actions:
+              - type: expression.assign
+                params:
+                  expression: '{ "handoff": event.handoff }'
+        states:
+          working:
+            initial: opening
+            on:
+              t3.turn.settled:
+                target: stalled
+                guard:
+                  type: expression.guard
+                  params:
+                    expression: event.threadId = context.thread and event.messageId = context.turn
+                actions:
+                  - type: expression.assign
+                    params:
+                      expression: '{ "stall": { "kind": "turn-" & event.state, "message": "The turn ended without a handoff." } }'
+              t3.session.failed:
+                target: stalled
+                guard:
+                  type: expression.guard
+                  params:
+                    expression: event.threadId = context.thread
+                actions:
+                  - type: expression.assign
+                    params:
+                      expression: '{ "stall": { "kind": "session-failed", "message": $string(event.error) } }'
+              t3.thread.archived:
+                target: stalled
+                guard:
+                  type: expression.guard
+                  params:
+                    expression: event.threadId = context.thread
+                actions:
+                  - type: expression.assign
+                    params:
+                      expression: '{ "thread": "", "stall": { "kind": "thread-archived", "message": "The thread was archived." } }'
+              t3.thread.deleted:
+                target: stalled
+                guard:
+                  type: expression.guard
+                  params:
+                    expression: event.threadId = context.thread
+                actions:
+                  - type: expression.assign
+                    params:
+                      expression: '{ "thread": "", "stall": { "kind": "thread-deleted", "message": "The thread was deleted." } }'
+            states:
+              opening:
+                invoke:
+                  id: open-thread
+                  src: thread-create
+                  input:
+                    type: expression.map
+                    params:
+                      expression: >-
+                        { "project": context.project,
+                          "title": "{{ issue.repository }}#{{ issue.number }}",
+                          "values": { "issue": context.task.issue },
+                          "model": context.model }
+                  onDone:
+                    target: preparing
+                    actions:
+                      - follow-thread
+                      - type: expression.assign
+                        params:
+                          expression: '{ "thread": event.output.threadId }'
+                  onError:
+                    target: "#task.active.stalled"
+                    actions:
+                      - type: expression.assign
+                        params:
+                          expression: '{ "stall": { "kind": event.error.kind, "message": event.error.message } }'
+              preparing:
+                invoke:
+                  id: prepare-turn
+                  src: turn-prepare
+                  onDone:
+                    target: prompting
+                    actions:
+                      - type: expression.assign
+                        params:
+                          expression: '{ "turn": event.output.messageId }'
+              prompting:
+                invoke:
+                  id: start-turn
+                  src: turn-start
+                  input:
+                    type: expression.map
+                    params:
+                      expression: >-
+                        { "threadId": context.thread, "messageId": context.turn,
+                          "prompt": "templates/task.njk",
+                          "values": { "issue": context.task.issue, "fields": context.fields } }
+                  onDone: waiting
+                  onError:
+                    target: "#task.active.stalled"
+                    actions:
+                      - type: expression.assign
+                        params:
+                          expression: '{ "stall": { "kind": event.error.kind, "message": event.error.message } }'
+              waiting: {}
+          stalled:
+            invoke:
+              id: ask
+              src: escalate
+              input:
+                type: expression.map
+                params:
+                  expression: >-
+                    { "title": "Agent thread stopped",
+                      "question": "The agent thread for " & context.task.issue.repository & "#" &
+                        $string(context.task.issue.number) & " stopped (" & context.stall.kind & "): " &
+                        context.stall.message,
+                      "choices": [
+                        { "id": "retry", "label": "Retry" },
+                        { "id": "done", "label": "Mark done" },
+                        { "id": "stop", "label": "Stop" } ] }
+            on:
+              escalation.answered:
+                - target: "#task.active.working.preparing"
+                  guard:
+                    type: expression.guard
+                    params:
+                      expression: event.answer.choice = "retry" and context.thread != ""
+                - target: "#task.active.working"
+                  guard:
+                    type: expression.guard
+                    params:
+                      expression: event.answer.choice = "retry"
+                - target: "#task.finishing"
+                  guard:
+                    type: expression.guard
+                    params:
+                      expression: event.answer.choice = "done"
+                - target: "#task.stopped"
+                  guard:
+                    type: expression.guard
+                    params:
+                      expression: event.answer.choice = "stop"
+      finishing:
+        invoke:
+          id: move-done
+          src: github-card-move
+          input: { status: Done }
+          onDone: done
+      done:
+        type: final
+        output:
+          type: expression.map
+          params:
+            expression: '{ "outcome": "done", "handoff": context.handoff }'
+      stopped:
+        type: final
+        output:
+          type: expression.map
+          params:
+            expression: '{ "outcome": "stopped", "handoff": context.handoff }'
+      closed:
+        type: final
+        output:
+          type: expression.map
+          params:
+            expression: '{ "outcome": "closed", "handoff": null }'
+  ```
+
+  Schemas. `schemas.events` declares `token`,
+  `github.project-item.field-changed`, `github.issue.closed`,
+  `agent.handoff`, `t3.turn.settled`, `t3.session.failed`,
+  `t3.thread.archived`, `t3.thread.deleted`, and `escalation.answered`,
+  each with a schema that the event its owner publishes satisfies;
+  `agent.handoff` takes any `handoff` value, since the handoff schema has
+  validated it. `schemas.actors` declares `github-card-move`,
+  `thread-create`, `turn-prepare`, `turn-start`, and `escalate` with
+  schemas their contracts satisfy. `schemas.context` holds the context
+  above with `manifold`, and `schemas.output` requires `outcome`, one of
+  `done`, `stopped`, and `closed`, and `handoff`.
+
+  Ids. The thread, the message, and the command ids derive from the
+  actor id and the entry of `opening`, `preparing`, and `prompting`, as
+  `agent-threads` defines, so a `retry` gives a new turn and the same
+  entry after a restart gives the same one.
+format: json-schema
+validation-criteria: >-
+  A shared test lints `packages/service/bundle/blueprints/task.yml` with
+  `lintBlueprint` and `manifoldImplementationNames` and shows no finding,
+  no warning, and the verdict `proved` for the gate at `todo`. Its machine
+  equals the machine above, parsed. A blueprint loader test shows
+  `loadRevision` of a revision with no `blueprints/task.yml` loads it as a
+  bundled version. The service test of `default-process` runs it from
+  intake to `done`, and to `stopped` through a stall, against the fake
+  GitHub API and the fake T3 Code server. Values in tests are generic and
+  never drawn from Manifold's own domain.

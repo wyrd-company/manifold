@@ -8,5 +8,6 @@ relationships:
 title: Blueprint version
 description: >-
   A blueprint as it is at one process repository commit, identified by the
-  commit and the blueprint's path. An actor runs one blueprint version from
+  commit and the blueprint's path, and for a bundled blueprint also by the
+  bundle its text came from. An actor runs one blueprint version from
   start to end unless it is migrated.

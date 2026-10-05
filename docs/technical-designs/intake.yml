@@ -340,7 +340,8 @@ proposed-design:
        `item-unknown`, `item-archived`, or `item-outside-binding`.
     6. The task input of `intake-decision-model`, built from the same
        tracked issue, validates with the actor host's validator: `manifold`
-       against actor identity, and the machine input (`task` and `intake`)
+       against actor identity, and the machine input (`task`, `binding`, and
+       `intake`)
        against the blueprint's `schemas.input`, else `input-invalid` with
        the validator's errors.
 

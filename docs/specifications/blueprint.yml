@@ -26,6 +26,25 @@ description: |-
   is the repository-relative path with `/` separators, such as
   `blueprints/parcels/delivery.yml`.
 
+  Bundled blueprints. Manifold bundles blueprints at paths of the same
+  form: the default task blueprint is `blueprints/task.yml`, as
+  `default-task-blueprint` specifies. A bundled blueprint is named by its
+  path wherever a blueprint path is named, such as the intake decision
+  model's `blueprint`. At a commit, a path names the process repository's
+  file when the repository holds one there, whether or not it lints
+  clean, and the bundled blueprint otherwise. A repository file therefore
+  replaces the bundled blueprint at its path: a process customizes a
+  bundled blueprint by committing its edited copy at the same path, and a
+  process that wants both commits its copy at another path. A bundled
+  blueprint reads every other file it names, a comparator, a template, or
+  a schema, from the process repository at the commit.
+
+  Bundle. The bundle is the set of bundled blueprints of one Manifold
+  build, by path. Its digest is the SHA-256 of the UTF-8 bytes of each
+  path and its file's text, each followed by U+0000, with paths in code
+  point order, written as 64 lowercase hexadecimal digits. One digest
+  names one set of texts.
+
   Document. The file is one YAML 1.2 document under the core schema, with
   no custom tags and unique mapping keys. Its value round-trips through
   JSON unchanged. The document is a mapping with these keys:
@@ -160,7 +179,10 @@ description: |-
   Child blueprints. An invoke whose `src` is a blueprint path,
   `blueprints/` followed by a path ending in `.yml` or `.yaml` as under
   Location, invokes that blueprint as a child state machine. The child
-  runs the version at its parent's commit. The invoke's `input` is the
+  runs the version at its parent's commit, from its parent's source: a
+  repository blueprint's child is the repository's file at the path, and
+  a bundled blueprint's child is the bundled blueprint at the path in its
+  parent's bundle. The invoke's `input` is the
   child's input, its `onDone` takes the child's output, and its `onError`
   takes the child's error. A child that cannot run fails the invoke at
   once with an error that validates against
@@ -337,10 +359,16 @@ description: |-
   ```
 
   Version identity. The loader gives each blueprint it loads a version:
-  the full id of the process repository commit it was read at, and its
-  path. The version key is `<commit>:<path>`, which is unambiguous because
-  a commit id holds no `:`. A blueprint version is immutable: the same
-  commit and path always give the same document. The service saves every
+  the full id of the process repository commit it was read at, its path,
+  and, for a bundled blueprint, `bundle`, the digest of the bundle its
+  text came from. The commit of a bundled version is the commit it runs
+  against, whose files it reads. The version key is `<commit>:<path>`
+  for a repository blueprint and `<commit>:<path>@<bundle>` for a bundled
+  one, which is unambiguous because a commit id holds no `:` and a path
+  ends in `.yml` or `.yaml`. A blueprint version is immutable: the same
+  key always gives the same document. The service keeps the text of every
+  bundle it has run with, so a version whose bundle a later Manifold build
+  no longer ships still builds. The service saves every
   snapshot of a state machine actor with its version key, so a restored
   actor runs the version it started on.
 
@@ -468,6 +496,13 @@ description: |-
         readonly findings: readonly BlueprintFinding[];
         readonly warnings: readonly BlueprintFinding[];
       };
+  interface BlueprintVersion {
+    readonly commit: string;
+    readonly path: string;
+    /** The bundle digest of a bundled blueprint; absent for a repository blueprint. */
+    readonly bundle?: string;
+  }
+  function bundleDigest(files: ReadonlyMap<string, string>): string;
   function lintBlueprint(
     path: string,
     text: string,
@@ -493,7 +528,8 @@ description: |-
   `agentToolDefinitions`, the name, description, and input schema of each
   agent tool, from the `agent-tools` schema asset, which the host CLI
   harness plugin serves. `parseBlueprintVersionKey` returns
-  `undefined` for a string that is not a version key.
+  `undefined` for a string that is not a version key. `bundleDigest`
+  computes the digest of a bundle from its texts by path.
 format: json-schema
 validation-criteria: >-
   Every blueprint, blueprint version, and blueprint finding validates
@@ -529,8 +565,11 @@ validation-criteria: >-
   located in the document. A
   clean fixture returns the parsed document, and the same call twice
   returns the same result. A test round-trips a version through its key,
-  including a path that contains `:`, and shows that a string with no
-  commit id is not a key. Lint tests show that an invoke `src` of
+  including a path that contains `:` and a bundled version, and shows
+  that a string with no commit id, and one whose bundle digest is not 64
+  hexadecimal digits, is not a key. A test computes `bundleDigest` of a
+  fixture bundle and compares it with a fixed expected digest, and shows
+  that the digest does not depend on the map's insertion order. Lint tests show that an invoke `src` of
   `blueprints/a.yml` lints clean with no actor names given, that a
   blueprint declaring `agent.handoff` lints clean with
   `manifoldImplementationNames` and one declaring `agent.hand-off` gives an

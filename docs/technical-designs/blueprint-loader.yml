@@ -7,6 +7,7 @@ relationships:
     - store
     - token-lint
     - task-metadata
+    - default-process
 objective: >-
   Turn the blueprints in a process repository into XState v5 state machines
   the engine runs, one per blueprint version, so that a pushed change to a
@@ -44,6 +45,10 @@ design-challenges:
   restore: >-
     A mismatch between a snapshot and its machine must be found before
     XState sees it, and handed to the caller as data.
+  bundled: >-
+    Manifold ships its default blueprints in its own build, and a
+    restored actor must run the bundled text it started on after a
+    Manifold upgrade changes that text.
   later-names: >-
     Gates and task actors register implementations in a later wave. The
     loader must accept names it does not know about today without a change
@@ -63,7 +68,10 @@ proposed-design:
     saved with that key is restored into the same machine, after
     `checkRestore` compares the snapshot with the machine. The host CLI
     command `manifold-host blueprint lint` runs `lintBlueprint` on files
-    with the names Manifold ships.
+    with the names Manifold ships. A revision's blueprints are its own
+    files under `blueprints/` and, at each path the repository does not
+    hold, the blueprint of the current bundle, which the loader loads as a
+    bundled version of the same commit, as `blueprint` specifies.
   public-interface: |-
     `packages/service/src/blueprint-loader/index.ts` exports exactly these
     names. `ProcessRepositoryRevision` is the process repository module's
@@ -89,6 +97,22 @@ proposed-design:
       readonly configurationBound?: number;
       /** Every state node entry of every machine the loader builds. */
       onStateEntry?(entry: StateEntry): void;
+      /** The bundled blueprints: the current bundle, and every bundle the store keeps. */
+      readonly bundles: BundleSource;
+    }
+
+    export interface BundleSource {
+      /** The bundle of this Manifold build. */
+      readonly current: Bundle;
+      /** The bundle of a digest, or undefined when the store keeps none. */
+      at(digest: string): Bundle | undefined;
+    }
+
+    export interface Bundle {
+      /** `bundleDigest(files)`. */
+      readonly digest: string;
+      /** Each bundled blueprint's text, by path. */
+      readonly files: ReadonlyMap<string, string>;
     }
 
     export interface StateEntry {
@@ -121,7 +145,7 @@ proposed-design:
     export type VersionLoad =
       | { readonly status: "loaded"; readonly blueprint: LoadedBlueprint }
       | { readonly status: "invalid"; readonly findings: readonly BlueprintFinding[] }
-      | { readonly status: "missing"; readonly reason: "commit" | "file" };
+      | { readonly status: "missing"; readonly reason: "commit" | "file" | "bundle" };
 
     export interface LoadedBlueprint {
       readonly version: BlueprintVersion;
@@ -163,8 +187,13 @@ proposed-design:
     paths ending in `.yml` or `.yaml`, sorts them by code point, and loads
     each path at `revision.commit` as `version` does. A path whose text
     `read` returns as `undefined` between the list and the read is left
-    out. The result holds each path once, in `blueprints` when it loaded
-    and in `failures` when it did not.
+    out. It then loads, as `version` does, each path of `bundles.current`
+    that the list does not hold, as the version `{ commit, path, bundle:
+    bundles.current.digest }`. A repository path is never also loaded
+    from the bundle, so a repository file that fails the lint is in
+    `failures` and its bundled blueprint is not loaded. The result holds
+    each path once, in `blueprints` when it loaded and in `failures` when
+    it did not.
   loading: >-
     Loading one version runs four steps. It reads the file through the
     revision, and reads `task-metadata.yml` and `bindings.yml` at the same
@@ -243,7 +272,12 @@ proposed-design:
     with `revisionAt(v.commit)`, loads `v.path` from it, and caches the
     result: `missing` with reason `commit` when `revisionAt` returns
     `undefined`, `missing` with reason `file` when `read` returns
-    `undefined`, `invalid` with the findings, or `loaded`. `loadRevision`
+    `undefined`, `invalid` with the findings, or `loaded`. A bundled
+    version, one with `bundle`, opens the revision the same way, since its
+    gate, templates, and schemas read that commit, and reads its text from
+    `bundles.at(v.bundle)`: `missing` with reason `bundle` when the source
+    holds no bundle of that digest, and `missing` with reason `file` when
+    the bundle holds no file at the path. `loadRevision`
     goes through the same cache, so a version loaded by a revision and the
     same version asked for by key are one machine. A `missing` result is
     not cached, so a commit the repository fetches later loads on the next
@@ -253,14 +287,17 @@ proposed-design:
   child-blueprints: >-
     An invoke whose `src` is a blueprint path invokes that blueprint as a
     child, as `blueprint` specifies. Building a version builds every child
-    blueprint it references at the same commit, through the same cache and
-    the same revision, and binds each child's machine as actor logic named
+    blueprint it references at the same commit, from the same source,
+    through the same cache and the same revision: a repository version's
+    child is the repository version at the path, and a bundled version's
+    child is the bundled version at the path in the same bundle, and binds each child's machine as actor logic named
     by its path, so the child's snapshot is restored inside its parent's
     and `checkRestore` checks it against the child's machine. A reference
     that cannot run is bound to a promise logic that rejects at once with
     `{ "type": "child-blueprint", "path": <path>, "reason": <reason> }`,
     and with `findings` for reason `invalid`, so the parent takes it
-    through `onError`: `missing` when the file is not at the commit,
+    through `onError`: `missing` when the file is not at the commit, or
+    not in the bundle for a bundled parent,
     `invalid` when the child fails the lint, `cycle` when the child's own
     references at the commit reach the parent again, and `schemas` when an
     `input` or `output` schema the parent declares under `schemas.actors`
@@ -362,4 +399,15 @@ proposed-design:
     exactly the names and `raises` declarations of `manifoldImplementationNames`. A registry guard named `in` throws; a `potential` gate loads
     with its warning and token lint result, a `violation` is in `failures`,
     and a graph exceeding a bound of 10 loads with a `token-unknown` warning.
-    Each test is written red before green.
+    Bundle tests use a fixture bundle of two generic blueprints, one
+    invoking the other: a revision that holds neither loads both as bundled
+    versions whose keys end in the bundle's digest; a revision that holds
+    a clean file at one path loads the repository version there and the
+    bundled version at the other; a revision whose file at a bundled path
+    fails the lint returns it in `failures` and loads no bundled blueprint
+    at that path; the bundled parent binds the bundled child even when the
+    revision holds a file at the child's path; `version` of a bundled key
+    whose bundle `at` no longer answers returns `missing` with reason
+    `bundle`, and loads from a bundle source whose `at` answers it while
+    `current` is another bundle. Each test is written red before
+    green.
