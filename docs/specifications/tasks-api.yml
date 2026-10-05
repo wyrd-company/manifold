@@ -72,10 +72,14 @@ description: |-
   - `portfolioItem`: the string at `context.manifold.portfolioItem` of the
     task actor's snapshot, or absent.
   - `actor`: the task actor, or absent when the store holds no snapshot
-    for its id. `{ status, states }`, where `status` is `held` when the
-    store holds an errored snapshot for the actor, else the snapshot's
-    status, `active`, `done`, or `stopped`; and `states` is the leaf state
-    paths of the snapshot's state value, as `actors-api` defines them.
+    for its id. `{ status, states }`, where `status` is `held` while the
+    router holds the actor, else the stored snapshot's status, `active`,
+    `done`, or `stopped`; and `states` is the leaf state paths of the
+    stored snapshot's state value, as `actors-api` defines them. The
+    router's held state is the current one: an actor whose restore the
+    host refused is held with no errored snapshot, and an actor released
+    and recovered is not held though the store keeps its errored
+    snapshot for inspection.
   - `openEscalations`: the number of the task's escalations whose status
     is `open`.
 
@@ -143,8 +147,11 @@ validation-criteria: >-
   its response schema in the OpenAPI document. The fixtures include two
   bound Projects and one archived binding, one Project with no lifecycle
   declaration, one issue on both Projects, one archived item, one item
-  whose status is not set, one task with no actor, one held actor, one
-  settled actor with actuals on two accounts, a blueprint escalation, a
+  whose status is not set, one task with no actor, one actor the
+  router holds after a refused restore with no errored snapshot, one
+  actor the router does not hold whose errored snapshot the store keeps
+  after a successful release, one settled actor with actuals on two
+  accounts, a blueprint escalation, a
   `held-actor` escalation, an `intake-failed` escalation, and a
   `stranded-token` escalation of the task, and an escalation of another
   actor. The test checks each field stated above, the order of projects,

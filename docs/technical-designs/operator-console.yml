@@ -20,8 +20,10 @@ objective: >-
   place in the service that serves them and the API the console reads, and a
   shell in T3 Code's visual language that every later screen fills, so that
   an operator opens the console from the service's own HTTP host, moves
-  between every screen `DESIGN.md` lists, and sees every active actor with
-  its blueprint, current state, and environment.
+  between every screen `DESIGN.md` lists, sees every active actor with
+  its blueprint, current state, and environment, sees where every task
+  of each bound Project is, and reads and answers a task's escalations,
+  state, threads, and usage on its Task page.
 background:
   current-design: >-
     `packages/console` holds a `package.json` and a README, and no framework.
@@ -47,7 +49,7 @@ design-challenges:
     service's tests drive the built console. The build and test order must
     follow from the package graph, with no step a person remembers.
   shell-before-screens: >-
-    Every screen but one is built in a later task. The shell must give
+    Most screens are built in later tasks. The shell must give
     each its route, its navigation entry, and its title now, so that a later
     task replaces one component and touches nothing else.
   browser-proof: >-
@@ -63,10 +65,16 @@ proposed-design:
     `/console` with `mount`, and the actors read endpoint, specified in
     `actors-api`, under `/api/actors` with `mount`. The shell is
     `AppShell` with the header, the sidebar, and the content region from
-    `DESIGN.md`. Every sidebar screen has a route; the Actors screen reads
-    `GET /api/actors`, and every other screen shows its title row and an
-    empty state. The console and API are served without authentication;
-    access control belongs to the deployment.
+    `DESIGN.md`. Every sidebar screen has a route. The Actors screen reads
+    `GET /api/actors`. The Board reads `GET /api/tasks` and shows the tasks
+    of each bound Project in lanes by lifecycle status, and a card opens
+    the Task page, which reads `GET /api/tasks/{actorId}` and answers the
+    task's open escalations through `POST /api/escalations/{id}/answer`.
+    The tasks read model, `packages/service/src/tasks/`, specified in
+    `tasks-api`, is mounted by service assembly under `/api/tasks` with
+    `mount`. Every other screen shows its title row and an empty state.
+    The console and API are served without authentication; access control
+    belongs to the deployment.
   console-package: >-
     `packages/console` holds `index.html`, `vite.config.ts`, `src/`, and
     `public/`. Its scripts are `build` (`vp build`, after building
@@ -309,7 +317,9 @@ proposed-design:
     export function openTasks(options: TasksOptions): Tasks;
 
     export interface TasksOptions {
-      readonly store: Pick<Store, "loadSnapshot" | "loadErroredSnapshot">;
+      readonly store: Pick<Store, "loadSnapshot">;
+      /** The router's `held`: whether the router holds the actor now. */
+      held(actorId: string): boolean;
       /** The GitHub Project bindings in force that are not archived, in declaration order. */
       boundProjects(): readonly TasksBoundProject[];
       /** The GitHub source's `trackedIssueIds` and `trackedIssue`. */
@@ -368,8 +378,9 @@ proposed-design:
     it, as the lifecycle field declaration specifies. `github` is the
     GitHub source, `actorUsage` is `portfolio.ledger.actorUsage`,
     `listEscalations` is the escalations module's `list`, `thread` is the
-    T3 Code source's `thread`, and `tokenHolder` is the gates module's
-    `tokenHolder`.
+    T3 Code source's `thread`, `tokenHolder` is the gates module's
+    `tokenHolder`, and `held` is whether the router's `held` answers for
+    the actor.
   board-and-task-convergence: >-
     The tasks endpoints only read, so a request that runs twice answers
     twice from the current state. An answer from the escalation panel is
@@ -382,7 +393,11 @@ proposed-design:
   board-and-task-tests: >-
     Each behavior is red before green, and tests go through public
     interfaces. In `packages/service/src/tasks/`, the endpoint test in
-    `tasks-api`'s validation criteria. In `packages/console`, unit tests
+    `tasks-api`'s validation criteria, with a real router for the held
+    state: one actor whose restore the host refuses, which is `held` with
+    no errored snapshot, and one actor whose delivery errored and whose
+    `release` then restored it, which is `active` while the store keeps
+    its errored snapshot. In `packages/console`, unit tests
     cover the three result mappings, the lane grouping of a Project's
     tasks, including the "No status" lane, and the reading and writing of
     collapsed lanes. The browser test,

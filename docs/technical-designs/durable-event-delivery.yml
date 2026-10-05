@@ -179,7 +179,12 @@ proposed-design:
     and calls `onHeld` with the new reason. `release` of an actor that is
     not held does nothing. The escalations module calls it when an operator
     answers a held-actor escalation with `retry`, as `escalations`
-    describes.
+    describes. `held(actorId)` reads the router's current hold of an
+    actor, with the reason and row of the latest `onHeld`, and is
+    undefined once a release restores it. The store's errored snapshot is
+    evidence of a past failure, kept after a release, and a refused
+    restore holds an actor without one, so a reader of an actor's current
+    state asks the router.
   host-saves: >-
     An actor changes without a delivery when an invoked promise or callback
     sends it an internal event. The host calls `persist(actorId)`, and the
@@ -301,6 +306,8 @@ proposed-design:
       schedule(actorId: string): void;
       /** Restores a held actor again; does nothing for one that is not held. */
       release(actorId: string): void;
+      /** The actor's current hold, or undefined when the router does not hold it. */
+      held(actorId: string): HeldActor | undefined;
       stop(): void;
     }
 
