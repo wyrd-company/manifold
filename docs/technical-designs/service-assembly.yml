@@ -177,12 +177,21 @@ proposed-design:
 
     export interface ServiceAssembly<Members extends object> {
       /** Adds a part; its needs must be members of the entries before it, and its members new names. */
-      part<Gives extends object>(part: ServiceWiringPart<Members, Gives>): ServiceAssembly<Members & Gives>;
+      part<Gives extends object>(
+        part: ServiceWiringPart<Members, Gives> & DistinctMembers<Members, Gives>,
+      ): ServiceAssembly<Members & Gives>;
       /** Adds a start step: logs `start-step`, calls the `step` probe, and checks the signal. */
       step(step: ServiceStep): ServiceAssembly<Members>;
       /** Runs the entries in order; resolves with every member and the service's `stop`. */
       start(): Promise<{ readonly members: Members; stop(): Promise<void> }>;
     }
+
+    /** `unknown` when `Gives` repeats no member name of `Members`; otherwise a member no part has, so the part does not compile. */
+    export type DistinctMembers<Members extends object, Gives extends object> = [
+      Extract<keyof Gives, keyof Members>,
+    ] extends [never]
+      ? unknown
+      : { readonly memberNameRepeated: Extract<keyof Gives, keyof Members> };
 
     /** In stop order. */
     export type ServiceStopStage =
@@ -386,7 +395,10 @@ proposed-design:
     it names from the parts listed before it, and the part's context, and
     resolves with the members it adds, or with `{}`. Its needs are the type
     of its first parameter, so `wiringPart` infers them and its members
-    without annotations. A member is named for its module in camel case,
+    without annotations. `part` takes a part only when its needs are
+    members of the entries before it and its members are new names:
+    `DistinctMembers` turns a repeated name, the initial `log` included,
+    into a member the part does not have, so the entry does not compile. A member is named for its module in camel case,
     such as `processRepository` or `githubMirror`; `ServiceParts` and
     `Service` name the members other modules read. A part's start opens
     its module, mounts the module's endpoints with `members.http.mount`,
@@ -792,8 +804,10 @@ proposed-design:
     `ready(signal)` rejects with the reason of a signal aborted before it
     starts; `addImplementations` from a part listed after
     `blueprint-loader` throws a TypeError. Type tests hold
-    `@ts-expect-error` lines for a part listed before a member it needs
-    and for a part that repeats a member name. The start, stop, abort, and
+    `@ts-expect-error` lines for a part listed before a member it needs,
+    for a part that repeats a member of an earlier part, and for a part
+    that repeats the initial `log` member; a chain of parts with distinct
+    members, one of them `{}`, compiles. The start, stop, abort, and
     crash tests above pass with no assertion changed.
     Binding archived: through `startService`, with one environment served
     by the T3 Code fake the agent threads tests use, a fixture repository
