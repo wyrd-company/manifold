@@ -1145,3 +1145,25 @@ test("title and URL changes update tracked issues without a lifecycle event and 
   });
   expect(f.errors).toEqual([]);
 });
+
+test("reconciling unchanged issue title and URL twice reports no second mirror change", async () => {
+  let changes = 0;
+  const f = await setup({}, () => {
+    changes++;
+  });
+  f.fake.addItem("IT_A", "I_A");
+  f.fake.issues.get("I_A")!.title = "Collect parcel";
+  f.fake.issues.get("I_A")!.url = "https://example.test/issues/1";
+  f.source.requestSweep();
+  await f.idle();
+  expect(f.source.trackedIssue("I_A")?.issue).toMatchObject({
+    title: "Collect parcel",
+    url: "https://example.test/issues/1",
+  });
+  expect(changes).toBeGreaterThan(0);
+  const firstWrite = changes;
+  f.source.requestSweep();
+  await f.idle();
+  expect(changes).toBe(firstWrite);
+  expect(f.errors).toEqual([]);
+});

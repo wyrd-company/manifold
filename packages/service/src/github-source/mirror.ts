@@ -18,12 +18,12 @@ export function createMirror(store: Store, now: () => number) {
   const db = store.connection.database;
   const issue = (row: Record<string, unknown>): GitHubIssue => ({
     nodeId: row["issue_node_id"] as string,
-    ...(typeof row["title"] === "string" ? { title: row["title"] } : {}),
-    ...(typeof row["url"] === "string" ? { url: row["url"] } : {}),
     repository: row["repository"] as string,
     number: row["number"] as number,
     state: row["state"] as GitHubIssue["state"],
     stateReason: row["state_reason"] as GitHubIssue["stateReason"],
+    ...(typeof row["title"] === "string" ? { title: row["title"] } : {}),
+    ...(typeof row["url"] === "string" ? { url: row["url"] } : {}),
   });
   function read(): MirrorState {
     return {
