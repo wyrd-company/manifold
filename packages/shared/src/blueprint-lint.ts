@@ -317,7 +317,11 @@ export async function lintBlueprint(
       name,
     }));
   if (findings.length)
-    return { ok: false, findings: [...findings, ...unknownEvents, ...lifecycleFindings], warnings: [] };
+    return {
+      ok: false,
+      findings: [...findings, ...unknownEvents, ...lifecycleFindings],
+      warnings: [],
+    };
   const tokens = lintTokens(blueprint, { names, ...options });
   const warnings: BlueprintFinding[] = [];
   for (const gate of tokens.gates)
