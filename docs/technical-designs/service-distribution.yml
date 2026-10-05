@@ -100,8 +100,8 @@ proposed-design:
     `loadServiceConfiguration` and checks that it names every root section
     and comments every value. The operator setup guide is
     `docs/guides/operator-setup.md`, structured below, and `README.md`
-    points to it. The archive is built from a checkout; publishing it is a
-    decision reserved to the user.
+    points to it. The archive and host CLI binaries are built from a checkout for UAT;
+    nothing is published before UAT.
   service-archive: >-
     The archive's root directory is `manifold-service/` and holds exactly:
     `package.json`, the service package's manifest; `dist/`, the output of
@@ -195,11 +195,10 @@ proposed-design:
     only Node. The host CLI is built the same way with
     `task build:targets`, and the guide copies
     `packages/host-cli/dist/linux-<arch>/manifold-host` (or the macOS
-    or Windows target) onto each environment's `PATH`. Neither artifact is
-    published to a registry, a release, or a workflow artifact until the
-    user decides where; the guide's install steps name only the archive
-    file and the binary, so a published location replaces the build step
-    and nothing else.
+    or Windows target) onto each environment's `PATH`. For UAT, distribution
+    is from the checkout. Nothing is published before UAT: no registry
+    package, release asset, image, or workflow artifact. The guide's install
+    steps name the archive file and host CLI binary built from the checkout.
   configuration-example: >-
     `docs/specifications/service-configuration.example.yml` is a complete
     service configuration for one organization, one environment, and one
@@ -257,8 +256,7 @@ proposed-design:
     layout of the example, kept apart from the install directory. (4) The GitHub App: create
     it on the organization with its webhook inactive (Manifold reads
     deliveries from an organization hook, not the App's webhook); the
-    permission table, each permission with the module that uses it and
-    why; install it on the organization for the process repository and
+    full approved permission table, each grant with the access it allows; install it on the organization for the process repository and
     the task repositories; record the App id and the installation id, the
     two ids the `github-app` credential takes (the App's client id is not
     used); generate the private key into `credentials/` with mode 0600. (5) The process
@@ -374,21 +372,14 @@ proposed-design:
     CLI and server; the guide uses the service's development dependency
     version, verified without issuing a token outside a test environment.
   github-app-permissions: >-
-    The guide's permission table lists what the modules of this release
-    use, each with its reason, and nothing more: repository `Metadata:
-    read`, which every App holds; repository `Contents: read and write`, for blueprint save from the
-    console and for the
-    process repository's clone and pulls; repository `Issues: read`, for
-    each issue's state and relationships; repository `Pull requests: read`,
-    so a pull request item on a Project shows its content; organization
-    `Projects: read and write`, to read Projects and to move a card's
-    lifecycle field; and organization `Webhooks: read and write`, to list
-    the organization hook's deliveries and ask for redelivery. Repository
-    `Webhooks: read and write` is listed for an operator who uses a
-    repository hook instead, such as for a repository a user account owns.
-    The App's own webhook stays inactive, and the App subscribes to no
-    event. Each grant is within the holdings the user approved for the
-    Manifold App.
+    The guide documents the full approved App permission set. Repository
+    permissions are Metadata read and Contents, Issues, Pull requests, and
+    Webhooks read and write. Organization permissions are Issue fields,
+    Issue types, Projects, and Webhooks read and write. The table describes
+    the access each grant allows; modules use the grants their operations
+    need. Contents read supports the process repository's clone and pulls,
+    and Contents write supports blueprint save from the console. The App's
+    own webhook stays inactive, and the App subscribes to no event.
   exposure: >-
     The guide's exposure section states one rule: the public network
     reaches the service only through a proxy that forwards exactly three
@@ -398,7 +389,9 @@ proposed-design:
     the page's form and ntfy's buttons send, as `escalations` defines them.
     `{id}` is one path segment. The proxy answers every other path, and
     every other method on these paths, itself without forwarding it; the
-    service listens on `127.0.0.1`. The webhook endpoint verifies each
+    service listens on `127.0.0.1` for same-host environments or on a
+    private LAN or VPN address for remote environments. Each proxy upstream
+    uses the configured bind address. The webhook endpoint verifies each
     delivery by its hook's secret, and both escalation endpoints need the
     escalation's key, so these are the endpoints that are safe to expose;
     `/api/`, `/console/`, `/api/usage/push`, and
@@ -410,9 +403,9 @@ proposed-design:
     environment calls two API endpoints: `usage push` posts to
     `/api/usage/push`, and the harness plugin posts each tool call to
     `/api/agent-tools/calls`. An environment on the service host reaches
-    both over loopback. How environments on another machine reach them is
-    a decision reserved to the user, and neither goes through the public
-    proxy.
+    both over loopback. An environment on another machine reaches these
+    paths and the console through the service host's private-network bind
+    address. Neither API path nor the console goes through the public proxy.
   verification: >-
     The executor follows the guide on a clean machine or container, step
     by step, once against real GitHub through the test environment of the

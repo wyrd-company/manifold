@@ -41,13 +41,9 @@ The host CLI is a Bun binary; its environment needs no Bun installation.
 
 ## 3. Build and install
 
-### Pending choice: publication
-
-**Pending user decision.** The proposed setup builds from a checkout and
-publishes nothing. Other choices are GitHub Release assets or a public GHCR
-image. Fill this section with the approved distribution location and first
-publication date if publishing is chosen. The commands below work from a
-checkout without publishing.
+Build the service archive and host CLI binaries from a checkout for user
+acceptance testing (UAT). Nothing is published before UAT, including release
+assets, registry packages, images, and workflow artifacts.
 
 In the Manifold checkout, build for your service host:
 
@@ -84,22 +80,23 @@ resolve against `service.yml`, regardless of the service's working directory.
 
 ## 4. Create and install the GitHub App
 
-### Pending choice: App permissions
+Grant the full approved App permission set below. The descriptions name the
+access each grant allows; each module uses the grants its operations need.
 
-**Pending user decision.** The proposed permission table below lists the grants
-this release uses. The other choice is the full permission set approved for the
-foundation epic. Fill this section with the chosen table before acceptance.
-Contents write must be present for the console to save blueprints.
+| Scope        | Permission                    | Access                                                                   |
+| ------------ | ----------------------------- | ------------------------------------------------------------------------ |
+| Repository   | Metadata: read                | Read repository metadata; GitHub includes this with every App.           |
+| Repository   | Contents: read and write      | Clone and pull the process repository; save blueprints from the console. |
+| Repository   | Issues: read and write        | Read and update issues and their relationships.                          |
+| Repository   | Pull requests: read and write | Read and update pull requests.                                           |
+| Repository   | Webhooks: read and write      | Manage repository hooks, read deliveries, and request redelivery.        |
+| Organization | Issue fields: read and write  | Read and manage organization issue field definitions.                    |
+| Organization | Issue types: read and write   | Read and manage organization issue types.                                |
+| Organization | Projects: read and write      | Read Projects and update their items and fields.                         |
+| Organization | Webhooks: read and write      | Manage organization hooks, read deliveries, and request redelivery.      |
 
-| Scope                                   | Permission               | Use                                                                      |
-| --------------------------------------- | ------------------------ | ------------------------------------------------------------------------ |
-| Repository                              | Metadata: read           | GitHub includes it with every App.                                       |
-| Repository                              | Contents: read and write | Clone and pull the process repository; save blueprints from the console. |
-| Repository                              | Issues: read             | Read issue state and relationships.                                      |
-| Repository                              | Pull requests: read      | Read pull request content on Projects.                                   |
-| Organization                            | Projects: read and write | Read Projects and move cards in their lifecycle field.                   |
-| Organization                            | Webhooks: read and write | Read organization hook deliveries and request redelivery.                |
-| Repository, only with a repository hook | Webhooks: read and write | Read repository hook deliveries and request redelivery.                  |
+See [GitHub's App permission reference](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps)
+for the permission scopes and operations they allow.
 
 In the organization's developer settings, create a GitHub App. Keep its own
 webhook inactive and select no App webhook events. Manifold reads deliveries
@@ -205,16 +202,31 @@ Check from outside the host: `/console/` and `/api/actors` return the proxy's
 and rejects an unsigned request with a 4xx. Set `escalations.publicUrl` to this
 public base URL, with no endpoint suffix.
 
-### Pending choice: remote environments and private paths
+### Private service access
 
-**Pending user decision.** The proposed setup binds `http.host` to a private LAN
-or VPN address when an environment is on another machine. Other choices are a
-public proxy limited by source IP, or only environments on the service host.
-Fill this section with the chosen route and whether acceptance environments
-share the service host. Until then, the example binds loopback and the checks
-use a same-host environment. The plugin, usage push, and console need the
-private service URL. Changing the route must also update the proxy's upstream
-address if it differs from loopback.
+For environments on the service host, keep `http.host: 127.0.0.1` and use
+`http://127.0.0.1:7480` as the private service URL. For environments on another
+machine, set `http.host` to the service host's private LAN or VPN address, for
+example:
+
+```yaml
+http:
+  # A private-network address assigned to the service host.
+  host: 192.168.50.10
+  # The service port on that address.
+  port: 7480
+```
+
+Use `http://192.168.50.10:7480` for the host CLI's `--service` value on each
+remote environment and for the console at `/console/`. The usage push reaches
+`/api/usage/push`; the MCP plugin reaches `/api/agent-tools/calls`. These paths
+and the console never go through the public proxy. Replace the loopback
+upstream in each Caddy forwarding rule above with the configured private bind
+address. Keep its three endpoint rules unchanged.
+
+Check from each remote environment: `GET /console/` on the private service URL
+returns HTML. From the public URL, `/console/`, `/api/usage/push`, and
+`/api/agent-tools/calls` receive the proxy's 404.
 
 ## 7. Create the organization hook
 

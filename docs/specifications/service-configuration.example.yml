@@ -26,7 +26,7 @@ store:
   file: state/manifold.sqlite
 
 http:
-  # The address the service listens on. Keep loopback; expose paths through your proxy.
+  # Loopback for same-host environments; use the host's private-network address for remote ones.
   host: 127.0.0.1
   # The port the service listens on.
   port: 7480
