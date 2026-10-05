@@ -5,25 +5,14 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { spawnSync } from "node:child_process";
 import { expect, test } from "vite-plus/test";
 import { parcelBlueprint } from "./test-fixtures/bundle-worker.ts";
 test("compiled repository lint discovers checkout paths and overlays bundled paths", () => {
   const directory = mkdtempSync(join(tmpdir(), "repository-blueprint-"));
   try {
-    const binary = join(directory, "lint");
-    const build = spawnSync(
-      "bun",
-      [
-        "build",
-        "src/blueprint-lint/test-fixtures/bundle-worker.ts",
-        "--compile",
-        "--outfile",
-        binary,
-      ],
-      { encoding: "utf8" },
-    );
-    expect(build.status, build.stderr).toBe(0);
+    const binary = childArtifacts().blueprint;
     writeFileSync(
       join(directory, "bindings.yml"),
       "githubProjects: { parcels: { owner: sample, number: 1, environment: local, item: shipments } }",
@@ -60,4 +49,4 @@ test("compiled repository lint discovers checkout paths and overlays bundled pat
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-}, 30000);
+});

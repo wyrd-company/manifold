@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: [usage-intake, host-cli-usage]
 // ---
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { beforeAll, afterAll, expect, test } from "vite-plus/test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +12,6 @@ import { openUsage, usageMigrationSteps } from "./index.ts";
 import { openStore } from "../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../ledger/index.ts";
 import {
-  compileUsageLint,
   usageLintCases,
   writeUsageLintCase,
 } from "../../../host-cli/src/usage-lint/test-fixtures/cases.ts";
@@ -19,7 +19,7 @@ let directory: string;
 let binary: string;
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "usage-lint-apply-"));
-  binary = await compileUsageLint(directory);
+  binary = childArtifacts().host;
 });
 afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });

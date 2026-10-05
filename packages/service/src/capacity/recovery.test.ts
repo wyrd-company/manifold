@@ -2,33 +2,19 @@
 // relationships:
 //   verifies: [portfolio, service-assembly, usage-intake]
 // ---
-import { fork, spawn } from "node:child_process";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
+import { fork } from "node:child_process";
 import { once } from "node:events";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { stringify } from "yaml";
-import { afterEach, beforeAll, expect, test } from "vite-plus/test";
+import { afterEach, expect, test } from "vite-plus/test";
 import { startService } from "../service/index.ts";
 import { serviceFixture } from "../service/test-fixtures/repository.ts";
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
-});
-beforeAll(async () => {
-  const child = spawn("pnpm", ["run", "build"], {
-    cwd: fileURLToPath(new URL("../../", import.meta.url)),
-    stdio: "pipe",
-  });
-  let output = "";
-  child.stdout.on("data", (data) => {
-    output += String(data);
-  });
-  child.stderr.on("data", (data) => {
-    output += String(data);
-  });
-  expect((await once(child, "exit"))[0], output).toBe(0);
 });
 test("SIGKILL after capacity commits recovers every pending actual once on the same file", async () => {
   const f = await serviceFixture();
@@ -59,7 +45,7 @@ test("SIGKILL after capacity commits recovers every pending actual once on the s
     }),
   );
   const child = fork(
-    fileURLToPath(new URL("./test-fixtures/recovery-worker.ts", import.meta.url)),
+    join(childArtifacts().service, "capacity/test-fixtures/recovery-worker.js"),
     [f.file],
     { stdio: ["ignore", "pipe", "pipe", "ipc"] },
   );
@@ -154,4 +140,4 @@ test("SIGKILL after capacity commits recovers every pending actual once on the s
       await service.stop();
     }
   }
-}, 30000);
+});

@@ -509,7 +509,7 @@ test("SIGKILL inside publishing rolls back the inbox and cursor, and restart rep
   const stoppedAgain = once(again.child, "exit");
   again.child.send("stop");
   await stoppedAgain;
-}, 30000);
+});
 test("a rejected environment credential does not delay another environment", async () => {
   const { server, store, options } = await setup();
   const unavailable = await fakeServer();
@@ -1196,7 +1196,7 @@ test("SIGKILL before the origin commit leaves no readiness and the next run comm
     store.connection.database.prepare("SELECT origin_sequence FROM t3_environment").get(),
   ).toEqual({ origin_sequence: 1 });
   expect(store.pendingInbox("reader")).toEqual([]);
-}, 30000);
+});
 
 test("ready resets during a changed environment identity until its new origin commits", async () => {
   const { server, store, start } = await setup();

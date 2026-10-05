@@ -4,9 +4,6 @@
 // ---
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 const account = (amount = 1) => `accounts:
   acct:
     unit: usd
@@ -53,22 +50,4 @@ export async function writeUsageLintCase(
     ["prices.yml", fixture.prices],
   ] as const)
     if (text !== undefined) await writeFile(join(directory, file), text);
-}
-export async function compileUsageLint(directory: string) {
-  const binary = join(
-    directory,
-    process.platform === "win32" ? "manifold-host.exe" : "manifold-host",
-  );
-  await promisify(execFile)(
-    fileURLToPath(new URL("../../../node_modules/.bin/bun", import.meta.url)),
-    [
-      "build",
-      fileURLToPath(new URL("../../cli.ts", import.meta.url)),
-      "--compile",
-      "--bytecode",
-      "--outfile",
-      binary,
-    ],
-  );
-  return binary;
 }

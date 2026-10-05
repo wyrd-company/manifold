@@ -2,14 +2,14 @@
 // relationships:
 //   verifies: service-assembly
 // ---
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { spawn, fork } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { stringify } from "yaml";
-import { afterEach, beforeAll, expect, test } from "vite-plus/test";
+import { afterEach, expect, test } from "vite-plus/test";
 import { serviceFixture } from "./test-fixtures/repository.ts";
 import { startService } from "./index.ts";
 import { signedDelivery } from "../github-source/test-fixtures/api.ts";
@@ -17,21 +17,14 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
 });
-const main = fileURLToPath(new URL("../../dist/main.js", import.meta.url));
-const cwd = fileURLToPath(new URL("../../", import.meta.url));
-beforeAll(async () => {
-  const child = spawn("pnpm", ["run", "build"], { cwd, stdio: "pipe" });
-  let errors = "";
-  child.stderr.on("data", (data) => {
-    errors += String(data);
-  });
-  const [code] = await once(child, "exit");
-  if (code !== 0) throw new Error(errors);
-});
 function run(file?: string, args?: string[]) {
-  const child = spawn(process.execPath, [main, ...(args ?? (file ? [file] : []))], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const child = spawn(
+    process.execPath,
+    [join(childArtifacts().service, "main.js"), ...(args ?? (file ? [file] : []))],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   cleanup.push(async () => {
     if (child.exitCode === null && child.signalCode === null) {
       const ended = once(child, "exit");
@@ -160,7 +153,7 @@ test("SIGKILL after publish recovers the declaration exactly once", async () => 
   const initial = await startService({ configurationFile: f.file, log: () => {} });
   await initial.stop();
   const child = fork(
-    fileURLToPath(new URL("./test-fixtures/crash-worker.ts", import.meta.url)),
+    join(childArtifacts().service, "service/test-fixtures/crash-worker.js"),
     [f.file],
     { stdio: ["ignore", "pipe", "pipe", "ipc"] },
   );
@@ -196,4 +189,4 @@ test("SIGKILL after publish recovers the declaration exactly once", async () => 
     expect(row?.["count"]).toBe(1);
     await service.stop();
   }
-}, 30000);
+});

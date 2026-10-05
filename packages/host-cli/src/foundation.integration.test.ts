@@ -5,6 +5,7 @@
 import { stringify } from "yaml";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { childArtifacts } from "../../../test-support/child-process.ts";
 import { spawnSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -39,24 +40,11 @@ const comparator =
 describe("host CLI runs the comparator lint and the expressions lint", () => {
   let directory = "";
   const run = (...args: string[]) =>
-    spawnSync(join(directory, "manifold-host"), args, { cwd: directory, encoding: "utf8" });
+    spawnSync(childArtifacts().host, args, { cwd: directory, encoding: "utf8" });
   beforeAll(() => {
     const cache = resolve("node_modules/.cache");
     mkdirSync(cache, { recursive: true });
     directory = mkdtempSync(join(cache, "foundation-binary-"));
-    const build = spawnSync(
-      "bun",
-      [
-        "build",
-        "src/cli.ts",
-        "--compile",
-        "--bytecode",
-        "--outfile",
-        join(directory, "manifold-host"),
-      ],
-      { encoding: "utf8" },
-    );
-    expect(build.status, build.stderr).toBe(0);
     writeFileSync(join(directory, "pick.ts"), comparator);
     writeFileSync(join(directory, "late.ts"), "export default async () => null;");
     writeFileSync(join(directory, "valid.yml"), blueprint("event.level > context.level"));
@@ -95,7 +83,7 @@ describe("host CLI runs the comparator lint and the expressions lint", () => {
     };
     for (const [name, text] of Object.entries(invalid))
       writeFileSync(join(directory, `invalid-${name}.yml`), text);
-  }, 30_000);
+  });
   afterAll(() => rmSync(directory, { recursive: true, force: true }));
 
   it("reports token verdicts and bounds from the compiled binary", () => {

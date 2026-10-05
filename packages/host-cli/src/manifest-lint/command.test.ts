@@ -4,32 +4,19 @@
 // ---
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { spawnSync } from "node:child_process";
-import { beforeAll, beforeEach, afterAll, afterEach, expect, it } from "vite-plus/test";
+import { beforeEach, afterEach, expect, it } from "vite-plus/test";
 import { stringify } from "yaml";
-let directory = "",
-  buildDirectory = "",
-  binary = "";
+let directory = "";
+const binary = childArtifacts().host;
 const run = (...args: string[]) =>
   spawnSync(binary, ["manifest", "lint", ...args], { cwd: directory, encoding: "utf8" });
-beforeAll(() => {
-  const cache = resolve("node_modules/.cache");
-  mkdirSync(cache, { recursive: true });
-  buildDirectory = mkdtempSync(join(cache, "manifest-build-"));
-  binary = join(buildDirectory, "manifold-host");
-  const build = spawnSync(
-    "bun",
-    ["build", "src/cli.ts", "--compile", "--bytecode", "--outfile", binary],
-    { encoding: "utf8" },
-  );
-  expect(build.status, build.stderr).toBe(0);
-}, 30000);
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "manifest-cli-"));
 });
 afterEach(() => rmSync(directory, { recursive: true, force: true }));
-afterAll(() => rmSync(buildDirectory, { recursive: true, force: true }));
 const write = (file: string, data: unknown) =>
   writeFileSync(join(directory, file), stringify(data));
 const manifest = () => write("manifold.yml", { intake: { decisionModel: "quote.yml" } });

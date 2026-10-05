@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { Writable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -348,19 +349,7 @@ test("keeps the newer Grok and OpenCode totals in either root order", async () =
 const execute = promisify(execFile);
 
 test("compiled Bun binary decodes all fixture roots to the golden JSON Lines", async () => {
-  const binary = join(
-    fixtureCopy,
-    process.platform === "win32" ? "manifold-host.exe" : "manifold-host",
-  );
-  const bun = fileURLToPath(new URL("../../node_modules/.bin/bun", import.meta.url));
-  await execute(bun, [
-    "build",
-    fileURLToPath(new URL("../cli.ts", import.meta.url)),
-    "--compile",
-    "--bytecode",
-    "--outfile",
-    binary,
-  ]);
+  const binary = childArtifacts().host;
   const { stdout, stderr } = await execute(binary, [
     "usage",
     "decode",
@@ -368,7 +357,7 @@ test("compiled Bun binary decodes all fixture roots to the golden JSON Lines", a
   ]);
   expect(stderr).toBe("");
   expect(stdout.replaceAll(fixtureCopy, "<fixtures>")).toBe(await expected());
-}, 30_000);
+});
 
 test("source errors isolate unreadable and failed sources without losing later calls", async () => {
   const damaged = join(fixtureCopy, "damaged");

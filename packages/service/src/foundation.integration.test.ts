@@ -7,9 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { parse, stringify } from "yaml";
+import { childArtifacts } from "../../../test-support/child-process.ts";
 import { fork, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import * as fs from "node:fs/promises";
 import git from "isomorphic-git";
 import { fixture as repositoryFixture } from "./process-repository/test-fixtures/remote.ts";
@@ -532,35 +532,7 @@ it("resumes the same revision after SIGKILL across repository, sources, inbox an
     token,
     crash: true,
   };
-  // Compile the child with the shipping settings, including relative-import rewriting.
-  const compiled = join(directory, "compiled");
-  const buildConfiguration = join(directory, "tsconfig.json");
-  const serviceRoot = fileURLToPath(new URL("..", import.meta.url));
-  writeFileSync(
-    buildConfiguration,
-    JSON.stringify({
-      extends: join(serviceRoot, "tsconfig.build.json"),
-      compilerOptions: {
-        outDir: compiled,
-        declaration: false,
-        typeRoots: [join(serviceRoot, "node_modules/@types")],
-      },
-      include: [join(serviceRoot, "src/**/*.ts")],
-      exclude: [
-        join(serviceRoot, "src/**/*.test.ts"),
-        join(serviceRoot, "src/**/test-fixtures/**"),
-      ],
-      files: [join(serviceRoot, "src/test-fixtures/foundation-worker.ts")],
-    }),
-  );
-  await promisify(execFile)(process.execPath, [
-    join(serviceRoot, "node_modules/typescript/bin/tsc"),
-    "-p",
-    buildConfiguration,
-  ]).catch((error: { stdout: string; stderr: string }) => {
-    throw new Error(`${error.stdout}\n${error.stderr}`);
-  });
-  await fs.symlink(join(serviceRoot, "node_modules"), join(compiled, "node_modules"), "dir");
+  const compiled = childArtifacts().service;
   function worker(crash: boolean) {
     // Buffer IPC notifications so a fast child cannot outrun an assertion's listener.
     const child = fork(
@@ -951,34 +923,7 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
   });
   await f.remote.force(revision);
 
-  // Compile the shipping entry point with the shipping TypeScript settings.
-  const serviceRoot = fileURLToPath(new URL("..", import.meta.url));
-  const compiled = join(f.directory, "compiled");
-  const buildConfiguration = join(f.directory, "tsconfig.json");
-  await fs.writeFile(
-    buildConfiguration,
-    JSON.stringify({
-      extends: join(serviceRoot, "tsconfig.build.json"),
-      compilerOptions: {
-        outDir: compiled,
-        declaration: false,
-        typeRoots: [join(serviceRoot, "node_modules/@types")],
-      },
-    }),
-  );
-  await promisify(execFile)(join(serviceRoot, "node_modules/.bin/tsc"), ["-p", buildConfiguration]);
-  await fs.symlink(join(serviceRoot, "node_modules"), join(f.directory, "node_modules"));
-  await fs.writeFile(join(f.directory, "package.json"), '{"type":"module"}');
-  const binary = join(f.directory, "manifold-host");
-  const hostRoot = fileURLToPath(new URL("../../host-cli", import.meta.url));
-  await promisify(execFile)(join(hostRoot, "node_modules/.bin/bun"), [
-    "build",
-    join(hostRoot, "src/cli.ts"),
-    "--compile",
-    "--bytecode",
-    "--outfile",
-    binary,
-  ]);
+  const { service: compiled, host: binary } = childArtifacts();
 
   function start() {
     const child = fork(join(compiled, "main.js"), [f.file], { silent: true, execArgv: [] });
@@ -1128,7 +1073,7 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
   const usageRoot = join(f.directory, "usage");
   await fs.mkdir(join(usageRoot, "sessions"), { recursive: true });
   const usage = await fs.readFile(
-    join(hostRoot, "src/usage/fixtures/codex/sessions/root.jsonl"),
+    new URL("../../host-cli/src/usage/fixtures/codex/sessions/root.jsonl", import.meta.url),
     "utf8",
   );
   // Put the historical fixture's call in this actor's current visit and credited window.

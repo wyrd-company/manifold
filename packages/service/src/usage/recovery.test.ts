@@ -202,5 +202,4 @@ it.each(["inside", "committed", "host-checkpoint"])(
       db.close();
     }
   },
-  30000,
 );

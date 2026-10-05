@@ -149,7 +149,7 @@ test("ServiceParts wires commands to the real host, source readiness, revision a
     ),
   ).toBe(true);
   await service.stop();
-}, 15000);
+});
 
 test("a real hosted actor without an environment cannot dispatch", async () => {
   const fixture = await serviceFixture();

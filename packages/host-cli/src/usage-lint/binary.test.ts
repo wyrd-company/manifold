@@ -2,17 +2,18 @@
 // relationships:
 //   verifies: host-cli-usage
 // ---
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { beforeAll, afterAll, expect, test } from "vite-plus/test";
 import { mkdtemp, mkdir, rm, access, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { compileUsageLint, usageLintCases, writeUsageLintCase } from "./test-fixtures/cases.ts";
+import { usageLintCases, writeUsageLintCase } from "./test-fixtures/cases.ts";
 let directory: string;
 let binary: string;
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "usage-lint-binary-"));
-  binary = await compileUsageLint(directory);
+  binary = childArtifacts().host;
 });
 afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });

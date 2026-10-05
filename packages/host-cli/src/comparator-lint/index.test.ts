@@ -5,6 +5,7 @@
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { spawnSync } from "node:child_process";
 import ts from "typescript";
 import { describe, expect, it } from "vite-plus/test";
@@ -111,14 +112,8 @@ describe("comparator lint", () => {
     const cache = resolve("node_modules/.cache");
     mkdirSync(cache, { recursive: true });
     const directory = mkdtempSync(join(cache, "comparator-binary-"));
-    const executable = join(directory, "manifold-host");
+    const executable = childArtifacts().host;
     try {
-      const build = spawnSync(
-        "bun",
-        ["build", "src/cli.ts", "--compile", "--bytecode", "--outfile", executable],
-        { encoding: "utf8" },
-      );
-      expect(build.status, build.stderr).toBe(0);
       writeFileSync(join(directory, "good.ts"), `throw new Error('must not execute'); ${good}`);
       writeFileSync(join(directory, "wrong.ts"), "export default async () => null;");
       const run = (...args: string[]) =>
@@ -139,5 +134,5 @@ describe("comparator lint", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  }, 20_000);
+  });
 });

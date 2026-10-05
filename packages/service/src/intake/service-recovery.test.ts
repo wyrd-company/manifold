@@ -2,12 +2,11 @@
 // relationships:
 //   verifies: [intake, gate-runtime, escalations]
 // ---
-import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { execFile, spawnSync } from "node:child_process";
-import { promisify } from "node:util";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
+import { spawnSync } from "node:child_process";
 import { afterEach, expect, it } from "vite-plus/test";
 import { openStore } from "../store/index.ts";
 import { setup, files, issue, first } from "./test-fixtures/fixture.ts";
@@ -71,35 +70,7 @@ it.each(["failed", "retry", "mirror", "untracked"])(
   },
 );
 it("recovers one comparator escalation after SIGKILL between evaluation and the next actor save", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "comparator-worker-"));
-  cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
-  const service = fileURLToPath(new URL("../..", import.meta.url));
-  const compiled = join(dir, "compiled"),
-    config = join(dir, "tsconfig.json");
-  writeFileSync(
-    config,
-    JSON.stringify({
-      extends: join(service, "tsconfig.build.json"),
-      compilerOptions: {
-        outDir: compiled,
-        declaration: false,
-        typeRoots: [join(service, "node_modules/@types")],
-      },
-      include: [],
-      exclude: [],
-      files: [join(service, "src/gates/test-fixtures/comparator-failure-worker.ts")],
-    }),
-  );
-  // Compilation is part of this test's budget; do not block the framework's timer.
-  await promisify(execFile)(process.execPath, [
-    join(service, "node_modules/typescript/bin/tsc"),
-    "-p",
-    config,
-  ]).catch((error: { stdout: string; stderr: string }) => {
-    throw new Error(`${error.stdout}\n${error.stderr}`);
-  });
-  symlinkSync(join(service, "node_modules"), join(compiled, "node_modules"), "dir");
-  writeFileSync(join(compiled, "package.json"), JSON.stringify({ type: "module" }));
+  const compiled = childArtifacts().service;
   const path = killed(
     join(compiled, "gates/test-fixtures/comparator-failure-worker.js"),
     "failure",
@@ -128,4 +99,4 @@ it("recovers one comparator escalation after SIGKILL between evaluation and the 
   cleanup.push(f.close);
   expect(f.escalations.list({ status: "open" })).toHaveLength(1);
   expect(f.escalations.list({ status: "open" })[0]?.raiser).toMatchObject({ occurrence: 1 });
-}, 30000);
+});

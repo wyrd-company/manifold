@@ -2,44 +2,18 @@
 // relationships:
 //   verifies: gate-runtime
 // ---
-import { execFile, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { expect, it } from "vite-plus/test";
 import { openStore } from "../store/index.ts";
 import { world } from "./test-fixtures/world.ts";
 it("SIGKILL at granting, granted, sent, and saved recovers exactly one held token and reservation", async () => {
   const dir = mkdtempSync(join(tmpdir(), "gate-crash-"));
   try {
-    const service = fileURLToPath(new URL("../..", import.meta.url)),
-      compiled = join(dir, "compiled"),
-      config = join(dir, "tsconfig.json");
-    writeFileSync(
-      config,
-      JSON.stringify({
-        extends: join(service, "tsconfig.build.json"),
-        compilerOptions: {
-          outDir: compiled,
-          declaration: false,
-          typeRoots: [join(service, "node_modules/@types")],
-        },
-        include: [],
-        exclude: [],
-        files: [join(service, "src/gates/test-fixtures/crash-worker.ts")],
-      }),
-    );
-    await promisify(execFile)(process.execPath, [
-      join(service, "node_modules/typescript/bin/tsc"),
-      "-p",
-      config,
-    ]).catch((e: { stdout: string; stderr: string }) => {
-      throw new Error(`${e.stdout}\n${e.stderr}`);
-    });
-    symlinkSync(join(service, "node_modules"), join(compiled, "node_modules"), "dir");
-    writeFileSync(join(compiled, "package.json"), JSON.stringify({ type: "module" }));
+    const compiled = childArtifacts().service;
     for (const point of ["granting", "granted", "sent", "saved"]) {
       const file = join(dir, `${point}.sqlite`);
       const child = spawnSync(
@@ -126,4 +100,4 @@ it("SIGKILL at granting, granted, sent, and saved recovers exactly one held toke
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-}, 30000);
+});

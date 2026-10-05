@@ -98,36 +98,32 @@ test("killed pull during a large pack leaves prior revision readable and next pu
   remote.state.mode = "healthy";
   expect(await recovered.pull()).toMatchObject({ kind: "advanced", commit: b });
   expect(await (await recovered.revisionAt(a))!.read("recipes/a.txt")).toBe("first");
-}, 15000);
-test.each([true, false])(
-  "replayed held pack is immutable; interrupted=%s",
-  async (interrupted) => {
-    const { remote, configuration } = await setup();
-    const a = await remote.commit("first");
-    const repository = await openProcessRepository({ configuration, credentials });
-    await repository.pull();
-    const response = remote.responses[0]!;
-    const packDirectory = join(configuration.directory, "git/objects/pack");
-    const pack = join(
-      packDirectory,
-      (await fs.readdir(packDirectory)).find((name) => name.endsWith(".pack"))!,
-    );
-    const before = await fingerprint(pack);
-    const b = await remote.commit("second");
-    await repository.pull();
-    remote.state.mode = "replay";
-    remote.state.replay = response;
-    await remote.force(a);
-    if (interrupted) {
-      const running = worker(configuration, "fetched");
-      await running.message("fetched");
-      await kill(running.child);
-    } else expect(await repository.pull()).toEqual({ kind: "advanced", commit: a, previous: b });
-    const recovered = await openProcessRepository({ configuration, credentials });
-    expect(recovered.current()!.commit).toBe(interrupted ? b : a);
-    expect(await fingerprint(pack)).toEqual(before);
-    expect(await (await recovered.revisionAt(a))!.read("recipes/a.txt")).toBe("first");
-    expect(await (await recovered.revisionAt(b))!.read("recipes/a.txt")).toBe("second");
-  },
-  10000,
-);
+});
+test.each([true, false])("replayed held pack is immutable; interrupted=%s", async (interrupted) => {
+  const { remote, configuration } = await setup();
+  const a = await remote.commit("first");
+  const repository = await openProcessRepository({ configuration, credentials });
+  await repository.pull();
+  const response = remote.responses[0]!;
+  const packDirectory = join(configuration.directory, "git/objects/pack");
+  const pack = join(
+    packDirectory,
+    (await fs.readdir(packDirectory)).find((name) => name.endsWith(".pack"))!,
+  );
+  const before = await fingerprint(pack);
+  const b = await remote.commit("second");
+  await repository.pull();
+  remote.state.mode = "replay";
+  remote.state.replay = response;
+  await remote.force(a);
+  if (interrupted) {
+    const running = worker(configuration, "fetched");
+    await running.message("fetched");
+    await kill(running.child);
+  } else expect(await repository.pull()).toEqual({ kind: "advanced", commit: a, previous: b });
+  const recovered = await openProcessRepository({ configuration, credentials });
+  expect(recovered.current()!.commit).toBe(interrupted ? b : a);
+  expect(await fingerprint(pack)).toEqual(before);
+  expect(await (await recovered.revisionAt(a))!.read("recipes/a.txt")).toBe("first");
+  expect(await (await recovered.revisionAt(b))!.read("recipes/a.txt")).toBe("second");
+});

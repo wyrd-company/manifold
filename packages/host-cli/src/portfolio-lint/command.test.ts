@@ -4,37 +4,20 @@
 // ---
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { spawnSync } from "node:child_process";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 describe("compiled portfolio lint", () => {
   let directory = "";
-  let buildDirectory = "";
-  let binary = "";
+  const binary = childArtifacts().host;
   const run = (...args: string[]) =>
     spawnSync(binary, ["portfolio", "lint", ...args], { cwd: directory, encoding: "utf8" });
-  beforeAll(() => {
-    const cache = resolve("node_modules/.cache");
-    mkdirSync(cache, { recursive: true });
-    buildDirectory = mkdtempSync(join(cache, "portfolio-build-"));
-    binary = join(buildDirectory, "manifold-host");
-    const build = spawnSync(
-      "bun",
-      ["build", "src/cli.ts", "--compile", "--bytecode", "--outfile", binary],
-      {
-        encoding: "utf8",
-      },
-    );
-    expect(build.status, build.stderr).toBe(0);
-  }, 30_000);
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), "portfolio-binary-"));
   });
   afterEach(() => rmSync(directory, { recursive: true, force: true }));
-  afterAll(() => {
-    rmSync(buildDirectory, { recursive: true, force: true });
-  });
   it("runs without node_modules, defaults to cwd and accepts an empty directory and a clean checkout", () => {
     const empty = run();
     expect([empty.status, empty.stdout, empty.stderr]).toEqual([0, "", ""]);

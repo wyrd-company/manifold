@@ -278,5 +278,4 @@ test.each(["thread-create", "turn-start"] as const)(
     resumed.child.send("stop");
     await exiting;
   },
-  30000,
 );

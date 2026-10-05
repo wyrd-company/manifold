@@ -2,11 +2,9 @@
 // relationships:
 //   verifies: [task-metadata, service-assembly, github-event-source, actor-host]
 // ---
-import { fork, execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
+import { fork } from "node:child_process";
 import { join } from "node:path";
-import { writeFile, symlink } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
 import { serviceFixture } from "../service/test-fixtures/repository.ts";
@@ -110,24 +108,7 @@ test.each([false, true])(
           },
         },
       );
-      const serviceRoot = fileURLToPath(new URL("../..", import.meta.url));
-      const compiled = join(f.directory, "compiled");
-      const configuration = join(f.directory, "tsconfig.json");
-      await writeFile(
-        configuration,
-        JSON.stringify({
-          extends: join(serviceRoot, "tsconfig.build.json"),
-          compilerOptions: {
-            outDir: compiled,
-            declaration: false,
-            typeRoots: [join(serviceRoot, "node_modules/@types")],
-          },
-          files: [join(serviceRoot, "src/task-metadata/test-fixtures/card-move-worker.ts")],
-        }),
-      );
-      await promisify(execFile)(join(serviceRoot, "node_modules/.bin/tsc"), ["-p", configuration]);
-      await symlink(join(serviceRoot, "node_modules"), join(f.directory, "node_modules"));
-      await writeFile(join(f.directory, "package.json"), '{"type":"module"}');
+      const compiled = childArtifacts().service;
       function worker(crash: boolean) {
         const child = fork(
           join(compiled, "task-metadata/test-fixtures/card-move-worker.js"),
