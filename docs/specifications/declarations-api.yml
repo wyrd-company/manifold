@@ -76,18 +76,22 @@ description: >-
   **Task fields.** A lint of a `task-metadata.yml` text that parses as one
   YAML document answers `fields`, read from the document whatever its
   findings, so that a field with a finding still shows: one row per task
-  field of each Project the document names, in document order, a member
-  of the wrong kind read as absent. A row holds `binding`; `name`;
-  `storage`, the storage kind of the field as `task-metadata-declaration`
-  declares it, one of `project-field`, `label`, `issue-type`,
-  `issue-field`, `milestone`, and `front-matter`, or absent when the
-  document gives none; `type`, the field's value type, when given;
-  `required`, when given; `settings`, the storage kind's settings the
-  document gives, by their names in `task-metadata-declaration`;
-  `options`, the option names of a type with options; `parent`, the
-  location of the field a nested field belongs to; `lifecycle`, true for
-  the Project's lifecycle field; `whenChanged`, `revert` or `accept`,
-  when given; `onGitHub`, `{ state, detail }` with `state` `present`,
+  field of each Project the document names, in document order. A row
+  carries the draft's values as written, not as the declaration accepts
+  them, so that it shows the value a finding names: a member that is a
+  string is that string, empty or not a valid name or kind included; a
+  member that is a boolean is that boolean; and a member of another kind
+  is absent. A Project key that is not a string is its text as written.
+  A row holds `binding`, the Project's key; `name`; `storage`, the
+  storage kind of the field as `task-metadata-declaration` declares it,
+  one of `project-field`, `label`, `issue-type`, `issue-field`,
+  `milestone`, and `front-matter` in a valid draft; `type`, the field's
+  value type; `required`; `settings`, the storage kind's settings whose
+  values are strings, by their names in `task-metadata-declaration`;
+  `options`, the option names that are strings, of a type with options;
+  `parent`, the location of the field a nested field belongs to;
+  `lifecycle`, true for the Project's lifecycle field; `whenChanged`,
+  `revert` or `accept` in a valid draft; `onGitHub`, `{ state, detail }` with `state` `present`,
   `missing`, or `differs`, when the service has observed the Project and
   the text has no finding; `location`, the JSON Pointer of the field's
   entry; and `range` by the rule for findings. The lifecycle field is a
@@ -130,6 +134,9 @@ description: >-
     fields, a `front-matter` field of type string named `field-<n>`, the
     lowest `n` from 1 that no field of the binding uses, with that name as
     its front matter key, adding the binding's entry when absent.
+    `binding` is a Project key of the text as written, so a field can be
+    added while that key has a finding, or a declared name for a new
+    entry; any other answers `400`.
   - `{ kind: "set-field", location, values }`: sets each member `values`
     names, of `name`, `type`, `storage`, `required`, `settings`,
     `options`, and `whenChanged`, on the field at `location`, and keeps
@@ -231,6 +238,11 @@ validation-criteria: >-
   finding; that `lint` of a task metadata text with a field whose storage
   cannot hold its type answers that field's row with the finding located
   under it, and of a text that does not parse answers no `fields`; that
+  `lint` of a text whose Project key is `Invalid name` and whose field has
+  an empty `type` and a `storage` that names no kind answers a body that
+  validates against the response schema, with the row holding the key,
+  the empty type, and the unknown kind as written, and the `schema`
+  findings at those locations, and the shared guard accepts that body; that
   `lint` of `task-metadata.yml` answers, for the
   `task-metadata-declaration` lint fixtures, the findings whose kinds and
   locations `manifold-host task-metadata lint` prints for the same files,

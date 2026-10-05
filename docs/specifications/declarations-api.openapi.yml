@@ -315,17 +315,22 @@ components:
     TaskField:
       type: object
       additionalProperties: false
+      description: >-
+        One field row of a parsed draft, with the draft's values as
+        written; a value the declaration does not accept is kept so that
+        the row shows what its finding names.
       required: [binding, name, lifecycle, location]
       properties:
         binding:
-          $ref: "#/components/schemas/DeclaredName"
+          type: string
+          description: The Project's key as written; a declared name in a valid draft.
         name:
           type: string
         storage:
-          $ref: "#/components/schemas/StorageKindName"
+          type: string
+          description: The storage kind as written; a StorageKindName in a valid draft.
         type:
           type: string
-          minLength: 1
         required:
           type: boolean
         settings:
@@ -342,7 +347,8 @@ components:
         lifecycle:
           type: boolean
         whenChanged:
-          enum: [revert, accept]
+          type: string
+          description: The choice as written; `revert` or `accept` in a valid draft.
         onGitHub:
           type: object
           additionalProperties: false
@@ -464,7 +470,11 @@ components:
                 kind:
                   const: add-field
                 binding:
-                  $ref: "#/components/schemas/DeclaredName"
+                  type: string
+                  minLength: 1
+                  description: >-
+                    A Project key of the text, as written, or a declared
+                    name for a new Project entry.
             - type: object
               additionalProperties: false
               required: [kind, location, values]
