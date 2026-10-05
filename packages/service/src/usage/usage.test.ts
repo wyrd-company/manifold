@@ -863,3 +863,29 @@ it("repairs pre-upgrade posted growths using the stored mapping despite a confli
   s.usage.push(request);
   expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(20);
 });
+
+it("keeps ledger account order and appends late-only accounts in name order", async () => {
+  const s = await setup();
+  s.save();
+  s.ledger.reserve({ key: "r1", actor: "actor-1", item: "alpha", account: "acct", amount: 10 });
+  for (const [index, account] of ["acct", "zeta", "alpha-acct"].entries()) {
+    if (account !== "acct") {
+      await s.apply(accounts.replace("  acct:", `  ${account}:`));
+      s.ledger.credit({
+        key: `credit-${account}`,
+        account,
+        window: "w1",
+        opensAt: 0,
+        closesAt: 10000,
+        amount: 100,
+      });
+    }
+    s.push([call(`late-${index}`, 1, 1)], false);
+  }
+  s.push([]);
+  expect(s.usage.actorUsage("actor-1").accounts).toEqual([
+    { account: "acct", estimate: 10, actual: 10, variance: 0, outstanding: 10 },
+    { account: "alpha-acct", estimate: 0, actual: 10, variance: 10, outstanding: 0 },
+    { account: "zeta", estimate: 0, actual: 10, variance: 10, outstanding: 0 },
+  ]);
+});
