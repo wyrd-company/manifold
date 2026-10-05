@@ -133,6 +133,27 @@ test("lists active snapshots, projects identity, leaves, versions and determinis
   });
   expect((await (await read()).json()).actors[0].states).toEqual(["changed"]);
 });
+test("bundled actors keep the full machine identity and expose the declared blueprint fields", async () => {
+  const machine = `${"a".repeat(40)}:blueprints/sample.yml@${"b".repeat(64)}`;
+  store.saveSnapshot({
+    actorId: "parcel",
+    machine,
+    snapshot: { status: "active", value: "packing", context: {} },
+  });
+  const response = await read();
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    actors: [
+      {
+        actorId: "parcel",
+        machine,
+        blueprint: { commit: "a".repeat(40), path: "blueprints/sample.yml" },
+        states: ["packing"],
+        savedAt: new Date(clock).toISOString(),
+      },
+    ],
+  });
+});
 test("empty results without authentication, methods, and paths", async () => {
   expect(await (await read()).json()).toEqual({ actors: [] });
   const response = await read("/api/actors", "POST");

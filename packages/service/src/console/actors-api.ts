@@ -33,7 +33,7 @@ export function actorSummaries(snapshots: readonly StoredSnapshot[]): ActorSumma
       return {
         actorId,
         machine,
-        ...(blueprint ? { blueprint } : {}),
+        ...(blueprint ? { blueprint: { path: blueprint.path, commit: blueprint.commit } } : {}),
         states: snapshot.status === "error" ? [] : leaves(snapshot.value),
         ...fields,
         savedAt: new Date(savedAt).toISOString(),
