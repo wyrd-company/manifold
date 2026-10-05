@@ -298,12 +298,15 @@ proposed-design:
     settlement of its turn leave the actor in `active.working.escalated`
     with no stall escalation, and `agent.escalation.answered` and a
     handoff then finish it; after a further `agent.escalated` and its
-    answer, the fake server settles the answer turn, whose message id is
-    the answer's `messageId`, with no handoff, and the actor raises the
-    stall escalation. A third run deletes the thread while the stall
+    answer, the fake server settles the answer turn, whose id is the
+    answer's `turnId`, with no handoff, and the actor raises the
+    stall escalation; an answer whose `turnId` is the running asking turn,
+    which it joined, makes that turn's settlement with no handoff a stall
+    too; and an answer with a `null` `turnId` leaves the actor waiting
+    after any settlement. A third run deletes the thread while the stall
     escalation is open, answers `retry`, and shows one replacement thread
-    created and one turn in it. A fourth shows a card move the fake GitHub API refuses
-    holding the actor with a `held-actor` escalation whose `retry` moves
+    created and one turn in it. A fourth shows a card move the fake
+    GitHub API refuses holding the actor with a `held-actor` escalation whose `retry` moves
     the card. The live check runs the starter, bound to the test Project
     of the GitHub test environment, from intake through both card moves
     and records which steps ran against real GitHub.

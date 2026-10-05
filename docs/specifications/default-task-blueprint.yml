@@ -123,9 +123,16 @@ description: |-
   `active.working.escalated`, where the settlement of the actor's own
   turn takes no transition, since the turn ended to wait for the answer.
   `agent.escalation.answered` enters `active.working.waiting` and
-  assigns its `messageId`, the user message that carries the answer, to
-  `context.turn`, so the answer turn is the actor's own turn: its
-  settlement with no handoff is a stall, as for the first turn.
+  assigns its `turnId`, the turn the answer started or the running turn
+  it joined, to `context.answerTurn`. It arrives before that turn's
+  settlement, so the answer turn is the actor's own turn: its settlement
+  with no handoff is a stall, as for the first turn, and a further
+  `agent.escalated` in it waits for the next answer. A `null` `turnId`
+  is an answer whose turn cannot be told, and the actor waits for a
+  handoff, a failed session, or a removed thread. The actor's own turns
+  are therefore the turn whose message id is `context.turn` and the turn
+  whose id is `context.answerTurn`, and every `t3.turn.settled` guard
+  reads both.
 
   `active.stalled` invokes `escalate` with the title `Agent thread
   stopped`, a question naming the issue and the stall, and the choices
@@ -155,6 +162,7 @@ description: |-
       model: {}
       thread: ""
       turn: ""
+      answerTurn: null
       stall: null
       handoff: null
     on:
@@ -241,7 +249,8 @@ description: |-
                 guard:
                   type: expression.guard
                   params:
-                    expression: event.threadId = context.thread and event.messageId = context.turn
+                    expression: >-
+                      event.threadId = context.thread and (event.messageId = context.turn or (context.answerTurn != null and event.turnId = context.answerTurn))
                 actions:
                   - type: expression.assign
                     params:
@@ -311,7 +320,7 @@ description: |-
                     actions:
                       - type: expression.assign
                         params:
-                          expression: '{ "turn": event.output.messageId }'
+                          expression: '{ "turn": event.output.messageId, "answerTurn": null }'
               prompting:
                 invoke:
                   id: start-turn
@@ -338,7 +347,8 @@ description: |-
                     guard:
                       type: expression.guard
                       params:
-                        expression: event.threadId = context.thread and event.messageId = context.turn
+                        expression: >-
+                          event.threadId = context.thread and (event.messageId = context.turn or (context.answerTurn != null and event.turnId = context.answerTurn))
                   agent.escalation.answered:
                     target: waiting
                     guard:
@@ -348,7 +358,7 @@ description: |-
                     actions:
                       - type: expression.assign
                         params:
-                          expression: '{ "turn": event.messageId }'
+                          expression: '{ "answerTurn": event.turnId }'
           stalled:
             invoke:
               id: ask
