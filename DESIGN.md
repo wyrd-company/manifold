@@ -140,6 +140,36 @@ components:
     strokeWidth: 1.5px
     criticalStrokeColor: "{colors.primary}"
     criticalStrokeWidth: 2px
+  state-node:
+    backgroundColor: "{colors.card}"
+    borderColor: "{colors.input}"
+    textColor: "{colors.foreground}"
+    rounded: "{rounded.control}"
+    width: 200px
+    height: 56px
+  state-group:
+    backgroundColor: "{colors.lane}"
+    borderColor: "{colors.input}"
+    rounded: "{rounded.lg}"
+    titleHeight: 32px
+    padding: 24px
+  transition-edge:
+    strokeColor: "{colors.muted-foreground}"
+    strokeWidth: 1.5px
+    selectedStrokeColor: "{colors.primary}"
+    selectedStrokeWidth: 2px
+    pillBackgroundColor: "{colors.card}"
+    pillBorderColor: "{colors.input}"
+    pillHeight: 20px
+  canvas-toolbar:
+    backgroundColor: "{colors.popover}"
+    borderColor: "{colors.border}"
+    rounded: "{rounded.lg}"
+    height: 40px
+  inspector:
+    backgroundColor: "{colors.card}"
+    borderColor: "{colors.border}"
+    width: 320px
   task-card:
     backgroundColor: "{colors.tile}"
     borderColor: "{colors.border}"
@@ -628,86 +658,183 @@ The processes Manifold runs, from the process repository.
 #### Blueprint editor
 
 The editor works on a local draft. Publish commits the draft and pushes it
-to the process repository.
+to the process repository. The canvas is the main view; the YAML is the
+other view of the same draft, and the two are never shown side by side.
 
-- Header (56px): the blueprint name in mono, the version the draft is based
-  on, a "Draft · N changes" badge, tabs (Graph, Source, Input schema,
-  Output schema), then "Discard draft" (ghost), "Auto layout" (outline, Graph tab
-  only), and "Publish" (primary).
+- Header (56px): the blueprint path in mono, the version the draft is based
+  on, a "Draft · N changes" badge, the view toggle (a segmented control,
+  "Canvas" and "YAML"), then "Discard draft" (ghost) and "Publish"
+  (primary).
 - "Discard draft" asks first, in a 400px alert dialog that names the number
   of changes and the published version that stays. The confirm button is
   solid error.
-- Left: the implementation palette (208px), with a filter field and the
-  implementations in groups. Each entry is the implementation name in mono
-  with its icon; its description is the tooltip. Dragging an entry onto the
-  canvas adds a state that invokes it. The Flow group also has "State", a
-  state that invokes nothing and waits on its events, and "Final state".
-- Center: the ReactFlow canvas on the dotted grid. The layout is automatic
-  (Dagre or ELK), top to bottom. Transitions carry the event name as a mono
-  pill; a guarded transition has a guard icon in its pill. Transitions into
-  and out of the selected state are primary. A state changed in the draft
-  has a warning dot. Zoom controls at the bottom left.
-- Right: `StateSettings` for the selected state (320px): state id, the
-  fields for its implementation, the events it exits on with the state each
-  one leads to ("not connected", in warning text, when an event has no
-  transition), and its gate.
-- Bottom of the canvas: the Problems strip (below).
+- Canvas view: the canvas toolbar over the canvas's top-left corner, the
+  ReactFlow canvas on the dotted grid, and the inspector (320px) at the
+  right. Under 1024px of content width the inspector is a sheet over the
+  canvas from the right.
+- YAML view: the code editor, full width.
+- Under either view: the Problems strip (below).
 
-`StateNode` is 200×56: an icon chip, the state id in mono (weight 600), and
-the implementation name. A state with a gate has a "Gate" badge after the
-implementation name. A final state has a double border. Selection is a 2px
-primary border with a ring, as for `TaskNode`.
+#### Canvas
 
-The palette groups are Decide, Flow, Thread, Task, and People. The
-implementations, their settings, and their events are in the specification.
+The canvas reads at a glance in both themes. Nodes are solid surfaces with
+`input`-colored borders and `foreground` text, edges are drawn in
+`muted-foreground`, and color appears only for selection (primary) and for
+state (success, warning, error). Every node and edge type differs by shape,
+border, stroke, or icon, never by color alone.
 
-#### Source
+`StateNode` is 200×56: a 24px icon chip on the `accent` surface, the state
+key in mono (weight 600), and under it the source of its first invoke in
+mono `muted-foreground`, with "+N" when it invokes more. A state that
+declares a gate has a "Gate" badge (info tint) after the source. The chip's
+icon is `Circle` for a state that invokes nothing, `Zap` for a Manifold
+implementation, and `FileCode2` for a child blueprint.
 
-The Source tab shows the blueprint YAML the draft generates, read only, full
-width, in the code editor with line numbers. Lines that differ from the
-published version have a 3px warning bar in the gutter and a faint warning
-background. A toolbar (48px) shows the file path, "Generated from the graph
-· read only", the legend for changed lines, and "Copy".
+| Node           | Look                                                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| State          | `StateNode`, 1px `input` border, 8px radius                                                                                                                        |
+| Final state    | `StateNode` with a 3px double `input` border and the `CircleCheckBig` chip                                                                                         |
+| Compound state | `GroupNode`: a 32px title bar with the `SquareStack` icon and the key in mono (weight 600), its children inside with 24px padding, 1px `input` border, 10px radius |
+| Parallel state | `GroupNode` with the `Columns2` icon and a "Parallel" badge; each region, a child state, has a dashed `input` border                                               |
+| History state  | `HistoryNode`: a 40px circle, 1px `input` border, `H` (shallow) or `H*` (deep) in mono (weight 600), the key in 12px mono `muted-foreground` under it              |
+| Initial marker | `InitialNode`: a 10px `foreground` dot joined by an unlabeled `foreground` edge with an arrowhead to the initial child                                             |
 
-#### State settings
+Nested groups alternate the `lane` and `card` surfaces, so each level
+stands apart from the one around it.
 
-The panel shows the state id, one field per setting of its implementation,
-and the events it exits on with the state each one leads to. Each event has
-its match and its guard as JSONata fields. A state that evaluates a decision
-model has an "Open decision model" button. Mappings (input, output, actions)
-are rows of two mono inputs joined by an arrow, with an "Add" button under
-them. JSONata fields are labeled "JSONata" and have an expand button at the
-right edge.
+`TransitionEdge` draws a transition with a 1.5px `muted-foreground`
+stroke, an arrowhead, and a label pill: 20px high, `card` surface, 1px
+`input` border, 6px radius, 12px mono `foreground` text.
 
-The Gate group is last. With no gate it has "Add gate" (outline). A gate
-shows its comparator (a select of the TypeScript files in the process
-repository, in mono), a "Reservation" switch, the transition it guards, and
-"Remove gate" (error text, outline).
+| Edge      | Stroke       | Pill                                                                  |
+| --------- | ------------ | --------------------------------------------------------------------- |
+| Event     | solid        | the event type                                                        |
+| `always`  | dashed (6 4) | "always"                                                              |
+| `after`   | dotted (2 3) | `Clock` icon, the delay, and its duration ("3600000 · 1h")            |
+| `onDone`  | solid        | `CircleCheck` icon in `success-foreground`, "done", and the invoke id |
+| `onError` | solid        | `CircleAlert` icon in `error-foreground`, "error", and the invoke id  |
 
-#### Expression editor
+A guarded transition has the `Filter` icon first in its pill. A
+transition with no target is a short loop on its source.
 
-The expand button opens a 920px dialog titled with the state, field, and key.
-On the left, the expression in a code editor. On the right, the result of
-the expression against a chosen source: the context of a recent actor of this
-blueprint, or a sample built from the input schema. Under the editor, the
-parse state ("Valid JSONata" or the error and its position); under the
-result, whether it matches the schema the field feeds. "Apply" writes the
-expression back to the field.
+- Selection is a 2px primary border with a ring, as for `TaskNode`. The
+  selected edge, and the edges into and out of the selected node, are 2px
+  primary, with a primary pill border.
+- A state changed in the draft has a 6px warning dot at its top-left
+  corner.
+- A state with a problem has a 16px "!" badge on its top-right corner,
+  error or warning colored. A transition with a problem has its pill
+  bordered in error or warning color with a 12px "!" icon.
+- Handles show on hover with the Select tool: an 8px dot on the top and
+  bottom edge of each node, `card` fill with a primary border.
+- When the canvas cannot draw the draft, it shows the last drawing at 40%
+  opacity with an info alert over it: "The canvas cannot draw this text.
+  Fix it in the YAML view." and "Open YAML" (outline).
+
+#### Canvas toolbar
+
+The toolbar floats 12px inside the canvas's top-left corner: 40px high,
+the `popover` surface, a 1px border, 10px radius, and the dialog shadow at
+its smallest. Its buttons are 28px ghost icon buttons with a tooltip that
+names the button and its key, in groups split by 1px vertical dividers:
+
+1. Select (`MousePointer2`, V) and Move (`Hand`, H). The active tool has
+   the `accent` fill and a `foreground` icon.
+2. Add state (`SquarePlus` with a chevron, S), a menu of State, Compound
+   state, Parallel state, Final state, and History state, each with its
+   node's icon; and Add transition (`Spline`, T). While one is armed its
+   button stays pressed and the cursor is a crosshair; a placed state
+   shows as a 50% ghost node under the pointer.
+3. Undo (`Undo2`) and Redo (`Redo2`).
+4. Zoom out (`ZoomOut`), Zoom in (`ZoomIn`), and Fit (`Maximize`).
+5. Automatic layout (`Network`).
+
+#### Event picker
+
+A 280px popover at the point a new transition was dropped: the title "New
+transition", the source and target paths in mono joined by an arrow, a
+filter field, and a list. Declared event types come first in mono, then
+"always", "after", "done", and "error" with their pill icons, then "Use
+<name>" for a typed name the list lacks.
+
+#### YAML view
+
+The YAML view is the blueprint YAML in the code editor with line numbers,
+full width, and editable. Lines that differ from the published version
+have a 3px warning bar in the gutter and a faint warning background. Each
+problem underlines its range in error or warning color. A toolbar (48px)
+shows the file path, the legend for changed lines, and "Copy".
+
+#### Inspector
+
+The inspector is 320px on the `card` surface with a 1px left border, and
+scrolls by itself.
+
+- Header (48px): the kind's icon, the kind in 12px `muted-foreground`
+  ("State", "Compound state", "Event transition", "Delayed transition",
+  "Blueprint"), and the state path or label in mono under it.
+- Body: groups with a 12px weight 500 `muted-foreground` heading and a
+  chevron to collapse, 16px between fields. A group opens when it holds a
+  value. Each field has a visible label; controls are 28px.
+- Footer: "Remove" (destructive outline) for a node or an edge.
+
+Groups for a state: Basics (key, type, description, initial child),
+Transitions, Entry actions, Exit actions, Invoke, Gate, Tags, Meta, and
+Output for a top-level final state. Groups for a transition: Trigger
+(event type, delay, or invoke), Target, Guard, Actions, and Details
+(reenter, description, order, meta). The blueprint's groups: Basics,
+Context, Schemas, and Layout.
+
+- **Transitions** lists each outgoing transition as a row: its trigger
+  icon, its label in mono, an arrow, and its target in mono, or "not
+  connected" in warning text. A row opens that transition. "Add
+  transition" (outline) sits under the list.
+- **Actions** are rows of the action (a combobox, or "Assign" for an
+  expression), its parameters under it, and a ghost remove button; "Add
+  action" (outline) sits under them.
+- **Invoke** is a card per invoke: `src` as a combobox in mono, its
+  description in 13px `muted-foreground` under it, then Contract: Input and
+  Output, each a small table of property (mono), type, and required (a
+  check), or "Not declared" in muted text with "Declare contract"
+  (outline). Unknown names show their line in warning text.
+- **Gate** shows "Add gate" (outline) with no gate. A gate shows its
+  comparator path (mono), its return point, the "Reservation" switch, the
+  token event type (mono), the dependencies region, and "Remove gate"
+  (error text, outline).
+- **Tags** are badges with a remove icon, and a field to add one.
+- A field with a problem has an error or warning border and the message
+  under it in 12px `-foreground` text.
+- Comboboxes of implementations group their entries (Decide, Flow,
+  Thread, Task, People) and show each description under its name.
+
+Fields that hold a name (a key, an event type, a delay, an invoke id) take
+effect on Enter or when they lose focus. Other fields take effect as they
+change.
+
+#### Expression field
+
+An expression (an assign, a guard, or a mapping) is a code field in mono
+with a "JSONata" label: one line, growing to eight as it wraps. A problem
+underlines its position, or the whole expression, and its message shows
+under the field. A static value, such as an invoke's input, is a YAML
+field of the same look with a "YAML" label; a YAML field whose text does
+not parse shows the parse error under it and is not applied.
 
 #### Problems
 
-The editor validates the draft as it changes. A strip under the canvas
+The editor validates the draft as it changes. A strip under the view
 shows the count of errors (error color) and warnings (warning color) and
-lists each problem with its state id; a problem opens its state. A state
-with a problem has a 16px "!" badge on its top-right corner, error or warning
-colored. The strip collapses to its 36px header.
+lists each problem with its state path; a problem selects the node or
+edge it marks on the canvas, or its line in the YAML view. The strip
+collapses to its 36px header.
 
 - Errors are error-colored and disable Publish until fixed.
 - Warnings are warning-colored and do not block Publish.
 
 #### Input and output schemas
 
-The input schema and the output schema each have an editor tab.
+The input schema and the output schema open from the Schemas group of the
+blueprint inspector, in a 920px dialog.
 
 - A toolbar (48px): a Visual / YAML switch, the count, and "Add property"
   (outline, Visual only). The add button stays in the toolbar so a long
@@ -912,10 +1039,15 @@ with the same name as the design canvas uses:
 - `TaskCard`: one card on the Board, used wherever a task shows as a card.
 - `TaskContent`: the Task page, shown over the screen it was opened from.
 - `TaskNode`: a ReactFlow custom node for a task in a graph.
-- `StateNode`: a ReactFlow custom node for a blueprint state.
+- `StateNode`: a ReactFlow custom node for an atomic or final blueprint
+  state.
 - `AccountsContent`: the Accounts and budget sources section of Settings.
-- `StateSettings`: the edit component for a blueprint state, one set of
-  fields per implementation, and its gate.
+- `GroupNode`, `HistoryNode`, and `InitialNode`: ReactFlow custom nodes for
+  a compound or parallel state, a history state, and an initial marker.
+- `TransitionEdge`: a ReactFlow custom edge for a blueprint transition.
+- `CanvasToolbar`: the blueprint canvas's toolbar.
+- `Inspector`: the panel that edits the selected node or edge of a
+  blueprint, one set of groups per node and edge type.
 - `SchemaEditor`: a Visual / YAML editor for a JSON Schema, used for
   blueprint input and output schemas, and in storage mode (Stored as column,
   field panel, Problems) for Task fields.

@@ -55,6 +55,8 @@ description: |-
     `#/$defs/expression-schemas`. `input` is the machine's input schema
     and `output` its output schema.
   - `description`, optional: text for people.
+  - `layout`, optional: where the blueprint editor's canvas draws each
+    state, as under Layout. The machine never reads it.
 
   ```yaml
   description: Moves a parcel from intake to delivery.
@@ -104,6 +106,27 @@ description: |-
       courier.route:
         input: { type: object, properties: { depot: { type: string } } }
         output: { type: object }
+  ```
+
+  Layout. `layout` holds `states`, a mapping from a state path to the
+  point where the canvas draws that state's top-left corner: `{ x, y }`,
+  two integers in canvas pixels. A nested state's point is relative to
+  its parent state's top-left corner, and a top-level state's point is
+  relative to the canvas origin. A blueprint with no `layout` is laid out
+  automatically each time it is drawn. A blueprint with `layout` is
+  pinned: each state with an entry is drawn at its point, and a state
+  with no entry is placed beside its positioned siblings. An entry whose
+  path names no state is ignored. `layout` changes nothing a blueprint
+  runs: the loader, the lint rules after `shape`, and the engine read only
+  `machine` and `schemas`, so two texts that differ only in `layout` run
+  the same machine, though each commit is its own version.
+
+  ```yaml
+  layout:
+    states:
+      sorting: { x: 0, y: 0 }
+      routing: { x: 0, y: 136 }
+      delivered: { x: 0, y: 272 }
   ```
 
   Machine configuration. The root is a state node with two more keys:
@@ -596,7 +619,11 @@ validation-criteria: >-
   `send-message`, lints clean with `manifoldImplementationNames` and one declaring `agent.hand-off` gives an
   `event-unknown` finding at its declaration, and that a
   root `context` holding `manifold` is a `shape` finding at
-  `/machine/context`. A test shows that the example in this
+  `/machine/context`. Lint tests show that the Layout example added to the
+  example in this specification lints clean and returns the same machine
+  as the example without it, that a `layout` entry whose path names no
+  state lints clean, and that a point whose `x` is not an integer and a
+  `layout` key other than `states` are each a `shape` finding. A test shows that the example in this
   specification lints clean when `courier.route` is among the actor
   names. Lint tests show that a `github-card-move` invoke whose static
   `status` is not among `lifecycleOptions` is a `lifecycle-option` finding

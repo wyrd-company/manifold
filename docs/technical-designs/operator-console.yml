@@ -13,6 +13,7 @@ relationships:
   references:
     - actors-api
     - blueprints-api
+    - blueprint
     - blueprint-version
     - tasks-api
     - escalation-contract
@@ -32,11 +33,12 @@ objective: >-
   its blueprint, current state, and environment, sees where every task
   of each bound Project is, and reads and answers a task's escalations,
   state, threads, and usage on its Task page. It changes a process
-  from the Blueprints screen: sees each blueprint as a graph of its states
-  and transitions, edits its YAML with the service's own lint marking each
-  finding as the text changes, and publishes it as a commit pushed to the
-  process repository, which the service then runs with no redeploy. It
-  keeps GitHub in step from GitHub Projects: sees each bound Project with
+  from the Blueprints screen: edits each blueprint on a canvas of its
+  states and transitions, with an inspector for every node and edge, or as
+  YAML in a view the operator toggles to, with the service's own lint
+  marking each finding as the draft changes, and publishes it as a commit
+  pushed to the process repository, which the service then runs with no
+  redeploy.   keeps GitHub in step from GitHub Projects: sees each bound Project with
   its configuration state and card counts, reviews what an Apply would
   change, applies it, and binds a GitHub Project or a T3code project; and
   from Settings, Task fields: edits the task fields as a draft with the
@@ -66,6 +68,11 @@ background:
       A blueprint changes only by a push to the process repository from a
       host with a clone, and its author sees the lint's findings only after
       running `manifold-host blueprint lint` or after the service loads it.
+    - >-
+      A graph that only shows the text is hard to read and cannot be
+      edited: its colors are faint, its layout lets nodes and labels
+      overlap, and selecting a state leads to the YAML rather than to
+      controls for it, so what an invoke's `src` names is not visible.
 design-challenges:
   client-routes: >-
     The console's routes exist only in the browser. A reload or a pasted
@@ -84,9 +91,29 @@ design-challenges:
     service reports when it loads the text and as `manifold-host blueprint
     lint` prints, token findings included, while the operator types.
   graph-from-text: >-
-    The graph is a view of the YAML. It must follow the text as it changes,
-    resolve every target as XState resolves it, and hold its place while
-    the text is mid-edit and does not parse.
+    The canvas is drawn from the text. It must follow the text as it
+    changes, resolve every target as XState resolves it, show a canvas edit
+    at once rather than after the lint's wait and request, and hold its
+    place while the text is mid-edit and does not parse.
+  edits-keep-the-text: >-
+    A blueprint is the operator's text, written by hand and by agents. A
+    canvas or inspector edit must change only the YAML it touches:
+    comments, key order, quoting, scalar styles, blank lines, and
+    formatting elsewhere in the file must stay byte for byte, and an edit
+    that cannot keep that must not be made.
+  every-property: >-
+    Every property XState and Manifold read from a state or a transition
+    must be settable without the YAML view: a state's type, initial child,
+    entry and exit actions, invokes, gate, tags, meta, and output, and a
+    transition's event, target, guard, and actions, with each
+    implementation's parameters and each expression.
+  readable-layout: >-
+    Each node and edge type must be told apart at a glance, and automatic
+    layout must place nested and parallel states and every transition
+    label with no overlap.
+  positions: >-
+    A position the operator gives a state must survive a reload, another
+    browser, and a publish, and must not change what the blueprint runs.
   declaration-edits: >-
     A bind dialog changes one binding in `bindings.yml`, a file the
     operator may also edit by hand with comments. The edit must keep every
@@ -537,27 +564,41 @@ proposed-design:
     when none does. The header (56px) holds the path in mono, "Based on
     <short commit>" in muted mono, a "Draft · N changes" warning badge when
     the text differs from the base text, where N is the count of changed
-    lines, then "Discard draft" (ghost) and "Publish" (primary). A bundled
+    lines, the view toggle, then "Discard draft" (ghost) and "Publish"
+    (primary). A bundled
     blueprint shows "Bundled <short digest>" in place of "Based on", and
     is edited as any blueprint is: publishing it adds the file at its path
     to the process repository, which replaces the bundled blueprint from
     that commit on. Its Publish dialog shows the file with `A` and the
-    line "This file replaces the bundled blueprint." Under the
-    header, the Source pane and the Graph pane sit side by side, each half
-    the width; under 1024px of content width they become the tabs "Source"
-    and "Graph". The Problems strip runs under both panes. Editing the
-    graph is absent: the graph is a view of the text.
-  source-pane: >-
-    The Source pane is a CodeMirror 6 editor over the text, with line
-    numbers, `@codemirror/lang-yaml`, the console's theme built from the
-    `DESIGN.md` code colors, and the findings as `@codemirror/lint`
+    line "This file replaces the bundled blueprint." Under the header and
+    its alerts is one view at a time, at every width: the canvas view,
+    which is the canvas toolbar, the canvas, and the inspector, or the
+    YAML view. The Problems strip runs under the view. Both views edit the
+    one draft text, so the draft, lint, save, conflict, and pending-save
+    behavior below is the same whichever view made a change.
+  view-toggle: >-
+    The view toggle is a segmented control of two options, "Canvas" and
+    "YAML", with `aria-pressed` on the shown one. The shown view is the
+    editor route's search parameter `view`: absent for the canvas, `yaml`
+    for the YAML view, so a reload or a pasted link opens the same view.
+    `Ctrl+Shift+Y` or `⌘⇧Y` switches views. Switching keeps the draft, the
+    latest lint answer, and the selection. Switching to YAML puts the
+    cursor at the start of the selected node's or edge's range and
+    scrolls it into view; switching to the canvas selects the deepest
+    transition, or else the deepest state, whose range holds the cursor,
+    opens its inspector, and pans to it when it is outside the viewport.
+  yaml-view: >-
+    The YAML view is a CodeMirror 6 editor over the text, full width, with
+    line numbers, `@codemirror/lang-yaml`, the console's theme built from
+    the `DESIGN.md` code colors, and the findings as `@codemirror/lint`
     diagnostics: each finding with a `range` is an error diagnostic and
     each warning with a `range` a warning diagnostic, over that range. A
     line that differs from the base text has the 3px warning bar in the
-    gutter and the faint warning background `DESIGN.md` gives the Source
-    tab, computed with `@codemirror/merge`'s diff of the base text and the
+    gutter and the faint warning background `DESIGN.md` gives the YAML
+    view, computed with `@codemirror/merge`'s diff of the base text and the
     text. A toolbar (48px) shows the file path, the legend for changed
-    lines, and "Copy".
+    lines, and "Copy". CodeMirror's own undo history serves the view while
+    it is shown.
   lint-as-you-type: >-
     Each change to the text starts a 300 ms wait; a change during the wait
     starts it again. When the wait ends, the editor sends `POST
@@ -569,41 +610,299 @@ proposed-design:
     pending, the Problems header shows "Checking…" in muted text and the
     previous marks stay. A lint request that fails shows "Cannot check
     this text. Try again." in the Problems header with a "Try again"
-    button, and Publish stays disabled.
-  graph-pane: >-
-    The Graph pane is a ReactFlow canvas on the dotted grid, read only:
-    nodes do not drag or connect, and the canvas pans and zooms, with the
-    zoom controls at the bottom left. It draws the graph of the latest
-    lint answer, or of the source on open. Each state is a `StateNode`,
-    200×56 as `DESIGN.md` states, with its key in mono and its first
-    invoke source under it, a "Gate" badge when gated, and a double border
-    when final. A compound or parallel state is a group node holding its
-    children, titled with its key, with a dashed border between a parallel
-    state's regions. The initial state of each level has an incoming
-    marker from a small filled dot. Each transition is an edge from its
-    source to its target with its label as a mono pill, a guard icon in
-    the pill when guarded, and the `graph-edge` style; a targetless
-    transition is a pill on a short self loop. The layout is elkjs's
-    `layered` algorithm, top to bottom, with `hierarchyHandling`
-    `INCLUDE_CHILDREN`, run on the main thread with `elk.bundled.js`, so
-    edges between levels route through their groups. Layout runs again
-    when the set of states or transitions changes, and the viewport keeps
-    its pan and zoom. When the latest lint answer has no graph, the pane
-    keeps the last graph, dimmed, with the muted line "Showing the last
-    text that parsed." Selecting a state draws its incoming and outgoing
-    transitions in primary and moves the editor's cursor to the start of
-    the state's range; moving the cursor into a state's range selects the
-    deepest state whose range holds it. A state with a finding or warning
-    whose location is the state's location or under it, and not under a
-    child state's location, has the 16px "!" badge, error colored when any
-    is a finding.
+    button, and Publish stays disabled. A canvas or inspector edit changes
+    the text, so it is linted by the same wait and request as typing.
+  canvas: >-
+    `BlueprintCanvas` is a ReactFlow canvas on the dotted grid. It draws
+    the graph that `blueprintGraph` computes in the browser from the
+    draft's text, recomputed on each change of the text, with the
+    document's `layout`, so a canvas edit shows at once. The service's
+    graph in a lint answer serves only the Problems strip and the list.
+    Findings mark the canvas from the latest lint answer, applied only to
+    the text it was sent for; while a lint is pending, the previous marks
+    stay on the nodes and edges they named. When the text has no graph,
+    because it does not parse, fails the shape, or its machine does not
+    resolve, the canvas keeps the last graph, dimmed and read only, with
+    the info line "The canvas cannot draw this text. Fix it in the YAML
+    view." and "Open YAML". While the draft is a pending save, the canvas
+    is read only. Read only, the canvas keeps select, move, zoom, and fit;
+    every other toolbar button and every inspector field is disabled. A
+    click on the canvas background selects the blueprint itself.
+  canvas-toolbar: >-
+    `CanvasToolbar` floats 12px inside the canvas's top-left corner. Its
+    buttons are ghost icon buttons, each with an `aria-label` and a
+    tooltip naming it and its key, in groups: Select (`V`) and Move (`H`),
+    one of which is the active tool; Add state (`S`), a menu of State,
+    Compound state, Parallel state, Final state, and History state, and
+    Add transition (`T`); Undo (`⌘Z` or `Ctrl+Z`) and Redo (`⌘⇧Z` or
+    `Ctrl+Shift+Z`); Zoom out (`-`), Zoom in (`+`), and Fit (`Shift+1`);
+    and Automatic layout (`Shift+L`). Keys act while focus is on the
+    canvas, never in an inspector field or the YAML view. With Select, a
+    click selects a node or an edge, a drag of a node moves it, a drag from
+    a node's handle starts a transition, and a drag of the background
+    pans. With Move, every drag pans and nothing moves or connects; holding
+    Space gives Move until it is released. Choosing a state type arms
+    placement: a ghost of the node follows the pointer, a click places the
+    state, and Escape disarms. Add transition arms connection: a click on
+    the source state and a click on the target state, the source again for
+    a transition to itself, open the event picker; Escape disarms. Zoom
+    runs from 25% to 200%. Fit frames every node with 48px of margin.
+    Automatic layout is disabled, with the tooltip "Layout is automatic",
+    while the blueprint has no `layout`. `Delete` and `Backspace` remove
+    the selected state or transition.
+  canvas-nodes: >-
+    Each node type has its own component and look, as `DESIGN.md` states.
+    An atomic state is a `StateNode`; a final state is a `StateNode` with a
+    double border; a compound state is a `GroupNode` holding its children
+    under a title bar; a parallel state is a `GroupNode` marked "Parallel"
+    whose regions, its child states, have dashed borders; a history state
+    is a `HistoryNode`, a circle marked `H` for shallow or `H*` for deep;
+    and each compound level, the machine's root included, has an
+    `InitialNode`, a small filled dot joined to the initial child by an
+    unlabeled edge. A state names the source of its first invoke, with
+    "+N" for more, and a "Gate" badge when it declares a gate. A state
+    whose range holds a line that differs from the base text has the
+    6px warning dot. A state with a finding or warning whose location is
+    the state's location or under it, and not under a child state's or a
+    transition's location, has the 16px "!" badge, error colored when any
+    is a finding. A selected node has the 2px primary border and ring.
+    Every node has a target handle on its top edge and a source handle on
+    its bottom edge, shown on hover with Select; a connection dropped
+    anywhere on a node connects to that node.
+  canvas-edges: >-
+    Each transition is a `TransitionEdge` whose stroke and label pill tell
+    its trigger apart, as `DESIGN.md` states: an event transition is solid
+    with the event type; `always` is dashed with "always"; `after` is
+    dotted with a clock icon, the delay as written, and, for a delay in
+    milliseconds, its duration after a middle dot, such as
+    "3600000 · 1h"; `onDone` is solid with a done icon, "done", and the
+    invoke id or the state; `onError` is solid with an error icon,
+    "error", and the invoke id. A guarded transition has the guard icon
+    first in its pill. A targetless transition is a short loop on its
+    source. A transition with several targets is one edge per target. The
+    edges into and out of the selected node, and the selected edge, are
+    drawn in primary. A transition with a finding or warning whose
+    location is the transition's location or under it has its pill
+    bordered in error or warning color with a 12px "!" icon.
+  automatic-layout: >-
+    `layoutCanvas(graph, layout, measure)` in `canvas-layout.ts` is a pure
+    async function from the graph, the document's `layout`, and a function
+    that measures a label's width to the positioned nodes, edges, and
+    labels. A blueprint with no `layout` is laid out automatically, every
+    time the set of states, transitions, or labels changes, with elkjs's
+    `layered` algorithm, top to bottom, `hierarchyHandling`
+    `INCLUDE_CHILDREN`, orthogonal edge routing, and each edge's label
+    pill given to the layout as a label of its measured size, placed at
+    the edge's center, so that elkjs keeps nodes and labels apart. Spacing
+    is 48px between nodes, 64px between layers, 24px between an edge and a
+    node, 16px between edges, and 8px around a label. A group's padding is
+    48px on top, for its title bar, and 24px on the other sides. A history
+    node is 40×40 and an initial node 10×10, laid out in its group's first
+    layer. Edge sections and label positions are read in root
+    coordinates, and each edge is drawn as a polyline through its
+    section's points with 6px rounded corners, its pill at elkjs's label
+    position. The browser measures a label with the canvas 2D context in
+    the mono font of `DESIGN.md`; tests pass a fixed width per character.
+    The viewport keeps its pan and zoom across layouts, and the first
+    drawing of a blueprint fits the view. Layout runs on the main thread
+    with `elk.bundled.js`.
+  pinned-layout: >-
+    A blueprint with `layout` is pinned. Each state with an entry in
+    `layout.states` is drawn at its point, relative to its parent group.
+    A state with no entry is placed to the right of its positioned
+    siblings' bounding box, 48px from it, top-aligned with it, one column
+    in document order; with no positioned sibling it is placed at its
+    group's padding. A group's size is its children's bounding box plus
+    its padding, at least 200×56. An initial node sits 32px above and to
+    the left of the initial child. Edges are ReactFlow smooth-step paths
+    between the node borders, with the pill at the path's midpoint; a
+    pinned drawing does not keep labels apart, and Automatic layout gives
+    a drawing that does. A drag with Select moves a node, with its
+    children, within its parent group. When the drag ends somewhere other
+    than where it started, the canvas writes every drawn state's point,
+    snapped to the 8px grid, as the whole `layout.states` mapping in
+    document order, so the first drag of an automatic blueprint pins the
+    drawing as it was shown, and an entry whose path names no state is
+    dropped. Moving a state to another parent is a change of the machine
+    and is made in the YAML view. Automatic layout removes `layout` and
+    the comments inside it, and the blueprint is automatic again.
+  adding: >-
+    Placing a state adds it to the deepest compound or parallel state
+    whose group holds the click point, or to the machine's root. Its key is
+    the first of `<base>`, `<base>-2`, `<base>-3`, and so on that no
+    sibling holds, where the base is `state`, `compound`, `parallel`,
+    `final`, or `history` by its type. It is written as the smallest text
+    that lints for its type: `{}` for a state, `{ type: final }`,
+    `{ type: history }`, a compound state with `initial` naming one child
+    state, and a parallel state with two child states, `region-1` and
+    `region-2`. A parent with no `initial` that needs one gets the new
+    state as `initial`. In a pinned blueprint the new state's point is
+    written with it. The new state is selected and its inspector opens with
+    its key field focused, so the operator names it next.
+  event-picker: >-
+    A connection opens `EventPicker`, a 280px popover at the drop point
+    titled "New transition" with the source and target paths in mono. A
+    filter field over a list offers each event type the blueprint declares
+    under `schemas.events`, in mono; "always"; "after", which asks for a
+    delay in milliseconds or a delay name; "done", when the source invokes
+    or has child states; and "error", when the source invokes, for its
+    first invoke, or a chosen one when it invokes more than one. A typed
+    name that the list does not hold is offered as "Use <name>". Enter or
+    a choice writes the transition; Escape or a click outside writes
+    nothing. A source that already has a transition on the chosen trigger
+    gets the new one as a further candidate after the existing ones. The
+    new edge is then selected and its inspector opens.
+  blueprint-edits: >-
+    `blueprint-edits.ts` is a pure module. `applyBlueprintEdit(text, edit,
+    graph)` takes the draft's text, one edit, and the graph of that text,
+    and returns `{ ok: true, text, select? }` with the new text and the
+    node or edge to select, or `{ ok: false, reason, message }` with the
+    text unchanged. The edits are `add-state`, `rename-state`,
+    `remove-state`, `set-initial`, `add-transition`, `remove-transition`,
+    `move-candidate`, `set`, `remove`, `rename-key`, `set-layout`, and
+    `clear-layout`; `set`, `remove`, and `rename-key` take a JSON Pointer
+    into the document and are what an inspector field writes. The module
+    parses the text with the `yaml` package's document model, finds each
+    node it changes by its pointer, and changes the text by splices
+    inside those nodes' source ranges: a replaced value is its node's range
+    rewritten, a renamed key its key scalar's range, a removed entry the
+    lines from its key to the end of its value, and an added entry new
+    lines after the last entry of its mapping, at that mapping's
+    indentation, or a new item at the end of a flow collection. A new
+    value is rendered by the `yaml` package's `stringify` in block style at
+    the place it goes; a replaced scalar keeps its style, plain, quoted,
+    literal, or folded, when the new value can be written in it. Every
+    character outside the splices is kept. The result is then checked: it
+    must parse with no error, and its value must equal the old document's
+    value with the edit applied as data. An edit that fails the check, or
+    that touches an anchor, an alias, or a node an alias refers to, returns
+    `unsafe`, and the editor shows "This edit cannot be made on the
+    canvas. Make it in the YAML view." An edit whose pointer, state, or
+    transition the text no longer holds returns `missing` and changes
+    nothing. A key that is empty, holds `.` or `#`, or that a sibling holds
+    returns `invalid` with the message the field shows.
+  edit-references: >-
+    A target is written in the shortest form that resolves to it from its
+    source: the sibling's key path, such as `routing` or
+    `routing.checking`, for a state under a sibling of the source or the
+    source itself; `.<path>` for a state under the source; and
+    `#<machine id>.<path>` otherwise. A target that is the only property
+    of its transition is written as a string. `rename-state` renames the
+    key and rewrites, in the form each was written, every reference that
+    resolves to the state or under it: transition targets, by the
+    locations the graph gives; the parent's `initial`; a history state's
+    `target`; each `in` guard's `states`; a gate's `return.state` and
+    `dependencies`; and the keys of `layout.states`. `remove-state` removes
+    the state, every transition target that resolves to it or under it,
+    and the transition when no target is left, its `layout.states`
+    entries, and its parent's `initial` when it named the state, which
+    then names the first remaining child, or is removed when no child is
+    left. An `in` guard or a gate that names a removed state stays, and the
+    lint marks it. `move-candidate` moves a transition earlier or later
+    among the candidates of its trigger.
+  inspector: >-
+    `Inspector` is a 320px panel at the canvas view's right edge that
+    shows the selected node or edge, or the blueprint when nothing is
+    selected. Under 1024px of content width it is an overlay sheet from the
+    right, closed with Escape. Its header names the kind, such as
+    "Compound state" or "Delayed transition", and the state path or label
+    in mono, and a node or edge inspector ends with "Remove" in destructive
+    outline. Its fields are grouped as `DESIGN.md` states, and each writes
+    through `applyBlueprintEdit`. A field whose value is a name, a state
+    key, an event type, a delay, or an invoke id, writes on Enter or when
+    it loses focus, and Escape restores it; every other field writes on
+    each change. A field whose pointer holds a finding or warning, at it
+    or under it, is bordered in the finding's color with the message
+    under it. Several kinds of field recur: a reference field, a combobox
+    of implementation names of one kind from the implementation catalog,
+    grouped and each with its description, plus the blueprint paths of the
+    list for an invoke `src`, and any typed name; an action list, with
+    rows of an action, its parameters, and remove, and "Add action"; an
+    expression field; and a YAML field, a CodeMirror YAML editor over one
+    value that writes when its text parses and otherwise shows the parse
+    error under it and writes nothing. Parameters are a YAML field over
+    `params`.
+  inspector-fields: >-
+    The blueprint inspector holds its description, the machine `id`, the
+    root's initial state, `context` as a YAML field, the input, output,
+    and context schemas, each event schema, and each actor schema as YAML
+    fields with "Add event schema" and "Add actor schema", and the layout,
+    "Automatic" or "Pinned" with Automatic layout. A state inspector holds
+    its key; its type, a select of State, Compound state, Parallel state,
+    and Final state, where a state with child states cannot become a state
+    or a final state; its description; its initial child, for a compound
+    state; its transitions, each with its trigger's icon, its label, and
+    its target or "not connected" in warning text, each opening that
+    transition's inspector, and "Add transition", which asks for the
+    target and then opens the event picker; its entry and exit actions;
+    its invokes, each with its `src`, its `id`, its `input` as a static
+    YAML field or a mapping expression, and its `onDone` and `onError`
+    targets, with "Add invoke"; its gate, "Add gate" or the comparator
+    path, the return point, exit or a state, the reservation switch, the
+    token event type, the dependencies region, and "Remove gate"; its
+    tags; its other `meta` keys as a YAML field; and, for a top-level final
+    state, its `output` as a static YAML field or a mapping expression. A
+    history inspector holds its key, shallow or deep, and its default
+    target. An initial inspector holds the level's initial child. A
+    transition inspector holds what its trigger names: the event type, the
+    delay, or the invoke it belongs to; its targets, each a select of
+    state paths or "No target"; its guard, none, an expression, `in` with
+    a multi-select of state paths, or a named guard with its parameters;
+    its actions; `reenter`; its description; its `meta` as a YAML field;
+    and, when it is one of several candidates, "N of M" with "Earlier" and
+    "Later".
+  invoke-contract: >-
+    An invoke shows what its `src` names: for a Manifold implementation,
+    its description from the implementation catalog; for a child
+    blueprint, the description the list gives for that path, or "Not in
+    the process repository" in warning text; for any other name, "Unknown
+    implementation" in warning text. Under it, Contract shows
+    `schemas.actors.<src>` of the blueprint: its input and its output,
+    each as a table of property, type, and required, read from the
+    schema's `properties` and `required`, or the schema as YAML when it is
+    not an object schema. With no declaration it shows "Not declared" in
+    muted text and, when the catalog gives the implementation's input and
+    output schemas, "Declare contract", which writes them under
+    `schemas.actors.<src>`. "Edit" opens the actor schema in the blueprint
+    inspector.
+  expression-field: >-
+    An expression field edits the `params.expression` of an
+    `expression.assign` or `expression.guard` reference, or of an
+    `expression.map` `input` or `output`. It is a CodeMirror 6 editor in
+    mono that grows from one line to eight, with a "JSONata" label and no
+    language package. Its diagnostics are the latest lint answer's
+    findings and warnings located at the expression or at its reference:
+    a finding with a `position` marks one character at that position in the
+    expression, and any other marks the whole expression. It writes on
+    each change, so it is linted with the same wait, request, and rules as
+    the YAML view. A one-line expression keeps the scalar style it had,
+    and a new or multi-line expression is written as a literal block
+    scalar.
+  canvas-undo: >-
+    `canvas-history.ts` holds the canvas's undo and redo as a pure stack
+    of pairs, the text before and after each canvas or inspector edit, up
+    to 100. Undo restores the text before the latest edit only when the
+    draft's text is still the text after it; a text changed elsewhere, by
+    the YAML view or a source read, empties both stacks. The stacks live in
+    memory and are emptied by a reload, a discard, and a source read that
+    replaces the text.
   problems-strip: >-
     The Problems strip is `DESIGN.md`'s: a 36px header with the error count
     in error color and the warning count in warning color, collapsible,
     and the list of findings then warnings, each with its kind in mono,
     its message, its state path when it falls in a state, and its line.
-    Choosing one moves the editor's cursor to its range and selects its
-    state. A finding with no range lists with its location in mono.
+    Choosing one in the canvas view selects the transition, the state, or
+    the blueprint it falls in, opens its inspector, and scrolls to the
+    field it marks; in the YAML view it moves the cursor to its range. A
+    finding with no range lists with its location in mono.
+  canvas-problems: >-
+    `problems.ts` maps each finding to what it marks: the deepest
+    transition whose location is the finding's location or a prefix of
+    it, else the deepest such state, else the blueprint; and, within the
+    inspector, the deepest field whose pointer is the finding's location or
+    a prefix of it. The canvas, the inspector, the Problems strip, and the
+    YAML view read the same latest lint answer, so each finding marks all
+    four.
   blueprint-drafts: >-
     A draft is the edited text of one blueprint, with the commit it is
     based on, kept in the browser. It lives in `localStorage` under
@@ -755,6 +1054,12 @@ proposed-design:
     so a sibling key, a `.child`, and a `#id` target resolve as they run.
     `after` transitions are labelled with their delay as written, and
     `onDone` and `onError` of an invoke with the invoke's id. It is pure.
+    It validates the shape with a validator generated from the blueprint
+    schema assets at build time by Ajv's standalone code generation, so it
+    compiles no code at run time, and the subpath export `./blueprint-graph`
+    serves it to the console with `findingRanges`, holding no lint, under
+    the console's Content Security Policy. The service and the console run
+    the same function.
   finding-ranges: >-
     `findingRanges(text, findings)` in `packages/shared` returns each
     finding with the `range` of `blueprints-api`. It parses the text once
@@ -928,14 +1233,53 @@ proposed-design:
     a save result to an answer, and `request-checks.ts` the pure
     cross-site, type, and shape checks. In `packages/console`,
     `src/screens/blueprints/` holds `BlueprintsList.tsx`,
-    `BlueprintEditor.tsx`, `SourcePane.tsx`, `GraphPane.tsx`,
-    `ProblemsStrip.tsx`, `PublishDialog.tsx`, `DiscardDialog.tsx`,
-    `ConflictAlert.tsx`, `StateNode.tsx`, and the pure modules `draft.ts`,
-    `graph-layout.ts` (graph to elkjs input, elkjs output to ReactFlow
-    nodes and edges), and `problems.ts` (findings to states and badges).
-    `src/screens/BlueprintsContent.tsx` switches between the list and the
+    `BlueprintEditor.tsx`, `YamlView.tsx`, `ProblemsStrip.tsx`,
+    `PublishDialog.tsx`, `DiscardDialog.tsx`, `ConflictAlert.tsx`, and the
+    pure modules `draft.ts`, `blueprint-edits.ts`, `canvas-history.ts`, and
+    `problems.ts`; `canvas/` holds `BlueprintCanvas.tsx`,
+    `CanvasToolbar.tsx`, `StateNode.tsx`, `GroupNode.tsx`,
+    `HistoryNode.tsx`, `InitialNode.tsx`, `TransitionEdge.tsx`,
+    `EventPicker.tsx`, and the pure `canvas-layout.ts`; and `inspector/`
+    holds `Inspector.tsx`, one component per inspector kind, and the field
+    components. `src/screens/BlueprintsContent.tsx` switches between the
+    list and the
     editor. The `blueprints-api` wiring part calls `mountBlueprintsApi`
     before the host listens, as `service-assembly` states.
+  implementation-catalog: |-
+    `packages/shared/src/implementation-catalog.ts` is the one list of the
+    implementations Manifold's service registers, and the subpath export
+    `./implementation-catalog` serves it with no schema compiler. Each
+    entry holds the name, its kind, a group for the inspector, a
+    one-sentence description, the event types an action raises, and,
+    where a specification defines them, the JSON Schemas of an actor's
+    input and output or of an action's or guard's parameters, taken from
+    that specification's schema asset. `manifoldImplementationNames` is
+    derived from the catalog and the agent tool event types, with its
+    export and shape unchanged, so a name added to the service is added
+    once, as a catalog entry. The console reads the catalog from the build
+    it is served by, so it names what the service registers.
+
+    ```ts
+    export type ImplementationKind = "actor" | "action" | "guard" | "delay";
+
+    export interface ImplementationEntry {
+      readonly name: string;
+      readonly kind: ImplementationKind;
+      /** The inspector's group, such as "Thread", "Task", or "People". */
+      readonly group: string;
+      /** One sentence. */
+      readonly description: string;
+      /** Event types an action raises. */
+      readonly raises?: readonly string[];
+      /** An actor's input and output schemas. */
+      readonly input?: object;
+      readonly output?: object;
+      /** An action's or guard's `params` schema. */
+      readonly params?: object;
+    }
+
+    export const manifoldImplementationCatalog: readonly ImplementationEntry[];
+    ```
   projects-routes: >-
     GitHub Projects has two routes: `projects`, the list, and
     `projects/$binding`, a Project's page, whose segment is the binding
@@ -2100,7 +2444,14 @@ proposed-design:
     replaces whole, and a service started on a `dist/` with no
     `index.html` refuses to start. The browser's writes are `localStorage`
     keys for theme and sidebar mode, each set to the operator's latest
-    choice, so a repeated save leaves one value.
+    choice, so a repeated save leaves one value. A canvas or inspector edit is a
+    pure function of the draft's text that writes the whole new text to
+    the draft, so a crash leaves the text before or after the edit, never
+    part of it. An edit that runs twice converges: a second `set`,
+    `set-layout`, `rename-state` to the same key, or `clear-layout` returns
+    the same text; a second `remove-state` or `remove-transition` returns
+    `missing` and changes nothing; and a second `add-state` adds a second
+    state, as a second click does.
   errors: >-
     `store.activeSnapshots()` throwing answers `500` with no body detail,
     and the error goes to the service's log with the request path. A
@@ -2120,16 +2471,39 @@ proposed-design:
     change, a `200` sets `saved` and keeps the draft, and a draft with
     `saved` is removed by a source read of its text, and becomes an
     ordinary draft based on the source when a save answer with `blueprint`
-    is followed by a source read of other text), `problems.ts`, and `graph-layout.ts` on a nested and a
-    parallel graph. `packages/service/src/blueprints-api/blueprints.browser.test.ts`
+    is followed by a source read of other text), and `problems.ts`.
+    In `packages/console`, `blueprint-edits.ts` is tested on a fixture
+    blueprint with comments before, between, and after entries, a flow
+    mapping, single- and double-quoted scalars, literal and folded block
+    expressions, blank lines, and an anchor: for each edit, the text before
+    the first changed character and after the last is byte for byte the
+    old text's, the changed span lies inside the lines of the nodes the
+    edit touches, and the result parses to the expected value; a rename
+    rewrites a sibling, a `.child`, and a `#id` target, an `in` guard, a
+    gate's return and dependencies, and layout keys; a remove drops the
+    targets into the state and moves the parent's `initial`; an edit under
+    an alias returns `unsafe`; and each edit run twice converges as stated.
+    `canvas-layout.ts` is tested on the bundled task blueprint and on a
+    fixture with nested and parallel states, every trigger, a history
+    state, and a targetless transition: in automatic layout no two nodes
+    overlap unless one holds the other, no label overlaps a node or
+    another label, and every node lies inside its group; in a pinned
+    layout each positioned state is at its point and an unpositioned state
+    lies beside its siblings. `canvas-history.ts`, `problems.ts`, and the
+    inspector's mapping from a finding to a field are unit tested, and a
+    shared test checks that every name of `manifoldImplementationNames`
+    has one catalog entry with a description and that each catalog schema
+    equals its specification's definition.
+    `packages/service/src/blueprints-api/blueprints.browser.test.ts`
     starts the service on a fixture process repository served over smart
     HTTP with push enabled, launches headless Chromium, opens Blueprints,
     and sees every fixture blueprint with its version and lint, a bundled
     blueprint with its "Bundled" badge, and a repository blueprint that
     replaces a bundled one with "Replaces the bundled blueprint"; opens one
-    and sees its states in the graph; types a transition target that names
-    no state and, once the lint answers, sees an error diagnostic on that
-    line, the "!" badge on the state, and Publish disabled; fixes it and
+    and sees its states on the canvas; toggles to the YAML view, types a
+    transition target that names no state and, once the lint answers, sees
+    an error diagnostic on that line, the "!" badge on the state when it
+    toggles back, and Publish disabled; fixes it and
     sees the marks clear; publishes with a message; sees the success toast;
     returns to the list and sees the new commit as the version; and finds
     one new commit on the fixture remote with that message. A second case
@@ -2147,7 +2521,18 @@ proposed-design:
     version" answers `already-saved`; the editor is editable and shows the
     saved text as a draft based on the later commit with the "changed this
     file since" alert, Compare shows both texts, and "Discard draft" leaves
-    the later commit's text and no draft. In `packages/service/src/console/`, `mountConsole` uses the
+    the later commit's text and no draft. A fifth case,
+    `canvas.browser.test.ts` beside it, drives the canvas: it adds a state
+    from the toolbar's Add state menu and names it in the inspector, drags
+    a transition from an existing state to the new one, picks its event in
+    the event picker, sets an expression guard in the transition
+    inspector with a syntax error, sees the
+    finding on the guard field, on the edge's pill, and in the Problems
+    strip, fixes the expression and sees the marks clear, toggles to the
+    YAML view and sees the new state and transition with the fixture's
+    comments in place, toggles back, drags a node, runs Automatic layout
+    and sees `layout` absent from the YAML, publishes, and sees the new
+    commit as the version in the list. In `packages/service/src/console/`, `mountConsole` uses the
     production HTTP host on a loopback port with no credentials: the actors
     endpoint behaviors in `actors-api`'s validation criteria; a client
     route under `/console/` answers `index.html`; a hashed asset answers
@@ -2185,7 +2570,9 @@ proposed-design:
     `@codemirror/language`, `@codemirror/lang-yaml`, `@codemirror/lint`,
     and `@codemirror/merge`. The Portfolio screen adds `yaml` (eemeli/yaml),
     the YAML library the service and the host CLI already use, whose
-    document model edits a text and keeps its comments. None of them
+    document model edits a text and keeps its comments. The canvas builds
+    its graph through the shared package's `./blueprint-graph` export,
+    whose validator is generated at build time. None of them
     evaluates generated code, so the console's Content Security Policy
     holds. Renovate keeps them current
     with the rest.
