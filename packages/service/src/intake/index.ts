@@ -18,3 +18,5 @@ export type {
   IntakeStartFailure,
   IntakeStep,
 } from "./types.ts";
+
+export { intakeFailedHandler } from "./escalation.ts";

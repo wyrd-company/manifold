@@ -7,6 +7,7 @@ import type { LoadedBlueprint, RevisionLoad, VersionLoad } from "../blueprint-lo
 import type { GitHubProject, TrackedIssue } from "../github-source/index.ts";
 import type { PortfolioInForce } from "../portfolio/index.ts";
 import type { JsonValue, Store } from "../store/index.ts";
+import type { Escalations } from "../escalations/index.ts";
 import type { DecisionModels } from "../decision-models.ts";
 import type { BlueprintVersion } from "@wyrd-company/manifold-shared";
 
@@ -14,6 +15,7 @@ import type { BlueprintVersion } from "@wyrd-company/manifold-shared";
 
 export interface IntakeOptions {
   readonly store: Store;
+  readonly escalations: Pick<Escalations, "raise" | "withdraw">;
   /** The GitHub event source satisfies it. */
   readonly tracked: TrackedIssues;
   /** The blueprint loader satisfies it. */
@@ -61,6 +63,7 @@ export interface Intake {
   discovered(issueNodeIds: readonly string[]): void;
   /** Reconciles every tracked issue against the revision `current` now answers. */
   revisionLoaded(): void;
+  mirrorChanged(): void;
   record(issueNodeId: string): IntakeRecord | undefined;
   /** Resolves when nothing is queued or running. */
   idle(): Promise<void>;
@@ -82,6 +85,7 @@ export interface IntakeRecord {
   readonly actorId: string;
   readonly failure: IntakeFailure | null;
   readonly evaluation: JsonValue | null;
+  readonly issueDigest: string | null;
   readonly attempts: number;
   /** The last failure to start the actor of a `recorded` record. */
   readonly startFailure: IntakeStartFailure | null;

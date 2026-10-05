@@ -26,6 +26,8 @@ function fixture() {
     configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
     tokenFile: () => "",
     handlers: {
+      "intake-failed": () => {},
+      "comparator-failed": () => {},
       "held-actor": heldActorHandler((id) => releases.push(id)),
       "stranded-token": () => {},
     },
@@ -102,6 +104,8 @@ test("service handlers write atomically and run their returned work after commit
     configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
     tokenFile: () => "",
     handlers: {
+      "intake-failed": () => {},
+      "comparator-failed": () => {},
       "held-actor": () => {
         store.connection.database.exec("CREATE TABLE handler_result(value TEXT)");
         return () => {
@@ -133,6 +137,8 @@ test("an answered cause with failed handling keeps its occurrence and retries on
     configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
     tokenFile: () => "",
     handlers: {
+      "intake-failed": () => {},
+      "comparator-failed": () => {},
       "held-actor": () => {
         calls++;
         store.connection.database.exec("CREATE TABLE handler_write(value TEXT)");

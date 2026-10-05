@@ -225,7 +225,11 @@ export function escalationRows(
         return insert(
           idOf(["service", request.kind, subjectOf(request.subject), occurrence]),
           { type: "service", kind: request.kind, subject: request.subject, occurrence },
-          { question: request.question, choices: request.choices },
+          {
+            question: request.question,
+            choices: request.choices,
+            ...(request.title === undefined ? {} : { title: request.title }),
+          },
         );
       }),
     withdraw: (request: Pick<ServiceEscalationRequest, "kind" | "subject">) => {

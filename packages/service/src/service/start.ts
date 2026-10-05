@@ -4,7 +4,7 @@
 //     - service-assembly
 //     - gate-runtime
 // ---
-import { startIntake, intakeMigrationSteps } from "../intake/index.ts";
+import { startIntake, intakeMigrationSteps, intakeFailedHandler } from "../intake/index.ts";
 import type { Intake } from "../intake/index.ts";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -140,6 +140,8 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         return credential.tokenFile;
       },
       handlers: {
+        "intake-failed": intakeFailedHandler(store, (id) => intake?.discovered([id])),
+        "comparator-failed": (escalation) => gates?.comparatorFailed(escalation),
         "held-actor": heldActorHandler((actorId) => {
           const release = actorHost!.release(actorId);
           void Promise.resolve(release).catch(() =>
@@ -377,7 +379,10 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         pull: revisions.pull,
       },
       onTracked: (ids) => intake?.discovered(ids),
-      ...(gates ? { onMirrorChanged: gates.inputChanged } : {}),
+      onMirrorChanged: () => {
+        gates?.inputChanged();
+        intake?.mirrorChanged();
+      },
       onError: (error) =>
         log({
           level: "error",
@@ -388,6 +393,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     });
     step("github-started", "start");
     intake = startIntake({
+      escalations: parts.escalations,
       store: parts.store,
       tracked: github,
       blueprints: parts.blueprints,

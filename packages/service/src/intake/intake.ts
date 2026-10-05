@@ -15,7 +15,8 @@ import type {
 import { records } from "./records.ts";
 import { modelCache } from "./models.ts";
 import { decide, failure, inputErrors, inputIssues } from "./decide.ts";
-import { decisionInput, taskInput, json } from "./inputs.ts";
+import { intakeFailureQuestion } from "./escalation.ts";
+import { decisionInput, taskInput, json, issueDigest } from "./inputs.ts";
 export function startIntake(options: IntakeOptions): Intake {
   const rows = records(options.store),
     models = modelCache(options.createModels);
@@ -27,14 +28,33 @@ export function startIntake(options: IntakeOptions): Intake {
     options.probe?.(step, id);
     options.onFailed?.(rows.get(id)!);
   };
+  function withdraw(id: string) {
+    options.escalations.withdraw({ kind: "intake-failed", subject: { issue: id } });
+  }
+  function raise(record: IntakeRecord, previous: IntakeRecord | undefined) {
+    const before = previous?.failure ?? previous?.startFailure;
+    const after = record.failure ?? record.startFailure!;
+    if (before && before.kind !== after.kind) withdraw(record.issueNodeId);
+    options.escalations.raise(intakeFailureQuestion(record));
+  }
+  function started(id: string) {
+    options.store.connection.transaction(() => {
+      rows.started(id);
+      withdraw(id);
+    });
+  }
   function startFailure(id: string, value: IntakeStartFailure) {
-    rows.failedStart(id, value);
+    options.store.connection.transaction(() => {
+      const previous = rows.get(id);
+      rows.failedStart(id, value);
+      raise(rows.get(id)!, previous);
+    });
     notifyFailure("start-failed", id);
   }
   async function start(record: IntakeRecord) {
     const id = record.issueNodeId;
     if (options.store.loadSnapshot(record.actorId)) {
-      rows.started(id);
+      started(id);
       options.probe?.("started", id);
       return;
     }
@@ -58,7 +78,7 @@ export function startIntake(options: IntakeOptions): Intake {
       return;
     }
     if (options.store.loadSnapshot(record.actorId)) {
-      rows.started(id);
+      started(id);
       options.probe?.("started", id);
       return;
     }
@@ -88,7 +108,7 @@ export function startIntake(options: IntakeOptions): Intake {
       }
       throw new IntakeError("start", id, error);
     }
-    rows.started(id);
+    started(id);
     options.probe?.("started", id);
   }
   async function take(id: string) {
@@ -100,9 +120,10 @@ export function startIntake(options: IntakeOptions): Intake {
     }
     const basis = options.current();
     if (!basis) return;
-    if (previous?.commit === basis.revision.commit) return;
     const issue = options.tracked.trackedIssue(id);
     if (!issue) return;
+    const digest = issueDigest(issue);
+    if (previous?.commit === basis.revision.commit && previous.issueDigest === digest) return;
     const declaration = basis.portfolio.declaration;
     const bindings = declaration.githubProjects
       .flatMap((binding) => {
@@ -136,6 +157,7 @@ export function startIntake(options: IntakeOptions): Intake {
       actorId: `task:${id}`,
       failure: null,
       evaluation: null,
+      issueDigest: digest,
       attempts: (previous?.attempts ?? 0) + 1,
       startFailure: null,
       startAttempts: 0,
@@ -143,7 +165,19 @@ export function startIntake(options: IntakeOptions): Intake {
       updatedAt: now,
     };
     const fail = (value: IntakeFailure) => {
-      rows.decide({ ...record, status: "failed", failure: value });
+      let changed = false;
+      options.store.connection.transaction(() => {
+        const failed = { ...record, status: "failed" as const, failure: value };
+        rows.decide(failed);
+        const currentIssue = options.tracked.trackedIssue(id);
+        if (!currentIssue) withdraw(id);
+        else if (issueDigest(currentIssue) !== digest) changed = true;
+        else raise(failed, previous);
+      });
+      if (changed) {
+        queued.add(id);
+        wakeRequested = true;
+      }
       notifyFailure("failed", id);
     };
     if (!chosen) {
@@ -195,7 +229,10 @@ export function startIntake(options: IntakeOptions): Intake {
       fail(failure("input-invalid", { errors }));
       return;
     }
-    rows.decide(record);
+    options.store.connection.transaction(() => {
+      rows.decide(record);
+      withdraw(id);
+    });
     options.probe?.("recorded", id);
     await start(record);
   }
@@ -237,6 +274,19 @@ export function startIntake(options: IntakeOptions): Intake {
           if (wakeRequested && !stopped) wake();
         });
   }
+  function checkRecords() {
+    const basis = options.current();
+    for (const record of rows.unfinished()) {
+      const issue = options.tracked.trackedIssue(record.issueNodeId);
+      if (!issue) withdraw(record.issueNodeId);
+      else if (
+        record.status === "failed" &&
+        basis &&
+        (record.commit !== basis.revision.commit || record.issueDigest !== issueDigest(issue))
+      )
+        queued.add(record.issueNodeId);
+    }
+  }
   function reconcile() {
     const basis = options.current();
     for (const id of options.tracked.trackedIssueIds()) {
@@ -249,6 +299,7 @@ export function startIntake(options: IntakeOptions): Intake {
         queued.add(id);
     }
     for (const id of rows.pending()) queued.add(id);
+    checkRecords();
     wake();
   }
   reconcile();
@@ -261,6 +312,11 @@ export function startIntake(options: IntakeOptions): Intake {
     revisionLoaded() {
       if (stopped) throw new TypeError("Intake is stopped");
       reconcile();
+    },
+    mirrorChanged() {
+      if (stopped) throw new TypeError("Intake is stopped");
+      checkRecords();
+      wake();
     },
     record: rows.get,
     async idle() {

@@ -18,6 +18,7 @@ if (step === "snapshot") {
   const { startIntake } = await import("../index.ts");
   const intake = startIntake({
     store: s.store,
+    escalations: s.escalations,
     tracked: {
       trackedIssue: (id) => s.tracked.get(id),
       trackedIssueIds: () => [...s.tracked.keys()],

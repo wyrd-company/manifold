@@ -293,6 +293,7 @@ export const intakeDecisionModelSchema = {
         "actorId",
         "failure",
         "evaluation",
+        "issueDigest",
         "attempts",
         "startFailure",
         "startAttempts",
@@ -399,6 +400,19 @@ export const intakeDecisionModelSchema = {
           oneOf: [
             {
               $ref: "https://manifold.wyrd.company/schemas/decision-models#/$defs/decision-model-evaluation",
+            },
+            {
+              type: "null",
+            },
+          ],
+        },
+        issueDigest: {
+          description:
+            "The SHA-256 digest, lower-case hex, of the tracked issue the record was decided over; null when a `failed` record must be decided again.",
+          oneOf: [
+            {
+              type: "string",
+              pattern: "^[0-9a-f]{64}$",
             },
             {
               type: "null",

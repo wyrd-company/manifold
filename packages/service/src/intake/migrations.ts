@@ -86,4 +86,33 @@ CREATE TRIGGER intake_record_no_delete
   BEFORE DELETE ON intake_record
   BEGIN SELECT RAISE(ABORT, 'intake_record rows are never deleted'); END;
 `,
+  `ALTER TABLE intake_record ADD COLUMN issue_digest TEXT CHECK (issue_digest IS NULL OR (length(issue_digest) = 64 AND issue_digest NOT GLOB '*[^0-9a-f]*'));
+DROP TRIGGER intake_record_decided;
+CREATE TRIGGER intake_record_decided
+  BEFORE UPDATE ON intake_record
+  WHEN OLD.status <> 'failed'
+    AND NOT (
+      OLD.status = 'recorded'
+      AND NEW.status IN ('recorded', 'started')
+      AND NEW.issue_node_id IS OLD.issue_node_id
+      AND NEW.actor_id IS OLD.actor_id
+      AND NEW.commit_id IS OLD.commit_id
+      AND NEW.binding IS OLD.binding
+      AND NEW.project_node_id IS OLD.project_node_id
+      AND NEW.project_owner IS OLD.project_owner
+      AND NEW.project_number IS OLD.project_number
+      AND NEW.environment IS OLD.environment
+      AND NEW.blueprint_path IS OLD.blueprint_path
+      AND NEW.blueprint_version IS OLD.blueprint_version
+      AND NEW.portfolio_item IS OLD.portfolio_item
+      AND NEW.portfolio_commit IS OLD.portfolio_commit
+      AND NEW.evaluation IS OLD.evaluation
+      AND NEW.failure IS OLD.failure
+      AND NEW.attempts IS OLD.attempts
+      AND NEW.created_at IS OLD.created_at
+      AND NEW.issue_digest IS OLD.issue_digest
+    )
+  BEGIN SELECT RAISE(ABORT, 'intake_record decision is final'); END;
+
+`,
 ];

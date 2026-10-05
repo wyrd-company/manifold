@@ -50,7 +50,12 @@ export function fixture(options: Partial<Omit<EscalationsOptions, "store">> = {}
     store,
     configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
     tokenFile: () => "",
-    handlers: { "held-actor": () => {}, "stranded-token": () => {} },
+    handlers: {
+      "intake-failed": () => {},
+      "comparator-failed": () => {},
+      "held-actor": () => {},
+      "stranded-token": () => {},
+    },
     logger: {
       warn: (message) => warnings.push(message),
       error: (message) => warnings.push(message),

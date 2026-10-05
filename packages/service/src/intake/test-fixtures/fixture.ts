@@ -11,7 +11,9 @@ import { createBlueprintLoader } from "../../blueprint-loader/index.ts";
 import type { BlueprintLoader } from "../../blueprint-loader/index.ts";
 import { openActorHost, recordStateEntry } from "../../actor-host/index.ts";
 import type { TrackedIssue } from "../../github-source/index.ts";
-import { intakeMigrationSteps, startIntake } from "../index.ts";
+import { openEscalations } from "../../escalations/index.ts";
+import type { Intake } from "../index.ts";
+import { intakeFailedHandler, intakeMigrationSteps, startIntake } from "../index.ts";
 import type { IntakeOptions, IntakeRevision } from "../index.ts";
 export const first = "a".repeat(40),
   second = "b".repeat(40);
@@ -150,6 +152,7 @@ export async function setup(
   source = files(),
   options: Partial<IntakeOptions> = {},
   commit = first,
+  initiallyTracked?: readonly TrackedIssue[],
 ) {
   const store = openStore({ path });
   store.connection.migrate("intake", intakeMigrationSteps);
@@ -171,10 +174,24 @@ export async function setup(
     blueprints: loaded,
     portfolio: portfolio(commit),
   };
-  const tracked = new Map<string, TrackedIssue>();
+  const tracked = new Map((initiallyTracked ?? []).map((issue) => [issue.issue.nodeId, issue]));
   const host = await testActorHost(store, loader);
   const errors: unknown[] = [];
-  const intake = startIntake({
+  let intake: Intake;
+  const escalations = openEscalations({
+    store,
+    configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
+    tokenFile: () => "",
+    handlers: {
+      "held-actor": () => {},
+      "stranded-token": () => {},
+      "comparator-failed": () => {},
+      "intake-failed": intakeFailedHandler(store, (id) => intake?.discovered([id])),
+    },
+  });
+  escalations.start();
+  intake = startIntake({
+    escalations,
     store,
     tracked: { trackedIssue: (id) => tracked.get(id), trackedIssueIds: () => [...tracked.keys()] },
     blueprints: loader,
@@ -183,7 +200,7 @@ export async function setup(
     onError: (e) => errors.push(e),
     ...options,
   });
-  tracked.set("I1", issue());
+  if (!initiallyTracked) tracked.set("I1", issue());
   return {
     store,
     loader,
@@ -191,6 +208,7 @@ export async function setup(
     tracked,
     host,
     intake,
+    escalations,
     errors,
     current: () => current,
     setCurrent(value: IntakeRevision | undefined) {
@@ -198,6 +216,7 @@ export async function setup(
     },
     async close() {
       await intake.stop();
+      await escalations.stop();
       host.stop();
       store.close();
     },

@@ -58,7 +58,12 @@ test("callback answers once, save marks taken, restart in the same state sends n
     store: f.store,
     configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
     tokenFile: () => "",
-    handlers: { "held-actor": () => {}, "stranded-token": () => {} },
+    handlers: {
+      "intake-failed": () => {},
+      "comparator-failed": () => {},
+      "held-actor": () => {},
+      "stranded-token": () => {},
+    },
     invocationOf: () => ({ actorId: "parcel", invokeId: "ask", entryId: "1" }),
   });
   cleanups.push(() => resumed.stop());

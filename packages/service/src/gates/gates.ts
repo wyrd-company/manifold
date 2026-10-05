@@ -64,11 +64,34 @@ export function createGates(options: GatesOptions): Gates {
     const loaded = await options.version(version);
     return loaded.status === "loaded" ? add(loaded.blueprint) : undefined;
   }
+  function comparatorFailure(
+    gate: string,
+    version: string,
+    comparator: string | undefined,
+    kind: string,
+    message: string,
+  ) {
+    options.escalations.raise({
+      kind: "comparator-failed",
+      subject: { gate },
+      title: "Comparator failed",
+      question:
+        `Gate: ${gate}\nComparator: ${comparator ?? "unknown"}\nVersion: ${version}\nCause: ${kind}\n${message}`.slice(
+          0,
+          8000,
+        ),
+      choices: [
+        { id: "retry", label: "Retry" },
+        { id: "dismiss", label: "Dismiss" },
+      ],
+    });
+  }
   async function loadComparator(
     gate: string,
     key: string,
     commit: string,
     revision: GateRevision | undefined,
+    withdraw = false,
   ) {
     function current() {
       const declared = tables.declarations().find((row) => row.gate === gate);
@@ -85,6 +108,14 @@ export function createGates(options: GatesOptions): Gates {
     if (!current()) return;
     if (!declaration || source === undefined) {
       replace();
+      comparatorFailure(
+        gate,
+        key,
+        declaration?.comparator,
+        "missing",
+        "Missing comparator source or declaration",
+      );
+      options.probe?.("comparator-failed", gate);
       options.onError?.({
         gate,
         version: key,
@@ -101,9 +132,21 @@ export function createGates(options: GatesOptions): Gates {
     }
     replace();
     if (!loaded.ok) {
+      comparatorFailure(
+        gate,
+        key,
+        declaration.comparator,
+        loaded.failure.kind,
+        loaded.failure.message,
+      );
+      options.probe?.("comparator-failed", gate);
       options.onError?.({ gate, version: key, message: loaded.failure.message });
       return;
     }
+    if (withdraw)
+      options.store.connection.transaction(() =>
+        options.escalations.withdraw({ kind: "comparator-failed", subject: { gate } }),
+      );
     spent.delete(gate);
     comparators.set(gate, { version: key, declaration, comparator: loaded.comparator });
     mark(gate);
@@ -127,9 +170,18 @@ export function createGates(options: GatesOptions): Gates {
       const draw = seed(),
         result = loaded.comparator.evaluate(input, draw);
       if (!result.ok || result.selection === null) {
-        options.store.connection.transaction(() =>
-          tables.evaluate(gate, loaded.version, input, draw, result),
-        );
+        options.store.connection.transaction(() => {
+          tables.evaluate(gate, loaded.version, input, draw, result);
+          if (!result.ok)
+            comparatorFailure(
+              gate,
+              loaded.version,
+              loaded.declaration.comparator,
+              result.failure.kind,
+              result.failure.message,
+            );
+        });
+        if (!result.ok) options.probe?.("comparator-failed", gate);
         if (!result.ok && result.failure.kind === "engine") {
           loaded.comparator.dispose();
           comparators.delete(gate);
@@ -221,7 +273,8 @@ export function createGates(options: GatesOptions): Gates {
       options.store.connection.transaction(() => {
         for (const row of writes) tables.declare(row.gate, row.key, revision.commit);
       });
-      for (const row of writes) await loadComparator(row.gate, row.key, revision.commit, revision);
+      for (const row of writes)
+        await loadComparator(row.gate, row.key, revision.commit, revision, true);
     },
     async prepare() {
       requireRunning();
@@ -243,6 +296,30 @@ export function createGates(options: GatesOptions): Gates {
       markAll();
       if (immediate !== undefined) clearImmediate(immediate);
       runDirty();
+    },
+    comparatorFailed(escalation) {
+      if (
+        escalation.raiser.type !== "service" ||
+        escalation.raiser.kind !== "comparator-failed" ||
+        !escalation.answer ||
+        !("choice" in escalation.answer.value) ||
+        escalation.answer.value.choice !== "retry"
+      )
+        return;
+      const gate = escalation.raiser.subject["gate"]!;
+      const row = tables.declarations().find((row) => row.gate === gate);
+      if (!row) return;
+      return () => {
+        if (stopped) return;
+        if (comparators.has(gate)) mark(gate);
+        else
+          void options
+            .revisionAt(row.revision_commit)
+            .then((revision) => loadComparator(gate, row.version, row.revision_commit, revision))
+            .catch((error) =>
+              options.onError?.({ gate, version: row.version, message: String(error) }),
+            );
+      };
     },
     inputChanged: markAll,
     async replay(id) {

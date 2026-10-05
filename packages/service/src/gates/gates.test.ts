@@ -5,6 +5,7 @@
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ServiceEscalationRequest } from "../escalations/index.ts";
 import { afterEach, expect, it } from "vite-plus/test";
 import { blueprintVersionKey } from "@wyrd-company/manifold-shared";
 import type { BlueprintDocument } from "@wyrd-company/manifold-shared";
@@ -100,7 +101,7 @@ async function fixture(source = oldest, override: Partial<GatesOptions> = {}, do
   const sources = new Map([[commit, source]]);
   const revisionAt = async (c: string) => ({ commit: c, read: async () => sources.get(c) });
   const raised: unknown[] = [],
-    withdrawn: unknown[] = [],
+    withdrawn: Pick<ServiceEscalationRequest, "kind" | "subject">[] = [],
     errors: unknown[] = [],
     scheduled: string[] = [];
   const lint: GateTokenLint = {
@@ -345,7 +346,7 @@ it("raises once per trap entry, handles return idempotently, and withdraws on ac
   expect(f.rows("gates_token")).toHaveLength(2);
   f.save("parcel-01", "working");
   f.save("parcel-01", "working", [], "entry-1", "done");
-  expect(f.withdrawn).toHaveLength(2);
+  expect(f.withdrawn.filter((e) => e.kind === "stranded-token")).toHaveLength(2);
 });
 it("queries a state across versions and lets afterDrain schedule gate inbox rows", async () => {
   const f = await fixture(single);
@@ -517,6 +518,7 @@ it("ignores reservations when disabled and rolls back a refused reservation with
   expect(denied.store.pendingInbox("parcel-00")).toEqual([]);
   expect(denied.rows("gates_evaluation")).toHaveLength(1);
   expect(denied.rows("gates_evaluation")[0]?.["failure_kind"]).toBe("reservation");
+  expect(denied.raised).toEqual([]);
 });
 it("records throws and timeouts, reevaluates after an input change, and stops cleanly", async () => {
   for (const body of [`throw new Error('example')`, `for (;;) {}`]) {
@@ -682,7 +684,7 @@ it("withdraws the escalation when a token returns after its actor has left a tra
   f.save("parcel-00", "shipped");
   expect(f.rows("gates_token")[0]?.["trapped"]).toBe(0);
   f.save("parcel-00", "shipped", [], "entry-1", "done");
-  expect(f.withdrawn).toHaveLength(1);
+  expect(f.withdrawn.filter((e) => e.kind === "stranded-token")).toHaveLength(1);
 });
 it("excludes a holder after a new state entry and an entry whose token was already returned", async () => {
   const f = await fixture(single);
@@ -1044,3 +1046,60 @@ function answered(
     ...(value ? { answer: { value, channel: "api" as const, at: 100 } } : {}),
   };
 }
+
+it("raises comparator failures once through raise and retries only the named gate", async () => {
+  const f = await fixture('export default () => { throw new Error("bad parcel order"); }');
+  f.gates.afterDrain({ schedule: () => {} });
+  expect(f.raised).toMatchObject([
+    { kind: "comparator-failed", subject: { gate }, title: "Comparator failed" },
+  ]);
+  const count = f.store.connection.database
+    .prepare("SELECT count(*) AS n FROM gates_evaluation")
+    .get()?.["n"];
+  f.gates.comparatorFailed({
+    raiser: { type: "service", kind: "comparator-failed", subject: { gate }, occurrence: 1 },
+    answer: { value: { choice: "dismiss" }, channel: "api", at: 100 },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(
+    f.store.connection.database.prepare("SELECT count(*) AS n FROM gates_evaluation").get()?.["n"],
+  ).toBe(count);
+  const retry = f.gates.comparatorFailed({
+    raiser: { type: "service", kind: "comparator-failed", subject: { gate }, occurrence: 1 },
+    answer: { value: { choice: "retry" }, channel: "api", at: 100 },
+  });
+  retry?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(f.raised).toHaveLength(2);
+});
+
+it("contains a rejected comparator retry at its fire-and-forget boundary", async () => {
+  const f = await fixture("export default 12;", {
+    revisionAt: async () => {
+      throw new Error("revision read failed");
+    },
+  });
+  const retry = f.gates.comparatorFailed({
+    raiser: { type: "service", kind: "comparator-failed", subject: { gate }, occurrence: 1 },
+    answer: { value: { choice: "retry" }, channel: "api", at: 100 },
+  });
+  retry?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(f.errors).toContainEqual(
+    expect.objectContaining({ gate, message: "Error: revision read failed" }),
+  );
+});
+
+it("rolls evaluation back when raising its comparator escalation fails", async () => {
+  const f = await fixture('export default () => { throw new Error("bad order"); }', {
+    escalations: {
+      withdraw: () => {},
+      raise: () => {
+        throw new Error("database fault");
+      },
+    },
+  });
+  expect(() => f.gates.afterDrain({ schedule: () => {} })).toThrow("database fault");
+  expect(f.rows("gates_evaluation")).toEqual([]);
+  expect(f.rows("gates_token")).toEqual([]);
+});

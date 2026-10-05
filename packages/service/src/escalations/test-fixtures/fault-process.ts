@@ -21,6 +21,8 @@ const module = openEscalations({
   },
   tokenFile: () => "",
   handlers: {
+    "intake-failed": () => {},
+    "comparator-failed": () => {},
     "held-actor": () => {
       if (mode === "handler") kill();
     },

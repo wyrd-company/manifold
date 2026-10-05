@@ -61,6 +61,8 @@ function reopen(path: string, server?: string) {
     },
     tokenFile: () => "",
     handlers: {
+      "intake-failed": () => {},
+      "comparator-failed": () => {},
       "held-actor": heldActorHandler((id) => releases.push(id)),
       "stranded-token": () => {},
     },

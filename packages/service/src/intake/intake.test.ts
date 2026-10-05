@@ -3,6 +3,7 @@
 //   verifies: [intake, intake-records-table]
 // ---
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vite-plus/test";
@@ -22,7 +23,7 @@ import { ledgerMigrationSteps } from "../ledger/index.ts";
 import type { IntakeRevision } from "./index.ts";
 import { decisionModelSchema } from "../../../shared/src/decision-model-schema.ts";
 import { createDecisionModels } from "../decision-models.ts";
-import { startIntake, intakeMigrationSteps } from "./index.ts";
+import { startIntake } from "./index.ts";
 import type { IntakeOptions } from "./index.ts";
 import { setup, files, issue, first, second, portfolio } from "./test-fixtures/fixture.ts";
 const cleanup: (() => Promise<void> | void)[] = [];
@@ -341,6 +342,9 @@ it("does not decide again after a start exception, and refuses decision changes 
       )
       .run(),
   ).toThrow();
+  expect(() =>
+    db.prepare("UPDATE intake_record SET issue_digest=NULL WHERE issue_node_id='I1'").run(),
+  ).toThrow();
   expect(() => db.prepare("DELETE FROM intake_record").run()).toThrow();
   expect(() =>
     db
@@ -355,9 +359,22 @@ it("does not decide again after a start exception, and refuses decision changes 
   await s.intake.idle();
   expect(s.intake.record("I1")).toMatchObject({ status: "started", attempts: 1 });
   expect(() => db.prepare("UPDATE intake_record SET updated_at=0").run()).toThrow();
-  expect(intakeMigrationSteps.join("\n").trim()).toBe(
-    readFileSync("../../docs/specifications/intake-records-table.sql", "utf8").trim(),
-  );
+  const declared = new DatabaseSync(":memory:");
+  try {
+    declared.exec(readFileSync("../../docs/specifications/intake-records-table.sql", "utf8"));
+    const columns = (connection: DatabaseSync) =>
+      connection
+        .prepare("PRAGMA table_info(intake_record)")
+        .all()
+        .map(({ cid: _cid, ...column }) => column)
+        .sort((a, b) => String(a["name"]).localeCompare(String(b["name"])));
+    expect(columns(db)).toEqual(columns(declared));
+    expect(() =>
+      db.prepare("UPDATE intake_record SET issue_digest=NULL WHERE issue_node_id='I1'").run(),
+    ).toThrow();
+  } finally {
+    declared.close();
+  }
 });
 it("preserves the recorded version and item through input-invalid and unavailable starts", async () => {
   let changed = false;
@@ -396,9 +413,18 @@ it("preserves the recorded version and item through input-invalid and unavailabl
   expect(record.startFailure?.detail).toEqual({
     errors: [{ instancePath: "/task/issue/state", message: "must be equal to constant" }],
   });
+  const inputNotice = s.escalations.list({ status: "open" })[0]!;
+  expect(inputNotice.question).toContain("Start failure: input-invalid");
+  s.tracked.delete("I1");
+  s.intake.mirrorChanged();
+  await s.intake.idle();
+  expect(s.escalations.get(inputNotice.id)?.status).toBe("withdrawn");
+  expect(s.intake.record("I1")).toEqual(record);
+  s.tracked.set("I1", issue());
   await s.intake.stop();
   const base = {
     store: s.store,
+    escalations: s.escalations,
     tracked: {
       trackedIssue: (id: string) => s.tracked.get(id),
       trackedIssueIds: () => [...s.tracked.keys()],
@@ -424,6 +450,7 @@ it("preserves the recorded version and item through input-invalid and unavailabl
     version: record.blueprintVersion,
     reason: "commit",
   });
+  expect(s.escalations.list({ status: "open" })[0]?.question).toContain("version-unavailable");
   await unavailable.stop();
   s.tracked.set("I1", issue());
   const revision = memoryRevision(second, files());
@@ -435,6 +462,7 @@ it("preserves the recorded version and item through input-invalid and unavailabl
   });
   const retry = startIntake({ ...base, blueprints: s.loader });
   await retry.idle();
+  expect(s.escalations.list({ status: "open" })).toEqual([]);
   expect(retry.record("I1")).toMatchObject({
     status: "started",
     commit: first,
@@ -671,6 +699,7 @@ it("reconcile at startup takes an already tracked population", async () => {
   s.tracked.set("I2", issue("I2"));
   const intake = startIntake({
     store: s.store,
+    escalations: s.escalations,
     tracked: {
       trackedIssue: (id) => s.tracked.get(id),
       trackedIssueIds: () => [...s.tracked.keys()],
@@ -701,6 +730,7 @@ it("checks again for an existing snapshot after the recorded version awaits", as
     entered = new Promise<void>((r) => (loading = r));
   const intake = startIntake({
     store: s.store,
+    escalations: s.escalations,
     tracked: {
       trackedIssue: (id) => s.tracked.get(id),
       trackedIssueIds: () => [...s.tracked.keys()],
@@ -763,6 +793,7 @@ it("uses an existing snapshot without reading an unavailable recorded version", 
   let reads = 0;
   const intake = startIntake({
     store: s.store,
+    escalations: s.escalations,
     tracked: {
       trackedIssue: (id) => s.tracked.get(id),
       trackedIssueIds: () => [...s.tracked.keys()],

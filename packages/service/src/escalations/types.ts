@@ -9,7 +9,11 @@ import type { ActorSave, Invocation } from "../actor-host/index.ts";
 import { invocationOf } from "../actor-host/index.ts";
 export type { Invocation } from "../actor-host/index.ts";
 import type { EscalationsConfiguration } from "../service-configuration/index.ts";
-export type ServiceEscalationKind = "held-actor" | "stranded-token";
+export type ServiceEscalationKind =
+  | "held-actor"
+  | "stranded-token"
+  | "intake-failed"
+  | "comparator-failed";
 export type EscalationSubject = Readonly<Record<string, string>>;
 export type ServiceEscalationHandler = (escalation: Escalation) => void | (() => void);
 export interface EscalationsOptions {
@@ -36,6 +40,7 @@ export interface EscalateInput {
 }
 export interface ServiceEscalationRequest {
   readonly kind: ServiceEscalationKind;
+  readonly title?: string;
   readonly subject: EscalationSubject;
   readonly question: string;
   readonly choices: readonly EscalationChoice[];

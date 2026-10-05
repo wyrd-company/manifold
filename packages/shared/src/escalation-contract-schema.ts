@@ -193,7 +193,7 @@ export const escalationContractSchema = {
                   const: "service",
                 },
                 kind: {
-                  enum: ["held-actor", "stranded-token"],
+                  enum: ["held-actor", "stranded-token", "intake-failed", "comparator-failed"],
                 },
                 subject: {
                   type: "object",

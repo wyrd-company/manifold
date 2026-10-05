@@ -57,7 +57,7 @@ export interface GatesOptions {
   readonly escalations: GateEscalations;
   readonly clock?: { now(): number };
   readonly seed?: () => number;
-  readonly probe?: (step: "granting" | "granted", tokenId: string) => void;
+  readonly probe?: (step: "granting" | "granted" | "comparator-failed", tokenId: string) => void;
   readonly onError?: (error: GateError) => void;
 }
 export interface Gates {
@@ -66,6 +66,7 @@ export interface Gates {
   afterDrain(router: Pick<Router, "schedule">): void;
   saved(save: GateSave): void;
   strandedToken(escalation: GateStrandedEscalation): (() => void) | undefined;
+  comparatorFailed(escalation: GateStrandedEscalation): (() => void) | undefined;
   inputChanged(): void;
   replay(evaluationId: number): Promise<GateReplay>;
   stop(): void;

@@ -792,6 +792,7 @@ test("wires gates into revision following, router resume, and shutdown", async (
       events.push("gate-drain");
     },
     saved: () => {},
+    comparatorFailed: () => undefined,
     strandedToken: () => undefined,
     inputChanged: () => {
       events.push("gate-input");
@@ -914,4 +915,29 @@ test("default service resumes gates with real token lint, save hooks, and escala
       .get()?.["return_reason"],
   ).toBe("escalation");
   expect(resumed.store.loadSnapshot("parcel-01")?.snapshot["value"]).toBe("holding");
+});
+
+test("retries failed intake through a committed GitHub mirror change on the same revision", async () => {
+  const f = await fixture();
+  const commit = await publishIntake(
+    f,
+    'task.issue.state = "open" ? {"blueprint":"missing.yml"} : {"blueprint":"blueprints/counter.yml","portfolioItem":"alpha"}',
+  );
+  f.api.addItem("IT_A", "I_A");
+  const service = await startService({ configurationFile: f.file, log: () => {} });
+  cleanup.push(service.stop);
+  await expect.poll(() => service.intake.record("I_A")?.status).toBe("failed");
+  const escalation = service.escalations
+    .list({ status: "open" })
+    .find((e) => e.raiser.type === "service" && e.raiser.kind === "intake-failed")!;
+  expect(escalation.raiser).toMatchObject({ subject: { issue: "I_A" } });
+  service.escalations.answer(escalation.id, { choice: "retry" }, "api");
+  await service.intake.idle();
+  expect(service.intake.record("I_A")?.attempts).toBe(2);
+  f.api.issues.get("I_A")!.state = "CLOSED";
+  service.github.requestSweep();
+  await expect.poll(() => service.intake.record("I_A")?.status).toBe("started");
+  expect(service.intake.record("I_A")).toMatchObject({ commit, attempts: 3 });
+  expect(service.store.activeSnapshots()).toHaveLength(1);
+  expect(service.escalations.list({ status: "open" })).toEqual([]);
 });

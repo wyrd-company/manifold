@@ -2,6 +2,7 @@
 // relationships:
 //   implements: intake-decision-model
 // ---
+import { createHash } from "node:crypto";
 import type { PortfolioDeclaration } from "@wyrd-company/manifold-shared";
 import type { TrackedIssue } from "../github-source/index.ts";
 import type { IntakeRecord } from "./types.ts";
@@ -65,4 +66,42 @@ export function taskInput(
     task: facts(issue, record.project!.nodeId),
     intake: data ?? {},
   }) as { readonly [key: string]: JsonValue };
+}
+
+/** Canonicalize keys and unordered mirror collections before hashing. */
+export function issueDigest(issue: TrackedIssue): string {
+  const order = (a: string, b: string) => {
+    const left = Array.from(a, (c) => c.codePointAt(0)!),
+      right = Array.from(b, (c) => c.codePointAt(0)!);
+    for (let i = 0; i < Math.min(left.length, right.length); i++)
+      if (left[i] !== right[i]) return left[i]! - right[i]!;
+    return left.length - right.length;
+  };
+  const nodes = <T extends { readonly nodeId: string }>(values: readonly T[]) =>
+    [...values].sort((a, b) => order(a.nodeId, b.nodeId));
+  function canonical(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value !== null && typeof value === "object")
+      return Object.fromEntries(
+        Object.entries(value)
+          .sort(([a], [b]) => order(a, b))
+          .map(([key, child]) => [key, canonical(child)]),
+      );
+    return value;
+  }
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        canonical({
+          ...issue,
+          parent: issue.parent ?? null,
+          blockedBy: nodes(issue.blockedBy),
+          blocking: nodes(issue.blocking),
+          subIssues: nodes(issue.subIssues),
+          projects: nodes(issue.projects),
+          items: [...issue.items].sort((a, b) => order(a.project.nodeId, b.project.nodeId)),
+        }),
+      ),
+    )
+    .digest("hex");
 }

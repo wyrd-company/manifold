@@ -12,6 +12,8 @@ import type { PersistedSnapshot, StoreOptions } from "../../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../../ledger/index.ts";
 import { createComparatorSandbox } from "../../comparator-sandbox/index.ts";
 import { startRouter } from "../../router/index.ts";
+import { openEscalations } from "../../escalations/index.ts";
+import type { Gates } from "../index.ts";
 import { createGates, gatesMigrationSteps } from "../index.ts";
 import type { GatesOptions } from "../index.ts";
 export const blueprintPath = "blueprints/parcels/sorting.yml",
@@ -96,12 +98,14 @@ export async function world(
   file: string,
   probe?: GatesOptions["probe"],
   deliveryProbe?: StoreOptions["probe"],
+  sourceText: string | null = source,
 ) {
   const store = openStore({
     path: file,
     now: () => 100,
     ...(deliveryProbe ? { probe: deliveryProbe } : {}),
   });
+  const restarting = store.activeSnapshots().length > 0;
   store.connection.migrate("ledger", ledgerMigrationSteps);
   store.connection.migrate("gates", gatesMigrationSteps);
   const ledger = createLedger({
@@ -121,8 +125,21 @@ export async function world(
     amount: 1000,
   });
   const blueprint = { key, document };
-  const revision = { commit, read: async () => source };
-  const gates = createGates({
+  let comparatorSource = sourceText;
+  const revision = { commit, read: async () => comparatorSource ?? undefined };
+  let gates: Gates;
+  const escalations = openEscalations({
+    store,
+    configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
+    tokenFile: () => "",
+    handlers: {
+      "held-actor": () => {},
+      "stranded-token": () => {},
+      "intake-failed": () => {},
+      "comparator-failed": (escalation) => gates?.comparatorFailed(escalation),
+    },
+  });
+  gates = createGates({
     store,
     version: async () => ({ status: "loaded", blueprint }),
     revisionAt: async () => revision,
@@ -135,17 +152,13 @@ export async function world(
     },
     lintTokens: () => ({ gates: [], configurations: 0, configurationKey: () => "" }),
     trackedIssue: () => undefined,
-    escalations: {
-      raise: () => {
-        throw new Error("No traps in this fixture");
-      },
-      withdraw: () => {},
-    },
+    escalations,
     clock: { now: () => 100 },
     seed: () => 7,
     ...(probe ? { probe } : {}),
   });
-  await gates.revision({ blueprints: new Map([[blueprintPath, blueprint]]) }, revision);
+  if (!restarting)
+    await gates.revision({ blueprints: new Map([[blueprintPath, blueprint]]) }, revision);
   if (!store.activeSnapshots().length)
     for (let i = 0; i < 20; i++) {
       const actor = createActor(machine);
@@ -178,9 +191,16 @@ export async function world(
     store,
     ledger,
     gates,
+    escalations,
+    blueprint,
+    revision,
+    setSource(text: string | null) {
+      comparatorSource = text;
+    },
     router,
     close: () => {
       gates.stop();
+      void escalations.stop();
       router.stop();
       store.close();
     },

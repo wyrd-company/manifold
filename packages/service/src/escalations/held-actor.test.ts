@@ -17,6 +17,8 @@ test("retry after a delivery error raises a new occurrence, then a fix drains th
     configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
     tokenFile: () => "",
     handlers: {
+      "intake-failed": () => {},
+      "comparator-failed": () => {},
       "held-actor": heldActorHandler((id) => router!.release(id)),
       "stranded-token": () => {},
     },

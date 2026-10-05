@@ -103,6 +103,7 @@ it("takes existing Project items through discovery, then hears their later issue
     });
     intake = startIntake({
       store: s.store,
+      escalations: s.escalations,
       tracked: source,
       blueprints: loader,
       current: s.current,

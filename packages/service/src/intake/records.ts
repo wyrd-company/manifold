@@ -20,6 +20,7 @@ const columns = [
   "actor_id",
   "failure",
   "evaluation",
+  "issue_digest",
   "attempts",
   "start_failure",
   "start_attempts",
@@ -55,6 +56,7 @@ export function records(store: Store) {
       row["evaluation"] === null
         ? null
         : (JSON.parse(row["evaluation"] as string) as IntakeRecord["evaluation"]),
+    issueDigest: row["issue_digest"] as string | null,
     attempts: row["attempts"] as number,
     startFailure:
       row["start_failure"] === null
@@ -68,6 +70,14 @@ export function records(store: Store) {
     get(id: string) {
       const row = db.prepare("SELECT * FROM intake_record WHERE issue_node_id=?").get(id);
       return row ? decode(row) : undefined;
+    },
+    unfinished() {
+      return db.prepare("SELECT * FROM intake_record WHERE status <> 'started'").all().map(decode);
+    },
+    retry(id: string) {
+      db.prepare(
+        "UPDATE intake_record SET issue_digest=NULL WHERE issue_node_id=? AND status='failed'",
+      ).run(id);
     },
     pending() {
       return db
@@ -100,6 +110,7 @@ export function records(store: Store) {
             r.actorId,
             r.failure === null ? null : JSON.stringify(r.failure),
             r.evaluation === null ? null : JSON.stringify(r.evaluation),
+            r.issueDigest,
             r.attempts,
             null,
             0,

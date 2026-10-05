@@ -83,4 +83,60 @@ CREATE INDEX escalation_notification_due
   ON escalation_notification (next_attempt_at)
   WHERE status = 'pending';
 `,
+  `PRAGMA defer_foreign_keys = ON;
+CREATE TABLE escalation_rebuild AS SELECT * FROM escalation;
+DROP TABLE escalation;
+CREATE TABLE escalation (
+  escalation_id TEXT PRIMARY KEY CHECK (length(escalation_id) = 22),
+  actor_id TEXT,
+  invoke_id TEXT,
+  entry_id TEXT,
+  kind TEXT CHECK (length(kind) > 0),
+  subject TEXT,
+  occurrence INTEGER CHECK (occurrence > 0),
+  title TEXT NOT NULL CHECK (length(title) > 0),
+  question TEXT NOT NULL CHECK (length(question) > 0),
+  choices TEXT NOT NULL,
+  free_text INTEGER NOT NULL CHECK (free_text IN (0, 1)),
+  destinations TEXT NOT NULL,
+  key_digest BLOB NOT NULL CHECK (length(key_digest) = 32),
+  status TEXT NOT NULL CHECK (status IN ('open', 'answered', 'withdrawn')),
+  answer TEXT,
+  channel TEXT CHECK (channel IN ('link', 'api')),
+  raised_at INTEGER NOT NULL,
+  closed_at INTEGER,
+  taken_at INTEGER,
+  handled_at INTEGER,
+  CHECK (
+    (actor_id IS NOT NULL AND invoke_id IS NOT NULL AND entry_id IS NOT NULL
+      AND kind IS NULL AND subject IS NULL AND occurrence IS NULL
+      AND handled_at IS NULL)
+    OR
+    (actor_id IS NULL AND invoke_id IS NULL AND entry_id IS NULL
+      AND kind IS NOT NULL AND subject IS NOT NULL AND occurrence IS NOT NULL
+      AND taken_at IS NULL)
+  ),
+  CHECK ((status = 'open') = (closed_at IS NULL)),
+  CHECK ((status = 'answered') = (answer IS NOT NULL)),
+  CHECK ((answer IS NULL) = (channel IS NULL)),
+  CHECK ((taken_at IS NULL AND handled_at IS NULL) OR status = 'answered')
+) STRICT, WITHOUT ROWID;
+
+CREATE UNIQUE INDEX escalation_raiser
+  ON escalation (actor_id, invoke_id, entry_id)
+  WHERE actor_id IS NOT NULL;
+
+CREATE UNIQUE INDEX escalation_occurrence
+  ON escalation (kind, subject, occurrence)
+  WHERE kind IS NOT NULL;
+
+CREATE INDEX escalation_open_actor
+  ON escalation (actor_id)
+  WHERE status = 'open' AND actor_id IS NOT NULL;
+
+CREATE INDEX escalation_status ON escalation (status, raised_at);
+
+INSERT INTO escalation SELECT * FROM escalation_rebuild;
+DROP TABLE escalation_rebuild;
+`,
 ];
