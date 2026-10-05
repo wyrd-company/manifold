@@ -110,6 +110,8 @@ proposed-design:
       followers(environment: string, threadId: string): readonly string[];
       /** Every thread the active actors list on the environment, unique. */
       followedThreads(environment: string): readonly string[];
+      /** Each thread an active actor whose identity holds the issue lists, with its environment. */
+      issueThreads(issue: string): readonly IssueThread[];
       /** The event schema an active actor's version declares for `type`. */
       eventSchema(actorId: string, type: string): EventSchemaLookup;
     }
@@ -124,6 +126,12 @@ proposed-design:
     export interface EventValidator {
       (value: unknown): boolean;
       readonly errors?: readonly { readonly instancePath: string; readonly message?: string }[] | null;
+    }
+
+    export interface IssueThread {
+      readonly actorId: string;
+      readonly environment: string;
+      readonly threadId: string;
     }
 
     export interface ActorStart {
@@ -151,6 +159,8 @@ proposed-design:
       readonly entered: readonly string[];
       /** Each active root state path, `""` excluded, to the entry id of its current entry. */
       readonly entries: Readonly<Record<string, string>>;
+      /** The inbox event id whose delivery this save consumes; absent for a save outside a delivery. */
+      readonly eventId?: string;
     }
 
     export interface ActiveInvoke {
@@ -373,7 +383,11 @@ proposed-design:
     host builds one `ActorSave` and calls each save hook with it, in
     registration order. `activeInvokes` lists every invoked child in the
     snapshot's tree with its invoke id and the entry id of the state node
-    that declares it; for `done` and `stopped` it is empty. `entered` is
+    that declares it; for `done` and `stopped` it is empty. `eventId` is
+    the inbox event id of the row the save consumes, which the store's
+    delivery gives the router's `saving` call, so a hook acts on the
+    taking of one event in the transaction that consumes it; a save that
+    `persist` makes outside a delivery has none. `entered` is
     computed against the last committed save, never against the last
     attempted one: when the host builds a write in `persist`, before the
     save's transaction opens, it reads the entry count of the actor's
@@ -407,8 +421,11 @@ proposed-design:
     save that follows it, and a held actor, which still hears its threads'
     topics, is listed too. The host indexes the identity of every stored
     snapshot it restores, refuses, attaches, or persists, from environment
-    and thread to actor ids, and drops an actor whose save ends it, so
-    neither read scans actors. `eventSchema(actorId, type)` reads the
+    and thread to actor ids and from issue to actor ids, and drops an actor
+    whose save ends it, so no read scans actors. `issueThreads(issue)`
+    lists, for each active actor whose identity holds the issue and an
+    environment, each thread its identity lists, ordered by environment,
+    thread, and actor id. `eventSchema(actorId, type)` reads the
     actor's version key from its record or, for a held actor, from its
     stored snapshot, and answers from the version the host keeps for that
     key: `declared` with the validator of `schemas.events[type]`, compiled
@@ -478,7 +495,10 @@ proposed-design:
     environment topic; a thread added through a registered action makes
     the next event under either topic reach the actor, and lists the actor
     in `followers` and the thread in `followedThreads`; an actor that ends
-    leaves both; an actor held at resume is listed in both; `eventSchema`
+    leaves both; an actor held at resume is listed in both; `issueThreads`
+    lists each thread of each actor that holds the issue, and drops an
+    actor that ends; a save that consumes an inbox row gives its hooks
+    that row's event id, and a save outside a delivery gives none; `eventSchema`
     accepts and rejects by the version's declared event schema, is
     `undeclared` for a type the version does not declare, and is
     `unavailable` for a held actor whose version is missing; `restore` of a snapshot whose version is missing, is

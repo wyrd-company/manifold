@@ -12,6 +12,7 @@ relationships:
     - intake-decision-model
     - github-events
     - t3code-thread-events
+    - agent-tools
 terms:
   - bundle
   - gate
@@ -143,6 +144,11 @@ description: |-
   `active.working` otherwise. An `agent.handoff` of its thread is taken in
   `active.working` and in `active.stalled`, so a handoff that arrives
   after its turn settled ends the escalation and finishes the task.
+
+  Messages. The blueprint declares `agent.message` and no state has a
+  transition for it, so the actor takes every message sent to its thread
+  in any state, the message reaches the agent as `agent-tools` states, and
+  the actor does nothing more: a message starts no turn.
 
   Card move failures. A `github-card-move` that fails has no `onError`.
   The actor's snapshot goes to status `error`, the service holds the
@@ -427,7 +433,7 @@ description: |-
   Schemas. `schemas.events` declares `token`,
   `github.project-item.field-changed`, `github.issue.closed`,
   `agent.handoff`, `agent.escalated`, `agent.escalation.answered`,
-  `t3.turn.settled`, `t3.session.failed`, `t3.thread.archived`,
+  `agent.message`, `t3.turn.settled`, `t3.session.failed`, `t3.thread.archived`,
   `t3.thread.deleted`, and `escalation.answered`, each with a schema that
   the event its owner publishes satisfies; the `agent.handoff` schema's
   `handoff` is the handoff schema above. `schemas.actors` declares `github-card-move`,
@@ -449,5 +455,6 @@ validation-criteria: >-
   `loadRevision` of a revision with no `blueprints/task.yml` loads it as a
   bundled version. The service test of `default-process` runs it from
   intake to `done`, and to `stopped` through a stall, against the fake
-  GitHub API and the fake T3 Code server. Values in tests are generic and
+  GitHub API and the fake T3 Code server, and shows a message sent to its
+  thread delivered with no change of state. Values in tests are generic and
   never drawn from Manifold's own domain.

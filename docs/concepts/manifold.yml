@@ -156,9 +156,10 @@ properties:
   harness-plugin: >-
     Lifecycle hooks and MCP tools for every provider T3 Code supports:
     `handoff`, `escalate` with up to three choices, and `get-messages`.
-    The host CLI serves the tools as an MCP server registered in each
-    provider's own configuration; Manifold identifies the calling thread
-    and its turn from what T3 Code records of the call.
+    The host CLI serves the tools as an MCP server, and runs a hook after
+    each tool call, each registered in each provider's own configuration;
+    Manifold identifies the calling thread and its turn from what T3 Code
+    records of the call.
   operator-console: >-
     A web UI in T3 Code's visual language: Board, Epics, Task, Actors,
     Portfolio, Blueprints with a graph editor, GitHub Projects, Environments,
@@ -187,8 +188,10 @@ features:
     answered through Manifold's API, which takes a reply or an action from
     any channel.
   deliver-messages-between-threads: >-
-    Routes cross-thread messages through the actor as events and tells the
-    receiving agent it has mail without interrupting its turn.
+    Lets a process send a message to another task's threads, routes it
+    through the actor that follows each thread as an event its blueprint
+    takes, and tells the receiving agent it has mail after its next tool
+    call, without interrupting its turn.
   gate-work-on-budget: >-
     Releases a task past a gated state only when the process's comparator
     picks it, reserving the estimate the comparator asks for against its

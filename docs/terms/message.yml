@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - agent-tools
+title: Message
+description: >-
+  Text a task sends to one thread, which reaches the thread's agent only
+  once an actor that follows the thread takes it as an event, and which
+  the agent reads once with `get-messages`.

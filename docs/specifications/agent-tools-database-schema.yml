@@ -39,6 +39,21 @@ description: |-
   failure, and `turn_id` is that turn, absent when the placement named
   none; a row is placed once, and `agent.escalation.answered` is published
   in the transaction that places it.
+
+  Messages. `agenttool_message` holds one row per message sent to a
+  thread, keyed by `message_id`, derived from the sending invocation and
+  the thread. `sequence` orders the messages as they were sent. The row
+  holds the `environment` and `thread_id` it is sent to, the sender's
+  actor id in `sender_actor_id` and the issue of its identity in
+  `sender_issue`, absent when the identity holds none, and `text`.
+  `sent_at` is when the row was written, in the transaction that publishes
+  its `agent.message`. `delivered_at` and `delivered_to` are set together,
+  in the save of the first following actor that takes the event, to when
+  and to the actor that took it. `noticed_at` is when a mail notice first
+  told the thread's agent of the message. `read_at` and `read_turn_id`
+  are set together, by the `get-messages` call that read it and the turn
+  that made the call. A message is noticed and read only once delivered,
+  and each column is set once.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/agent-tools-database-schema.sql` runs without error
@@ -51,4 +66,9 @@ validation-criteria: >-
   `('agenttool', n)`, where n is the number of the module's migration
   steps. A second question row for one turn, a sent answer without a
   sequence, a failed answer without an error, and a turn id on an
-  unplaced answer each fail.
+  unplaced answer each fail. A message delivered without the actor
+  that took it, a message read without its turn, and a message noticed or
+  read before it is delivered each fail. The step that adds
+  `agenttool_message` is step 2 of the owner `agenttool`, and a store
+  file at step 1 that holds question and answer rows migrates with every
+  row kept.

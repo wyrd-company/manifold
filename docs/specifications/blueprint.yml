@@ -301,6 +301,19 @@ description: |-
   runs again after a crash, sets the same option again and leaves one
   value. A blueprint that retries after an error enters the state again.
 
+  - `send-message`, an actor: sends a message to a task's threads or to
+    one thread, as `agent-tools` defines. Its input is
+    `#/$defs/send-message-input` of the `agent-tools` schema asset,
+    `{ to, text }`, where `to` is `{ issue }` or `{ environment, threadId
+    }`. It resolves with `#/$defs/send-message-output`, the message id and
+    thread of each message sent, and fails with
+    `#/$defs/send-message-error`, of kind `input`, `no-recipient`, or
+    `not-accepted`. Each recipient thread's followers take the message as
+    `agent.message`. A blueprint that invokes it declares its input and
+    output under `schemas.actors.send-message`, with schemas that those
+    definitions satisfy. An invoke that one state entry runs again sends
+    no second message.
+
   Each move reaches the actor again as `github.project-item.field-changed`
   when the GitHub event source reads it, with `movedBy` naming the actor,
   as `github-events` states. `movedBy.confirmed` is true when GitHub
@@ -326,6 +339,11 @@ description: |-
   follow the calling thread as three events, which `agent-tools` defines:
   `agent.handoff` when the agent hands off, `agent.escalated` when it asks
   a person, and `agent.escalation.answered` when the person answers. A
+  message that a task sends to a thread reaches the actors that follow it
+  as a fourth, `agent.message`. A message reaches the thread's agent only
+  once an actor whose blueprint declares `agent.message` takes the event;
+  what the actor does with it is the blueprint's, and a state with no
+  transition for it takes it all the same. A
   blueprint takes one by declaring it under `schemas.events` with a schema
   the event satisfies, such as `#/$defs/agent-handoff-event` of the
   `agent-tools` schema asset. The schema a blueprint declares for
@@ -475,7 +493,7 @@ description: |-
     readonly delays: ReadonlySet<string>;
     /** Event types each named action may raise; an action not listed raises none. */
     readonly raises?: ReadonlyMap<string, readonly string[]>;
-    /** Event types Manifold publishes whose prefix it reserves: `agent.handoff`, `agent.escalated`, `agent.escalation.answered`. */
+    /** Event types Manifold publishes whose prefix it reserves: `agent.handoff`, `agent.escalated`, `agent.escalation.answered`, `agent.message`. */
     readonly events?: ReadonlySet<string>;
   }
   interface BlueprintLintOptions {
@@ -571,8 +589,8 @@ validation-criteria: >-
   fixture bundle and compares it with a fixed expected digest, and shows
   that the digest does not depend on the map's insertion order. Lint tests show that an invoke `src` of
   `blueprints/a.yml` lints clean with no actor names given, that a
-  blueprint declaring `agent.handoff` lints clean with
-  `manifoldImplementationNames` and one declaring `agent.hand-off` gives an
+  blueprint declaring `agent.handoff` and `agent.message`, and invoking
+  `send-message`, lints clean with `manifoldImplementationNames` and one declaring `agent.hand-off` gives an
   `event-unknown` finding at its declaration, and that a
   root `context` holding `manifold` is a `shape` finding at
   `/machine/context`. A test shows that the example in this

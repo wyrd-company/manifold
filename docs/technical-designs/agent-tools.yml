@@ -16,21 +16,27 @@ relationships:
     - agent-tools-configuration
     - agent-tools-database-schema
     - host-cli-mcp
+    - host-cli-hook
     - escalation-contract
     - router-events
     - blueprint
+    - default-task-blueprint
 terms:
   - harness-plugin
   - escalation
   - topic
   - inbox
+  - message
 objective: >-
-  Give the agent in a thread that a task actor follows two tools, `handoff`
-  and `escalate`, through a harness plugin that each provider harness T3
-  Code runs, so that a handoff reaches the task actor once as a routed
-  event, an escalation reaches a person on every channel and its answer
-  reaches the agent's thread once, and neither is lost or taken twice
-  across a restart of the service or a call the agent makes again.
+  Give the agent in a thread that a task actor follows three tools,
+  `handoff`, `escalate`, and `get-messages`, and a hook that tells it of new
+  messages during its turn, through a harness plugin that each provider
+  harness T3 Code runs, so that a handoff reaches the task actor once as a
+  routed event, an escalation reaches a person on every channel and its
+  answer reaches the agent's thread once, a message a task sends reaches
+  the receiving thread only through the actor that follows it and is read
+  once, and none is lost or taken twice across a restart of the service or
+  a call the agent makes again.
 background:
   problems:
     - >-
@@ -57,6 +63,20 @@ background:
       A person answers an escalation at any time, while the service is down
       included, and the agent ended its turn when it asked.
     - >-
+      T3 Code 0.0.45 gives a client one way to put text before an agent
+      while its turn runs: a `thread.turn.start` sent during the turn, which
+      T3 Code adds to the running turn as a user message, so it steers the
+      turn. An MCP server cannot put text before the agent until the agent
+      calls one of its tools.
+    - >-
+      Claude, Codex, and Cursor run a user-level command hook after each
+      tool call and add the context it answers to the tool's result, and
+      OpenCode runs a user-level plugin that can append to a tool's output.
+      Each hook's input names the provider session, which T3 Code's database
+      maps to the thread, and Claude, Codex, and OpenCode name the tool call
+      by the id T3 Code records as `toolCallId`. Measured on 0.0.45, a
+      notice each gave reached the agent within its turn, which went on.
+    - >-
       Claude reads MCP servers from the user's configuration in the threads
       T3 Code starts, Codex from `config.toml` in its home with T3 Code's
       own server layered over it, and Cursor from `~/.cursor/mcp.json`.
@@ -72,6 +92,14 @@ design-challenges:
   validation: >-
     A handoff must fail its blueprint's handoff schema at the call, while
     the agent can still correct it, and publish nothing.
+  messages: >-
+    A message one task sends another must reach the receiving thread only
+    through the actor that follows it, be read once in order, and survive
+    a crash between its commit and its delivery, with no new topic the
+    router derives from an identity.
+  notice: >-
+    The receiving agent must learn it has mail while its turn runs,
+    without a new turn, a steered turn, or a stopped one, on every provider.
   evolution: >-
     A T3 Code or provider release that changes where a call id travels
     must be absorbed by a service release, with no new host CLI on any
@@ -100,14 +128,22 @@ proposed-design:
     pending answer turn in the transaction that records the answer's
     handling, and sent to the thread as a `thread.turn.start` whose ids are
     derived from the escalation id, so a resend after a crash is answered
-    with T3 Code's first receipt. The tools, the request, the events, and
-    the ids are specified in `agent-tools`; the command in `host-cli-mcp`;
-    the configuration in `agent-tools-configuration`; the tables in
-    `agent-tools-database-schema`.
+    with T3 Code's first receipt. A blueprint sends a message by invoking
+    `send-message`, which writes the message and publishes `agent.message`
+    under the agent topic of each recipient thread in one transaction. The
+    message is delivered when the first following actor whose blueprint
+    declares the event takes it, in that actor's save. Only then does the
+    hook tell the thread's agent, after its next tool call, that it has
+    mail, and only then does `get-messages` read it. The tools, the
+    request, the events, the messages, the notice, and the ids are
+    specified in `agent-tools`; the commands in `host-cli-mcp` and
+    `host-cli-hook`; the configuration in `agent-tools-configuration`; the
+    tables in `agent-tools-database-schema`.
   plugin: >-
     `manifold-host mcp --service <url> --environment <name>` serves MCP over
     standard input and output with the MCP TypeScript SDK, as server
-    `manifold`, with two tools, `handoff` and `escalate`, whose names,
+    `manifold`, with three tools, `handoff`, `escalate`, and
+    `get-messages`, whose names,
     descriptions, and input schemas are `agentToolDefinitions` exported by
     `packages/shared` from the `agent-tools` schema asset. On `tools/call`
     it sends one `POST {service}/api/agent-tools/calls` with
@@ -141,8 +177,13 @@ proposed-design:
     T3 Code starts with its own configuration directory or home reads the
     registration from that directory. The registration loads in sessions
     started outside T3 Code too; a call from one finds no followed thread
-    and is refused. Manifold neither starts the plugin nor writes any
-    provider's configuration.
+    and is refused. The plugin's hook is installed beside it, in each
+    provider's user-level hook configuration, as `host-cli-hook` gives:
+    a `PostToolUse` hook in Claude's `settings.json` and in Codex's
+    `config.toml`, which Codex runs once the operator trusts it; a
+    `postToolUse` hook in Cursor's `~/.cursor/hooks.json`; and the plugin
+    file `manifold.js` in OpenCode's plugin directory. Manifold neither
+    starts the plugin or the hook nor writes any provider's configuration.
   identity: >-
     The service identifies the calling thread and turn. The plugin learns
     the service from its registration and never learns its own thread. The
@@ -339,6 +380,113 @@ proposed-design:
     A blueprint that declares neither still gets the escalation and the
     answer turn: the agent asks and is answered in its thread whatever the
     process declares.
+  messages: >-
+    A message is text that a task sends to one thread. Messages travel the
+    way every other agent event travels: under the thread's agent topic, to
+    the actors that follow the thread, so the router derives no new topic
+    from an identity, and a message reaches a thread followed by any
+    actor, of any process, on any declared environment. A blueprint sends;
+    an agent reaches another thread through its own task's blueprint, by
+    what it hands off. The module's table `agenttool_message` holds each
+    message with its delivery and read receipts.
+  sending: >-
+    The module registers the promise actor `send-message` and gives it to
+    the service through its wiring part's `context.addImplementations`.
+    The invoke validates its input against `#/$defs/send-message-input`,
+    and an input that fails, or names an undeclared environment, fails
+    with kind `input`. It resolves the address: `{ issue }` to every
+    thread that an active actor whose identity holds the issue lists, with
+    that actor's environment, from the actor host's `issueThreads(issue)`;
+    `{ environment, threadId }` to that thread. It derives each message id
+    from the invocation, as `invocationOf` gives it, the environment, and
+    the thread. In one `store.connection.transaction` it takes each
+    resolved thread in environment and thread order: a thread whose message
+    row exists is sent; a thread with no active follower, by
+    `followers(environment, threadId)`, is skipped; otherwise it publishes
+    the source event `{ source: "agent", eventId: "message/<messageId>",
+    topics: [agentThreadTopic(environment, threadId)], event }`, with the
+    event `{ type: "agent.message", environment, threadId, messageId,
+    from, text }`, and inserts the message row when the publish wrote at
+    least one inbox row. When no thread is sent, the transaction rolls back
+    and the invoke fails: with `no-recipient` when no resolved thread has
+    a follower, and with `not-accepted` otherwise. A commit resolves the
+    invoke with the message id and thread of each thread sent. `from` is
+    the invocation's actor id and the issue of that actor's identity from
+    `actorOf`, or `null`.
+  delivery: >-
+    A message is delivered in the save of the first following actor that
+    takes its event. The actor host adds to each `ActorSave` the inbox
+    event id whose delivery the save consumes, `eventId`, absent for a save
+    outside a delivery. The module's save hook `saving` reads it: for
+    `agent:message/<messageId>`, when the saved actor's version declares
+    `agent.message`, by `eventSchema`, it sets the row's `delivered_at`
+    and `delivered_to` when they are unset. The hook runs in the save's
+    transaction, which also consumes the inbox row, so a crash before the
+    commit leaves the row pending and the message undelivered, and the
+    redelivery after the restart delivers it once. An actor that takes the
+    event in a state with no transition for it delivers it all the same:
+    the blueprint decides what the actor does about the message, never
+    whether the event counts as taken. A held actor's inbox keeps the row,
+    and the message is delivered when the actor is restored with a version
+    that declares the event.
+  reading: >-
+    `get-messages` takes `{ thread? }` and is identified as `handoff` is,
+    with the same refusals: `not-followed` for a thread no active actor
+    follows, and `caller-unidentified` and `environment-unavailable` as for
+    every tool. In one transaction the module sets `read_at` and
+    `read_turn_id`, to the call's turn, on every delivered message of the
+    thread that is not read, and selects the messages whose `read_turn_id`
+    is the call's turn, in `sequence` order. The call answers them with
+    the text `agent-tools` gives. A repeated call in the turn, a provider
+    retry, or a call the plugin made again after `service-unreachable`
+    answers the same messages, and any delivered since; a message read in
+    one turn is never answered in another. Reading publishes no event and
+    starts nothing.
+  mail-notice: >-
+    The hook tells the agent of new mail after a tool call, inside the
+    turn, as context the provider adds to the tool's result. It is the one
+    mechanism measured to reach the agent during its turn without starting
+    or steering one, as `tell-agents-of-mail-through-provider-hooks`
+    records. The module answers `POST /api/agent-tools/notices`. With a
+    `threadId` that an active actor follows on the environment, the
+    thread is that one. Otherwise, with a `callId`, the candidates are the
+    threads on the environment that hold a delivered message neither read
+    nor noticed, one indexed query; none answers `null` at once with no
+    read of T3 Code, which is the answer to almost every tool call. Each
+    candidate's detail is read once through `readThread`, with no wait, and
+    the one whose tool activities hold the call id is the thread; a miss
+    answers `null`, and the agent's next tool call asks again. In one
+    transaction the module sets `noticed_at` on the thread's delivered
+    messages that are neither read nor noticed, and answers the notice text
+    for their count, or `null` for none. The notice tells the agent the
+    count and to read them with `get-messages` when its current step is
+    done, and never carries a message's text, so a message reaches the
+    agent only through `get-messages`. An agent that is between turns runs
+    no tool and gets no notice: whether to start a turn for a message is
+    the blueprint's.
+  hook: >-
+    `manifold-host hook post-tool-use` is the hook for Claude, Codex, and
+    Cursor. It reads the hook input, maps its provider session to the T3
+    Code thread with `readSessionMappings`, the read `usage push` makes of
+    T3 Code's database under `--t3-home`, and posts `{ environment,
+    threadId, callId }` with the bound `--timeout-ms`, default 2000. It
+    writes the notice in the provider's output format and exits 0 in every
+    case once its command line is valid, so a hook never fails a tool call
+    and delays it at most its bound. The session mapping identifies a
+    Cursor call, whose tool call id T3 Code does not record; the call id
+    identifies an OpenCode call, whose plugin cannot read T3 Code's
+    database without a second implementation of the mapping. The OpenCode
+    plugin, whose text `host-cli-hook` gives, posts the call id with the
+    same bound and appends the notice to the tool's output.
+  message-blueprints: >-
+    A blueprint takes messages by declaring `agent.message` under
+    `schemas.events`, which puts the type in its subscription. It may take
+    the event with no transition, so the agent reads its mail, or act on
+    it: start a turn through `turn-start` when the agent is between turns,
+    forward it with `send-message`, or escalate. A blueprint that declares
+    no `agent.message` receives no messages, and a send to its threads is
+    `not-accepted`. The default task blueprint declares `agent.message`
+    and takes it with no transition, as `default-task-blueprint` states.
   configuration: >-
     The `agentTools` section of service configuration holds
     `identifyTimeoutMs`, the longest time the module looks for a call id
@@ -348,17 +496,22 @@ proposed-design:
     The service's HTTP host mounts the module's `requestListener` at
     `/api/agent-tools` with `mount`, served without authentication as
     `serve-the-api-without-authentication` records. It answers only
-    `POST /api/agent-tools/calls`, with a JSON body of at most 1 MiB; a
+    `POST /api/agent-tools/calls`, with a JSON body of at most 1 MiB, and
+    `POST /api/agent-tools/notices`, with a JSON body of at most 64 KiB; a
     larger body answers `413`, and every other path or method `404` or
-    `405`. A body the request schema rejects answers `400` with each
+    `405`. A notice request answers `200` with a notice response, `400`
+    for a body the notice request schema rejects, and `404` for an
+    undeclared environment; it is never refused for an identity, a
+    follower, or an environment whose source is not ready, which answer
+    `null`. A body the request schema rejects answers `400` with each
     failing path. An environment the service configuration does not
     declare answers `404` with `unknown-environment`. A refusal answers
     `409` for `not-followed`, `not-accepted`, `caller-unidentified`, and
     `task-held`,
     and `422` for `invalid-handoff` and `invalid-escalation`. An
     environment whose source is not ready within the identification bound
-    answers `503` with `environment-unavailable`. An accepted or raised
-    call answers `200`.
+    answers `503` with `environment-unavailable`. An accepted, raised, or
+    read call answers `200`.
   public-interface: |-
     `packages/service/src/agent-tools/index.ts` exports exactly these
     names.
@@ -370,6 +523,7 @@ proposed-design:
     import type { ActorHost, SaveHook } from "../actor-host/index.ts";
     import type { AgentThreads } from "../agent-threads/index.ts";
     import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
+    import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
     import type { AgentToolsConfiguration } from "../service-configuration/index.ts";
 
     export function openAgentTools(options: AgentToolsOptions): AgentTools;
@@ -387,7 +541,10 @@ proposed-design:
       /** The escalations module, read when a call or a handling arrives. */
       readonly escalations: () => Pick<Escalations, "raise" | "withdraw">;
       /** The actor host, read when a call arrives. */
-      readonly actors: () => Pick<ActorHost, "followers" | "followedThreads" | "eventSchema">;
+      readonly actors: () => Pick<
+        ActorHost,
+        "followers" | "followedThreads" | "eventSchema" | "issueThreads" | "actorOf"
+      >;
       readonly threads: Pick<AgentThreads, "readThread" | "runningThreads" | "startTurn">;
       /** The environment source's `environmentId`, read when a call arrives. */
       readonly environmentId: (environment: string, signal?: AbortSignal) => Promise<string>;
@@ -404,8 +561,10 @@ proposed-design:
       readonly questionHandler: ServiceEscalationHandler;
       /** Given to the environment source; runs inside its transaction. */
       readonly messagePlaced: (placement: MessagePlacement) => void;
-      /** Added to `serviceSaveHooks`. */
+      /** Added to `serviceSaveHooks`: withdraws a finished actor's questions and delivers messages. */
       readonly saving: SaveHook;
+      /** Given to `context.addImplementations`: the `send-message` actor. */
+      readonly implementations: ImplementationRegistry;
       /** After the router and the escalations module start: sends pending answers. */
       start(): void;
       /** Stops identification waits and the answer sender; pending rows stay pending. */
@@ -413,7 +572,7 @@ proposed-design:
     }
 
     export interface CommittedCall {
-      readonly tool: "handoff" | "escalate";
+      readonly tool: "handoff" | "escalate" | "get-messages";
       readonly eventId: string;
       readonly replay: boolean;
     }
@@ -432,7 +591,12 @@ proposed-design:
     }` with the compiled validator of `schemas.events[type]` of the actor's
     version, `{ status: "undeclared" }` when that version does not declare
     the type, and `{ status: "unavailable" }` when the host cannot load the
-    version.
+    version. It also gains `issueThreads(issue)`, every `{ actorId,
+    environment, threadId }` that an active actor whose identity holds the
+    issue and an environment lists, in environment, thread, and actor id
+    order, read from the same index; and `ActorSave` gains `eventId`, the
+    inbox event id whose delivery the save consumes, absent for a save
+    outside a delivery.
     The agent threads module gains `readThread(environment, threadId,
     signal)`, the thread's session status, active turn id, and tool
     activities with their turn ids and call ids, read with
@@ -448,25 +612,36 @@ proposed-design:
     a service escalation request gains an optional `title` and
     `freeText`, and `raise` joins a transaction its caller holds open.
   service-wiring: >-
-    The module joins the service as `service-assembly` describes. It is
-    opened before the actor host, after the agent threads module and
-    before the escalations module, which takes its `questionHandler` among
-    its handlers, and its `saving` joins `serviceSaveHooks` through
-    `ServiceParts`. It reads the actor host, the router, the environment
-    source, and the escalations module through getters and functions that
-    the service answers once each is started, and no call reaches them
-    before the HTTP host listens. Its `requestListener` is mounted before
-    `listen`. `start()` runs after the escalations module's `start()`, so
-    the handlers of answers committed while the service was down have
-    written their answer rows before the sender runs, and `stop()` runs
-    after the HTTP host closes.
+    The module joins the service through its wiring parts in
+    `agent-tools/wiring.ts`, as `service-assembly` describes: the
+    `agent-tools` part opens it after the agent threads module and before
+    the escalations module, which takes its `questionHandler` among its
+    handlers, and the `agent-tools-delivery` part runs its `start()` after
+    the escalations module's. Its `saving` joins `serviceSaveHooks`. The
+    `agent-tools` part gives `implementations`, which holds `send-message`,
+    to `context.addImplementations`, so the blueprint loader builds every
+    version with it and no other part changes. It reads the actor host,
+    the router, the environment source, and the escalations module
+    through `context.later` and the getters it is given, and no call or
+    invoke reaches them before they start. Its `requestListener`, which
+    answers the calls and the notices, is mounted with
+    `members.http.mount` before `listen`. `start()` runs after the
+    escalations module's `start()`, so the handlers of answers committed
+    while the service was down have written their answer rows before the
+    sender runs, and the part registers the module's `stop()` with
+    `context.onStop` at the stage `commands`, after the HTTP host stops
+    taking requests. Its migration steps run where `service-assembly`
+    runs the `agenttool` steps, and the message table's step is step 2.
   module-layout: >-
     `index.ts` re-exports the public names. `calls.ts` holds the pure
     rules: the call id read from `meta`, the call key, the event ids, the
     answer message id and text, and the path rewrite of a handoff failure.
     `identify.ts` runs the identification over the candidates with its
     bound. `handoff.ts` and `escalate.ts` hold each tool's transaction.
-    `answers.ts` holds the handler and the sender. `http.ts` holds the
+    `answers.ts` holds the handler and the sender. `messages.ts` holds the
+    `send-message` actor, the delivery save hook, the `get-messages`
+    transaction, and the notice; the message ids, the message text, and
+    the notice text are pure rules in `calls.ts`. `http.ts` holds the
     request listener. `migrations.ts` holds the migration steps under the
     owner `agenttool`. Tests import only `index.ts` and the modules'
     `index.ts` files they wire.
@@ -489,7 +664,24 @@ proposed-design:
     reported twice, by an item the source handles again after a crash or
     by a later turn's attribution, publishes the answered event once,
     since the first places the row and the event id is fixed by the
-    escalation. A withdrawal on the actor's end twice withdraws once.
+    escalation. A withdrawal on the actor's end twice withdraws once. A
+    `send-message` invoke that its state entry runs again, after a crash
+    before or after its commit, derives the same message ids: a thread
+    whose row exists is sent and not written again, and its event is a
+    replay, so each thread holds one message per entry; a thread that a
+    task follows only since the first run gets its message on the second.
+    A crash after a message commits and before its event is delivered
+    leaves the inbox row pending; after the restart the router delivers it,
+    the save that takes it delivers the message once, and `get-messages`
+    answers it once. A delivery save that rolls back delivers nothing, and
+    its redelivery delivers the message. A `get-messages` call made twice
+    in a turn reads each message once and answers the same messages; a
+    crash inside its transaction reads none, and one after its commit
+    leaves the plugin with `service-unreachable`, so the agent's next call
+    in the turn answers the messages the first call read. A notice request
+    made twice marks each message noticed once and answers `null` the
+    second time; a crash after its commit and before its response loses
+    that notice, and the message stays readable with `get-messages`.
   failures: >-
     A call refused for an identity, a schema, or a missing follower
     publishes and raises nothing, and its result tells the agent what to
@@ -499,7 +691,12 @@ proposed-design:
     next pass within the bound. SQLite errors propagate as `500` and roll
     back the call. The answer sender treats a rejected command as final for
     its row, since its ids are fixed, and keeps every other row pending
-    across stops and restarts.
+    across stops and restarts. A notice request that cannot identify its
+    thread, finds no candidate, or meets an environment that is not ready
+    answers `null`, and a hook that cannot reach the service within its
+    bound writes nothing, so a notice is at most once and never fails a
+    tool call. A `send-message` whose transaction fails on SQLite fails the
+    invoke with the store's error and commits nothing.
   dependencies: >-
     The host CLI adds `@modelcontextprotocol/sdk`, the MCP TypeScript SDK,
     for the stdio server; its releases are frequent and it is the protocol's
@@ -562,9 +759,36 @@ proposed-design:
     plugin's repeated call answers `replay`; a kill after an answer commits
     and before its handling, and a kill after the fake server accepts the
     answer's command and before the row is marked sent, each leave the
-    thread with exactly one answer message after the restart. Host CLI
-    tests run the compiled `mcp` command over stdio against a test HTTP
-    server: it lists the two tools with their schemas, forwards a call's
+    thread with exactly one answer message after the restart. Message
+    behaviours, each red before green: a `send-message` to a thread whose
+    follower declares `agent.message` writes one message and delivers it
+    when that actor takes the event, and `get-messages` from that thread
+    answers it; a message is not answered before its event is taken; a
+    send to an issue reaches each thread its task follows; a send to a
+    thread with no follower fails `no-recipient`, and one whose followers
+    do not declare the event fails `not-accepted` and writes nothing; a
+    state entry that runs its invoke again sends no second message, and a
+    re-entry sends a new one; three messages are answered in the order
+    they were sent; two `get-messages` calls in one turn answer the same
+    messages, a message delivered between them is added to the second, and
+    a call in the next turn answers only messages delivered since; a call
+    from a thread no actor follows is refused with `not-followed`; a notice
+    request with a followed thread answers the notice once and `null`
+    after, one with a call id the fake server records on a candidate
+    thread answers it, and one when no message waits answers `null` with
+    no read of the fake server; a read marks a message so that no notice
+    names it. The integration test drives two task actors through the fake
+    T3 Code server: the first one's blueprint invokes `send-message` to the
+    second's issue, the second's blueprint takes `agent.message`, its agent
+    gets the notice through the compiled hook command against the
+    service's endpoint, and reads the message through the compiled plugin
+    and the service's endpoint. The fault test kills the service with
+    `SIGKILL` from a store probe after the message commits and before its
+    inbox row is consumed, restarts it on the same file, and shows the
+    event delivered once, the message delivered once, and `get-messages`
+    answering it once. Host CLI tests run the compiled `mcp` command over
+    stdio against a test HTTP server: it lists the three tools with their
+    schemas, forwards a call's
     arguments and `_meta`, maps an accepted response, a refusal, a
     timeout, and a refused connection to their results, and writes nothing
     but protocol to standard output. The live test, run by the service
@@ -575,7 +799,15 @@ proposed-design:
     enabled in that T3 Code, `claude`, `codex`, `cursor`, and `opencode`,
     as `host-cli-mcp` gives, and for each starts a thread whose prompt
     asks the agent to call `handoff`. It records for each provider whether the registration
-    loaded, the `_meta` keys the plugin received, whether the call id
-    equals the activity's `toolCallId`, and which rule identified the
-    call, and the evidence table in `agent-tools` is updated from that run.
+    loaded, the tools it lists, which include `get-messages`, the `_meta`
+    keys the plugin received, whether the call id equals the activity's
+    `toolCallId`, and which rule identified the call. In a second thread
+    per provider, with the hook registered as `host-cli-hook` gives and a
+    test endpoint that answers a notice, the prompt asks the agent to run
+    two shell commands and then call `get-messages`; it records whether
+    the notice reached the agent within its turn, whether the turn went on
+    with one turn and one user message, whether the hook's session mapped
+    to the thread and its call id equalled `toolCallId`, and that
+    `get-messages` was called. The evidence tables in `agent-tools` are
+    updated from that run.
     Values are generic and never drawn from Manifold's own domain.

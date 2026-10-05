@@ -1,0 +1,157 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - agent-tools
+    - host-cli-mcp
+    - host-cli-usage
+terms:
+  - harness-plugin
+  - message
+description: |-
+  Defines the `hook post-tool-use` command of the host CLI,
+  `manifold-host`, the harness plugin's hook that tells an agent of new
+  messages for its thread during its turn, and how the hook is registered
+  in each provider T3 Code runs. `docs/specifications/host-cli-hook.cli.yml`
+  is the machine-readable command definition.
+
+  `manifold-host hook post-tool-use --service <url> --environment <name>
+  --provider <provider>` runs once after each tool call of an agent. It
+  reads the provider's hook input, one JSON object of at most 1 MiB, from
+  standard input, and takes from it the provider session id,
+  `session_id`, and the tool call's id, `tool_use_id`. It maps the
+  provider session to its T3 Code thread with the session mappings
+  `manifold-host usage push` reads from T3 Code's database under
+  `--t3-home`, for the provider `--provider` names. It sends one
+  `POST {service}/api/agent-tools/notices` with the body
+  `#/$defs/notice-request` of `docs/specifications/agent-tools.schema.yml`:
+  the environment `--environment` names, the thread when the mapping holds
+  the session, and the call id when the input holds one. It waits for the
+  response at most `--timeout-ms` milliseconds, default 2000. When the
+  response is `200` with a notice, it writes the notice to standard output
+  in the provider's hook output format:
+
+  - `claude` and `codex`:
+    `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"<notice>"}}`
+  - `cursor`: `{"additional_context":"<notice>"}`
+
+  Otherwise it writes nothing to standard output. It sends no
+  authentication credential; deployment controls access to the service
+  API. It never retries, keeps nothing between runs, writes no file, and
+  reads only standard input and T3 Code's database, read-only. Input that
+  is not a JSON object, an absent database, a session the mappings do not
+  hold with no call id, a refused connection, a timeout, and a response
+  that is not a notice response each end the run with nothing on standard
+  output and exit code 0, and one line on standard error. A hook never
+  fails the tool call it runs after, and never delays it more than its
+  bound and the time to start the binary. An invalid command line exits 2
+  before reading standard input; a provider shows the agent the standard
+  error of a hook that exits 2, so this happens only for a registration
+  that is wrong.
+
+  Registration. A provider harness runs the hook from a registration in
+  that provider's user-level hook configuration, for every tool. The
+  command is the path of the installed binary. The examples use the
+  service `http://127.0.0.1:8080`, the environment `workstation`, and T3
+  Code's default data directory.
+
+  Claude reads `settings.json` in its configuration directory,
+  `CLAUDE_CONFIG_DIR` or `~/.claude`:
+
+  ```json
+  {
+    "hooks": {
+      "PostToolUse": [
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/local/bin/manifold-host hook post-tool-use --service http://127.0.0.1:8080 --environment workstation --provider claude"
+            }
+          ]
+        }
+      ]
+    }
+  }
+  ```
+
+  Codex reads `config.toml` in its home, `CODEX_HOME` or `~/.codex`, and
+  runs a user hook only once the operator trusts it in Codex, which
+  records the hook's hash under `hooks.state`:
+
+  ```toml
+  [[hooks.PostToolUse]]
+  matcher = "*"
+  [[hooks.PostToolUse.hooks]]
+  type = "command"
+  command = "/usr/local/bin/manifold-host hook post-tool-use --service http://127.0.0.1:8080 --environment workstation --provider codex"
+  ```
+
+  Cursor reads `~/.cursor/hooks.json`:
+
+  ```json
+  {
+    "version": 1,
+    "hooks": {
+      "postToolUse": [
+        {
+          "command": "/usr/local/bin/manifold-host hook post-tool-use --service http://127.0.0.1:8080 --environment workstation --provider cursor"
+        }
+      ]
+    }
+  }
+  ```
+
+  OpenCode runs no command hook. Its plugin `manifold.js` in
+  `~/.config/opencode/plugin/` sends the notice request itself, with the
+  call id, which the service matches against T3 Code's record of the call,
+  and appends the notice to the tool's output:
+
+  ```js
+  const service = "http://127.0.0.1:8080";
+  const environment = "workstation";
+
+  export const Manifold = async () => ({
+    "tool.execute.after": async (input, output) => {
+      try {
+        const response = await fetch(`${service}/api/agent-tools/notices`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ environment, callId: input.callID }),
+          signal: AbortSignal.timeout(2000),
+        });
+        const body = response.ok ? await response.json() : undefined;
+        if (typeof body?.notice === "string")
+          output.output = `${String(output.output ?? "")}\n\n${body.notice}`;
+      } catch {
+        // A hook never fails the tool call.
+      }
+    },
+  });
+  ```
+
+  Grok's hook is not measured. Every registration loads in sessions
+  started outside T3 Code too; such a session's thread is followed by no
+  actor, so its hook finds no notice. Manifold neither runs the hook nor
+  writes any provider's configuration. The evidence for each registration
+  is the mail notice table of `agent-tools`.
+format: cli
+validation-criteria: >-
+  The command surface conforms to
+  `docs/specifications/host-cli-hook.cli.yml`. The binary test in
+  `packages/host-cli` compiles the binary and runs `manifold-host hook
+  post-tool-use` against a test HTTP server and a T3 Code database fixture
+  that maps a provider session to a thread. It checks, for each of
+  `claude`, `codex`, and `cursor`, that a hook input with a mapped session
+  sends one request that validates against `#/$defs/notice-request` with
+  the thread and the call id, and no Authorization header; that a notice
+  response gives the provider's output and exit 0; that a `null` notice, an
+  unmapped session with no call id, input that is not JSON, an absent
+  database, a refused connection, a response held past `--timeout-ms`, and
+  a body that is not a notice response each give no standard output and
+  exit 0; and that an unknown option, a missing required option, an
+  unknown provider, and a timeout out of range exit 2 with nothing on
+  standard output. A test runs the OpenCode plugin's `tool.execute.after`
+  against the same server and checks the request and the appended notice.

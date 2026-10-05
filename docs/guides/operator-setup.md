@@ -9,6 +9,7 @@ relationships:
     - escalations
     - host-cli-usage
     - host-cli-mcp
+    - host-cli-hook
     - default-process
     - accounts-declaration
     - task-metadata-declaration
@@ -225,7 +226,8 @@ http:
 
 Use `http://192.168.50.10:7480` for the host CLI's `--service` value on each
 remote environment and for the console at `/console/`. The usage push reaches
-`/api/usage/push`; the MCP plugin reaches `/api/agent-tools/calls`. These paths
+`/api/usage/push`; the MCP plugin reaches `/api/agent-tools/calls`, and its hook
+reaches `/api/agent-tools/notices`. These paths
 and the console never go through the public proxy. Replace the loopback
 upstream in each Caddy forwarding rule above with the configured private bind
 address. Keep its three endpoint rules unchanged.
@@ -428,8 +430,23 @@ manifold-host mcp --service http://127.0.0.1:7480 --environment workstation
 Use [the host CLI MCP specification](../specifications/host-cli-mcp.yml) for each
 provider's configuration file and registration snippet. It owns those snippets;
 the guide does not duplicate them. Register in the scope that the task's agent
-will load. Check that the provider lists `handoff` and `escalate`. Tool calls
-reach `/api/agent-tools/calls` on the private service URL.
+will load. Check that the provider lists `handoff`, `escalate`, and
+`get-messages`. Tool calls reach `/api/agent-tools/calls` on the private service
+URL.
+
+Register the plugin's hook beside it, so an agent learns of new messages during
+its turn:
+
+```sh
+manifold-host hook post-tool-use --service http://127.0.0.1:7480 --environment workstation --provider codex
+```
+
+Use [the host CLI hook specification](../specifications/host-cli-hook.yml) for
+each provider's hook configuration and for the OpenCode plugin file. Codex runs
+the hook only after you trust it in Codex. The hook runs as the provider user
+and reads T3 Code's data directory, `T3CODE_HOME` or `~/.t3`, so set
+`--t3-home` when T3 Code keeps its data elsewhere. Hooks reach
+`/api/agent-tools/notices` on the private service URL.
 
 ## 12. Check intake
 

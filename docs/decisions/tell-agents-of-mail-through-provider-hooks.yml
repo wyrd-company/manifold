@@ -1,0 +1,61 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - agent-tools
+    - host-cli-hook
+description: >-
+  A message must reach the receiving thread only through the actor that
+  follows it, and its agent must learn it has mail without its turn being
+  interrupted, steered, or started by the message. T3 Code 0.0.45 puts text
+  before a running agent in one way: a `thread.turn.start` sent during the
+  turn, which it adds to that turn as a user message and so steers it. An
+  MCP server's text reaches the agent only as the result of a call the
+  agent makes, and the harness plugin's process does not know its thread.
+  Claude, Codex, and Cursor run a user-level command hook after each tool
+  call and add the context it answers to the tool's result; OpenCode runs a
+  user-level plugin that can append to a tool's output. Measured on T3 Code
+  0.0.45 with each of the four, a notice given after each of two shell
+  commands reached the agent within its turn, which ran both commands and
+  completed as one turn with one user message. Each hook's provider session
+  maps to its thread through T3 Code's database, and Claude, Codex, and
+  OpenCode name the tool call by the id T3 Code records.
+considered-options:
+  "1": >-
+    Provider hooks. A `PostToolUse` hook for Claude and Codex, a
+    `postToolUse` hook for Cursor, and a plugin for OpenCode ask the
+    service after each tool call whether the thread has delivered mail the
+    agent has not been told of, and add a notice to the tool's result.
+  "2": >-
+    Steer the turn. The service sends a short user message, `You have
+    mail`, to a thread whose turn runs, which T3 Code adds to that turn.
+  "3": >-
+    Next turn only. The agent learns of mail when the blueprint starts its
+    next turn, from the prompt or a message the blueprint sends.
+  "4": >-
+    Agent polling. The prompt tells the agent to call `get-messages` at
+    set points of its work.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 is the only one measured to reach the agent during its turn
+    without a message in the thread, a new turn, or a steered one, on every
+    provider the live test measures. The notice rides on a tool result the
+    agent was already waiting for, so the turn goes on as planned, and it
+    holds only a count, so the message itself reaches the agent only
+    through `get-messages`, after the actor took it. Option 2 steers the
+    turn and adds a user message the thread keeps, which is what a message
+    must never do by itself. Option 3 does not tell the agent during its
+    turn, and with option 4 spends the agent's tokens to learn nothing most
+    of the time; both stay open to a blueprint, which may start a turn for
+    a message.
+expected-outcomes:
+  positive:
+    - An agent learns of mail at its next tool call, in the turn it is running.
+    - No message, turn, or interruption appears in the thread for a notice.
+    - The service answers almost every hook from one indexed query, with no read of T3 Code.
+  negative:
+    - The operator registers a hook for each provider beside the plugin, and trusts it once in Codex.
+    - Every tool call of every session of a provider on the environment runs the hook, in T3 Code or not, and waits for the service at most the hook's bound.
+    - An agent that runs no tool after a message arrives learns of it only when it next runs one or reads its mail.
+    - A notice is at most once; one lost to a timeout or a crash is not repeated, though the message stays readable.
+    - Cursor's identification depends on T3 Code's database mapping of provider sessions, which T3 Code does not document.

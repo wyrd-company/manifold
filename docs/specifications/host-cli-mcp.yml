@@ -4,6 +4,7 @@ relationships:
   # design or another specification; `references` is the best fit.
   references:
     - agent-tools
+    - host-cli-hook
 terms:
   - harness-plugin
 description: |-
@@ -14,8 +15,8 @@ description: |-
 
   `manifold-host mcp --service <url> --environment <name>` serves the
   Model Context Protocol over standard input and output as server
-  `manifold`, with the tools `handoff` and `escalate` that `agent-tools`
-  defines. For each tool call it sends one request to the service at
+  `manifold`, with the tools `handoff`, `escalate`, and `get-messages`
+  that `agent-tools` defines. For each tool call it sends one request to the service at
   `--service` as the environment named `--environment`, and returns the
   service's answer as the tool result, as `agent-tools` defines. It waits
   for each response at most `--request-timeout-ms` milliseconds, default
@@ -80,6 +81,9 @@ description: |-
     }
   }
   ```
+
+  The plugin's hook, which tells an agent of new messages during its
+  turn, is registered beside it, as `host-cli-hook` gives.
 
   Grok's registration is not measured; a Grok agent identifies its calls
   with the `thread` argument once its harness loads the plugin. The

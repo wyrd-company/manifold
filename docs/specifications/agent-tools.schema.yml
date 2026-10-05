@@ -6,15 +6,17 @@ $schema: https://json-schema.org/draft/2020-12/schema
 $id: https://manifold.wyrd.company/schemas/agent-tools
 title: Agent tools
 description: >-
-  The shapes of the agent tools: the input of `handoff` and `escalate`, the
-  request the harness plugin sends the service for a tool call, the
-  service's response, and the events the service publishes to the actors
-  that follow the calling thread.
+  The shapes of the agent tools: the input of `handoff`, `escalate`, and
+  `get-messages`, the request the harness plugin sends the service for a
+  tool call, the service's response, the events the service publishes to
+  the actors that follow the calling thread, the contract of the
+  `send-message` actor, and the mail notice request and response.
 $defs:
   tool:
     enum:
       - handoff
       - escalate
+      - get-messages
   thread-argument:
     description: >-
       The T3 Code thread id, given when the prompt names it; used when the
@@ -70,6 +72,13 @@ $defs:
         properties:
           freeText:
             const: true
+  get-messages-input:
+    description: The input of the `get-messages` tool.
+    type: object
+    additionalProperties: false
+    properties:
+      thread:
+        $ref: "#/$defs/thread-argument"
   call-request:
     description: The body of `POST /api/agent-tools/calls`.
     type: object
@@ -158,6 +167,27 @@ $defs:
             type: string
           turnId:
             type: string
+          message:
+            type: string
+      - type: object
+        additionalProperties: false
+        required:
+          - status
+          - threadId
+          - turnId
+          - messages
+          - message
+        properties:
+          status:
+            const: read
+          threadId:
+            type: string
+          turnId:
+            type: string
+          messages:
+            type: array
+            items:
+              $ref: "#/$defs/thread-message"
           message:
             type: string
       - type: object
@@ -261,6 +291,184 @@ $defs:
         description: >-
           The turn that holds the answer, started by it or running when it
           arrived; null when no turn can be told or the message was rejected.
+        type:
+          - string
+          - "null"
+  message-id:
+    description: A UUID derived as `agent-tools/message` from the sending invocation and the thread.
+    type: string
+    pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+  message-text:
+    description: Markdown.
+    type: string
+    minLength: 1
+    maxLength: 8000
+  message-sender:
+    description: The task that sent a message.
+    type: object
+    additionalProperties: false
+    required:
+      - actorId
+      - issue
+    properties:
+      actorId:
+        type: string
+        minLength: 1
+      issue:
+        description: The issue node id of the sender's identity, or null when it holds none.
+        type:
+          - string
+          - "null"
+  thread-message:
+    description: A message as `get-messages` answers it.
+    type: object
+    additionalProperties: false
+    required:
+      - messageId
+      - from
+      - text
+      - sentAt
+      - deliveredAt
+    properties:
+      messageId:
+        $ref: "#/$defs/message-id"
+      from:
+        $ref: "#/$defs/message-sender"
+      text:
+        $ref: "#/$defs/message-text"
+      sentAt:
+        type: string
+        format: date-time
+      deliveredAt:
+        type: string
+        format: date-time
+  agent-message-event:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - environment
+      - threadId
+      - messageId
+      - from
+      - text
+    properties:
+      type:
+        const: agent.message
+      environment:
+        type: string
+      threadId:
+        type: string
+      messageId:
+        $ref: "#/$defs/message-id"
+      from:
+        $ref: "#/$defs/message-sender"
+      text:
+        $ref: "#/$defs/message-text"
+  send-message-input:
+    description: The input of the `send-message` actor.
+    type: object
+    additionalProperties: false
+    required:
+      - to
+      - text
+    properties:
+      to:
+        oneOf:
+          - description: A task, by its issue node id.
+            type: object
+            additionalProperties: false
+            required:
+              - issue
+            properties:
+              issue:
+                type: string
+                minLength: 1
+          - description: One thread on a declared environment.
+            type: object
+            additionalProperties: false
+            required:
+              - environment
+              - threadId
+            properties:
+              environment:
+                $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+              threadId:
+                type: string
+                minLength: 1
+      text:
+        $ref: "#/$defs/message-text"
+  send-message-output:
+    type: object
+    additionalProperties: false
+    required:
+      - messages
+    properties:
+      messages:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required:
+            - messageId
+            - environment
+            - threadId
+          properties:
+            messageId:
+              $ref: "#/$defs/message-id"
+            environment:
+              type: string
+            threadId:
+              type: string
+  send-message-error:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - kind
+      - message
+    properties:
+      type:
+        const: send-message
+      kind:
+        enum:
+          - input
+          - no-recipient
+          - not-accepted
+      message:
+        type: string
+        minLength: 1
+  notice-request:
+    description: The body of `POST /api/agent-tools/notices`.
+    type: object
+    additionalProperties: false
+    required:
+      - environment
+    properties:
+      environment:
+        $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+      threadId:
+        description: The T3 Code thread the hook mapped the provider session to.
+        type: string
+        minLength: 1
+      callId:
+        description: The provider's id of the tool call the hook runs after.
+        type: string
+        minLength: 1
+    anyOf:
+      - required:
+          - threadId
+      - required:
+          - callId
+  notice-response:
+    type: object
+    additionalProperties: false
+    required:
+      - notice
+    properties:
+      notice:
+        description: The notice text, or null when there is nothing to tell.
         type:
           - string
           - "null"
