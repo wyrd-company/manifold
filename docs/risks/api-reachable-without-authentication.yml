@@ -41,9 +41,10 @@ response-strategy: mitigate
 status: open
 
 # Mitigation: the host binds `127.0.0.1` by default. A deployment that must
-# be reached from outside puts a proxy in front that forwards only
-# `/webhooks/github`, whose deliveries the GitHub source verifies by
-# signature, and `/escalations`, where an answer needs the escalation's key.
+# be reached from outside puts a proxy in front that forwards exactly
+# `POST /webhooks/github`, whose deliveries the GitHub source verifies by
+# signature, and `GET /escalations/{id}` and `POST /escalations/{id}/answer`,
+# which need the escalation's key, as `service-distribution` states.
 # A page on another site cannot drive the save from the operator's browser:
 # the save takes only `application/json`, so a cross-site request needs a
 # preflight the host never grants, and a request marked

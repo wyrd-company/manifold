@@ -98,6 +98,7 @@ validation-criteria: >-
   including `comparatorSandboxDefaults`. A credential name that `credentials`
   does not define fails with an issue at the property that uses it.
   `docs/specifications/service-configuration.example.yml` loads with no
-  issue once each `privateKeyFile` it names exists, its top-level keys are
+  issue once each credential file it names exists (every `privateKeyFile`,
+  `tokenFile`, and hook `secretFile`), its top-level keys are
   the root's `properties`, and each of its scalar values has a comment,
   checked by a test.
