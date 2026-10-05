@@ -7,6 +7,11 @@ import { childProcessLimit } from "../../test-support/limits.ts";
 
 // Includes direct children and tests whose Git remote fixture starts git http-backend.
 const children = [
+  "src/blueprints-api/api.test.ts",
+  "src/blueprints-api/blueprints.browser.test.ts",
+  "src/process-repository/save.test.ts",
+  "src/service/blueprint-save.test.ts",
+  "src/service/blueprint-save-crash.test.ts",
   "src/actor-host/crash.test.ts",
   "src/agent-threads/recovery.test.ts",
   "src/agent-threads/service-wiring.test.ts",

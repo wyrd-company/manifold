@@ -55,7 +55,10 @@ test("lists, reads, and lints through the HTTP host with source ranges and graph
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect(conforms("BlueprintsResponse", await response.json())).toMatchObject({
     commit: fixture.first,
-    blueprints: [{ path: "blueprints/counter.yml", status: "loaded", activeActors: 1 }],
+    blueprints: [
+      { path: "blueprints/counter.yml", status: "loaded", activeActors: 1 },
+      { path: "blueprints/task.yml", source: "repository", replacesBundled: true },
+    ],
   });
   const source = await fetch(url + "/source?path=blueprints%2Fcounter.yml");
   expect(source.status).toBe(200);
@@ -210,6 +213,7 @@ test("bundled paths list once, count older bundled actors and save as repository
         activeActors: 1,
       },
       { path: "blueprints/other.yaml", source: "bundled", bundle: digest },
+      { path: "blueprints/task.yml", source: "repository" },
     ],
   });
   expect(
@@ -549,7 +553,10 @@ test("an invalid repository blueprint replaces its bundled path and exposes the 
   const url = `http://127.0.0.1:${address.port}/api/blueprints`;
   expect(conforms("BlueprintsResponse", await fetch(url).then((r) => r.json()))).toMatchObject({
     commit,
-    blueprints: [{ source: "repository", replacesBundled: true, status: "invalid", findings: 2 }],
+    blueprints: [
+      { source: "repository", replacesBundled: true, status: "invalid", findings: 2 },
+      { path: "blueprints/task.yml", source: "repository" },
+    ],
   });
   const source = conforms(
     "BlueprintSource",
@@ -561,4 +568,70 @@ test("an invalid repository blueprint replaces its bundled path and exposes the 
     findings: expect.arrayContaining([expect.objectContaining({ kind: "machine" })]),
   });
   expect(source).not.toHaveProperty("graph");
+});
+
+test("service lists the shipped task blueprint and its repository replacement", async () => {
+  const { fixture, service, url } = await setup();
+  const git = (await import("isomorphic-git")).default;
+  const fs = await import("node:fs/promises");
+  const replacement = await (await fetch(url)).json();
+  expect(replacement.blueprints).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        path: "blueprints/task.yml",
+        source: "repository",
+        replacesBundled: true,
+      }),
+    ]),
+  );
+  const parent = await git.readCommit({ fs, gitdir: fixture.remote.gitdir, oid: fixture.first });
+  const root = await git.readTree({ fs, gitdir: fixture.remote.gitdir, oid: parent.commit.tree });
+  const entry = root.tree.find((item) => item.path === "blueprints")!;
+  const directory = await git.readTree({ fs, gitdir: fixture.remote.gitdir, oid: entry.oid });
+  const blueprints = await git.writeTree({
+    fs,
+    gitdir: fixture.remote.gitdir,
+    tree: directory.tree.filter((item) => item.path !== "task.yml"),
+  });
+  const tree = await git.writeTree({
+    fs,
+    gitdir: fixture.remote.gitdir,
+    tree: root.tree.map((item) =>
+      item.path === "blueprints" ? { ...item, oid: blueprints } : item,
+    ),
+  });
+  const commit = await git.writeCommit({
+    fs,
+    gitdir: fixture.remote.gitdir,
+    commit: { ...parent.commit, tree, parent: [fixture.first], message: "Use the bundled sample" },
+  });
+  await fixture.remote.force(commit);
+  await service.revisions.pull();
+  const list = conforms("BlueprintsResponse", await (await fetch(url)).json());
+  expect(list).toMatchObject({
+    blueprints: [
+      { path: "blueprints/counter.yml", source: "repository" },
+      {
+        path: "blueprints/task.yml",
+        source: "bundled",
+        bundle: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    ],
+  });
+  const source = conforms(
+    "BlueprintSource",
+    await (await fetch(url + "/source?path=blueprints/task.yml")).json(),
+  );
+  expect(source).toMatchObject({ source: "bundled", text: expect.stringContaining("intake") });
+  await fixture.commit(62);
+  await service.revisions.pull();
+  expect((await (await fetch(url)).json()).blueprints).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        path: "blueprints/task.yml",
+        source: "repository",
+        replacesBundled: true,
+      }),
+    ]),
+  );
 });

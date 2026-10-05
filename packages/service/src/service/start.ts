@@ -8,7 +8,7 @@ import { openCapacity } from "../capacity/index.ts";
 import type { Capacity } from "../capacity/index.ts";
 import { openTaskMetadata, taskMetadataMigrationSteps } from "../task-metadata/index.ts";
 import { startIntake, intakeMigrationSteps, intakeFailedHandler } from "../intake/index.ts";
-import { openBundles, bundleMigrationSteps } from "../bundle/index.ts";
+import { openBundles, bundleMigrationSteps, bundle } from "../bundle/index.ts";
 import type { Intake } from "../intake/index.ts";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -550,7 +550,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         branch: configuration.processRepository.branch,
       },
       configurationBound: configuration.blueprintLint.configurationBound,
-      bundle: { digest: "", blueprints: new Map() },
+      bundle,
       log: (entry) =>
         log({
           level: entry.level,
