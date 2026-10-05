@@ -453,7 +453,7 @@ description: |-
   interface BlueprintLintOptions {
     /** The token lint's configuration bound. Default `defaultConfigurationBound`, 20000. */
     readonly configurationBound?: number;
-    /** The declared lifecycle options rule 10 checks a literal `status` against; absent skips rule 10. */
+    /** The declared lifecycle options rule 11 checks a literal `status` against; absent skips rule 11. */
     readonly lifecycleOptions?: ReadonlySet<string>;
   }
   type BlueprintLint =
