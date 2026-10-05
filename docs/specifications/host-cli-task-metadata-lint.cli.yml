@@ -1,0 +1,45 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: host-cli-task-metadata-lint
+# ---
+$schema: https://commonclischema.org/draft/2026-04/schema
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+commands:
+  - name: task-metadata
+    summary: Work with the task metadata declaration of a process repository.
+    mode: non-interactive
+    subcommands:
+      - name: lint
+        summary: Lint `task-metadata.yml` against `bindings.yml` in a process repository checkout.
+        mode: non-interactive
+        positional-arguments:
+          - name: repository
+            description: The process repository checkout directory. Defaults to the current directory.
+            position: 0
+            required: false
+            default: .
+            value:
+              type: path
+        output:
+          modes:
+            - name: text
+              description: >-
+                One line per finding on standard output,
+                `task-metadata.yml:<location> <kind> <message>`; nothing
+                when there is no finding.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: There is no finding.
+            - code: 1
+              meaning: The declaration has at least one finding.
+            - code: 2
+              meaning: The directory or a file could not be read.
+        examples:
+          - manifold-host task-metadata lint
+          - manifold-host task-metadata lint ./process

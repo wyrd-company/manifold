@@ -6,6 +6,7 @@ relationships:
     - service-configuration
     - process-repository
     - portfolio
+    - task-metadata
   mitigates:
     - github-events-incomplete
     - github-reads-lag-deliveries
@@ -13,7 +14,9 @@ objective: >-
   Turn GitHub webhook deliveries, and the changes GitHub never delivers,
   into router events for the issues and Projects Manifold tracks, so that
   each change reaches its actors once, a blocked issue's actor hears its
-  blocker close, and a push to the process repository pulls it.
+  blocker close, and a push to the process repository pulls it; and set a
+  task's lifecycle field on its Project for a card move, so that each move
+  leaves GitHub holding one value and reaches the actor as its own.
 background:
   current-design: >-
     The router publishes source events through the seam `router-events`
@@ -52,6 +55,11 @@ design-challenges:
   acknowledgement: >-
     GitHub marks a delivery failed when the answer takes longer than ten
     seconds, and reading GitHub's current state can take longer than that.
+  attribution: >-
+    GitHub reports a card move Manifold made the same way it reports a
+    person's: a delivery that names the item, and a field value read from
+    the API. An actor must tell its own move from a person's, by webhook or
+    by sweep, after a crash, and when a read lags the write.
 proposed-design:
   high-level-overview: >-
     The GitHub event source is `packages/service/src/github-source/`, whose
@@ -102,6 +110,8 @@ proposed-design:
       readonly onTracked?: (issueNodeIds: readonly string[]) => void;
       /** Called after each committed transaction that changed a mirror row. */
       readonly onMirrorChanged?: () => void;
+      /** Called after a card move's write returns from GitHub, before its promise resolves. */
+      readonly probeMove?: (move: CardMove) => void;
     }
 
     /** The `github` section of the service configuration, defaults applied. */
@@ -147,7 +157,36 @@ proposed-design:
       trackedIssue(nodeId: string): TrackedIssue | undefined;
       /** The node id of every issue trackedIssue answers for, sorted by code point. */
       trackedIssueIds(): readonly string[];
+      /** The mirror's Project of a node id, or undefined when the mirror holds none. */
+      project(nodeId: string): GitHubProject | undefined;
+      /** Sets a single-select field of an issue's item; resolves once GitHub holds the option. */
+      moveCard(move: CardMove, signal?: AbortSignal): Promise<void>;
       stop(): Promise<void>;
+    }
+
+    export interface CardMove {
+      /** The invocation of the `github-card-move` invoke that asks for the move. */
+      readonly actorId: string;
+      readonly invokeId: string;
+      readonly entryId: string;
+      readonly projectNodeId: string;
+      readonly issueNodeId: string;
+      /** The name of a single-select field of the Project. */
+      readonly field: string;
+      /** The name of an option of that field. */
+      readonly option: string;
+    }
+
+    export class GitHubWriteError extends Error {
+      readonly kind:
+        | "field-missing"
+        | "option-missing"
+        | "item-missing"
+        | "forbidden"
+        | "transport"
+        | "rejected";
+      /** The HTTP status of the failed request, when there was one. */
+      readonly status: number | undefined;
     }
 
     export interface WebhookDelivery {
@@ -227,10 +266,13 @@ proposed-design:
     holds the pure functions from a mirror view and an observed state to the
     mirror writes and the events to publish. `events.ts` holds the pure
     functions that build each event's topics and event id. `mirror.ts`
-    holds every SQL read and write of the source's tables. `github-api.ts`
-    holds the GraphQL queries and the REST calls, and nothing else talks to
-    GitHub. `runner.ts` holds the serial runner, the sweep, the redelivery
-    scan, and the timers. `migrations.ts` holds the migration steps.
+    holds every SQL read and write of the source's tables, the card move
+    rows included. `attribution.ts` holds the pure function from a field
+    change and the card move rows of its item and field to its `movedBy`
+    and the rows to delete. `github-api.ts` holds the GraphQL queries, the
+    card move mutation, and the REST calls, and nothing else talks to
+    GitHub. `runner.ts` holds the serial runner, the card move queue, the
+    sweep, the redelivery scan, and the timers. `migrations.ts` holds the migration steps.
     `test-fixtures/` holds the synthetic delivery payloads. Tests live beside the
     module and import only `index.ts`, the router's and the store's
     `index.ts`, and the service configuration's `index.ts`.
@@ -264,13 +306,17 @@ proposed-design:
     each issue's state, `blockedBy`, `blocking`, `subIssues`, and `parent`;
     repository `Pull requests: read`, so that a pull request item on a
     Project shows its content node id instead of `REDACTED`; organization
-    `Projects: read`, to resolve a Project by owner and number and read its
-    `closed`, items, and field values; organization `Webhooks: read and
+    `Projects: read and write`, to resolve a Project by owner and number
+    and read its `closed`, items, fields, and field values (read), and to
+    set an item's single-select field value for a card move (write);
+    organization `Webhooks: read and
     write`, on an account with an organization hook, to list the hook's
     deliveries (read) and ask for a redelivery (write); and repository
     `Webhooks: read and write`, on a repository with a repository hook, for
-    the same. The source never writes to an issue, a Project, or a
-    repository, and needs no `Contents` permission: a push reaches a hook
+    the same. The source writes nothing to GitHub but an item's
+    single-select field value for a card move, and the redelivery requests.
+    It never writes to an issue or a repository, and needs no `Issues:
+    write` and no `Contents` permission: a push reaches a hook
     without it, the process repository's own `contents: read` token fetches
     the pushed commit, and the source never links a repository to a
     Project.
@@ -327,9 +373,15 @@ proposed-design:
   runner: >-
     One runner does all of the source's GitHub work, one step at a time, so
     no two requests to GitHub overlap and no two reconciles write at once.
-    It holds three flags: a redelivery scan is due, a sweep is due, and
-    pending rows exist. On waking it runs a due scan first, then a due
-    sweep, then the pending reconciles, and sleeps when all three are clear.
+    It holds a queue of card moves and three flags: a redelivery scan is
+    due, a sweep is due, and pending rows exist. On waking it runs every
+    queued card move first, then a due scan, then a due sweep, then the
+    pending reconciles, and sleeps when the queue is empty and all three
+    flags are clear. It takes queued card moves again before each later
+    request of a scan, a sweep, or a pending reconcile, so a move waits at
+    most for the one request in hand. A card move is never sent while a
+    read is in flight, so every read that starts after a move's write
+    returns starts after GitHub took the write.
     `startGitHubSource` sets the scan and the sweep due and wakes it. After
     each scan it arms one timer for `redeliveryIntervalMs`, and after each
     sweep one for `sweepIntervalMs`, through the clock; a timer sets its
@@ -354,9 +406,62 @@ proposed-design:
     sweep wake, so a timer that fired during the read still runs and re-arms;
     pending work alone is not retried immediately. A `publish` that returns `rejected` is a
     defect in the source and throws, which rolls the transaction back.
+  card-moves: >-
+    `moveCard(move, signal)` queues the move, wakes the runner, and returns
+    a promise the runner settles. A `signal` that aborts while the move is
+    queued removes it from the queue and rejects with the signal's reason;
+    one that aborts while its request is in flight aborts the request, and
+    the move's fate is GitHub's. `moveCard` after `stop` throws a
+    `TypeError`. The runner runs one move in these steps. (1) The item: the
+    present item on the Project whose content is the issue, read from the
+    mirror; none is `item-missing`. (2) The field: the `GitHubProjectField`
+    query with the Project's node id and the field name, with the
+    credential of the Project's owner. No field of that name, a field that
+    is not single-select, and a Project the query does not find are
+    `field-missing`; the option is the field's option whose name equals the
+    move's option exactly, and none is `option-missing`. (3) In one
+    transaction, the move's `github_card_move` row is written, as
+    `github-source-database-schema` states. (4) The `GitHubCardMove`
+    mutation sets the item's field to the option. (5) When it returns, the
+    item becomes a pending `item`, in one transaction, so the runner reads
+    it next, calls `probeMove`, and resolves the move. The promise
+    therefore resolves only once GitHub has taken the write and answered
+    for it. Each request runs under `requestTimeoutMs`, as every request of
+    the source does, and the source adds no retry of a write: a failure
+    rejects the move with a `GitHubWriteError`. A `NOT_FOUND` error at the
+    item is `item-missing`; a `FORBIDDEN` error, a `401` or `403` answer,
+    and an owner that `owners` does not name are `forbidden`; a request
+    that fails before GitHub answers, runs past `requestTimeoutMs`, or is
+    answered with a `5xx` or a rate limit is `transport`; any other GraphQL
+    error is `rejected`, with GitHub's message. A mutation that GitHub
+    refuses deletes the move's row in its own transaction; a `transport`
+    failure keeps it, since GitHub may have taken the write. A move's
+    failure is not sent to `onError`: its caller takes it.
+  attribution: >-
+    The card move rows decide `movedBy` on each
+    `github.project-item.field-changed` a reconcile publishes, inside the
+    reconcile's transaction, from the rows of the change's item and field.
+    When the new value is a single-select option that one or more rows set,
+    the change is attributed to the actor of the row with the largest
+    `sequence` among them, and that row and every row of the item and field
+    with a smaller `sequence` are deleted. Otherwise `movedBy` is `null`
+    and every row of the item and field is deleted, since GitHub holds a
+    value that no recorded move set, so a later change made them stale. A
+    change of the item's other fields reads no row. Removing an item
+    deletes its rows. The runner never sends a move while a read is in
+    flight, so a row a read can find belongs to a write sent before the
+    read began. A read that lags a move and shows the field's earlier value
+    finds no difference and publishes nothing, and the delivery's read or
+    the sweep that reads the move publishes it, attributed. A row whose
+    value never shows as a change, such as a move to the option the card
+    already held, stays until the next change of that field attributes or
+    deletes it. One case attributes a move to no actor: a person changes
+    the field between two moves of one actor, and a read that lags shows
+    the person's value; the second move is then published with `movedBy`
+    `null`.
   credentials-per-entity: >-
-    A Project and its items are read with the credential of the Project's
-    owner. A tracked issue is read with the credential of its repository's
+    A Project, its fields, and its items are read, and a card move
+    written, with the credential of the Project's owner. A tracked issue is read with the credential of its repository's
     owner when `owners` names that owner, and otherwise with the credential
     of the owner of a bound Project that holds it.
   queries: |-
@@ -423,6 +528,24 @@ proposed-design:
     fragment GitHubField on ProjectV2FieldConfiguration {
       ... on ProjectV2FieldCommon { id name dataType }
     }
+
+    query GitHubProjectField($id: ID!, $name: String!) {
+      node(id: $id) {
+        ... on ProjectV2 {
+          field(name: $name) {
+            ... on ProjectV2SingleSelectField { id name options { id name } }
+          }
+        }
+      }
+    }
+
+    mutation GitHubCardMove($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+      updateProjectV2ItemFieldValue(
+        input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }
+      ) {
+        projectV2Item { id }
+      }
+    }
     ```
 
     A connection whose `pageInfo.hasNextPage` is true is read to its end
@@ -481,8 +604,10 @@ proposed-design:
     a removal. A change of `isArchived` is an archive or a restore. Each
     field whose value differs from its row, a field with no value read as
     `null`, is one `field-changed` event; a field with no row whose value is
-    not `null` is one too. Item changes publish before field changes. A
-    field's latest name is written without a change.
+    not `null` is one too. Each `field-changed` takes its `movedBy` from the
+    card move rows, as described under attribution. Item changes publish
+    before field changes. A field's latest name is written without a
+    change.
   compare-projects: >-
     A Project's comparison reads its `closed` and every page of its items.
     A change of `closed` is `github.project.closed` or
@@ -551,7 +676,9 @@ proposed-design:
     Project, with its `archived` flag and every field value row the mirror
     holds for it, keyed by the field's latest name, a row with no value as
     `null`. `trackedIssueIds()` reads the node id of every issue for which
-    `trackedIssue` answers. Both read the mirror synchronously, so a caller
+    `trackedIssue` answers. `project(nodeId)` reads the mirror's Project
+    row of a node id, so the service maps an actor's Project to its
+    binding. They read the mirror synchronously, so a caller
     that reads them and acts in the same turn of the event loop sees no
     reconcile between. Intake reconciles against `trackedIssueIds`.
     After each transaction that commits a change to a mirror row, whether or not
@@ -559,7 +686,10 @@ proposed-design:
     that writes no mirror change, and a rolled-back one, call nothing.
   stop: >-
     `stop()` clears both timers, aborts the request in flight, and resolves
-    when the runner has returned; the aborted work stays pending. `receive`
+    when the runner has returned; the aborted work stays pending. A queued
+    card move, and one whose request it aborts, is left unsettled, so its
+    actor saves no outcome for it and the invoke the restored actor runs
+    sends it again. `receive`
     after `stop` throws a `TypeError`, and `stop` twice does nothing more.
   convergence: >-
     `receive` twice with one GUID writes one `github_delivery` row and one
@@ -574,7 +704,16 @@ proposed-design:
     again. A redelivery request that GitHub took before a crash, with no
     `github_redelivery` row yet, is asked again once, and the second
     arrival is a duplicate. A sweep twice publishes nothing the second time
-    that the first published.
+    that the first published. A card move twice for one invocation writes
+    one row and sets one option twice, which leaves GitHub holding one value
+    and the mirror publishing one change. A crash before the row commits
+    leaves nothing, and the restored actor's invoke sends the move as the
+    first time. A crash after the row commits and before the write leaves a
+    row that GitHub's value never matches; the restored invoke writes it
+    again with the same key. A crash after GitHub takes the write and
+    before the pending row commits leaves the row; the restored invoke
+    writes again, and the read that follows publishes one change,
+    attributed.
   errors: >-
     A delivery that fails verification is a `rejected` outcome, never a
     throw, since GitHub and anyone who can reach the endpoint send it.
@@ -582,8 +721,10 @@ proposed-design:
     `onError`, and the runner recovers from them on its next wake. SQLite
     errors and an unreadable secret file throw from `receive`; in the
     runner they stop the wake, are sent to `onError`, and leave the work
-    pending. Misuse by service code throws a `TypeError`. Inputs from
-    service code are trusted otherwise.
+    pending. A card move's failure is a `GitHubWriteError` that rejects its
+    promise, and leaves the runner's other work as it was. Misuse by
+    service code throws a `TypeError`. Inputs from service code are trusted
+    otherwise.
   tests: >-
     Tests run against a real store file in a temporary directory, with a
     router started on it and a recording actor host whose actors subscribe
@@ -648,3 +789,25 @@ proposed-design:
     that sends itself `SIGKILL` from `probe`, between a reconcile's read
     and its commit, and whose kill signal the parent asserts: after a restart on the same
     file the change is published once.
+    Card moves, through the fake, which also answers `GitHubProjectField`
+    and `GitHubCardMove` from its model and logs each mutation: a move sets
+    the item's field to the option and resolves; the item is read next and
+    `field-changed` is published once with `movedBy` the move's actor; the
+    delivery GitHub sends for the move then publishes nothing. With the
+    fake's first read after the mutation answering the earlier value, the
+    read publishes nothing and the delivery's read publishes the change,
+    attributed; with no delivery, the next sweep publishes it, attributed.
+    A person's change in the fake publishes `movedBy` `null`, and so does a
+    change to another option after a move whose value never showed. Two
+    moves of one actor whose first read shows only the first value publish
+    two changes, each attributed. A move to the option the card holds
+    resolves and publishes nothing. While a sweep's read is held open by the
+    fake, a queued move waits, and is sent before the sweep's next request.
+    A field the Project lacks, a text field of that name, an option the
+    field lacks, an issue with no item on the Project, a `NOT_FOUND` at the
+    item, a `FORBIDDEN` error, a `403`, a `502`, a rate limit answer, a
+    mutation that never answers past `requestTimeoutMs` on the fake clock,
+    and another GraphQL error each reject with their kind; the refused ones
+    leave no row and the `transport` ones keep it. A move aborted while
+    queued sends nothing. Every published `field-changed` validates against
+    `github-events.schema.yml` with its `movedBy`.

@@ -8,6 +8,7 @@ relationships:
     - blueprint
     - blueprint-expressions
     - token-lint
+    - task-metadata-declaration
 description: >-
   Defines the host CLI command `manifold-host blueprint lint`, which runs
   the blueprint lint of `blueprint` on the host. It is the same
@@ -22,6 +23,19 @@ description: >-
   `blueprintLint.configurationBound`. A value that is not such an integer
   is reported on standard error and ends the command with exit code 2
   before any file is read.
+
+  `--repository <dir>` names the process repository checkout whose task
+  metadata declaration the lint checks a literal `status` of a
+  `github-card-move` invoke against, as `blueprint` states. The command
+  reads `task-metadata.yml` and `bindings.yml` from that directory, an
+  absent file as `undefined`, and lints them with
+  `lintTaskMetadataDeclaration`, then passes the declared options to
+  `lintBlueprint` as `lifecycleOptions`. A directory or file that cannot be
+  read ends the command with exit code 2, as an unreadable blueprint file
+  does. A declaration with findings is reported on standard error as
+  `task-metadata.yml: <n> findings; run manifold-host task-metadata lint`
+  and ends the command with exit code 2 before any blueprint is linted.
+  Without `--repository`, the lint does not check `status`.
 
   The command reads every file argument as UTF-8 text before it lints any.
   A file that cannot be read is reported on standard error as
@@ -58,6 +72,12 @@ validation-criteria: >-
   `token-unknown` line for a gate linted with `--configuration-bound 10`
   on a graph larger than that; and exit 2 with no standard output for no
   file, for an unreadable file after a valid file, and for
-  `--configuration-bound 0`. For each token-lint fixture of `token-lint`,
+  `--configuration-bound 0`. With `--repository` naming a checkout whose
+  declaration lists `Packed`, it observes exit 0 for a blueprint whose
+  `github-card-move` input is `{ status: Packed }` and exit 1 with a
+  `lifecycle-option` line for `{ status: Pakced }`; exit 0 for the second
+  blueprint without `--repository`; and exit 2 with no standard output for
+  a checkout whose `task-metadata.yml` has a `schema` finding. For each
+  token-lint fixture of `token-lint`,
   the lines equal those built from the loader's findings and warnings for
   the same text.

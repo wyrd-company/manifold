@@ -10,6 +10,8 @@ relationships:
     - gate-runtime
     - token-lint
     - escalation-contract
+    - task-metadata-declaration
+    - github-events
 description: |-
   Defines the blueprint file: the YAML document in a process repository
   from which Manifold builds an XState v5 state machine, the version
@@ -225,6 +227,74 @@ description: |-
     `schemas.events`, with schemas that the contract's
     `#/$defs/escalate-input` and `#/$defs/escalation-answered-event`
     satisfy.
+  - `github-card-move`, an actor: moves the invoking actor's card. It
+    sets the lifecycle field of the item of the actor's issue,
+    `context.manifold.issue`, on the actor's Project,
+    `context.manifold.project`, to the option named `status`, one of the
+    options `task-metadata-declaration` declares for that Project. It
+    resolves with `{}` once GitHub holds that value. Its input is
+    `#/$defs/card-move-input`, its output `#/$defs/card-move-output`, and
+    it fails with a card move error, `#/$defs/card-move-error`. A blueprint
+    that invokes it declares its input and output under
+    `schemas.actors.github-card-move`, with schemas that those definitions
+    satisfy.
+
+  ```yaml
+  packing:
+    invoke:
+      id: stage
+      src: github-card-move
+      input:
+        status: Packed
+      onDone: shipping
+      onError: stalled
+  ```
+
+  The input may be a mapping, so a blueprint can choose the option from
+  its context. Setting an option the card already holds succeeds. A card
+  move error is a plain object with `type` `card-move`, a `kind`, a
+  `message`, and the `status` it was asked for. The kinds:
+
+  - `input`: the input does not validate against
+    `#/$defs/card-move-input`.
+  - `identity`: the actor has no `project` or no `issue` in
+    `context.manifold`, as a child blueprint has none.
+  - `undeclared`: the actor's Project has no GitHub Project binding, the
+    task metadata declaration in force declares no lifecycle field for
+    that binding, or its `options` do not list `status`.
+  - `field-missing`: the Project has no single-select field with the
+    declared field name.
+  - `option-missing`: the field has no option named `status`.
+  - `item-missing`: the issue has no item on the Project.
+  - `forbidden`: GitHub refuses the write for permission, or service
+    configuration names no credential for the Project's owner.
+  - `transport`: the request failed, ran past the GitHub source's
+    `requestTimeoutMs`, was rate limited, or GitHub answered with a server
+    error. GitHub may hold the value or not.
+  - `rejected`: GitHub refuses the write for any other reason, with its
+    message.
+
+  A move that one state entry repeats, such as the move a restored actor
+  runs again after a crash, sets the same option again and leaves one
+  value. A blueprint that retries after an error enters the state again.
+
+  Each move reaches the actor again as `github.project-item.field-changed`
+  when the GitHub event source reads it, with `movedBy` naming the actor,
+  as `github-events` states. A change Manifold did not make carries
+  `movedBy` `null`, so a blueprint takes a person's move apart from its
+  own:
+
+  ```yaml
+  on:
+    github.project-item.field-changed:
+      target: sorting
+      guard:
+        type: expression.guard
+        params:
+          expression: >-
+            event.movedBy = null and event.field.name = "Stage"
+            and event.to.name = "Sorting"
+  ```
 
   Version identity. The loader gives each blueprint it loads a version:
   the full id of the process repository commit it was read at, and its
@@ -304,6 +374,14 @@ description: |-
      `configurationBound` and `configurations`. It runs only when rules 1
      to 8 found nothing.
 
+  10. `lifecycle-option`: an invoke whose `src` is `github-card-move` has
+      a static `input` whose `status` is a string that is not among the
+      lint's `lifecycleOptions`. The finding is at that `status`, such as
+      `/machine/states/packing/invoke/input/status`, and carries `name`,
+      the string. It runs only when the lint is given `lifecycleOptions`
+      and rule 2 found nothing. An `input` that is a mapping is not
+      checked; the move checks its `status` when it runs.
+
   Findings are ordered by rule, then by location; expression findings
   keep the expression lint's order. A blueprint with no findings loads.
   Every finding fails the blueprint, except `token-potential` and
@@ -327,6 +405,8 @@ description: |-
   interface BlueprintLintOptions {
     /** The token lint's configuration bound. Default `defaultConfigurationBound`, 20000. */
     readonly configurationBound?: number;
+    /** The declared lifecycle options rule 10 checks a literal `status` against; absent skips rule 10. */
+    readonly lifecycleOptions?: ReadonlySet<string>;
   }
   type BlueprintLint =
     | {
@@ -358,7 +438,10 @@ description: |-
   trap set. `manifoldImplementationNames` lists every implementation name
   Manifold's service registers, with the events each of its actions
   raises, so a lint outside the service checks names against
-  the same set the service loads with. `parseBlueprintVersionKey` returns
+  the same set the service loads with. The service and the host CLI pass
+  as `lifecycleOptions` the declared options of `task-metadata-declaration`
+  at the blueprint's commit, when that declaration lints clean.
+  `parseBlueprintVersionKey` returns
   `undefined` for a string that is not a version key.
 format: json-schema
 validation-criteria: >-
@@ -401,4 +484,12 @@ validation-criteria: >-
   root `context` holding `manifold` is a `shape` finding at
   `/machine/context`. A test shows that the example in this
   specification lints clean when `courier.route` is among the actor
-  names. Fixtures use a domain unrelated to Manifold.
+  names. Lint tests show that a `github-card-move` invoke whose static
+  `status` is not among `lifecycleOptions` is a `lifecycle-option` finding
+  at that `status` with its `name`; that the same blueprint lints clean
+  with no `lifecycleOptions`, and with `lifecycleOptions` that hold the
+  name; and that a mapping `input` lints clean with an empty
+  `lifecycleOptions`. A test shows that the `github-card-move` example in
+  this specification lints clean with `lifecycleOptions` holding `Packed`
+  and `github-card-move` among the actor names. Fixtures use a domain
+  unrelated to Manifold.

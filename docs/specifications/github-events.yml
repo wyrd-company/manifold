@@ -99,7 +99,7 @@ description: |-
   | `github.sub-issue.added`, `github.sub-issue.removed` | `parent`, `subIssue` | both issues |
   | `github.project-item.added` | `project`, `item`, `issue`, `archived`, `fields` | the Project, and the issue when `contentType` is `issue` |
   | `github.project-item.removed`, `github.project-item.archived`, `github.project-item.restored` | `project`, `item` | the Project, and the issue when `contentType` is `issue` |
-  | `github.project-item.field-changed` | `project`, `item`, `field`, `from`, `to` | the Project, and the issue when `contentType` is `issue` |
+  | `github.project-item.field-changed` | `project`, `item`, `field`, `from`, `to`, `movedBy` | the Project, and the issue when `contentType` is `issue` |
   | `github.project.closed`, `github.project.reopened` | `project` | the Project |
 
   `blocks` lists the node ids of the issues the mirror shows the issue
@@ -110,7 +110,12 @@ description: |-
   `github.project-item.added` is the content issue's reference, or `null`
   for a pull request or draft issue. `fields` lists the item's custom
   field values when it was added; `field-changed` carries one field's value
-  before and after. A field is a custom field of data type `TEXT`,
+  before and after. `movedBy` is `{ "actorId": "<actor id>" }` when the
+  value is the option a card move of that actor set, as
+  `github-event-source` attributes it, and `null` for a change Manifold
+  did not make: a person, a Project workflow, or another integration. A
+  card move reaches the actors of its item's issue through the same read,
+  comparison, topics, and event id as any other change. A field is a custom field of data type `TEXT`,
   `NUMBER`, `DATE`, `SINGLE_SELECT`, or `ITERATION`, named by `nodeId` and
   `name`. A field value is `null` or one of:
 
@@ -162,5 +167,6 @@ validation-criteria: >-
   with a required field removed, or a node id holding `.`, is rejected as
   `malformed` and publishes nothing. A delivery with a wrong signature, one
   signed with another hook's secret, and one whose body differs by one byte
-  from the signed body are each rejected as `signature`. Each published
+  from the signed body are each rejected as `signature`. Every published
+  `github.project-item.field-changed` carries `movedBy`. Each published
   event's topics and event id match the tables above.

@@ -1,0 +1,145 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design that applies this
+  # declaration and moves cards from it.
+  realizes:
+    - task-metadata
+  references:
+    - bindings-declaration
+    - blueprint
+    - service-configuration
+terms:
+  - lifecycle-field
+  - card-move
+  - binding
+description: |-
+  Defines `task-metadata.yml`, the file at the root of the process
+  repository that declares the task metadata schema: the metadata of a
+  task that Manifold keeps on GitHub. It declares the lifecycle field of
+  each bound GitHub Project, the single-select field Manifold sets when a
+  blueprint moves a task's card. `docs/specifications/task-metadata-declaration.schema.yml`
+  is the machine-readable definition of the document and of a finding.
+
+  An absent file and an empty document both declare no lifecycle field.
+
+  Document. The file is one YAML 1.2 document under the core schema with
+  unique mapping keys. It is a mapping with one key:
+
+  - `projects`: a mapping from a GitHub Project binding name, a key of
+    `githubProjects` in `bindings.yml` at the same commit, to the metadata
+    of that Project's tasks.
+
+  A Project's metadata is a mapping with one key:
+
+  - `lifecycle`, required: the Project's lifecycle field, with `field`,
+    the name of a single-select field of the Project, and `options`, the
+    names of the field's options a blueprint may set, at least one, each
+    once.
+
+  A name is a string that is not empty and has no leading or trailing
+  white space. Names compare exactly, as GitHub shows them, case
+  included.
+
+  ```yaml
+  projects:
+    parcels:
+      lifecycle:
+        field: Stage
+        options: [Sorting, Packed, Shipped]
+    returns:
+      lifecycle:
+        field: Stage
+        options: [Received, Inspected]
+  ```
+
+  Each Project declares its own lifecycle field, so two Projects may name
+  different fields and options. A bound Project the document does not
+  name has no lifecycle field, and a card move on it fails as
+  `undeclared`. An archived binding may be named; its tasks' cards still
+  move.
+
+  Declared options. The declared options of a declaration are the union
+  of the `options` of every Project it names. The blueprint lint checks a
+  literal `status` of a `github-card-move` invoke against them, as
+  `blueprint` states, so a name no Project declares fails the blueprint
+  before it loads. Which Project a task's actor runs on is decided at
+  intake, so the check at a card move is the declared options of the
+  actor's own Project.
+
+  The declaration names fields and options; it creates neither. The
+  operator creates the field and its options on the Project in GitHub.
+  Manifold resolves each name to GitHub's ids at every card move, so a
+  renamed or recreated option is found by its name.
+
+  Findings. Linting a task metadata document gives findings with a kind,
+  a location, and a message. The location is the RFC 6901 JSON Pointer of
+  the offending value in the document. The kinds:
+
+  - `syntax`: the file does not parse as one YAML document. The location
+    is the empty pointer, and the message is the parser's, with its line
+    and column. No other finding is reported for that file.
+
+  - `schema`: the document does not validate against `#/$defs/declaration`.
+    One finding per failing location, with the validator's message. No
+    other finding is reported for a document with a `schema` finding.
+
+  - `unknown-binding`: a key of `projects` names no GitHub Project binding
+    of `bindings.yml`. The location is that key's entry. Not reported when
+    `bindings.yml` does not parse or does not validate against its own
+    schema; `manifold-host portfolio lint` reports those.
+
+  Lint. `packages/shared` exports the lint and the declared options:
+
+  ```ts
+  function lintTaskMetadataDeclaration(files: {
+    /** The text of `task-metadata.yml`, or undefined when no file is there. */
+    readonly taskMetadata: string | undefined;
+    /** The text of `bindings.yml`, or undefined when no file is there. */
+    readonly bindings: string | undefined;
+  }): TaskMetadataLint;
+
+  type TaskMetadataLint =
+    | { readonly ok: true; readonly declaration: TaskMetadataDeclaration }
+    | { readonly ok: false; readonly findings: readonly TaskMetadataFinding[] };
+
+  interface TaskMetadataDeclaration {
+    /** Keyed by GitHub Project binding name. */
+    readonly projects: Readonly<Record<string, { readonly lifecycle: LifecycleField }>>;
+  }
+
+  interface LifecycleField {
+    readonly field: string;
+    readonly options: readonly string[];
+  }
+
+  function declaredLifecycleOptions(declaration: TaskMetadataDeclaration): ReadonlySet<string>;
+  ```
+
+  The lint reads no file, network, clock, or environment; the same texts
+  give the same result. An absent or empty `task-metadata.yml` lints
+  clean as `{ projects: {} }`. Findings are in document order.
+  `TaskMetadataFinding` is `#/$defs/finding`. The service lints the
+  declaration of every revision it applies, and the host CLI command
+  `manifold-host task-metadata lint` lints a checkout, as
+  `host-cli-task-metadata-lint` states.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/task-metadata-declaration.schema.yml` is a valid
+  JSON Schema 2020-12 document, and equals the schema `packages/shared`
+  embeds, which a test shows. Every finding the lint tests produce
+  validates against `#/$defs/finding`. The lint tests in `packages/shared`
+  call `lintTaskMetadataDeclaration` and check each finding's kind,
+  location, and order for: text that is not YAML; a Project with no
+  `lifecycle`; a lifecycle with an empty `options`, with an option listed
+  twice, and with an option `" Packed"` that has a leading space, each a
+  `schema` finding; an unknown key at the root and in a lifecycle, each a
+  `schema` finding; a key of `projects` that no GitHub Project binding
+  names, an `unknown-binding` finding, and the same key with a
+  `bindings.yml` that does not parse, no finding; and a key that names a
+  T3code project binding, an `unknown-binding` finding. An absent file and
+  an empty document lint clean with no Projects. The example in this
+  specification lints clean against bindings that name `parcels` and
+  `returns`, and its declared options are the five option names. The same
+  call twice returns the same result. Fixtures use a domain unrelated to
+  Manifold.

@@ -102,3 +102,16 @@ CREATE TABLE github_sub_issue (
 CREATE INDEX github_sub_issue_sub ON github_sub_issue (sub_issue_node_id);
 
 ALTER TABLE github_issue ADD COLUMN present INTEGER NOT NULL DEFAULT 1 CHECK (present IN (0, 1));
+
+CREATE TABLE github_card_move (
+  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+  invoke_id TEXT NOT NULL CHECK (length(invoke_id) > 0),
+  entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
+  item_node_id TEXT NOT NULL CHECK (length(item_node_id) > 0),
+  field_node_id TEXT NOT NULL CHECK (length(field_node_id) > 0),
+  option_id TEXT NOT NULL CHECK (length(option_id) > 0),
+  sequence INTEGER NOT NULL CHECK (sequence > 0),
+  PRIMARY KEY (actor_id, invoke_id, entry_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX github_card_move_field ON github_card_move (item_node_id, field_node_id, sequence);

@@ -1,0 +1,249 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - github-event-source
+    - actor-host
+    - blueprint-loader
+    - service-assembly
+    - portfolio
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  references:
+    - task-metadata-declaration
+    - host-cli-task-metadata-lint
+    - blueprint
+    - github-events
+    - bindings-declaration
+objective: >-
+  Let a blueprint move its task's card on GitHub: set the lifecycle field
+  the process repository declares for the task's Project to a declared
+  option, so that a move repeated after a crash leaves one value, every
+  failure reaches the blueprint as a typed error, and the actor tells its
+  own move from a change a person made.
+background:
+  current-design: >-
+    Manifold reads GitHub and never writes to it. The GitHub event source
+    reads each bound Project's items and their field values into the GitHub
+    mirror and publishes each change as `github.project-item.field-changed`
+    to the actor of the item's issue. A task actor holds its Project's
+    node id and its issue's node id at `context.manifold`. The process
+    repository binds each GitHub Project to a portfolio item by binding
+    name, and declares nothing about a Project's fields.
+  problems:
+    - >-
+      A blueprint has no way to move its task's card, so the card on GitHub
+      does not show where the task is.
+    - >-
+      The process repository does not say which field is a Project's
+      lifecycle or which of its options a blueprint may set, so a typo in a
+      blueprint's status is found only when the move runs.
+    - >-
+      A move's write that GitHub took before a crash is sent again when the
+      restored actor runs its invoke again.
+    - >-
+      GitHub reports Manifold's own move as it reports a person's.
+design-challenges:
+  declaration: >-
+    The lifecycle field is the first part of the task metadata schema. The
+    declaration must say which field and which options each Project uses,
+    and leave room for the rest of a Project's configuration.
+  replay: >-
+    A move that one state entry runs twice, before and after a crash, must
+    leave GitHub holding one value and the actor past the move.
+  attribution: >-
+    The actor must take its own move and a person's change of the same
+    field apart, whether a webhook delivery or a sweep reads the change.
+  startup: >-
+    A restored actor's invoke can run during the router's resume, before
+    the GitHub event source has started.
+proposed-design:
+  high-level-overview: >-
+    The task metadata module, `packages/service/src/task-metadata/`, holds
+    the task metadata declaration in force and gives the implementation
+    registry one promise implementation, `github-card-move`. It applies
+    `task-metadata.yml` from each revision the service follows, as
+    `task-metadata-declaration` defines, and keeps the last clean
+    declaration in force. A card move reads the invoking actor's Project
+    and issue from `context.manifold`, finds the lifecycle field the
+    declaration in force declares for the Project's binding, and asks the
+    GitHub event source to set it. The source runs the write in its serial
+    runner, records the move before it writes, and attributes the change it
+    later reads to the actor, as `github-event-source` states. The input,
+    output, and errors are specified in `blueprint`.
+  public-interface: |-
+    `packages/service/src/task-metadata/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type {
+      ProcessRepositoryRevision,
+      TaskMetadataDeclaration,
+      TaskMetadataFinding,
+    } from "@wyrd-company/manifold-shared";
+    import type { fromPromise } from "xstate";
+    import type { ActorHost, Invocation } from "../actor-host/index.ts";
+    import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
+    import type { GitHubProject, GitHubSource } from "../github-source/index.ts";
+
+    export function openTaskMetadata(options: TaskMetadataOptions): TaskMetadata;
+
+    export interface TaskMetadataOptions {
+      /** The actor host's `actorOf`; undefined for an actor it does not hold. */
+      readonly actorOf: ActorHost["actorOf"];
+      /** The actor host's invocation reader receives the full creator args. */
+      readonly invocationOf: (args: Parameters<Parameters<typeof fromPromise>[0]>[0]) => Invocation;
+      /** The GitHub event source once it has started; rejects with the signal's reason. */
+      readonly source: (signal: AbortSignal) => Promise<Pick<GitHubSource, "project" | "moveCard">>;
+      /** The name of the GitHub Project binding of a Project, at the current revision. */
+      readonly bindingOf: (project: GitHubProject) => string | undefined;
+    }
+
+    export interface TaskMetadata {
+      /** `github-card-move`. */
+      readonly implementations: ImplementationRegistry;
+      /** Lints the revision's declaration and puts a clean one in force. */
+      apply(revision: ProcessRepositoryRevision): Promise<TaskMetadataApplied>;
+      /** The declaration in force; undefined before the first clean apply. */
+      current(): TaskMetadataDeclaration | undefined;
+    }
+
+    export type TaskMetadataApplied =
+      | { readonly status: "applied"; readonly commit: string }
+      | {
+          readonly status: "rejected";
+          readonly commit: string;
+          readonly findings: readonly TaskMetadataFinding[];
+        };
+
+    export type { CardMoveError, CardMoveErrorKind } from "./types.ts";
+    ```
+
+    `CardMoveError` is `#/$defs/card-move-error` of `blueprint`.
+  module-layout: >-
+    `index.ts` re-exports the public names. `declaration.ts` holds the
+    declaration in force and `apply`. `card-move.ts` holds the pure function
+    from an actor's identity, its binding, the declaration in force, and an
+    input to a `CardMove` or a card move error, and the mapping from a
+    `GitHubWriteError` to a card move error. `implementations.ts` builds
+    the registry part. The lint, the schema, and `declaredLifecycleOptions`
+    live in `packages/shared`, in `task-metadata-declaration.ts` and the
+    generated schema constants. The host CLI command lives in
+    `packages/host-cli/src/task-metadata-lint/command.ts`. Tests import only
+    `index.ts`, and the `index.ts` of the store, the router, the actor host,
+    the blueprint loader, and the GitHub source.
+  declaration-in-force: >-
+    `apply(revision)` reads `task-metadata.yml` and `bindings.yml` through
+    the revision's `read`, and lints them with
+    `lintTaskMetadataDeclaration`. A clean declaration replaces the one in
+    force and returns `applied`. A declaration with findings returns
+    `rejected` with them and leaves the one in force as it was. The
+    declaration in force is held in memory: the service applies the current
+    revision at every start before any actor is restored, so a restart puts
+    the current commit's declaration in force, or none when it has
+    findings. A move reads the declaration in force when it runs, never the
+    one of the actor's blueprint version, since it describes the Project as
+    it is on GitHub now.
+  card-move: >-
+    `github-card-move` is a `fromPromise` actor. It runs these steps, and
+    each failure rejects with a card move error. (1) It validates its input
+    against `#/$defs/card-move-input`; a failure is `input`. (2) It reads
+    the invocation with `invocationOf` and the actor's identity with
+    `actorOf`; an actor with no `project` or no `issue` is `identity`. (3)
+    It awaits `source(signal)`. (4) It maps the Project node id to its
+    mirror row with `source.project` and the row to its binding with
+    `bindingOf`. No row, no binding, no lifecycle field for the binding in
+    the declaration in force, and a `status` its `options` do not list are
+    `undeclared`. (5) It calls `source.moveCard` with the invocation, the
+    Project and issue node ids, the declared field name, and `status`, and
+    the invoke's signal. A `GitHubWriteError` rejects with the error kind of
+    the same name and its message. (6) It resolves with `{}`. A card move
+    error is a plain object, so that it survives a snapshot save and
+    expression evaluation, with `type` `card-move`, `kind`, `message`, and
+    `status` when the input held a string. Moves go through archived
+    bindings: archiving a binding stops discovery of new tasks, and the
+    cards of tasks in flight still move.
+  replay: >-
+    A move is keyed by its invocation. XState stops the promise when its
+    state exits, and the router restores an actor from the snapshot saved
+    before the invoke resolved, so a crash between GitHub taking the write
+    and the actor's save restores the actor in the invoking state with the
+    same invocation, and its invoke runs the move again. Setting a
+    single-select field to an option is the same write each time, so the
+    second write leaves GitHub holding the one value, and the source's card
+    move row for the invocation is replaced, not added. The read that
+    follows publishes one change. A new entry of the state is a new
+    invocation and a new move.
+  own-moves: >-
+    Each move reaches the actor as `github.project-item.field-changed`,
+    published by the GitHub event source's read of the item, with
+    `movedBy` `{ actorId }`. A change the source cannot attribute to a
+    recorded move carries `movedBy` `null`. A blueprint takes a person's
+    move with a guard on `event.movedBy = null`, and its own with a guard
+    on `event.movedBy.actorId`, or lets its own pass with no transition. A
+    move's promise resolves when GitHub has taken the write, before the
+    change is read, so a blueprint never waits on its own move's event.
+  lint: >-
+    The service lints the declaration of each revision it applies, through
+    `apply`, and the blueprint loader checks every literal `status` of a
+    `github-card-move` invoke against the declared options of the same
+    commit, as `blueprint-loader` states. The host CLI command
+    `manifold-host task-metadata lint` runs the same lint on a checkout,
+    and `manifold-host blueprint lint --repository <dir>` checks literal
+    statuses against that checkout's declaration.
+  wiring: >-
+    The service opens the module before it creates the blueprint loader,
+    with the actor host's `actorOf` read through the host once it opens,
+    `invocationOf`, a `source` that resolves with the GitHub event source
+    once `startGitHubSource` returns and rejects when its signal aborts
+    first, and a `bindingOf` that finds the GitHub Project binding of the
+    portfolio's declaration in force whose owner, compared without regard
+    to case, and number match. It adds `taskMetadata.implementations` to
+    `serviceImplementations` as `taskMetadata`, and adds
+    `github-card-move` to `manifoldImplementationNames`. The revision
+    follower calls `taskMetadata.apply(revision)` after `portfolio.apply`,
+    and logs `task-metadata-rejected` with the findings of a rejected
+    result.
+  convergence: >-
+    `apply` twice with one revision gives the same declaration in force. A
+    move run twice for one invocation leaves GitHub holding one value, one
+    card move row, and one published change, as `github-event-source`
+    states. A crash before GitHub takes the write leaves the actor in the
+    invoking state, and the restored invoke sends the write as the first
+    time. A crash after GitHub takes the write and before the actor's save
+    restores the actor in the invoking state; its invoke writes again and
+    resolves, and the actor takes `onDone`. A `transport` error leaves
+    GitHub's value unknown; the blueprint that enters the state again sends
+    a new move, which sets the option whatever the first did.
+  tests: >-
+    Tests run through a real store, router, actor host, blueprint loader,
+    and GitHub event source, against the GitHub fake of the source's test
+    suite, with blueprints and a task metadata declaration in a process
+    repository fixture. Behaviours proved, each red before green: a
+    blueprint that invokes `github-card-move` with a literal status moves
+    the fake item's field to that option and takes `onDone`; the actor then
+    takes `github.project-item.field-changed` with `movedBy` its own actor
+    id; a person's change of the field in the fake, delivered by webhook,
+    reaches the actor with `movedBy` `null`, and a blueprint guarded on
+    `event.movedBy = null` takes only the person's change; a move whose
+    status comes from a mapping moves the card; an input with no `status`
+    and with a status of `7` fail with `input`; a child blueprint's move
+    fails with `identity`; a Project with no binding, a binding the
+    declaration does not name, and a status the binding's options do not
+    list each fail with `undeclared`; a field and an option the fake's
+    Project lacks fail with `field-missing` and `option-missing`; an issue
+    whose item the fake removed fails with `item-missing`; a `FORBIDDEN`
+    answer fails with `forbidden`; a `502` and a mutation that never answers
+    past `requestTimeoutMs` fail with `transport`; and another GraphQL
+    error fails with `rejected`. A revision whose declaration has a finding
+    returns `rejected` and leaves the earlier declaration in force, and a
+    move before the first clean apply fails with `undeclared`. A move on a
+    restored actor whose invoke runs during the router's resume waits for
+    the source to start and then moves the card. The fault test runs the
+    service in a child Node process, which kills itself with `SIGKILL` from
+    `probeMove` after the fake answers the mutation and before the actor's
+    save; the test asserts the signal, starts the service again on the same
+    store file, and checks that the fake's item holds the option, that each
+    mutation in the fake's log set that same option, that one
+    `field-changed` for the item and field was published, with `movedBy`
+    the actor, and that the actor's snapshot is in the state its `onDone`
+    enters. Values are generic and never drawn from Manifold's own domain.

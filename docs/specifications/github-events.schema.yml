@@ -330,7 +330,7 @@ $defs:
         $ref: "#/$defs/item"
   field-changed-event:
     type: object
-    required: [type, project, item, field, from, to]
+    required: [type, project, item, field, from, to, movedBy]
     additionalProperties: false
     properties:
       type:
@@ -345,6 +345,19 @@ $defs:
         $ref: "#/$defs/field-value"
       to:
         $ref: "#/$defs/field-value"
+      movedBy:
+        description: >-
+          The actor whose card move set `to`, or null for a change Manifold
+          did not make.
+        oneOf:
+          - type: "null"
+          - type: object
+            required: [actorId]
+            additionalProperties: false
+            properties:
+              actorId:
+                type: string
+                minLength: 1
   project-event:
     type: object
     required: [type, project]

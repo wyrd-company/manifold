@@ -13,6 +13,7 @@ terms:
   - tracked-issue
   - redelivery
   - webhook-delivery
+  - card-move
 description: |-
   Defines the tables the GitHub event source owns in Manifold's SQLite
   database file. `docs/specifications/github-source-database-schema.sql` is
@@ -43,6 +44,18 @@ description: |-
   read survives it. `project_node_id` records the Project an item delivery
   names, so a new or archived item can be read with its owner's credential
   before the mirror holds that item. It is null for other pending kinds.
+
+  Card moves. `github_card_move` holds one row per card move whose value
+  GitHub may hold and the source has not yet attributed: the move's
+  invocation, its actor id, invoke id, and entry id, as its key; the item,
+  the single-select field, and the option it set, by node id and option
+  id; and `sequence`, which orders the moves. A move writes its row before
+  it sends the write, with a `sequence` one more than the largest in the
+  table, replacing a row with the same key, so a move that one state entry
+  repeats keeps one row. A write GitHub refuses deletes its row, and a
+  write whose fate is unknown keeps it. A reconcile that publishes a change of the item's
+  field deletes the rows it attributes or rules out, in its transaction, as
+  `github-event-source` states.
 
   Mirror. The remaining tables are the GitHub mirror: the last state the
   source read of each entity, with the revision each published change gave

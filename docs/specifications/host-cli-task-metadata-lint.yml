@@ -1,0 +1,40 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose command this is.
+  realizes:
+    - task-metadata
+  references:
+    - task-metadata-declaration
+    - bindings-declaration
+description: >-
+  Defines the host CLI command `manifold-host task-metadata lint`, which
+  lints the task metadata declaration of a process repository checkout on
+  the host. It runs `lintTaskMetadataDeclaration` from `packages/shared`,
+  the function the service runs on every revision it applies.
+  `docs/specifications/host-cli-task-metadata-lint.cli.yml` is the
+  machine-readable definition.
+
+  The command takes one optional argument, the directory of a process
+  repository checkout, default the current directory. It reads
+  `task-metadata.yml` and `bindings.yml` from that directory and passes
+  their text to the lint. An absent file is passed as `undefined`, as the
+  service reads it. A directory that cannot be read, or a file that exists
+  but cannot be read, is reported on standard error as `<file>: <reason>`
+  and ends the command with exit code 2 before anything is linted.
+  Otherwise the command reports every finding on standard output as one
+  line, `task-metadata.yml:<location> <kind> <message>`, in the lint's
+  order. It prints nothing and exits 0 when there is no finding, and exits
+  1 when there is one.
+format: cli
+validation-criteria: >-
+  `docs/specifications/host-cli-task-metadata-lint.cli.yml` validates
+  against the CLI Command Specification schema. A test compiles the host
+  CLI for the current platform and runs `task-metadata lint` from a
+  directory with no `node_modules`. It observes exit 0 and no output for a
+  clean checkout and for an empty directory; exit 1 with a `schema` line
+  for a lifecycle with no `options`; exit 1 with an `unknown-binding` line
+  for a Project key that `bindings.yml` does not bind; exit 1 with a
+  `syntax` line for a `task-metadata.yml` that does not parse as YAML; and
+  exit 2 with no standard output for a missing directory and for a
+  `task-metadata.yml` that is a directory.

@@ -6,6 +6,7 @@ relationships:
     - gates
     - store
     - token-lint
+    - task-metadata
 objective: >-
   Turn the blueprints in a process repository into XState v5 state machines
   the engine runs, one per blueprint version, so that a pushed change to a
@@ -166,9 +167,14 @@ proposed-design:
     and in `failures` when it did not.
   loading: >-
     Loading one version runs four steps. It reads the file through the
-    revision. It calls `lintBlueprint(path, text, names, {
-    configurationBound })`, where `names` holds the registry's keys of each
-    kind and its `raises` declarations; any finding fails the version with
+    revision, and reads `task-metadata.yml` and `bindings.yml` at the same
+    commit and lints them with `lintTaskMetadataDeclaration`, once per
+    commit. It calls `lintBlueprint(path, text, names, {
+    configurationBound, lifecycleOptions })`, where `names` holds the
+    registry's keys of each kind and its `raises` declarations, and
+    `lifecycleOptions` is `declaredLifecycleOptions` of a clean declaration,
+    absent when the declaration has findings, which the revision follower
+    reports; any finding fails the version with
     those findings and warnings, and a version that loads keeps its
     warnings and token lint result on its `LoadedBlueprint`. It calls `createBlueprintExpressions` with the
     document's `machine` and `schemas`, and an `onError` that calls

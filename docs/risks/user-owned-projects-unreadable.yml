@@ -17,7 +17,8 @@ description: >-
   tokens. When the GraphQL API refuses them too, a binding of a Project a
   user account owns resolves no Project, its sweep reports
   `unresolved-project` or an API failure, and no issue on it is tracked or
-  taken in.
+  taken in. A card move on such a Project writes with the same token, and
+  fails as `forbidden` when GitHub refuses it.
 
 categories:
   - technical

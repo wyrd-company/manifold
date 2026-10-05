@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - blueprint
+    - github-event-source
+title: Card Move
+description: >-
+  Manifold setting the lifecycle field of a task's item on its Project to a
+  declared option, when the task's actor invokes `github-card-move`.

@@ -9,6 +9,7 @@ relationships:
     - portfolio
     - github-event-source
     - t3code-environment-source
+    - task-metadata
 objective: >-
   Run the service as one process from one service configuration file, with
   one HTTP host that every module mounts its endpoints on, a start order
@@ -235,7 +236,8 @@ proposed-design:
     owners when they start. (3) `portfolio-opened`: `openPortfolio` with
     the store's connection. (4) `process-repository-opened`:
     `openProcessRepository` with the `processRepository` section, the
-    credentials, and the `pull` probe, then `createBlueprintLoader` with
+    credentials, and the `pull` probe, then `openTaskMetadata` as
+    `task-metadata` states, then `createBlueprintLoader` with
     `serviceImplementations()`, the repository's `revisionAt`,
     `onStateEntry: recordStateEntry`, and an
     `onExpressionError` that logs `expression-error`. (5)
@@ -323,7 +325,9 @@ proposed-design:
     `blueprints.loadRevision(revision)`, keeps the result as `latest`,
     logs `blueprint-invalid` for each path in its `failures`, awaits
     `portfolio.apply(revision)`, logs `portfolio-rejected` with the
-    findings of a rejected result, sets `followed` to the commit, logs
+    findings of a rejected result, awaits `taskMetadata.apply(revision)`,
+    logs `task-metadata-rejected` with the findings of a rejected result,
+    sets `followed` to the commit, logs
     `revision-applied`, and calls the `applied` probe. No other pull runs
     between a pull and its apply step, and no pull starts while the current
     commit is unapplied, so at most one published commit is ever unapplied,
