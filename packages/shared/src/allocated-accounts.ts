@@ -23,10 +23,8 @@ export type PortfolioWarning = {
 const ajv = new Ajv2020({ strict: false, validateFormats: false });
 for (const schema of serviceConfigurationSchemas) ajv.addSchema(schema);
 ajv.addSchema(usageRecordSchema);
-const portfolioValidator = ajv.compile<PortfolioDocument>(portfolioDeclarationSchema);
-const accountsValidator = ajv.compile<{ accounts?: Record<string, UsageAccount> }>(
-  accountsDeclarationSchema,
-);
+let portfolioValidator: ValidateFunction<PortfolioDocument> | undefined;
+let accountsValidator: ValidateFunction<{ accounts?: Record<string, UsageAccount> }> | undefined;
 
 function document<T>(text: string | undefined, validate: ValidateFunction<T>): T | undefined {
   let value: unknown;
@@ -43,6 +41,10 @@ export function lintAllocatedAccounts(files: {
   portfolio: string | undefined;
   accounts: string | undefined;
 }): readonly PortfolioWarning[] {
+  portfolioValidator ??= ajv.compile<PortfolioDocument>(portfolioDeclarationSchema);
+  accountsValidator ??= ajv.compile<{ accounts?: Record<string, UsageAccount> }>(
+    accountsDeclarationSchema,
+  );
   const portfolio = document(files.portfolio, portfolioValidator);
   const accounts = document(files.accounts, accountsValidator);
   if (portfolio === undefined || accounts === undefined) return [];
