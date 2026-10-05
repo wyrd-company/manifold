@@ -1,45 +1,30 @@
 // ---
 // relationships:
-//   implements: [host-cli-usage, host-cli-comparator-lint, host-cli-expressions-lint, host-cli-blueprint-lint, host-cli-portfolio-lint]
+//   implements: [host-cli, host-command-catalog]
 // ---
 import { homedir } from "node:os";
-import { banner } from "./index.ts";
+import { buildCatalog, resolve } from "./catalog/catalog.ts";
+import { commandTree } from "./catalog/command-tree.generated.ts";
+import { commandHandlers } from "./commands.ts";
 
 async function main() {
-  if (process.argv[2] === "mcp") {
-    const { mcpCommand } = await import("./mcp/command.ts");
-    process.exitCode = await mcpCommand(process.argv.slice(3));
-  } else if (process.argv[2] === "comparator" && process.argv[3] === "lint") {
-    const { comparatorLintCommand } = await import("./comparator-lint/command.ts");
-    process.exitCode = await comparatorLintCommand(process.argv.slice(4));
-  } else if (process.argv[2] === "expressions" && process.argv[3] === "lint") {
-    const { expressionsLintCommand } = await import("./expressions-lint/command.ts");
-    process.exitCode = await expressionsLintCommand(process.argv.slice(4));
-  } else if (process.argv[2] === "blueprint" && process.argv[3] === "lint") {
-    const { blueprintLintCommand } = await import("./blueprint-lint/command.ts");
-    const { bundledFiles } = await import("@wyrd-company/manifold-shared");
-    process.exitCode = await blueprintLintCommand(process.argv.slice(4), {
-      files: new Map(Object.entries(bundledFiles)),
-    });
-  } else if (process.argv[2] === "task-metadata" && process.argv[3] === "lint") {
-    const { taskMetadataLintCommand } = await import("./task-metadata-lint/command.ts");
-    process.exitCode = await taskMetadataLintCommand(process.argv.slice(4));
-  } else if (process.argv[2] === "portfolio" && process.argv[3] === "lint") {
-    const { portfolioLintCommand } = await import("./portfolio-lint/command.ts");
-    process.exitCode = await portfolioLintCommand(process.argv.slice(4));
-  } else if (process.argv[2] === "manifest" && process.argv[3] === "lint") {
-    const { manifestLintCommand } = await import("./manifest-lint/command.ts");
-    process.exitCode = await manifestLintCommand(process.argv.slice(4));
-  } else if (process.argv[2] === "usage") {
-    const { runUsageCommand } = await import("./usage/index.ts");
-    process.exitCode = await runUsageCommand(process.argv.slice(3), {
+  const resolution = resolve(commandTree, process.argv.slice(2));
+  if (resolution.kind === "help") {
+    process.stdout.write(resolution.text);
+    process.exitCode = 0;
+  } else if (resolution.kind === "refusal") {
+    process.stderr.write(resolution.text);
+    process.exitCode = 2;
+  } else {
+    const command = buildCatalog(commandTree, commandHandlers).find(
+      (command) => command.path.join(" ") === resolution.path.join(" "),
+    )!;
+    process.exitCode = await command.handler(resolution.args, {
       stdout: process.stdout,
       stderr: process.stderr,
       env: process.env,
       home: homedir(),
     });
-  } else {
-    console.log(banner());
   }
 }
 void main();

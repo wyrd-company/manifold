@@ -7,6 +7,7 @@ import { childProcessLimit } from "../../test-support/limits.ts";
 
 // Tests that execute compiled Bun children.
 const children = [
+  "src/help.test.ts",
   "src/blueprint-lint/repository.test.ts",
   "src/comparator-lint/index.test.ts",
   "src/foundation.integration.test.ts",
