@@ -271,8 +271,12 @@ proposed-design:
     `retryPending()` resolves every pending posting again, oldest first,
     in one transaction, and returns how many it posted and how many stay
     pending by reason. `apply` calls it after it accepts a declaration.
-    The service calls it after it writes a ledger credit, so a window
-    that covers a pending posting's time lets it post.
+    The service calls it once at start, after it follows the head
+    revision, and after every ledger credit, through the capacity module's
+    follow-up, so a window that covers a pending posting's time lets it
+    post. The ledger the service gives the module is the capacity module's,
+    which answers `no-window` for a `usedAt` no window covers and credits
+    that window, as `portfolio` states in `capacity-crediting`.
   declarations: >-
     `apply(revision)` reads `accounts.yml` and `prices.yml` through the
     revision and lints them with `lintUsageDeclaration` from
@@ -280,7 +284,9 @@ proposed-design:
     one in force stays. A declaration equal to the one in force, as
     canonical JSON, is unchanged and writes nothing. Any other is
     appended to the module's declaration table and takes effect for every
-    later posting, then `retryPending` runs. `openUsage` reads the
+    later posting, then `retryPending` runs. `accounts()` returns
+    the accounts of the declaration in force, which the capacity module
+    reads to credit windows. `openUsage` reads the
     declaration with the greatest sequence, or the empty declaration,
     with no accounts and no price overrides, when there is none. `apply`
     calls run one at a time in call order. The service calls `apply` with
@@ -350,6 +356,7 @@ proposed-design:
       saveHook(save: UsageActorSave): void;
       apply(revision: UsageRevision): Promise<UsageApplyResult>;
       retryPending(): UsageRetryResult;
+      accounts(): UsageDeclaration["accounts"];
     }
 
     export type UsageApplyResult =
@@ -466,9 +473,13 @@ proposed-design:
 
     - Late usage: a call posted after `actor-1` ended counts in its actual.
 
-    - No window: a call before the account's first window is pending
-      `no-window`; after a credit opens a window before it, `retryPending`
-      posts it.
+    - No window: through a ledger with no window, a call is pending
+      `no-window`; after a credit opens a window that covers it,
+      `retryPending` posts it.
+
+    - Accounts: after `apply` of a revision whose `accounts.yml` declares
+      `acct`, `accounts()` returns it with its kind and capacity; after a
+      rejected revision it returns the accounts in force.
 
     - Endpoint: an invalid record answers 400 and writes nothing; an
       unknown environment answers 422; a body above 8 MiB answers 413.

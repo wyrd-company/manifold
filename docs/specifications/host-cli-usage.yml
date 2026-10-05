@@ -7,6 +7,8 @@ relationships:
     - usage-record
     - usage-intake
     - usage-push
+    - accounts-declaration
+    - price-table
 description: >-
   Defines the `usage` commands of the host CLI, `manifold-host`, the Bun
   binary installed on each environment.
@@ -45,6 +47,26 @@ description: >-
   service's `calls` and `threads` counts. Standard error carries messages
   about the command line and the failure that ends the run. The command
   writes only its push state.
+
+  `manifold-host usage lint` lints the usage declarations of a process
+  repository checkout on the host: `accounts.yml` in the
+  `accounts-declaration` format and `prices.yml` in the `price-table`
+  format. It runs `lintUsageDeclaration` from `packages/shared`, the
+  function the service runs on every revision it applies, so it reports
+  the same findings. The command takes one optional argument, the
+  directory of a process repository checkout, default the current
+  directory. It reads `accounts.yml` and `prices.yml` from that directory
+  and passes their text to the lint. An absent file is linted as an empty
+  document, as the service reads it. A directory that cannot be read, or a
+  file that exists but cannot be read, is reported on standard error as
+  `<file>: <reason>` and ends the command with exit code 2 before anything
+  is linted. Otherwise the command reports every finding on standard
+  output as one line, `<file>:<location> <kind> <message>`, with the file
+  as `accounts.yml` or `prices.yml`, the location the finding's RFC 6901
+  JSON Pointer, and the kind and message the finding's. Findings of
+  `accounts.yml` come first, then those of `prices.yml`, each in the
+  lint's order. The command prints nothing and exits 0 when there is no
+  finding, and exits 1 when there is one.
 format: cli
 validation-criteria: >-
   The command surface conforms to
@@ -59,3 +81,13 @@ validation-criteria: >-
   request validates against `docs/specifications/usage-push.schema.yml`,
   that the summary on standard output is one JSON object, and that a run
   with no credential succeeds and sends no Authorization header.
+  The binary test runs `manifold-host usage lint` from a directory with no
+  `node_modules`. It observes exit 0 and no output for a clean checkout
+  and for an empty directory; exit 1 with an `invalid-capacity` line at
+  `/accounts/acct/capacity/amount` for an amount of 0.0000001; exit 1 with
+  a `schema` line for an account with no `capacity`; exit 1 with a
+  `duplicate-model` line from `prices.yml`; exit 1 with a `syntax` line for
+  an `accounts.yml` that does not parse as YAML; and exit 2 with no
+  standard output for a missing directory and for an `accounts.yml` that
+  is a directory. A service test lints the same files through `apply` and
+  reads the same findings.

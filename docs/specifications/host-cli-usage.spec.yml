@@ -143,3 +143,33 @@ commands:
                 Nothing is decoded or sent.
         examples:
           - manifold-host usage push --service http://127.0.0.1:8080 --environment env-one
+      - name: lint
+        summary: Lint `accounts.yml` and `prices.yml` in a process repository checkout.
+        mode: non-interactive
+        positional-arguments:
+          - name: repository
+            description: The process repository checkout directory. Defaults to the current directory.
+            position: 0
+            required: false
+            default: .
+            value:
+              type: path
+        output:
+          modes:
+            - name: text
+              description: >-
+                One line per finding on standard output,
+                `<file>:<location> <kind> <message>`, with the file
+                `accounts.yml` or `prices.yml`; nothing when there is no
+                finding.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: There is no finding.
+            - code: 1
+              meaning: At least one file has a finding.
+            - code: 2
+              meaning: The directory or a file could not be read.
+        examples:
+          - manifold-host usage lint
+          - manifold-host usage lint ./process

@@ -519,9 +519,12 @@ proposed-design:
   service-wiring: >-
     The service applies `gatesMigrationSteps`, creates the gates with its
     store, loader, process repository, comparator sandbox, portfolio, GitHub
-    source, and escalations, registers `saved` with the actor host, and
-    `strandedToken` and `comparatorFailed` with the escalations module as
-    the handlers of their kinds, awaits `revision` with the
+    source, and escalations, where the portfolio's `ledger` is the capacity
+    module's, so a balance read and a reservation credit the window they
+    need first, as `portfolio` states in `capacity-crediting`, registers
+    `saved` with the actor host, and `strandedToken` and `comparatorFailed`
+    with the escalations module as the handlers of their kinds, awaits
+    `revision` with the
     head revision and then `prepare`, and starts the router with
     `afterDrain`. It calls `revision` with every later revision it loads, in
     the order it pulls them. It calls `inputChanged` after each ledger write

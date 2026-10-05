@@ -149,7 +149,20 @@ proposed-design:
       settle(request: { actor: string }): LedgerSettleResult;
       balance(query: { item: string; account: string; waiting: readonly string[] }): LedgerBalance;
       actorUsage(actor: string): LedgerActorUsage;
+      windowAt(query: { account: string; at: number }): LedgerWindows;
     }
+
+    export type LedgerWindow = {
+      window: string;
+      opensAt: number;
+      closesAt: number;
+      capacity: number; // the sum of the window's credits
+    };
+
+    export type LedgerWindows = {
+      current: LedgerWindow | null; // the window with the greatest opensAt not after `at`
+      next: LedgerWindow | null; // the window with the least opensAt after `at`
+    };
 
     export type LedgerWriteResult = { replayed: boolean };
 
@@ -240,8 +253,8 @@ proposed-design:
     throws `window-conflict`; a new window opening at the same time as an
     existing window of the account also throws `window-conflict`. The
     current window of an account at time `t` is its window with the greatest
-    `opensAt` not after `t`. Capacity is observed and resets are estimated
-    elsewhere; the ledger records what the caller credits.
+    `opensAt` not after `t`. What a window holds and when it opens are
+    decided elsewhere; the ledger records what the caller credits.
   entries: >-
     A credit counts in its window. An actual counts in the window that holds
     its `usedAt`, so usage counts against the capacity it spent even when it
@@ -325,6 +338,12 @@ proposed-design:
     that item, never above the account's unspent capacity. Before the account's first
     credit, `window` is null and every amount is 0. An item the portfolio
     does not hold throws `invalid-input`.
+  window-read: >-
+    `windowAt` returns the account's current window at `at` and the
+    account's next window after `at`, each with its capacity, or null where
+    there is none. It writes nothing. A window is current at `at` whether
+    or not its `closesAt` is after `at`; the caller compares `closesAt`
+    with `at` to learn whether the window covers it.
   actor-usage-read: >-
     `actorUsage` returns, per account the actor has entries in, the
     estimate (sum of its `reserve` entries), the actual (sum of its `actual`
@@ -528,6 +547,10 @@ proposed-design:
 
     - Append-only: an `UPDATE` or `DELETE` on any ledger table, through the
       test's own connection, fails.
+
+    - Window read: with `w1` from 0 to 1000 credited 100 twice and `w2`
+      from 2000 to 3000, `windowAt` at 1500 returns `w1` with capacity 200
+      and `w2`; at -1 it returns no current window and `w1` as next.
 
     - Durability: a second `Ledger` on the same file returns the same
       balances and actor usage.

@@ -5,6 +5,16 @@ relationships:
     - portfolio-ledger
     - store
     - process-repository
+    - usage-intake
+  # GAP-EDGE: the technical-design schema declares no edge to a
+  # specification; `references` is the best fit.
+  references:
+    - accounts-declaration
+terms:
+  - capacity
+  - credit
+  - reset
+  - window
 objective: >-
   Track budget by portfolio item across accounts so that a gate can ask
   whether a task may reserve an estimate, unused budget is not stranded, one
@@ -125,10 +135,208 @@ proposed-design:
     binding, or to Other. The Portfolio page lets an operator move such usage
     to an item or a task, which writes the same move entries as re-intake.
   capacity: >-
-    A subscription account's capacity per window is observed from reported
-    usage and its reset times are estimates until observed. An API account's
-    capacity is its declared monthly budget. A granted reset is shown and
-    never applied on the operator's behalf.
+    Each account declares its capacity in `accounts.yml`, in the
+    `accounts-declaration` format: its kind, the amount one window holds in
+    the account's unit, a reset at which a window opens, and the length of
+    a window in hours, days, or calendar months. The windows form a series
+    from the reset, in both directions. For an API account the amount is
+    the budget of a billing period. For a subscription the amount, the
+    reset, and the length are the operator's estimates of the provider's
+    limit, priced as the account's unit prices its calls; the provider's
+    reported reset times, its reported share used, and the ratio between
+    that share and the amount are observations and are not declared. A
+    granted reset is shown and never applied on the operator's behalf.
+  capacity-crediting: >-
+    The capacity module credits each window once, when an operation first
+    needs it, from the accounts declaration in force. A gate's balance read
+    and its reservation need the window that covers the current time now,
+    so the module credits it before the ledger call, in the caller's
+    transaction when one is open. An actual can wait, since usage intake
+    already holds a posting that lacks a fact and posts it when the fact
+    arrives: a posting whose `usedAt` no window covers is held pending with
+    reason `no-window`, the module credits that window on the next turn of
+    the event loop in its own transaction, and usage intake's
+    `retryPending` posts it. The ledger counts an actual in the window with
+    the greatest `opensAt` not after its `usedAt`, whether or not that
+    window has closed, so the module lets an actual reach the ledger only
+    once a window covers its time, and usage after a reset never counts in
+    the window before it. After every credit the module runs the service's follow-up once per turn of the
+    event loop: `retryPending`, then the gates' `inputChanged`. A window is
+    covered when the ledger's window with the greatest `opensAt` not after
+    the time has a `closesAt` after it. The window credited for a time `t`
+    is the declared series window that holds `t`, clipped to the gap
+    between the ledger's neighbouring windows of the account: it opens at
+    the later of the series window's open and the previous window's close,
+    and closes at the earlier of the series window's close and the next
+    window's open. An unclipped window is credited the declared amount; a
+    clipped one is credited the amount in proportion to its length,
+    `max(1, floor(amount × length / series length))`, computed with
+    `BigInt`. Windows never overlap, so a changed reset or length fills
+    the gap to its own series with one clipped window. The window's key is
+    its open time as an ISO 8601 UTC string, and the credit's idempotency
+    key is `capacity:<account>:<window key>`, so a window is credited once
+    whatever runs twice. A credited window keeps its capacity and its
+    bounds, so a changed amount applies from the next window credited. A
+    window credited for a past time, such as the window of usage decoded
+    from before Manifold ran, takes the declaration in force when it is
+    credited. An account that the accounts declaration does not name, such
+    as one `portfolio.yml` allocates and `accounts.yml` leaves out, is
+    credited nothing, and its balances read 0.
+  capacity-module: |-
+    The capacity module is `packages/service/src/capacity/`. It holds no
+    state of its own on disk: windows and credits are the ledger's, and the
+    declaration in force is usage intake's. Its public surface is exported
+    from `index.ts`:
+
+    ```ts
+    export type CapacityAccount = {
+      kind: "api" | "subscription";
+      capacity: {
+        amount: number; // in the account's unit, as declared
+        reset: string; // RFC 3339 date-time
+        every: { hours: number } | { days: number } | { months: number };
+      };
+    };
+
+    export function openCapacity(options: {
+      ledger: Ledger;
+      accounts(): Readonly<Record<string, CapacityAccount>>; // the declaration in force
+      now?: () => number; // defaults to Date.now; the ledger's clock
+      credited(credit: CapacityCredit): void; // after the credit is written, before the follow-up
+      followUp(): void; // once per turn of the event loop after a credit
+    }): Capacity;
+
+    export interface Capacity {
+      /** The ledger, with `balance` and `reserve` crediting the window at `now()` first. */
+      readonly ledger: Ledger;
+      /** Credits the window that covers `at` for `account` when none covers it. */
+      ensure(request: { account: string; at: number }): CapacityEnsureResult;
+      /** Cancels a scheduled credit or follow-up. */
+      close(): void;
+    }
+
+    export type CapacityCredit = {
+      account: string;
+      window: string;
+      opensAt: number;
+      closesAt: number;
+      amount: number; // in the ledger's integer amount of the unit
+    };
+
+    export type CapacityEnsureResult =
+      | { status: "covered"; window: string }
+      | { status: "credited"; credit: CapacityCredit; replayed: boolean }
+      | { status: "undeclared" };
+    ```
+
+    `capacity.ledger` is the ledger it is given with three members
+    wrapped. `balance` and `reserve` call `ensure` with the request's
+    account and `now()` and then the ledger. `postActual` reads the windows
+    around `usedAt` with the ledger's `windowAt`; when a window covers it,
+    it calls the ledger. Otherwise it records the account and `usedAt`,
+    schedules a credit, and throws `LedgerError` with code `no-window` and
+    details `{ account, at }`, as the ledger does for a time before every
+    window, so usage intake keeps the posting pending. Every other
+    member is the ledger's. The scheduled callback, one `setImmediate` per
+    turn of the event loop, calls `ensure` for each recorded time, in its
+    own transaction since no transaction is open, then calls `followUp`
+    when any credit was written since the last follow-up. `ensure` reads
+    the account from `accounts()`, reads the windows around `at` with the
+    ledger's `windowAt`, and calls `credit` when no window covers `at`;
+    `credited` is called after `credit` returns: after its commit for a
+    credit in its own transaction, and inside the caller's transaction for
+    a credit that joins one. `windows.ts` holds the
+    series and the clipping as pure functions of the declared capacity,
+    the time, and the neighbouring windows; `capacity.ts` holds
+    `openCapacity`. The amount converts as `accounts-declaration` states,
+    and `lintUsageDeclaration` has already refused a capacity it cannot
+    convert, so the module trusts it.
+  capacity-wiring: >-
+    The service opens the capacity module after the portfolio and before
+    usage intake, with `portfolio.ledger`, the service clock, `accounts`
+    reading `usage.accounts()`, `credited` as the service's probe and log
+    entry `capacity-credited`, and `followUp` running `usage.retryPending()`
+    and then the gates' `inputChanged()`. It gives usage intake
+    `capacity.ledger` for `postActual` and `settle`, and gives the gates a
+    portfolio whose `ledger` is `capacity.ledger` and whose `current` is the
+    portfolio's. After it follows the head revision at start, it calls
+    `usage.retryPending()` once, so a posting that waited on a credit
+    committed before a crash posts. It calls `capacity.close()` when it
+    stops. The module adds no store migration and no service
+    configuration.
+  capacity-convergence: >-
+    `ensure` twice for one time: the second finds the window covering it,
+    or replays the credit by its key, and writes nothing. A crash before a
+    credit commits leaves no window, and the next balance read, reserve, or
+    `retryPending` that needs it credits it. A crash after a credit commits
+    and before `retryPending` runs leaves the window credited once and its
+    postings pending, and the `retryPending` at start posts each once by its
+    ledger key. A credit written in a gate's grant or in a push rolls back
+    with it, and the next need credits it again. A follow-up that finds
+    nothing pending posts nothing, and a pass that `inputChanged` starts
+    over unchanged balances grants nothing it would not have granted.
+  capacity-tests: |-
+    Tests live in `packages/service/src/capacity/capacity.test.ts` and
+    drive `openCapacity` with a `Ledger` and a usage intake on a database
+    file each test opens in a temporary directory, with an injected clock.
+    Values are generic: account `acct` of kind `api`, reset
+    `2026-01-01T00:00:00Z`, every `hours: 1`, amount 1, which is 1,000,000
+    in the ledger; items `alpha` and `beta` at 50%. Times are offsets from
+    the reset. The scenarios, each written red before green:
+
+    - First read: a balance read of `alpha` at 10 minutes credits window
+      `2026-01-01T00:00:00.000Z` from 0 to 1 hour with 1,000,000 and reads
+      allocation 500,000; a second read credits nothing.
+
+    - Reset: after a read at 10 minutes, a read at 1 hour 5 minutes
+      credits the window from 1 hour to 2 hours, and `followUp` runs once.
+
+    - Next window: with the window from 0 to 1 hour credited, a revision
+      with amount 2 is applied; a read at 30 minutes still reads
+      allocation 500,000, and a read at 1 hour 5 minutes credits 2,000,000.
+
+    - Changed series: with the window from 0 to 1 hour credited, a
+      revision with every `hours: 2` and reset 1 hour 30 minutes is applied;
+      a read at 1 hour 10 minutes credits a window from 1 hour to 1 hour 30
+      minutes with 250,000, and a read at 1 hour 40 minutes credits the
+      window from 1 hour 30 minutes to 3 hours 30 minutes with 1,000,000.
+
+    - Months: every `months: 1` from `2026-01-28T00:00:00Z`; an instant on
+      `2026-03-01` falls in the window from `2026-02-28` to `2026-03-28`,
+      and an instant on `2025-12-31` in the window from `2025-12-28` to
+      `2026-01-28`.
+
+    - Reserve: a reserve at 10 minutes with no window credits it in the
+      reserve's transaction; a reserve inside the caller's `transaction`
+      whose work then throws leaves no window and no credit.
+
+    - Waiting actual: a push of a call at 10 minutes with no window answers
+      `pending` 1; after the next turn of the event loop the window is
+      credited, `retryPending` has run, and a second `DatabaseSync` opened
+      on the store's file reads one `actual` entry for the call's ledger
+      key.
+
+    - Stale window: with the window from 0 to 1 hour credited, a push of a
+      call at 1 hour 5 minutes answers `pending` 1, and the call posts in
+      the window from 1 hour to 2 hours; the window from 0 to 1 hour holds
+      no actual.
+
+    - Past window: a push of a call at minus 3 hours credits the window
+      from minus 3 hours to minus 2 hours and posts it there; a balance
+      read at 10 minutes reads the window from 0 to 1 hour.
+
+    - Undeclared: a balance read for an account `accounts.yml` does not
+      name credits nothing and reads 0.
+
+    - Convergence: `ensure` twice for one time writes one credit; a credit
+      whose key the ledger holds replays.
+
+    The recovery test lives in `packages/service/src/capacity/recovery.test.ts`.
+    It starts a fixture service process on a database file with the
+    `credited` probe writing a line and waiting, pushes a call with no
+    window, and kills the process with `SIGKILL` after the line. It starts
+    the service again on the same file and reads one `credit` operation
+    for the window, and one posted `actual` for every pending posting.
   declaration: >-
     The portfolio is declared in `portfolio.yml` and the bindings in
     `bindings.yml`, both at the root of the process repository. Their

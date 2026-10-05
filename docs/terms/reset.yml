@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the artifacts that define it.
+relationships:
+  references:
+    - accounts-declaration
+    - portfolio
+title: Reset
+description: >-
+  The instant at which an account's capacity starts again, closing one
+  window and opening the next.
