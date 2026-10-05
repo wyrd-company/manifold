@@ -20,7 +20,14 @@ export default defineConfig({
     sortPackageJson: {},
   },
   lint: {
-    ignorePatterns: ["coverage", "dist", "node_modules", "pnpm-lock.yaml", "*.tsbuildinfo"],
+    ignorePatterns: [
+      "coverage",
+      "dist",
+      "node_modules",
+      "pnpm-lock.yaml",
+      "*.tsbuildinfo",
+      "packages/shared/src/blueprint-validator.js",
+    ],
     plugins: ["eslint", "oxc", "unicorn", "typescript", "react"],
     categories: {
       correctness: "warn",

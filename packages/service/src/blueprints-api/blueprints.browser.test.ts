@@ -35,14 +35,18 @@ test("built Blueprints editor lints, preserves drafts, publishes once, and reloa
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(url + "/console/blueprints");
     await page.getByRole("link", { name: "blueprints/counter.yml", exact: true }).click();
-    await page.locator(".cm-content").waitFor();
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page.locator(".blueprint-source .cm-content").waitFor();
     expect(await page.locator(".breadcrumb").innerText()).toContain("blueprints/counter.yml");
-    await page.locator(".blueprint-state").getByText("counting", { exact: false }).waitFor();
+    await page.getByRole("button", { name: "Canvas", exact: true }).click();
+    await page.locator(".canvas-state").getByText("counting", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
     await page.reload();
-    await page.locator(".cm-content").waitFor();
-    const original = await page.locator(".cm-content").innerText();
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page.locator(".blueprint-source .cm-content").waitFor();
+    const original = await page.locator(".blueprint-source .cm-content").innerText();
     await page
-      .locator(".cm-content")
+      .locator(".blueprint-source .cm-content")
       .fill(original.replace("counting: {}", "counting:\n      on:\n        GO: missing"));
     await page.waitForFunction(
       () => document.querySelector(".error-text")?.textContent !== "0 errors",
@@ -50,16 +54,22 @@ test("built Blueprints editor lints, preserves drafts, publishes once, and reloa
     expect(await page.getByRole("button", { name: "Publish", exact: true }).isDisabled()).toBe(
       true,
     );
+    await page.getByRole("button", { name: "Canvas", exact: true }).click();
+    await page.locator(".blueprint-problem.error").first().waitFor();
     expect(await page.locator(".blueprint-problem.error").count()).toBeGreaterThan(0);
-    await page.locator(".cm-content").fill(original.replace("count: 60", "count: 61"));
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page
+      .locator(".blueprint-source .cm-content")
+      .fill(original.replace("count: 60", "count: 61"));
     await page.waitForFunction(
       () =>
         !document.querySelector<HTMLButtonElement>(".blueprint-header-actions button:last-child")
           ?.disabled,
     );
     await page.reload();
-    await page.locator(".cm-content").waitFor();
-    expect(await page.locator(".cm-content").innerText()).toContain("count: 61");
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page.locator(".blueprint-source .cm-content").waitFor();
+    expect(await page.locator(".blueprint-source .cm-content").innerText()).toContain("count: 61");
     await page.getByRole("button", { name: "Publish", exact: true }).click();
     await page.getByLabel("Commit message").fill("Adjust sample count");
     await page.getByRole("button", { name: "Commit and push", exact: true }).click();
@@ -71,8 +81,9 @@ test("built Blueprints editor lints, preserves drafts, publishes once, and reloa
     expect(commits).toHaveLength(2);
     expect(commits[0]?.commit.message).toContain("Adjust sample count");
     await page.reload();
-    await page.locator(".cm-content").waitFor();
-    expect(await page.locator(".cm-content").innerText()).toContain("count: 61");
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page.locator(".blueprint-source .cm-content").waitFor();
+    expect(await page.locator(".blueprint-source .cm-content").innerText()).toContain("count: 61");
     expect(await page.getByRole("button", { name: "Publish", exact: true }).isDisabled()).toBe(
       true,
     );
@@ -109,9 +120,12 @@ test.each([false, true])(
       await page.goto(
         `http://${address.host}:${address.port}/console/blueprints/blueprints/counter.yml`,
       );
-      await page.locator(".cm-content").waitFor();
-      const original = await page.locator(".cm-content").innerText();
-      await page.locator(".cm-content").fill(original.replace("count: 60", "count: 61"));
+      await page.getByRole("button", { name: "YAML", exact: true }).click();
+      await page.locator(".blueprint-source .cm-content").waitFor();
+      const original = await page.locator(".blueprint-source .cm-content").innerText();
+      await page
+        .locator(".blueprint-source .cm-content")
+        .fill(original.replace("count: 60", "count: 61"));
       await page.waitForFunction(
         () =>
           !document.querySelector<HTMLButtonElement>(".blueprint-header-actions button:last-child")
@@ -122,8 +136,13 @@ test.each([false, true])(
       await page.getByRole("button", { name: "Load saved version" }).waitFor();
       await page.reload();
       await page.getByRole("button", { name: "Load saved version" }).waitFor();
-      expect(await page.locator(".cm-content").getAttribute("contenteditable")).toBe("false");
-      expect(await page.locator(".cm-content").innerText()).toContain("count: 61");
+      await page.getByRole("button", { name: "YAML", exact: true }).click();
+      expect(
+        await page.locator(".blueprint-source .cm-content").getAttribute("contenteditable"),
+      ).toBe("false");
+      expect(await page.locator(".blueprint-source .cm-content").innerText()).toContain(
+        "count: 61",
+      );
       if (later) {
         const parent = await git.resolveRef({ fs, gitdir: f.remote.gitdir, ref: "main" });
         const old = await git.readCommit({ fs, gitdir: f.remote.gitdir, oid: parent });
@@ -166,7 +185,9 @@ test.each([false, true])(
       expect(await page.getByRole("button", { name: "Load saved version" }).count()).toBe(0);
       if (later) {
         await page.getByText(/changed this file since/).waitFor();
-        expect(await page.locator(".cm-content").innerText()).toContain("count: 61");
+        expect(await page.locator(".blueprint-source .cm-content").innerText()).toContain(
+          "count: 61",
+        );
         await page.getByRole("button", { name: "Compare", exact: true }).click();
         await page.getByRole("dialog").waitFor();
         expect(await page.locator(".cm-merge-a .cm-content").innerText()).toContain("count: 62");
@@ -180,7 +201,9 @@ test.each([false, true])(
           .getByRole("button", { name: "Discard draft", exact: true })
           .click();
         await page.waitForFunction(() =>
-          document.querySelector(".cm-content")?.textContent?.includes("count: 62"),
+          document
+            .querySelector(".blueprint-source .cm-content")
+            ?.textContent?.includes("count: 62"),
         );
       } else
         expect(await page.getByRole("button", { name: "Publish", exact: true }).isDisabled()).toBe(
@@ -214,9 +237,12 @@ test("conflicting drafts survive reload and the operator can compare and replace
     await page.goto(
       `http://${address.host}:${address.port}/console/blueprints/blueprints/counter.yml`,
     );
-    await page.locator(".cm-content").waitFor();
-    const original = await page.locator(".cm-content").innerText();
-    await page.locator(".cm-content").fill(original.replace("count: 60", "count: 61"));
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page.locator(".blueprint-source .cm-content").waitFor();
+    const original = await page.locator(".blueprint-source .cm-content").innerText();
+    await page
+      .locator(".blueprint-source .cm-content")
+      .fill(original.replace("count: 60", "count: 61"));
     await f.commit(62);
     await page.waitForFunction(
       () =>
@@ -231,8 +257,9 @@ test("conflicting drafts survive reload and the operator can compare and replace
     expect(await page.locator(".cm-merge-a .cm-content").innerText()).toContain("count: 62");
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await page.reload();
-    await page.locator(".cm-content").waitFor();
-    expect(await page.locator(".cm-content").innerText()).toContain("count: 61");
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page.locator(".blueprint-source .cm-content").waitFor();
+    expect(await page.locator(".blueprint-source .cm-content").innerText()).toContain("count: 61");
     await page.getByRole("button", { name: "Publish", exact: true }).click();
     await page.getByRole("button", { name: "Commit and push", exact: true }).click();
     await page.getByRole("button", { name: "Use latest as base" }).click();
@@ -280,9 +307,12 @@ test("bundled blueprints list and publish as repository replacements", async () 
     await page.getByRole("cell", { name: /Bundled/ }).waitFor();
     await page.getByText("Replaces the bundled blueprint").waitFor();
     await page.getByRole("link", { name: "blueprints/sample.yml", exact: true }).click();
-    await page.locator(".cm-content").waitFor();
-    const original = await page.locator(".cm-content").innerText();
-    await page.locator(".cm-content").fill(original.replace("count: 60", "count: 61"));
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page.locator(".blueprint-source .cm-content").waitFor();
+    const original = await page.locator(".blueprint-source .cm-content").innerText();
+    await page
+      .locator(".blueprint-source .cm-content")
+      .fill(original.replace("count: 60", "count: 61"));
     await page.waitForFunction(
       () =>
         !document.querySelector<HTMLButtonElement>(".blueprint-header-actions button:last-child")
@@ -353,11 +383,16 @@ test("late lint answers cannot mark newer text", async () => {
     await page.goto(
       `http://${address.host}:${address.port}/console/blueprints/blueprints/counter.yml`,
     );
-    await page.locator(".cm-content").waitFor();
-    const original = await page.locator(".cm-content").innerText();
-    await page.locator(".cm-content").fill(original.replace("count: 60", "count: 61"));
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await page.locator(".blueprint-source .cm-content").waitFor();
+    const original = await page.locator(".blueprint-source .cm-content").innerText();
+    await page
+      .locator(".blueprint-source .cm-content")
+      .fill(original.replace("count: 60", "count: 61"));
     await seen;
-    await page.locator(".cm-content").fill(original.replace("count: 60", "count: 62"));
+    await page
+      .locator(".blueprint-source .cm-content")
+      .fill(original.replace("count: 60", "count: 62"));
     await page.waitForFunction(
       () =>
         !document.querySelector<HTMLButtonElement>(".blueprint-header-actions button:last-child")
@@ -400,10 +435,11 @@ test.each(["aborted", "failed", "successful retry"] as const)(
       await page.goto(
         `http://${address.host}:${address.port}/console/blueprints/blueprints/counter.yml`,
       );
-      await page.locator(".cm-content").waitFor();
-      const original = await page.locator(".cm-content").innerText();
+      await page.getByRole("button", { name: "YAML", exact: true }).click();
+      await page.locator(".blueprint-source .cm-content").waitFor();
+      const original = await page.locator(".blueprint-source .cm-content").innerText();
       const checked = original.replace("count: 60", "count: 61");
-      await page.locator(".cm-content").fill(checked);
+      await page.locator(".blueprint-source .cm-content").fill(checked);
       await page.waitForFunction(
         () =>
           !document.querySelector<HTMLButtonElement>(".blueprint-header-actions button:last-child")
@@ -428,7 +464,9 @@ test.each(["aborted", "failed", "successful retry"] as const)(
           body: JSON.stringify({ error: "remote", message: "Example lint failure" }),
         });
       });
-      await page.locator(".cm-content").fill(original.replace("count: 60", "count: 62"));
+      await page
+        .locator(".blueprint-source .cm-content")
+        .fill(original.replace("count: 60", "count: 62"));
       await seen;
       if (outcome !== "aborted")
         await page.getByText("Cannot check this text.", { exact: false }).waitFor();
@@ -440,7 +478,8 @@ test.each(["aborted", "failed", "successful retry"] as const)(
         if (outcome === "failed")
           await page.getByText("Cannot check this text.", { exact: false }).waitFor();
       }
-      if (outcome !== "successful retry") await page.locator(".cm-content").fill(checked);
+      if (outcome !== "successful retry")
+        await page.locator(".blueprint-source .cm-content").fill(checked);
       await page.waitForFunction(
         () =>
           !document.querySelector<HTMLButtonElement>(".blueprint-header-actions button:last-child")

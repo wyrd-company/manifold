@@ -28,12 +28,12 @@ import {
 } from "./draft.ts";
 import type { BlueprintDraft } from "./draft.ts";
 import { SourcePane } from "./SourcePane.tsx";
-import { GraphPane } from "./GraphPane.tsx";
+import { BlueprintCanvasEditor } from "./BlueprintCanvasEditor.tsx";
 import { ProblemsStrip } from "./ProblemsStrip.tsx";
 import { PublishDialog } from "./PublishDialog.tsx";
 import { DiscardDialog } from "./DiscardDialog.tsx";
 import { CompareDialog } from "./ConflictAlert.tsx";
-import { findingState, stateAtCursor } from "./problems.ts";
+import { findingSelection, stateAtCursor } from "./problems.ts";
 export function BlueprintEditor({ path }: { path: string }) {
   const query = useQuery({
     queryKey: ["blueprint-source", path],
@@ -107,7 +107,7 @@ function Editor({
   const [conflict, setConflict] = useState<SaveConflictResponse>();
   const [later, setLater] = useState<string>();
   const [toast, setToast] = useState<string>();
-  const [tab, setTab] = useState("source");
+  const [tab, setTab] = useState("canvas");
   const update = (next: BlueprintDraft) => {
     if (next.text === lint.text) {
       setRetry(0);
@@ -215,7 +215,7 @@ function Editor({
   };
   const selectFinding = (finding: ApiFinding) => {
     setCursor(finding.range?.from);
-    setSelected(findingState(finding, lint.body.graph?.states ?? []));
+    setSelected(lint.body.graph ? findingSelection(finding, lint.body.graph) : undefined);
   };
   return (
     <div className="blueprint-editor">
@@ -316,38 +316,50 @@ function Editor({
           </div>
         </div>
       ) : null}
-      <div className="blueprint-tabs">
-        <Button variant="ghost" onClick={() => setTab("source")}>
-          Source
+      <div className="blueprint-view-toggle" aria-label="Editor view">
+        <Button variant="ghost" aria-pressed={tab === "canvas"} onClick={() => setTab("canvas")}>
+          Canvas
         </Button>
-        <Button variant="ghost" onClick={() => setTab("graph")}>
-          Graph
+        <Button variant="ghost" aria-pressed={tab === "yaml"} onClick={() => setTab("yaml")}>
+          YAML
         </Button>
       </div>
-      <div className={`blueprint-panes tab-${tab}`}>
-        <SourcePane
-          path={path}
-          text={draft.text}
-          baseText={draft.baseText}
-          findings={lint.body.findings}
-          warnings={lint.body.warnings}
-          readOnly={pending}
-          onChange={change}
-          cursor={cursor}
-          onCursor={(position) =>
-            setSelected(stateAtCursor(position, lint.body.graph?.states ?? []))
-          }
-        />
-        <GraphPane
-          graph={lint.body.graph}
-          findings={lint.body.findings}
-          warnings={lint.body.warnings}
-          selected={selected}
-          onSelect={(state) => {
-            setSelected(state);
-            setCursor(lint.body.graph?.states.find((item) => item.path === state)?.range?.from);
-          }}
-        />
+      <div className={`blueprint-panes ${tab === "canvas" ? "canvas-only" : "yaml-only"}`}>
+        {tab === "yaml" ? (
+          <SourcePane
+            path={path}
+            text={draft.text}
+            baseText={draft.baseText}
+            findings={lint.body.findings}
+            warnings={lint.body.warnings}
+            readOnly={pending}
+            onChange={change}
+            cursor={cursor}
+            onCursor={(position) =>
+              setSelected(stateAtCursor(position, lint.body.graph?.states ?? []))
+            }
+          />
+        ) : null}
+        <div style={{ display: tab === "canvas" ? "contents" : "none" }}>
+          <BlueprintCanvasEditor
+            text={draft.text}
+            baseText={draft.baseText}
+            readOnly={pending}
+            findings={lint.body.findings}
+            warnings={lint.body.warnings}
+            selection={selected}
+            onSelect={setSelected}
+            onChange={(basis, text) => {
+              if (current.current.text === basis) change(text);
+            }}
+            onOpenYaml={() => setTab("yaml")}
+            blueprintPaths={
+              repositoryQuery.data?.kind === "ok"
+                ? repositoryQuery.data.body.blueprints.map((item) => item.path)
+                : []
+            }
+          />
+        </div>
       </div>
       <ProblemsStrip
         findings={lint.body.findings}

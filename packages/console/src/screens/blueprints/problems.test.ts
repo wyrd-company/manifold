@@ -3,7 +3,7 @@
 //   verifies: operator-console
 // ---
 import { expect, test } from "vite-plus/test";
-import { findingState, stateAtCursor } from "./problems.ts";
+import { findingState, stateAtCursor, findingSelection, findingField } from "./problems.ts";
 const states = [
   {
     path: "outer",
@@ -41,4 +41,28 @@ test("findings and cursor select the deepest state, parent findings stay on the 
   ).toBe("outer");
   expect(stateAtCursor(30, states)).toBe("outer.inner");
   expect(stateAtCursor(90, states)).toBeUndefined();
+});
+test("selects the deepest transition before its owning state and the deepest inspector field", () => {
+  const graph = {
+    states: [{ ...states[0]!, path: "a", location: "/machine/states/a" }],
+    transitions: [
+      {
+        source: "a",
+        trigger: "event",
+        label: "NEXT",
+        guarded: true,
+        location: "/machine/states/a/on/NEXT",
+      },
+    ],
+  } as Parameters<typeof findingSelection>[1];
+  const finding = { location: "/machine/states/a/on/NEXT/guard/params/expression" } as Parameters<
+    typeof findingSelection
+  >[0];
+  expect(findingSelection(finding, graph)).toBe("/machine/states/a/on/NEXT");
+  expect(
+    findingField(finding, [
+      "/machine/states/a/on/NEXT/guard",
+      "/machine/states/a/on/NEXT/guard/params/expression",
+    ]),
+  ).toBe(finding.location);
 });

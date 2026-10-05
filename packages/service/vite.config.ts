@@ -13,6 +13,7 @@ const children = [
   "src/portfolio-api/portfolio-service.test.ts",
   "src/blueprints-api/api.test.ts",
   "src/blueprints-api/blueprints.browser.test.ts",
+  "src/blueprints-api/canvas.browser.test.ts",
   "src/process-repository/save.test.ts",
   "src/service/blueprint-save.test.ts",
   "src/service/blueprint-save-crash.test.ts",

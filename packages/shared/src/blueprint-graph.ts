@@ -2,30 +2,15 @@
 // relationships:
 //   implements: [blueprints-api, operator-console]
 // ---
-import { Ajv2020 } from "ajv/dist/2020.js";
-import type { ValidateFunction } from "ajv";
 import { parseDocument } from "yaml";
 import { createMachine, fromPromise } from "xstate";
 import type { AnyStateMachine, MachineConfig } from "xstate";
-import { blueprintSchema, blueprintExpressionsSchema } from "./blueprint-schema.ts";
+import validateBlueprint from "./blueprint-validator.js";
 import { compileStateGuards } from "./state-guards.ts";
 import { record } from "./expression-sites.ts";
 import { findingRanges } from "./finding-ranges.ts";
 import type { BlueprintGraph, GraphState, GraphTransition } from "./blueprints-api.ts";
-import type { BlueprintDocument } from "./blueprint-lint.ts";
 
-let blueprintValidator: ValidateFunction<BlueprintDocument> | undefined;
-function validator() {
-  if (!blueprintValidator) {
-    const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: false });
-    ajv.addSchema(blueprintExpressionsSchema);
-    ajv.addSchema(blueprintSchema);
-    blueprintValidator = ajv.compile<BlueprintDocument>({
-      $ref: `${blueprintSchema.$id}#/$defs/blueprint`,
-    });
-  }
-  return blueprintValidator;
-}
 const pointer = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
 const list = (value: unknown): unknown[] =>
   value === undefined ? [] : Array.isArray(value) ? value : [value];
@@ -47,7 +32,7 @@ function jsonValue(value: unknown, ancestors = new Set<object>()): boolean {
   return valid;
 }
 
-export function blueprintGraph(text: string): BlueprintGraph | undefined {
+export function blueprintGraph(text: string, includeHidden = false): BlueprintGraph | undefined {
   try {
     const yaml = parseDocument(text, {
       version: "1.2",
@@ -58,7 +43,7 @@ export function blueprintGraph(text: string): BlueprintGraph | undefined {
     if (yaml.errors.length || yaml.warnings.length || yaml.directives?.yaml.version !== "1.2")
       return undefined;
     const document: unknown = yaml.toJS();
-    if (!jsonValue(document) || !validator()(document)) return undefined;
+    if (!jsonValue(document) || !validateBlueprint(document)) return undefined;
     const actors = new Set<string>();
     function names(config: Record<string, unknown>) {
       for (const invoke of list(config["invoke"])) {
@@ -110,8 +95,21 @@ export function blueprintGraph(text: string): BlueprintGraph | undefined {
       const always = node.always;
       if (node.type === "history" && node.parent) {
         const parentId = node.parent.id.replaceAll("\\", "\\\\").replaceAll(".", "\\.");
-        for (const target of list(node.config.target) as string[])
-          machine.getStateNodeById(target.startsWith("#") ? target : `#${parentId}.${target}`);
+        for (const [index, target] of (list(node.config.target) as string[]).entries()) {
+          const resolved = machine.getStateNodeById(
+            target.startsWith("#") ? target : `#${parentId}.${target}`,
+          );
+          if (includeHidden)
+            transitions.push({
+              source: node.path.join("."),
+              target: resolved.path.join("."),
+              trigger: "always",
+              label: "history",
+              guarded: false,
+              location:
+                location + "/target" + (Array.isArray(node.config.target) ? "/" + index : ""),
+            });
+        }
       }
       if (node.parent)
         states.push({
@@ -130,7 +128,7 @@ export function blueprintGraph(text: string): BlueprintGraph | undefined {
         if (key === "states")
           for (const [childKey, child] of Object.entries(node.states))
             walk(child, `${at}/${pointer(childKey)}`);
-        if (!node.parent) continue;
+        if (!node.parent && !includeHidden) continue;
         if (key === "on")
           for (const [event, row] of Object.entries(record(value)))
             emit(node, resolved.get(event) ?? [], row, `${at}/${pointer(event)}`, "event", event);
@@ -160,6 +158,15 @@ export function blueprintGraph(text: string): BlueprintGraph | undefined {
             const id = node.invoke[index]?.id ?? String(config["id"]);
             const invokeLocation = `${at}${Array.isArray(value) ? `/${index}` : ""}`;
             for (const [event, row] of Object.entries(config)) {
+              if (includeHidden && event === "onSnapshot")
+                emit(
+                  node,
+                  resolved.get(`xstate.snapshot.${id}`) ?? [],
+                  row,
+                  `${invokeLocation}/onSnapshot`,
+                  "event",
+                  "snapshot",
+                );
               if (event === "onDone")
                 emit(
                   node,

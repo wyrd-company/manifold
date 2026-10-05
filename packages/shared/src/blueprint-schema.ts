@@ -26,6 +26,41 @@ export const blueprintSchema = {
         schemas: {
           $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-schemas",
         },
+        layout: {
+          $ref: "#/$defs/layout",
+        },
+      },
+    },
+    layout: {
+      description:
+        "Where the blueprint editor's canvas draws each state. The machine never reads it.",
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        states: {
+          description:
+            "The top-left corner of each state, by state path, relative to its parent state's corner, or to the canvas origin for a top-level state. A path that names no state is ignored.",
+          type: "object",
+          propertyNames: {
+            $ref: "#/$defs/state-path",
+          },
+          additionalProperties: {
+            $ref: "#/$defs/layout-point",
+          },
+        },
+      },
+    },
+    "layout-point": {
+      type: "object",
+      required: ["x", "y"],
+      additionalProperties: false,
+      properties: {
+        x: {
+          type: "integer",
+        },
+        y: {
+          type: "integer",
+        },
       },
     },
     machine: {

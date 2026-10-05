@@ -18,7 +18,10 @@ import type { ExpressionBlueprint, ExpressionFinding } from "./blueprint-express
 import type { ImplementationNames } from "./implementation-names.ts";
 import { record, compareExpressionText } from "./expression-sites.ts";
 
-export type BlueprintDocument = ExpressionBlueprint & { description?: string };
+export type BlueprintDocument = ExpressionBlueprint & {
+  description?: string;
+  layout?: { states: Record<string, { x: number; y: number }> };
+};
 export type BlueprintFinding = {
   readonly path: string;
   readonly kind:
