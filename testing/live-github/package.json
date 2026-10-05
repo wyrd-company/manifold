@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@wyrd-company/manifold-host-cli": "workspace:*",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
