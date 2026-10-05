@@ -50,7 +50,7 @@ export interface EscalationAnswerResponse {
 }
 const answer = (v: unknown) =>
   shape(v, { choice: nonempty }) ||
-  shape(v, { text: (v) => nonempty(v) && String(v).length <= 4096 });
+  shape(v, { text: (v) => nonempty(v) && Array.from(String(v)).length <= 4096 });
 export function isEscalation(v: unknown): v is Escalation {
   return shape(
     v,
@@ -75,7 +75,7 @@ export function isEscalation(v: unknown): v is Escalation {
         array((c) =>
           shape(c, {
             id: (v) => string(v) && v.length <= 32 && /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(v),
-            label: (v) => nonempty(v) && String(v).length <= 40,
+            label: (v) => nonempty(v) && Array.from(String(v)).length <= 40,
           }),
         )(v) && (v as unknown[]).length <= 3,
       freeText: boolean,

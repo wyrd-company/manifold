@@ -91,3 +91,28 @@ test("task timestamps reject invalid calendar dates and missing timezone offsets
     }),
   ).toBe(true);
 });
+
+test("escalation length limits count Unicode characters as the schema does", () => {
+  const escalation = {
+    id: "a".repeat(22),
+    raiser: { type: "blueprint", actorId: "task:parcel", invokeId: "ask", entryId: "one" },
+    title: "Delivery",
+    question: "Where?",
+    choices: [{ id: "door", label: "📦".repeat(40) }],
+    freeText: true,
+    destinations: [],
+    status: "answered",
+    raisedAt: 0,
+    answer: { value: { text: "📦".repeat(4096) }, channel: "api", at: 1 },
+  };
+  expect(isEscalation(escalation)).toBe(true);
+  expect(isEscalation({ ...escalation, choices: [{ id: "door", label: "📦".repeat(41) }] })).toBe(
+    false,
+  );
+  expect(
+    isEscalation({
+      ...escalation,
+      answer: { ...escalation.answer, value: { text: "📦".repeat(4097) } },
+    }),
+  ).toBe(false);
+});
