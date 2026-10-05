@@ -1320,3 +1320,57 @@ test("message placement runs in the publication transaction before turn changes"
     ]);
   await expect.poll(() => f.store.pendingInbox("reader").length).toBe(2);
 });
+test("projects reflect shell snapshots and live project edits with followed thread counts", async () => {
+  const { server, start } = await setup();
+  server.projects.set("project", {
+    id: "project",
+    title: "Garden",
+    workspaceRoot: "/tmp/garden",
+    defaultModelSelection: null,
+    deletedAt: null,
+    scripts: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const thread = fixtureThread();
+  server.baseline(thread);
+  let reads = 0;
+  server.hooks.readModel = () => {
+    reads++;
+  };
+  const source = start();
+  expect(source.projects("station")).toBeUndefined();
+  expect(source.projects("absent")).toBeUndefined();
+  await expect
+    .poll(() => source.projects("station"))
+    .toEqual([{ id: "project", title: "Garden", workspaceRoot: "/tmp/garden", activeThreads: 1 }]);
+  server.project({
+    id: "project",
+    title: "Orchard",
+    workspaceRoot: "/tmp/orchard",
+    defaultModelSelection: null,
+    deletedAt: null,
+    scripts: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await expect.poll(() => source.projects("station")?.[0]?.title).toBe("Orchard");
+  thread.archivedAt = thread.createdAt;
+  server.change(thread, "thread.archived", { threadId: thread.id, archivedAt: thread.archivedAt });
+  await expect.poll(() => source.projects("station")?.[0]?.activeThreads).toBe(0);
+  server.removeProject("project");
+  await expect.poll(() => source.projects("station")).toEqual([]);
+  server.failShell();
+  server.projects.set("project", {
+    id: "project",
+    title: "Meadow",
+    workspaceRoot: "/tmp/meadow",
+    defaultModelSelection: null,
+    deletedAt: null,
+    scripts: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await expect.poll(() => reads).toBe(2);
+  await expect.poll(() => source.projects("station")?.[0]?.title).toBe("Meadow");
+});

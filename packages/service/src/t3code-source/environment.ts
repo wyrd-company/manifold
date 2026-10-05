@@ -29,7 +29,7 @@ import { retryDelay } from "./retry.ts";
 import { needsSubscription, canClose } from "./follow.ts";
 import { sourceEvent, threadTopic } from "./events.ts";
 import { persistence, SourceDefect } from "./persistence.ts";
-import type { T3CodeSourceOptions, EnvironmentStatus } from "./types.ts";
+import type { T3CodeSourceOptions, EnvironmentStatus, T3CodeProjectView } from "./types.ts";
 export function environmentLoop(
   options: T3CodeSourceOptions,
   environment: string,
@@ -37,6 +37,8 @@ export function environmentLoop(
   onReady: () => void,
   onNotReady: () => Promise<void>,
 ) {
+  let projects: Omit<T3CodeProjectView, "activeThreads">[] | undefined;
+  let projectSequence = -1;
   const configuration = options.environments[environment]!;
   const stored = persistence(options.store, environment);
   const status: {
@@ -268,15 +270,20 @@ export function environmentLoop(
         await client.connect(lifetime.signal);
         server = (await client.server.environment(lifetime.signal)).environmentId;
         const previous = stored.environment();
-        if (!previous || previous.environment_id !== server) {
-          await onNotReady();
+        const baseline = !previous || previous.environment_id !== server;
+        if (baseline) await onNotReady();
+        const model = await client.shell.readModel(lifetime.signal);
+        projectSequence = model.snapshotSequence;
+        projects = model.projects
+          .filter((project) => !project.deletedAt)
+          .map(({ id, title, workspaceRoot }) => ({ id, title, workspaceRoot }));
+        if (baseline) {
           const pending = new Set(
             stored
               .rows()
               .filter((row) => row.status === "followed" && row.thread === null)
               .map((row) => row.thread_id),
           );
-          const model = await client.shell.readModel(lifetime.signal);
           stored.atomic(() => {
             stored.reset();
             stored.initialize(server, model.snapshotSequence);
@@ -310,6 +317,14 @@ export function environmentLoop(
               continue;
             }
             if (item.kind === "snapshot") {
+              projectSequence = item.snapshot.snapshotSequence;
+              projects = item.snapshot.projects
+                .filter((project) => !project["deletedAt"])
+                .map(({ id, title, workspaceRoot }) => ({
+                  id,
+                  title,
+                  workspaceRoot,
+                }));
               const present = new Set(item.snapshot.threads.map((t) => t.id));
               for (const row of stored.rows())
                 if (row.status === "followed" && !present.has(threadId(row.thread_id)))
@@ -352,8 +367,19 @@ export function environmentLoop(
             } else if (item.kind === "thread-removed") {
               await remove(item.threadId, item.sequence);
               stored.atomic(() => stored.shell(item.sequence));
-            } else if (item.kind === "project-upserted" || item.kind === "project-removed")
+            } else if (item.kind === "project-upserted" || item.kind === "project-removed") {
+              if (projects && item.sequence > projectSequence) {
+                projectSequence = item.sequence;
+                if (item.kind === "project-upserted") {
+                  const { id, title, workspaceRoot } = item.project;
+                  projects = [
+                    ...projects.filter((project) => project.id !== id),
+                    { id, title, workspaceRoot },
+                  ];
+                } else projects = projects.filter((project) => project.id !== item.projectId);
+              }
               stored.atomic(() => stored.shell(item.sequence));
+            }
             count();
           }
         })();
@@ -381,5 +407,5 @@ export function environmentLoop(
     }
     status.state = "stopped";
   };
-  return { status, done: run() };
+  return { status, done: run(), projects: () => projects };
 }

@@ -904,3 +904,310 @@ small {
 .blueprint-source .cm-changedLineGutter {
   border-left: 3px solid var(--warning);
 }
+/* Projects and Task fields: operator-console */
+.projects-screen {
+  display: grid;
+  gap: 20px;
+}
+.projects-heading,
+.project-page-heading,
+.projects-actions,
+.project-card-heading,
+.field-group-heading,
+.plan-group-heading,
+.projects-count {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.projects-heading,
+.project-page-heading,
+.project-card-heading,
+.field-group-heading {
+  justify-content: space-between;
+}
+.projects-heading h2,
+.project-card-heading h3,
+.field-group-heading p {
+  margin: 0;
+}
+.projects-count {
+  justify-content: flex-end;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.projects-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.projects-table th {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  height: 38px;
+}
+.projects-table th,
+.projects-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 12px;
+  vertical-align: middle;
+}
+.projects-table tbody tr:hover,
+.projects-table tbody tr.selected {
+  background: var(--accent);
+}
+.projects-table small,
+.plan-row small,
+.binding-project-choices small {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.projects-table .numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.projects-section {
+  margin-top: 16px;
+}
+.projects-empty {
+  padding: 48px 20px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+.configuration-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.configuration-badge.success {
+  color: var(--success-foreground);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  border-color: color-mix(in srgb, var(--success) 25%, transparent);
+}
+.configuration-badge.warning {
+  color: var(--warning-foreground);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border-color: color-mix(in srgb, var(--warning) 25%, transparent);
+}
+.configuration-badge.info {
+  color: var(--info-foreground);
+  background: color-mix(in srgb, var(--info) 10%, transparent);
+  border-color: color-mix(in srgb, var(--info) 25%, transparent);
+}
+.project-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.project-card > p {
+  margin: 16px;
+}
+.project-card-heading {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.project-switch,
+.binding-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+input[type="checkbox"] {
+  height: 16px;
+  width: 16px;
+  accent-color: var(--primary);
+}
+.plan-group-heading {
+  padding: 12px 16px;
+  background: var(--sidebar);
+  font-size: 12px;
+}
+.plan-group-heading > :last-child {
+  margin-left: auto;
+}
+.plan-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.plan-row .mono {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.plan-row.kept,
+.task-fields-visual.dimmed {
+  opacity: 0.5;
+}
+.binding-form,
+.field-panel fieldset {
+  display: grid;
+  gap: 12px;
+  border: 0;
+  padding: 0;
+  margin: 16px 0;
+}
+.binding-form label,
+.field-panel label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+.binding-form .binding-check,
+.binding-project-choices label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.binding-project-choices {
+  display: grid;
+  gap: 12px;
+}
+select {
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  max-width: 100%;
+}
+select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.field-error {
+  border-color: var(--error);
+}
+.task-fields-heading {
+  height: auto;
+  min-height: 70px;
+  padding: 0 0 16px;
+}
+.task-fields-heading h2,
+.task-fields-heading p {
+  margin: 0;
+}
+.task-fields-heading p {
+  margin-top: 6px;
+}
+.task-fields-version {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 12px 0;
+  font-size: 12px;
+}
+.task-fields-visual {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  min-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+.field-group-heading {
+  padding: 10px 12px;
+  background: var(--sidebar);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.field-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+.field-panel {
+  width: auto;
+  border-left: 1px solid var(--border);
+  padding: 16px;
+  background: var(--sidebar);
+}
+.field-panel h3,
+.field-panel h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.field-panel fieldset {
+  margin: 0;
+}
+.field-panel p {
+  font-size: 12px;
+  margin: 0;
+}
+.field-options {
+  display: grid;
+  gap: 10px;
+}
+.field-options > div {
+  display: flex;
+  gap: 4px;
+  align-items: flex-end;
+}
+.field-options label {
+  flex: 1;
+  min-width: 0;
+}
+.field-options input {
+  width: 100%;
+}
+.field-github {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 4px;
+}
+.field-segment {
+  display: flex;
+  gap: 6px;
+}
+.task-fields-yaml {
+  height: 480px;
+  min-height: 300px;
+}
+.task-fields-yaml .blueprint-source {
+  height: 100%;
+}
+.impact-table {
+  margin-top: 16px;
+  font-size: 12px;
+}
+@media (max-width: 1000px) {
+  .task-fields-visual {
+    grid-template-columns: 1fr;
+  }
+  .field-panel {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  .project-page-heading,
+  .project-card-heading {
+    flex-wrap: wrap;
+  }
+}
+.task-fields-editor .blueprint-tabs {
+  display: flex;
+}

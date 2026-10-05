@@ -43,3 +43,13 @@ test("save identity survives reload, changes clear it, and pending saves settle 
     text: "second",
   });
 });
+test("declaration drafts use an independent prefix with unchanged blueprint defaults", () => {
+  const s = storage();
+  writeDraft(s, "sample", base);
+  const changed = changeDraft(base, "third");
+  writeDraft(s, "sample", changed, "manifold.declaration-draft.");
+  expect(readDraft(s, "sample")).toEqual(base);
+  expect(readDraft(s, "sample", "manifold.declaration-draft.")).toEqual(changed);
+  writeDraft(s, "sample", undefined, "manifold.declaration-draft.");
+  expect(readDraft(s, "sample")).toEqual(base);
+});

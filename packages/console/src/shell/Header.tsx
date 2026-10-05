@@ -53,6 +53,12 @@ export function Header({ toggleSidebar }: { toggleSidebar: () => void }) {
             <span className="mono">{blueprintPath}</span>
           </>
         ) : null}
+        {params.binding ? (
+          <>
+            <ChevronRight size={14} />
+            <span className="mono">{params.binding}</span>
+          </>
+        ) : null}
         {tab ? (
           <>
             <ChevronRight size={14} />

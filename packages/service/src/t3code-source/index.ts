@@ -7,6 +7,7 @@ export { threadTopic } from "./events.ts";
 export type {
   T3CodeSourceOptions,
   T3CodeSource,
+  T3CodeProjectView,
   ThreadView,
   EnvironmentStatus,
   EnvironmentsConfiguration,

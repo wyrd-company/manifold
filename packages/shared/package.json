@@ -37,6 +37,10 @@
     "./blueprints-api": {
       "types": "./dist/blueprints-api.d.ts",
       "import": "./dist/blueprints-api.js"
+    },
+    "./declarations-api": {
+      "types": "./dist/declarations-api.d.ts",
+      "import": "./dist/declarations-api.js"
     }
   },
   "scripts": {
@@ -62,7 +66,8 @@
     "implements": [
       "actors-api",
       "operator-console",
-      "blueprints-api"
+      "blueprints-api",
+      "declarations-api"
     ]
   }
 }

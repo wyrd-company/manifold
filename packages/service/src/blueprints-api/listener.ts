@@ -7,14 +7,8 @@ import { blueprintsApiPath } from "@wyrd-company/manifold-shared/blueprints-api"
 import type { HttpHost } from "../http-host/index.ts";
 import type { BlueprintsApiOptions } from "./types.ts";
 import { catalog, sourceText, lintText } from "./catalog.ts";
-import {
-  validPath,
-  saveRequest,
-  sameSite,
-  textRequest,
-  lintRequest,
-  jsonContent,
-} from "./request-checks.ts";
+import { validPath, saveRequest, textRequest, lintRequest } from "./request-checks.ts";
+import { sameSite, jsonContent } from "../http-host/request-checks.ts";
 import { saveAnswer, invalidAnswer, failureAnswer } from "./answers.ts";
 export function mountBlueprintsApi(host: HttpHost, options: BlueprintsApiOptions) {
   host.mount(blueprintsApiPath, (request, response) => {

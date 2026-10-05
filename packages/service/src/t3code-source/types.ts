@@ -50,7 +50,14 @@ export interface ThreadView {
   readonly turn?: "running" | "completed" | "interrupted" | "error";
   readonly archived: boolean;
 }
+export interface T3CodeProjectView {
+  readonly id: string;
+  readonly title: string;
+  readonly workspaceRoot: string;
+  readonly activeThreads: number;
+}
 export interface T3CodeSource {
+  projects(environment: string): readonly T3CodeProjectView[] | undefined;
   thread(environment: string, threadId: string): ThreadView | undefined;
   environmentId(environment: string, signal?: AbortSignal): Promise<string>;
   status(): readonly EnvironmentStatus[];

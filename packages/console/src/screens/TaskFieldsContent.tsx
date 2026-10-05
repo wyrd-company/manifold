@@ -2,8 +2,16 @@
 // relationships:
 //   implements: operator-console
 // ---
-import { navigation } from "../shell/navigation.ts";
-import { EmptyState } from "./EmptyContent.tsx";
+import { lazy, Suspense } from "react";
+const TaskFieldsEditor = lazy(() =>
+  import("./task-fields/TaskFieldsEditor.tsx").then((module) => ({
+    default: module.TaskFieldsEditor,
+  })),
+);
 export function TaskFieldsContent() {
-  return <EmptyState icon={navigation.find((item) => item.label === "Settings")!.icon} />;
+  return (
+    <Suspense fallback={<p role="status">Loading task fields…</p>}>
+      <TaskFieldsEditor />
+    </Suspense>
+  );
 }

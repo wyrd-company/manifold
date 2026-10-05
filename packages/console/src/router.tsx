@@ -82,7 +82,6 @@ settings.addChildren([
     path: "task-fields",
     component: () => (
       <>
-        <h2>Task fields</h2>
         <TaskFieldsContent />
       </>
     ),
@@ -103,6 +102,16 @@ export const router = createRouter({
   routeTree: root.addChildren([
     ...routes,
     blueprintEditorRoute,
+    createRoute({
+      getParentRoute: () => root,
+      path: "/projects/$binding",
+      component: () => (
+        <>
+          <PageTitle title="GitHub Projects" description="Project configuration" />
+          <ProjectsContent />
+        </>
+      ),
+    }),
     createRoute({
       getParentRoute: () => root,
       path: "/board/task/$actorId",

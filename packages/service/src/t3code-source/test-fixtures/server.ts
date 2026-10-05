@@ -44,6 +44,7 @@ export async function fakeServer() {
     deliverThreadItems?: () => boolean;
   } = {};
   const threads = new Map<string, ReturnType<typeof fixtureThread>>();
+  const projects = new Map<string, Record<string, unknown>>();
   const log: unknown[] = [];
   const subscriptions = new Map<
     WebSocket,
@@ -62,7 +63,7 @@ export async function fakeServer() {
   function shell() {
     return {
       snapshotSequence: sequence,
-      projects: [],
+      projects: [...projects.values()],
       threads: [...threads.values()].filter((t) => !t.archivedAt && !t.deletedAt).map(shellThread),
       updatedAt: at,
     };
@@ -134,7 +135,7 @@ export async function fakeServer() {
       response.end(
         JSON.stringify({
           snapshotSequence: sequence,
-          projects: [],
+          projects: [...projects.values()],
           threads: [...threads.values()],
           updatedAt: at,
         }),
@@ -330,6 +331,23 @@ export async function fakeServer() {
   return {
     url: `http://127.0.0.1:${address.port}`,
     threads,
+    projects,
+    project(project: Record<string, unknown>) {
+      projects.set(String(project["id"]), project);
+      sequence++;
+      for (const [socket, subs] of subscriptions)
+        for (const [id, sub] of subs)
+          if (sub.tag === "orchestration.subscribeShell")
+            chunk(socket, id, [{ kind: "project-upserted", sequence, project }]);
+    },
+    removeProject(projectId: string) {
+      projects.delete(projectId);
+      sequence++;
+      for (const [socket, subs] of subscriptions)
+        for (const [id, sub] of subs)
+          if (sub.tag === "orchestration.subscribeShell")
+            chunk(socket, id, [{ kind: "project-removed", sequence, projectId }]);
+    },
     requests,
     log,
     acknowledgements: () => acknowledgements,

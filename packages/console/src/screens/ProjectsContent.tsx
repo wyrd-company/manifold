@@ -2,8 +2,10 @@
 // relationships:
 //   implements: operator-console
 // ---
-import { navigation } from "../shell/navigation.ts";
-import { EmptyState } from "./EmptyContent.tsx";
+import { useParams } from "@tanstack/react-router";
+import { ProjectsList } from "./projects/ProjectsList.tsx";
+import { ProjectPage } from "./projects/ProjectPage.tsx";
 export function ProjectsContent() {
-  return <EmptyState icon={navigation.find((item) => item.label === "GitHub Projects")!.icon} />;
+  const { binding } = useParams({ strict: false });
+  return binding ? <ProjectPage key={binding} binding={binding} /> : <ProjectsList />;
 }

@@ -65,6 +65,18 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
     };
   });
   const source: T3CodeSource = {
+    projects(name) {
+      const environment = environments.find((entry) => entry.status.environment === name);
+      const projects = environment?.projects();
+      if (!projects) return undefined;
+      const rows = persistence(options.store, name).rows();
+      return projects.map((project) => ({
+        ...project,
+        activeThreads: rows.filter(
+          (row) => row.project_id === project.id && row.status === "followed",
+        ).length,
+      }));
+    },
     thread(name, threadId) {
       const configuration = options.environments[name];
       if (!configuration) return undefined;

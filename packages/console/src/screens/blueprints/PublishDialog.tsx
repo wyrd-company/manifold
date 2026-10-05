@@ -2,9 +2,14 @@
 // relationships:
 //   implements: operator-console
 // ---
+import type { ReactNode } from "react";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../../ui/dialog.tsx";
 import { Button } from "../../ui/button.tsx";
 export function PublishDialog({
+  title = "Publish blueprint",
+  width = 480,
+  children,
+  publishDisabled = false,
   open,
   path,
   added,
@@ -16,6 +21,10 @@ export function PublishDialog({
   onClose,
   onPublish,
 }: {
+  title?: string;
+  width?: number;
+  children?: ReactNode;
+  publishDisabled?: boolean;
   open: boolean;
   path: string;
   added: boolean;
@@ -34,13 +43,16 @@ export function PublishDialog({
         if (!value && !busy) onClose();
       }}
     >
-      <DialogPopup style={{ width: 480 }} showCloseButton={!busy}>
-        <DialogTitle>Publish blueprint</DialogTitle>
+      <DialogPopup style={{ width }} showCloseButton={!busy}>
+        <DialogTitle>{title}</DialogTitle>
         <DialogDescription>Commit and push this file to the process repository.</DialogDescription>
         <p className="mono">
           {added ? "A" : "M"} {path}
         </p>
-        {added ? <p className="muted">This file replaces the bundled blueprint.</p> : null}
+        {added && title === "Publish blueprint" ? (
+          <p className="muted">This file replaces the bundled blueprint.</p>
+        ) : null}
+        {children}
         <label className="blueprint-message">
           Commit message
           <input
@@ -61,7 +73,7 @@ export function PublishDialog({
           <Button variant="outline" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={busy || !message.trim()} onClick={onPublish}>
+          <Button disabled={busy || publishDisabled || !message.trim()} onClick={onPublish}>
             {busy ? "Saving…" : error ? "Try again" : "Commit and push"}
           </Button>
         </div>

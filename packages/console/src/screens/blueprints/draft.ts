@@ -11,9 +11,13 @@ export interface BlueprintDraft {
   saved?: string;
 }
 type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-const key = (path: string) => `manifold.blueprint-draft.${path}`;
-export function readDraft(storage: DraftStorage, path: string): BlueprintDraft | undefined {
-  const value = storage.getItem(key(path));
+const key = (path: string, prefix: string) => `${prefix}${path}`;
+export function readDraft(
+  storage: DraftStorage,
+  path: string,
+  prefix = "manifold.blueprint-draft.",
+): BlueprintDraft | undefined {
+  const value = storage.getItem(key(path, prefix));
   if (value === null) return;
   try {
     const draft: unknown = JSON.parse(value);
@@ -34,11 +38,17 @@ export function readDraft(storage: DraftStorage, path: string): BlueprintDraft |
   } catch {
     /* A malformed draft cannot be recovered. */
   }
-  storage.removeItem(key(path));
+  storage.removeItem(key(path, prefix));
 }
-export function writeDraft(storage: DraftStorage, path: string, draft: BlueprintDraft | undefined) {
-  if (!draft || (draft.text === draft.baseText && !draft.saved)) storage.removeItem(key(path));
-  else storage.setItem(key(path), JSON.stringify(draft));
+export function writeDraft(
+  storage: DraftStorage,
+  path: string,
+  draft: BlueprintDraft | undefined,
+  prefix = "manifold.blueprint-draft.",
+) {
+  if (!draft || (draft.text === draft.baseText && !draft.saved))
+    storage.removeItem(key(path, prefix));
+  else storage.setItem(key(path, prefix), JSON.stringify(draft));
 }
 export function changeDraft(draft: BlueprintDraft, text: string): BlueprintDraft {
   return { base: draft.base, baseText: draft.baseText, text };

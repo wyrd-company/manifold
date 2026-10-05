@@ -4,13 +4,19 @@
 // ---
 import { isMap, isSeq, isScalar, isNode, LineCounter, parseDocument } from "yaml";
 import type { Node } from "yaml";
-import type { BlueprintFinding } from "./blueprint-lint.ts";
-import type { ApiFinding, FindingRange } from "./blueprints-api.ts";
 
-export function findingRanges(
-  text: string,
-  findings: readonly BlueprintFinding[],
-): readonly ApiFinding[] {
+import type { FindingRange } from "./blueprints-api.ts";
+
+export function findingRanges<
+  T extends {
+    kind: string;
+    location: string;
+    message: string;
+    path?: string;
+    line?: number;
+    column?: number;
+  },
+>(text: string, findings: readonly T[]): readonly (Omit<T, "path"> & { range: FindingRange })[] {
   const lines = new LineCounter();
   const document = parseDocument(text, {
     version: "1.2",
