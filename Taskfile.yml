@@ -24,7 +24,9 @@ tasks:
 
   build:targets:
     desc: Compile the host CLI for Linux x64/arm64, macOS arm64, and Windows x64
-    cmds: [pnpm --filter @wyrd-company/manifold-host-cli run build:targets]
+    cmds:
+      - pnpm --filter @wyrd-company/manifold-shared run build
+      - pnpm --filter @wyrd-company/manifold-host-cli run build:targets
 
   format:
     desc: Format every file
