@@ -129,7 +129,11 @@ test("compiled stdio MCP forwards each call once and handles service responses a
   const session = connect(`http://127.0.0.1:${address.port}`);
   try {
     await session.client.connect(session.transport);
-    expect((await session.client.listTools()).tools).toEqual(agentToolDefinitions);
+    const listed = (await session.client.listTools()).tools;
+    expect(listed).toEqual(agentToolDefinitions);
+    const escalateSchema = listed.find((tool) => tool.name === "escalate")!.inputSchema;
+    expect(escalateSchema.required).not.toContain("title");
+    expect(escalateSchema.properties?.["title"]).not.toHaveProperty("default");
     const accepted = await session.client.callTool({
       name: "handoff",
       arguments: { handoff: { outcome: "done" }, thread: "thread-one" },
@@ -168,6 +172,11 @@ test("compiled stdio MCP forwards each call once and handles service responses a
         arguments: { question: "Where should it go?", freeText: true },
       }),
     ).toMatchObject({ isError: false, structuredContent: { status: "raised", replay: true } });
+    await session.client.callTool({
+      name: "escalate",
+      arguments: { question: "Where should it go?", title: "Destination", freeText: true },
+    });
+    expect(requests[3]).toMatchObject({ tool: "escalate", arguments: { title: "Destination" } });
     mode = "malformed";
     expect(
       await session.client.callTool({ name: "handoff", arguments: { handoff: null } }),
@@ -188,7 +197,7 @@ test("compiled stdio MCP forwards each call once and handles service responses a
     expect(
       await session.client.callTool({ name: "handoff", arguments: { handoff: null } }),
     ).toMatchObject({ isError: true, structuredContent: { code: "service-unreachable" } });
-    expect(requests).toHaveLength(5);
+    expect(requests).toHaveLength(6);
     const ajv = new Ajv2020({ strict: false });
     for (const schema of serviceConfigurationSchemas) ajv.addSchema(schema);
     ajv.addSchema(escalationContractSchema);

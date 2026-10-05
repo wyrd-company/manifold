@@ -3,7 +3,8 @@
 //   implements: agent-tools
 // ---
 import type { EscalateInput } from "../escalations/index.ts";
-import { agentThreadTopic, eventId } from "./calls.ts";
+import { identityOf } from "../actor-host/identity.ts";
+import { agentThreadTopic, eventId, questionTitle } from "./calls.ts";
 import { refuse } from "./types.ts";
 import type { AgentToolsOptions, Identity } from "./types.ts";
 export function escalate(options: AgentToolsOptions, identity: Identity, input: EscalateInput) {
@@ -19,6 +20,9 @@ export function escalate(options: AgentToolsOptions, identity: Identity, input: 
     if (existing) return { escalationId: String(existing["escalation_id"]), replay: true };
     const actorId = options.actors().followers(identity.environment, identity.threadId)[0];
     if (!actorId) return refuse("not-followed", "No active task follows this thread.");
+    const snapshot = options.store.loadSnapshot(actorId);
+    const issueId = snapshot ? identityOf(snapshot.snapshot).issue : undefined;
+    const context = issueId ? options.trackedIssue(issueId) : undefined;
     const question = options.escalations().raise({
       kind: "agent-question",
       subject: {
@@ -28,7 +32,7 @@ export function escalate(options: AgentToolsOptions, identity: Identity, input: 
         turnId: identity.turnId,
       },
       question: input.question,
-      title: input.title ?? "Question",
+      title: questionTitle(context, input.title),
       choices: input.choices ?? [],
       freeText: input.freeText ?? false,
     });

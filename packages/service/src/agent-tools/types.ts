@@ -11,6 +11,11 @@ import type { AgentThreads } from "../agent-threads/index.ts";
 import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
 import type { AgentToolsConfiguration } from "../service-configuration/index.ts";
 import type { MessagePlacement } from "../t3code-source/index.ts";
+export interface AgentQuestionContext {
+  readonly repository: string;
+  readonly number: number;
+  readonly title?: string;
+}
 export interface AgentToolsOptions {
   readonly store: Store;
   readonly configuration: AgentToolsConfiguration;
@@ -23,6 +28,7 @@ export interface AgentToolsOptions {
   >;
   readonly threads: Pick<AgentThreads, "readThread" | "runningThreads" | "startTurn">;
   readonly sourceReady: (environment: string) => boolean;
+  readonly trackedIssue: (nodeId: string) => AgentQuestionContext | undefined;
   readonly environmentId: (environment: string, signal?: AbortSignal) => Promise<string>;
   readonly probe?: (committed: CommittedCall) => void;
   readonly clock?: { now(): number; sleep(ms: number, signal?: AbortSignal): Promise<void> };

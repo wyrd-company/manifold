@@ -21,12 +21,13 @@ export interface RecoveryConfiguration {
   path: string;
   token: string;
   environments: EnvironmentsConfiguration;
+  issueTitle?: string;
   identifyTimeoutMs?: number;
   held?: "different" | "unavailable" | "available";
   soleHeld?: boolean;
   noMessages?: boolean;
   ignoreMessage?: boolean;
-  crash?: "handoff" | "answer-committed" | "answer-sent" | "message";
+  crash?: "escalate" | "handoff" | "answer-committed" | "answer-sent" | "message";
 }
 export async function recoveryService(config: RecoveryConfiguration) {
   const store = openStore({ path: config.path });
@@ -127,6 +128,10 @@ export async function recoveryService(config: RecoveryConfiguration) {
     revisionAt: async () => revision,
   });
   const tools = openAgentTools({
+    trackedIssue: (nodeId) =>
+      nodeId === "shipment-recipient" && config.issueTitle !== undefined
+        ? { repository: "example-org/widgets", number: 7, title: config.issueTitle }
+        : undefined,
     store,
     configuration: { identifyTimeoutMs: config.identifyTimeoutMs ?? 100 },
     environments: new Set(["station"]),
@@ -146,7 +151,7 @@ export async function recoveryService(config: RecoveryConfiguration) {
     environmentId: (name, signal) => source.environmentId(name, signal),
     escalations: () => escalations,
     probe(call) {
-      if (config.crash === "handoff" && call.tool === "handoff")
+      if (config.crash === call.tool)
         process.kill(process.pid, "SIGKILL");
     },
     log: () => {},

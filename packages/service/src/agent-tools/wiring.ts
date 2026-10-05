@@ -10,6 +10,7 @@ import type { AgentTools } from "./index.ts";
 import { router as routerPart } from "../router/wiring.ts";
 import { actorHost as actorHostPart } from "../actor-host/wiring.ts";
 import { escalations as escalationsPart } from "../escalations/wiring.ts";
+import { githubSource } from "../github-source/wiring.ts";
 import { t3codeSource } from "../t3code-source/wiring.ts";
 export const agentTools = wiringPart({
   name: "agent-tools",
@@ -24,6 +25,7 @@ export const agentTools = wiringPart({
     const actorHost = context.later(actorHostPart);
     const escalations = context.later(escalationsPart);
     const source = context.later(t3codeSource);
+    const github = context.later(githubSource);
     const agentTools = openAgentTools({
       store,
       configuration: configuration.agentTools,
@@ -32,6 +34,7 @@ export const agentTools = wiringPart({
       actors: () => actorHost.get().actorHost,
       escalations: () => escalations.get().escalations,
       threads: agentThreads,
+      trackedIssue: (nodeId) => github.get().github.trackedIssue(nodeId)?.issue,
       sourceReady: (environment) =>
         source
           .current()

@@ -46,10 +46,11 @@ export const agentToolsSchema = {
           maxLength: 8000,
         },
         title: {
+          description:
+            "A short name for the question. The service names the task beside it, so the title need not.",
           type: "string",
           minLength: 1,
           maxLength: 120,
-          default: "Question",
         },
         choices: {
           $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/choices",
@@ -297,6 +298,7 @@ export const agentToolsSchema = {
           $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/escalation-id",
         },
         title: {
+          description: "The escalation's title, which names the task.",
           type: "string",
         },
         question: {

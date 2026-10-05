@@ -4,4 +4,9 @@
 // ---
 export { openAgentTools } from "./tools.ts";
 export { agentThreadTopic } from "./calls.ts";
-export type { AgentTools, AgentToolsOptions, CommittedCall } from "./types.ts";
+export type {
+  AgentTools,
+  AgentToolsOptions,
+  AgentQuestionContext,
+  CommittedCall,
+} from "./types.ts";

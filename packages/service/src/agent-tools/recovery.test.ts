@@ -545,3 +545,33 @@ test.each([
     ).toBe(0);
   },
 );
+test("SIGKILL after question commit preserves its task title on replay after a rename", async () => {
+  const f = await fixture(true);
+  const crash = worker({ ...f.config, issueTitle: "Repaint the garden shed", crash: "escalate" });
+  await crash.ready();
+  const exited = once(crash.child, "exit");
+  crash.child.send({
+    kind: "call",
+    tool: "escalate",
+    args: {
+      thread: "conversation",
+      question: "Which colour?",
+      title: "Paint colour",
+      freeText: true,
+    },
+  });
+  expect(await exited, crash.error()).toEqual([null, "SIGKILL"]);
+  const resumed = await recoveryService({ ...f.config, issueTitle: "Renamed issue" });
+  cleanup.push(() => resumed.stop());
+  const result = await resumed.call("escalate", {
+    thread: "conversation",
+    question: "Again?",
+    title: "Changed title",
+    freeText: true,
+  });
+  expect(result).toMatchObject({ status: "raised", replay: true });
+  const questions = resumed.escalations.list({});
+  expect(questions).toHaveLength(1);
+  expect(questions[0]!.title).toBe("example-org/widgets#7: Paint colour — Repaint the garden shed");
+  expect(questions[0]!.id).toBe(result["escalationId"]);
+});

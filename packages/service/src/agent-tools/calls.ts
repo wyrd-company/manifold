@@ -5,7 +5,7 @@
 import { derivedId } from "../agent-threads/ids.ts";
 import type { Escalation } from "../escalations/index.ts";
 import type { ThreadMessage } from "@wyrd-company/manifold-shared";
-import type { Identity } from "./types.ts";
+import type { AgentQuestionContext, Identity } from "./types.ts";
 export const encoded = (id: string) => encodeURIComponent(id).replaceAll(".", "%2E");
 export const agentThreadTopic = (environment: string, threadId: string) =>
   `agent.environment.${environment}.thread.${encoded(threadId)}`;
@@ -31,7 +31,7 @@ export function eventId(identity: Identity, tool: string) {
 export const answerMessageId = (id: string) => derivedId("agent-tools/answer-message", id);
 export function answerText(escalation: Escalation) {
   const answer = escalation.answer!.value;
-  const prefix = `Answer to your question "${escalation.title}":`;
+  const prefix = "Your question was answered:";
   return "text" in answer
     ? `${prefix}\n\n${answer.text}\n\nContinue your work with this answer.`
     : `${prefix} ${escalation.choices.find((c) => c.id === answer.choice)!.label} (choice \`${answer.choice}\`).\n\nContinue your work with this answer.`;
@@ -66,4 +66,13 @@ export function noticeText(count: number | bigint) {
   return count
     ? `Manifold: ${count} new ${count === 1 || count === 1n ? "message" : "messages"} for this thread. Read them with the manifold get-messages tool when your current step is done. Do not stop or end your turn for them.`
     : null;
+}
+
+export function questionTitle(context: AgentQuestionContext | undefined, title?: string) {
+  const task = context ? `${context.repository}#${context.number}` : undefined;
+  const subject =
+    title && context?.title ? `${title} — ${context.title}` : (title ?? context?.title);
+  const text = task ? (subject ? `${task}: ${subject}` : task) : (subject ?? "Question");
+  const points = [...text];
+  return points.length > 120 ? points.slice(0, 119).join("") + "…" : text;
 }

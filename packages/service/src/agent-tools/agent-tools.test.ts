@@ -7,7 +7,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { openStore } from "../store/index.ts";
 import { startRouter } from "../router/index.ts";
 import { openEscalations } from "../escalations/index.ts";
-import { serve, eventually } from "../escalations/test-support.ts";
+import { serve, eventually, readRequest } from "../escalations/test-support.ts";
 import {
   isAgentToolCallResponse,
   agentToolsSchema,
@@ -24,6 +24,16 @@ afterEach(async () => {
 async function fixture(
   options: { declared?: boolean; rejected?: boolean; available?: boolean } = {},
 ) {
+  const notifications: { title: string; click?: string }[] = [];
+  const ntfy = await serve((req, res) => {
+    void readRequest(req).then((body) => {
+      notifications.push(JSON.parse(body) as { title: string; click?: string });
+      res.end("{}");
+    });
+  });
+  closing.push(ntfy.close);
+  let issue: { repository: string; number: number; title?: string } | undefined;
+  const reads: string[] = [];
   const store = openStore({ path: ":memory:" });
   let schema: "declared" | "unavailable" | "undeclared" = "declared";
   const validate = new Ajv2020({ allErrors: true }).compile({
@@ -122,6 +132,10 @@ async function fixture(
       },
     },
     sourceReady: () => ready,
+    trackedIssue: (nodeId: string) => {
+      reads.push(nodeId);
+      return issue;
+    },
     environmentId: async () => {
       if (options.available === false) throw new Error("Unavailable");
       return "server-a";
@@ -131,7 +145,14 @@ async function fixture(
   });
   const escalations = openEscalations({
     store,
-    configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
+    configuration: {
+      publicUrl: "http://localhost",
+      destinations: {
+        default: { server: ntfy.url, topic: "parcel-questions", posture: "open", priority: 4 },
+      },
+      requestTimeoutMs: 30000,
+      retryIntervalMs: 60000,
+    },
     tokenFile: () => "",
     handlers: {
       "held-actor": () => {},
@@ -141,7 +162,10 @@ async function fixture(
   });
   escalations.start();
   tools.start();
-  const http = await serve(tools.requestListener);
+  const http = await serve((req, res) => {
+    if (req.url?.startsWith("/escalations/")) escalations.requestListener(req, res);
+    else tools.requestListener(req, res);
+  });
   closing.push(async () => {
     await http.close();
     await tools.stop();
@@ -159,6 +183,20 @@ async function fixture(
     return { status: response.status, body };
   };
   return {
+    notifications,
+    reads,
+    issue(value: typeof issue, nodeId: string | undefined = "I_PARCEL") {
+      issue = value;
+      store.saveSnapshot({
+        actorId: "parcel",
+        machine: "sort",
+        snapshot: {
+          status: "active",
+          value: "waiting",
+          context: { manifold: { issue: nodeId } },
+        },
+      });
+    },
     url: http.url,
     reads: () => reads,
     ready: (value: boolean) => {
@@ -542,3 +580,84 @@ test("a disconnected notice request keeps mail unmarked after its read completes
   });
   expect(await response.json()).toEqual({ notice: expect.stringContaining("1 new message") });
 });
+test.each([undefined, "Paint colour"])(
+  "question title %s names the tracked task on every channel and survives replay",
+  async (title) => {
+    const f = await fixture();
+    f.issue({ repository: "example-org/widgets", number: 7, title: "Repaint the garden shed" });
+    const args = {
+      question: "Which colour?",
+      choices: [{ id: "blue", label: "Blue" }],
+      freeText: true,
+      ...(title ? { title } : {}),
+    };
+    const first = await f.call("escalate", args);
+    expect(first.status).toBe(200);
+    const id = (first.body as { escalationId: string }).escalationId;
+    const expected = title
+      ? "example-org/widgets#7: Paint colour — Repaint the garden shed"
+      : "example-org/widgets#7: Repaint the garden shed";
+    expect(f.escalations.get(id)?.title).toBe(expected);
+    expect(f.store.pendingInbox("parcel")[0]!.payload).toMatchObject({
+      type: "agent.escalated",
+      title: expected,
+    });
+    await eventually(() => expect(f.notifications).toHaveLength(1));
+    expect(f.notifications[0]!.title).toBe(expected);
+    const click = new URL(f.notifications[0]!.click!);
+    const page = await fetch(f.url + click.pathname + click.search);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain(expected);
+    f.issue({ repository: "example-org/widgets", number: 7, title: "Changed issue title" });
+    expect((await f.call("escalate", { ...args, title: "Changed question" })).body).toMatchObject({
+      escalationId: id,
+      replay: true,
+    });
+    expect(f.reads).toEqual(["I_PARCEL"]);
+    expect(f.escalations.get(id)?.title).toBe(expected);
+    f.escalations.answer(
+      id,
+      title ? { choice: "blue" } : { text: "Use blue.\nKeep the trim white." },
+      "api",
+    );
+    await eventually(() => expect(f.sent).toHaveLength(1));
+    expect(f.sent[0]!.text).toBe(
+      title
+        ? "Your question was answered: Blue (choice `blue`).\n\nContinue your work with this answer."
+        : "Your question was answered:\n\nUse blue.\nKeep the trim white.\n\nContinue your work with this answer.",
+    );
+  },
+);
+
+test.each(["missing identity", "untracked issue"])(
+  "question with %s keeps the fallback",
+  async (kind) => {
+    const f = await fixture();
+    if (kind === "untracked issue") f.issue(undefined);
+    const result = await f.call("escalate", { question: "Which colour?", freeText: true });
+    expect(f.escalations.get((result.body as { escalationId: string }).escalationId)?.title).toBe(
+      "Question",
+    );
+    expect(f.reads).toEqual(kind === "untracked issue" ? ["I_PARCEL"] : []);
+  },
+);
+
+test.each(["held-actor", "stranded-token", "intake-failed", "comparator-failed"] as const)(
+  "service escalation %s keeps its supplied title",
+  async (kind) => {
+    const f = await fixture();
+    f.issue({ repository: "example-org/widgets", number: 7, title: "Repaint the garden shed" });
+    const question = f.escalations.raise({
+      kind,
+      subject: { actorId: "parcel" },
+      title: "Delivery needs attention",
+      question: "Which shelf?",
+      choices: [],
+      freeText: true,
+    });
+    expect(question.title).toBe("Delivery needs attention");
+    await eventually(() => expect(f.notifications).toHaveLength(1));
+    expect(f.notifications[0]!.title).toBe("Delivery needs attention");
+    expect(f.reads).toEqual([]);
+  },
+);
