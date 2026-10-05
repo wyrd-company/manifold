@@ -8,6 +8,17 @@ relationships:
     - escalations
   mitigates:
     - github-fakes-diverge-from-github
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  # `service-configuration` under `related-to` is the technical design of
+  # that name; the specification of the same name is referenced here.
+  references:
+    - service-configuration
+    - github-source-configuration
+    - escalations-configuration
+    - escalation-contract
+    - actors-api
+    - github-source-database-schema
 objective: >-
   Give Manifold a live GitHub test environment in the `mmenm` organization,
   so that checks and acceptance runs reach real GitHub through the Manifold
@@ -97,7 +108,7 @@ proposed-design:
     |---|---|---|
     | `live:provision` | `src/provision.ts` | Converges the GitHub resources, the hook secret, and the service configuration. `CONTENT=<directory>` takes the process repository content from another directory. |
     | `live:start` | `task build`, then `src/start.ts` | Runs the supervisor in the foreground until `live:stop`, `SIGINT`, or `SIGTERM`. `ANSWERS=1` also passes escalation answers. `OVERLAY=<file>` merges a configuration overlay. |
-    | `live:stop` | `src/stop.ts` | Sends `SIGTERM` to the supervisor and waits for it to end. |
+    | `live:stop` | `src/stop.ts` | Asks the supervisor to stop through its control socket and waits for it to end, then stops any child a dead supervisor left. |
     | `live:smoke` | `src/smoke.ts` | Runs the live smoke check against the started environment, then the secret scan. |
     | `live:teardown` | `src/teardown.ts` | Converges to no resource. Refuses while a supervisor runs. |
   settings: |-
@@ -129,11 +140,13 @@ proposed-design:
     | File | Written by | Holds |
     |---|---|---|
     | `resources.json` | provision, teardown | The id, node id, name, and number of each resource the tooling made, and the head commit it wrote to the process repository. |
-    | `hook.secret` | provision | The organization hook's secret, 32 random bytes in hex. A credential file. |
+    | `hook.secret` | provision | The organization hook's secret, 32 random bytes in hex, that the hook holds. A credential file. |
+    | `hook.secret.pending` | provision | A new secret not yet known to be on the hook. Present only between its generation and the hook update that applies it. A credential file. |
     | `service.yml` | provision, start | The service configuration. |
     | `service/` | the service | The store database, the process repository clone, and the service's log. |
     | `tunnel/` | start | The OpenSSH configuration that holds the Pinggy token, a credential file removed when the tunnel stops, and the tunnel's known hosts and log. |
-    | `run.json` | start | The supervisor's process id, the service's and the forwarder's loopback addresses, the service's process id, the tunnel URL, and whether answers pass. Removed when the supervisor ends. |
+    | `control.sock` | start | The supervisor's control socket, a Unix domain socket. Bound only while a supervisor runs. |
+    | `children.json` | start, stop, teardown | One entry for each child process the supervisor started and has not yet seen end: its role, process id, and process start time. |
     | `smoke/<run-id>.log` | smoke | The smoke check's output, as it also printed it. |
   credentials: >-
     The tooling reads each credential from its file when a step needs it,
@@ -156,11 +169,14 @@ proposed-design:
     variable passes the PAT or the Pinggy token to it.
   ownership: >-
     Each GitHub resource the tooling makes carries the marker from
-    `settings.yml`: each repository has it as a topic; the Project has it
-    in its short description; each seed issue's body ends with an HTML
-    comment holding it; and the organization hook's URL carries it as the
-    query parameter `owner-marker`. A resource is the tooling's own only
-    when it carries the marker. Provisioning finds each resource by its
+    `settings.yml` in a field of the request that creates it, so that no
+    resource exists, even for a moment, without it: each repository's
+    description is `Test fixture (<marker>)`; the Project's title is
+    `<project> (<marker>)`, since `createProjectV2` takes no description;
+    each seed issue's body ends with an HTML comment holding it; and the
+    organization hook's URL carries it as the query parameter
+    `owner-marker`. No later write adds or changes a marker. A resource is
+    the tooling's own only when it carries the marker. Provisioning finds each resource by its
     name and marker, adopts one it finds, and makes one it does not.
     When a resource has the name and no marker, provisioning stops with
     an error that names it, and never changes or adopts it. Teardown
@@ -188,43 +204,57 @@ proposed-design:
     `present`, `created`, or `updated`. A second run reports every resource
     `present` and makes no write to GitHub or to a file.
 
-    1. `hook.secret`. Kept when it exists; generated when it does not.
+    1. The hook secret. When neither `hook.secret` nor
+       `hook.secret.pending` exists, a new secret is written to
+       `hook.secret.pending`. Step 7 applies it.
     2. The test repository: private, initialized with a README, with the
-       marker topic.
+       marker in its description, all in the one create request.
     3. The seed issues `Sample item 1` to `Sample item <seedIssues>` in the
        test repository, each with the marker in its body.
-    4. The test Project, owned by the organization, titled from
-       `settings.yml`, with the marker in its short description. Its
-       lifecycle field is the built-in single-select `Status` field with
+    4. The test Project, owned by the organization, with the marker in its
+       title. Its lifecycle field is the built-in single-select `Status` field with
        the options `Todo`, `In Progress`, and `Done`; provisioning checks
        that it exists with those options and stops with an error when it
        does not.
     5. Each seed issue as an item of the Project.
     6. The test process repository: private, initialized, with the marker
-       topic. Its default branch holds the content directory's files, with
+       in its description, in one create request. Its default branch holds the content directory's files, with
        each GitHub Project binding in `bindings.yml` set to the
        organization and the test Project's number. Provisioning builds the
        tree through the Git Data API and compares its tree SHA with the
        branch head's; it commits and moves the branch only when they
        differ.
     7. The organization hook: `application/json`, SSL verification on,
-       the secret from `hook.secret`, and the events
-       `github-event-source` lists for an organization hook: `issues`,
-       `issue_dependencies`, `sub_issues`, `projects_v2_item`,
-       `projects_v2`, and `push`. A new hook is made inactive, with the URL
+       and the events `github-event-source` lists for an organization
+       hook: `issues`, `issue_dependencies`, `sub_issues`,
+       `projects_v2_item`, `projects_v2`, and `push`. A new hook is made
+       inactive, with the URL
        `https://hook.invalid/webhooks/github?owner-marker=<marker>`,
-       because no tunnel exists yet. An existing hook keeps its URL and
-       its `active` value, and gets the events set when they differ. When
-       step 1 generated the secret in this run, the hook's secret is set
-       from the file, so a lost secret file never leaves a hook whose
-       secret nothing holds.
+       because no tunnel exists yet. An existing hook keeps its URL and its
+       `active` value, and gets the events set when they differ. The
+       secret follows the rule below.
     8. `resources.json`, then `service.yml` (see Service configuration).
 
-    A run stopped after any step leaves resources that carry the marker
-    and a record that may lack them. The next run finds them by name and
-    marker and continues from the first step whose resource differs. A
-    seed issue whose creation was answered but not recorded is found by
-    title and marker, so no second copy is made.
+    The hook secret converges through `hook.secret.pending`, a secret the
+    hook may not hold yet. When the pending file exists, step 7 sends its
+    secret in the hook's create or update request, and after GitHub
+    answers it renames the pending file over `hook.secret`, which is
+    atomic. When only `hook.secret` exists, the hook holds it: the file is
+    renamed into place only after the hook took it, and a hook is made
+    only with a secret from one of the two files. A run stopped after the
+    pending file is written and before the rename leaves the pending file,
+    so the next run sends it again, whether or not the hook took it the
+    first time. A lost `hook.secret` with no pending file gives a new
+    pending secret at step 1, which step 7 sets on the existing hook.
+    `service.yml` names `hook.secret`, so the service reads only a secret
+    the hook holds.
+
+    A run stopped after any write leaves resources that carry the marker,
+    since each create request carries it, and a record that may lack them.
+    The next run finds them by name and marker and continues from the
+    first step whose resource differs. A seed issue whose creation was
+    answered but not recorded is found by title and marker, so no second
+    copy is made.
   service-configuration: |-
     Provisioning writes `service.yml`, and start rewrites it when the
     tunnel URL or the overlay changes it:
@@ -273,19 +303,25 @@ proposed-design:
     | Method | Path, the request target before `?` | Passed when | Sent to the service as |
     |---|---|---|---|
     | `POST` | exactly `/webhooks/github` | always | `/webhooks/github`, the query dropped |
+    | `GET` | matches `^/escalations/[A-Za-z0-9_-]{22}$` | `ANSWERS=1` | the same path and query, unchanged, since the query holds the answer key |
     | `POST` | matches `^/escalations/[A-Za-z0-9_-]{22}/answer$` | `ANSWERS=1` | the same path, the query dropped |
 
-    Every other request, including another method on an allowed path, a
-    path with a trailing `/`, an extra segment, a percent-encoded or dot
-    segment, `/api/` and everything under it, `/escalations` and an answer
-    page, and `/`, is answered by the forwarder with `404`, the header
-    `x-live-forwarder: refused`, and an empty body, and never reaches the
-    service. A passed request keeps its method, body, and headers, without
-    hop-by-hop headers, and the service's answer goes back unchanged. The
-    service never sends `x-live-forwarder`, so the header tells a refusal
-    from a service answer. Until the service is listening, the forwarder
-    answers a passed path with `503`. The forwarder logs each decision,
-    with the method, the path, and the outcome, to the supervisor's log.
+    The two escalation rows are the answer page that an ntfy notification
+    opens and the answer that its buttons and the page's form send; the
+    escalation's key authorizes both. Every other request, including
+    another method on an allowed path, a path with a trailing `/`, an extra
+    segment, a percent-encoded or dot segment, `/api/` and everything under
+    it, `/escalations` itself, and `/`, and both escalation rows when
+    answers do not pass, is answered by the forwarder with `404`, the
+    header `x-live-forwarder: refused`, and an empty body, and never
+    reaches the service. A passed request keeps its method, body, and
+    headers, without hop-by-hop headers, and the service's answer goes
+    back unchanged. The service never sends `x-live-forwarder`, so the
+    header tells a refusal from a service answer. Until the service is
+    listening, the forwarder answers a passed path with `503`. The
+    forwarder logs each decision, with the method, the path without its
+    query, and the outcome, to the supervisor's log, so that no answer key
+    is logged.
   tunnel: >-
     The supervisor starts OpenSSH as `ssh -F <tunnel config> -T -N live`,
     with the config holding `HostName` from `settings.yml`, `Port 443`,
@@ -293,8 +329,8 @@ proposed-design:
     `LocalForward 127.0.0.1:<free port> localhost:4300`,
     `ServerAliveInterval 30`, `ExitOnForwardFailure yes`,
     `StrictHostKeyChecking accept-new`, and `UserKnownHostsFile` in
-    `tunnel/`. The supervisor captures the child's process id at spawn and
-    signals only that process. It reads the public HTTPS URL from Pinggy's
+    `tunnel/`. The tunnel is a child process, started and stopped as
+    Children states. The supervisor reads the public HTTPS URL from Pinggy's
     web debugger at `/urls` through the local forward, and fails start when
     no HTTPS URL is read within 30 seconds. When the tunnel process ends
     while the supervisor runs, the supervisor starts it again after 5
@@ -302,10 +338,45 @@ proposed-design:
     with `ANSWERS=1`, rewrites `escalations.publicUrl` and restarts the
     service. The tunnel configuration file is removed when the tunnel
     process ends and rewritten at its next start.
+  control: >-
+    The supervisor binds `control.sock` in the state directory, which only
+    its user can reach, before it does anything else, and serves two
+    requests, each one JSON line answered by one JSON line. `status`
+    answers the environment's instance id, the tunnel URL, the service's
+    loopback address, the service's process id and start time, and whether
+    answers pass. `stop` answers `stopping`, runs the shutdown below, and
+    closes the socket when the shutdown ends. Stop, smoke, and teardown
+    reach the supervisor of this state directory only through the socket,
+    so that none of them signals a process found by its id. A socket file
+    that no supervisor answers is stale; the next start or stop removes
+    it.
+  children: >-
+    The supervisor starts each child, the tunnel and the service, through
+    a gate, so that no child runs a program unless it is recorded first.
+    It spawns `sh -c 'read -r go && exec "$0" "$@"'` with the program and
+    its arguments, and with standard input a pipe from the supervisor. It
+    then reads the child's start time, field 22 of `/proc/<pid>/stat`;
+    writes the child's role, process id, and start time to
+    `children.json` through a temporary file and a rename; and only then
+    writes `go` to the pipe and closes it. `exec` keeps the process id and
+    the start time, so the record names the program's own process. When
+    the supervisor dies before `go`, the pipe closes, `read` fails, and
+    the shell exits without running the program. When a child ends while
+    the supervisor runs, its entry is removed. Recovery stops what a dead
+    supervisor left: for each entry, when `/proc/<pid>/stat` exists and
+    holds the recorded start time, it sends `SIGTERM`, waits up to 60
+    seconds for the process to end, and sends `SIGKILL` when it has not;
+    an entry whose process is gone or holds another start time is a
+    reused process id, and is removed with no signal. Start, stop, and
+    teardown run recovery when no supervisor answers the socket. The
+    process identity check reads `/proc`, so the supervisor runs on Linux,
+    as the devcontainer does.
   start: |-
     The supervisor runs these steps, then waits:
 
-    1. Refuses when `run.json` names a process that is alive.
+    1. Binds `control.sock`. When a supervisor answers on it, start
+       refuses. When none answers, start removes the stale socket file,
+       binds it, and runs recovery.
     2. Runs the preflight, and reads `resources.json`; stops when
        provisioning has not run.
     3. Starts the forwarder.
@@ -313,33 +384,38 @@ proposed-design:
     5. Writes `service.yml` with the tunnel URL and the overlay.
     6. Starts the service as
        `node packages/service/dist/main.js <state>/service.yml` from the
-       worktree it runs in, with the environment the Credentials section
-       states, stdout and stderr to `service/service.log`, and its process
-       id captured at spawn. It reads the bound address from the service's
-       `started` log line, and fails start when the line does not appear
-       within 120 seconds.
+       worktree it runs in, through the gate, with the environment the
+       Credentials section states, and stdout and stderr to
+       `service/service.log`. It reads the bound address from the
+       service's `started` log line, and fails start when the line does
+       not appear within 120 seconds.
     7. Sets the organization hook's URL to the tunnel URL plus
        `/webhooks/github?owner-marker=<marker>` and `active` to true, each
        only when it differs. A start with the same URL changes nothing.
-    8. Writes `run.json`, and prints the tunnel URL and the loopback
+    8. Answers `status`, and prints the tunnel URL and the loopback
        address of the service.
 
-    On `SIGINT` or `SIGTERM`, the supervisor sets the hook inactive, so
-    that no delivery goes to a URL another Pinggy user may later hold, then
-    stops the service with `SIGTERM` and waits for it to end, stops the
-    tunnel and the forwarder, and removes `run.json`. A supervisor that
-    died without this leaves an active hook and a stale `run.json`; the
-    next start finds the recorded process gone, and step 7 corrects the
-    hook. A failed step stops what earlier steps started, in reverse
-    order.
+    The shutdown runs on `SIGINT`, `SIGTERM`, or a `stop` request, and
+    after a failed step, in reverse order of what started: it sets the
+    hook inactive, so that no delivery goes to a URL another Pinggy user
+    may later hold; stops the service with `SIGTERM` and waits up to 60
+    seconds for it to end, then `SIGKILL`; stops the tunnel the same way;
+    stops the forwarder; removes each stopped child's entry; and closes
+    and removes the socket. A supervisor killed at any step, including
+    before the service starts, leaves only gated children recorded in
+    `children.json`, an active or inactive hook, and a stale socket file.
+    The next start, stop, or teardown stops the recorded children through
+    recovery before it starts anything, and start's step 7 corrects the
+    hook.
   stop: >-
-    `live:stop` reads the supervisor's process id from `run.json`, checks
-    that the process is alive and that its command line runs
-    `src/start.ts`, sends it `SIGTERM`, and waits up to 60 seconds for
-    `run.json` to be removed. With no `run.json`, or a process that is gone,
-    it removes the stale file and reports the environment stopped.
+    `live:stop` sends `stop` on `control.sock` and waits up to 60 seconds
+    for the socket to close. When no supervisor answers, it removes the
+    stale socket file. In both cases it then runs recovery, and reports the
+    environment stopped. It signals no process other than the recorded
+    children whose start time matches.
   smoke: |-
-    `live:smoke` reads `run.json` and runs the steps in order. It prints
+    `live:smoke` asks the supervisor for `status` on `control.sock`, fails
+    when no supervisor answers, and runs the steps in order. It prints
     each step as `PASS` or `FAIL` with the reason, writes the same lines to
     `smoke/<run-id>.log`, runs every step even after a failure where the
     step does not need an earlier step's result, and exits non-zero on any
@@ -347,7 +423,8 @@ proposed-design:
 
     0. **Configuration.** `service.yml` holds no PAT value and names no
        PAT file, and the service process's environment, read from
-       `/proc/<service pid>/environ`, holds no PAT value.
+       `/proc/<service pid>/environ` after its start time is checked
+       against the one `status` reports, holds no PAT value.
     1. **Delivery.** It creates an issue `Sample item <run-id>` in the test
        repository and adds it to the Project. Within 60 seconds, the
        organization hook's delivery log, read with the PAT, holds a
@@ -367,10 +444,13 @@ proposed-design:
        with an unsigned body gets the service's rejection, `400`, `401`,
        or `404`, with no `x-live-forwarder`; `GET /webhooks/github`,
        `POST /webhooks/github/x`, `GET /api/actors`, `GET /escalations`,
-       `GET /escalations/<22 characters>`, and `GET /` each get the
-       forwarder's refusal; `POST /escalations/<22 characters>/answer`, with
-       a form body holding a key and a choice, gets the service's `404`, with no `x-live-forwarder`, when `run.json`
-       says answers pass, and the forwarder's refusal when it does not.
+       `GET /escalations/<22 characters>/answer`, and `GET /` each get the
+       forwarder's refusal. When the supervisor reports that answers
+       pass, `GET /escalations/<22 characters>?key=<random>` and
+       `POST /escalations/<22 characters>/answer`, with a form body holding
+       a key and a choice, each get the service's `404` for an unknown
+       escalation, with no `x-live-forwarder`; when answers do not pass,
+       each gets the forwarder's refusal.
     5. **Secret scan.** The scan below over the smoke log and the
        generated files.
 
@@ -385,20 +465,27 @@ proposed-design:
     credentials' own files; and every file `git ls-files --cached --others
     --exclude-standard` lists in the worktree. A match fails the scan with
     the file's path and the credential's name, never the value or its
-    context. A test in `task check` proves the scan with synthetic values:
-    a generated file holding one value in each form fails it, and the same
-    files without it pass.
+    context, and the scan's own output holds no value. Tests in
+    `task check` prove the scan with synthetic credential files. A
+    generated file holding one value in each form fails it, and the same
+    files without it pass. A smoke run whose step list holds one extra
+    step that prints a synthetic value through the smoke check's reporter,
+    the one path by which every step writes to standard output and to the
+    smoke log, exits non-zero; its scan names the smoke log's path and the
+    credential's name, and its scan report holds no value. The same run
+    without that step passes the scan.
   teardown: |-
-    Teardown refuses while `run.json` names a live process. It converges to
-    no resource, in this order, and reports each resource `absent` or
+    Teardown refuses while a supervisor answers on `control.sock`, and
+    otherwise runs recovery first. It converges to no resource, in this order, and reports each resource `absent` or
     `removed`. A second run reports every resource `absent`.
 
     1. The organization hook carrying the marker in its URL.
     2. The Project carrying the marker.
     3. The test repository and the test process repository carrying the
-       marker topic, which removes their issues.
-    4. The state directory's `hook.secret`, `service.yml`, `service/`,
-       `tunnel/`, and `resources.json`. The smoke logs stay.
+       marker in their description, which removes their issues.
+    4. The state directory's `hook.secret`, `hook.secret.pending`,
+       `service.yml`, `service/`, `tunnel/`, `children.json`, and
+       `resources.json`. The smoke logs stay.
 
     A resource with a test name and no marker is reported `foreign` and
     left. A run stopped after any step leaves fewer marked resources, and
@@ -411,8 +498,9 @@ proposed-design:
     tunnel URL reaches GitHub as the organization hook's URL, the tunnel
     URL plus `githubWebhookPath`, set at each start and each new tunnel
     URL. It reaches the service only as `escalations.publicUrl`, written
-    into `service.yml` when answers pass, so that ntfy buttons post to
-    `{publicUrl}/escalations/{id}/answer` through the tunnel. The README
+    into `service.yml` when answers pass, so that an ntfy notification's
+    link opens `{publicUrl}/escalations/{id}?key={key}` and its buttons
+    post to `{publicUrl}/escalations/{id}/answer` through the tunnel. The README
     states both.
   readme: >-
     `testing/live-github/README.md` states: what the environment is for;
@@ -429,19 +517,34 @@ proposed-design:
     and GraphQL calls the tooling makes, which records each call, backs
     the convergence tests: provisioning from nothing makes every resource;
     a second run reports every resource `present` and records no write;
-    for each write in a clean run, a run stopped right after it and then
-    run again ends in the clean run's state with no duplicate; a resource
+    for each write in a clean run, to GitHub or to a file, the fake or
+    the file layer fails the run right after that write takes effect, and
+    the run made again ends in the clean run's state with no duplicate and
+    with no unmarked resource; a run that loses `hook.secret` and then
+    stops after the pending secret is written, and another that stops
+    after GitHub takes the secret and before the rename, each end with the
+    hook holding the secret `hook.secret` holds; a resource
     with a test name and no marker stops provisioning and survives
     teardown; teardown removes every marked resource, a second teardown
     records no write, and a teardown stopped after each removal converges
     on its next run. Forwarder tests send each row of the forwarder table
     and each refused form to a forwarder in front of an echo server, with
     and without answers, and check the status, the header, and what the
-    echo server received. The secret scan test is stated above. A test
+    echo server received, and that a passed answer page keeps its query
+    while the log line holds none. Supervisor tests use child programs
+    that only sleep, in place of OpenSSH and the service: a supervisor
+    killed with `SIGKILL` before a child's `go`, after it, and after
+    every child started leaves no child running a program that
+    `children.json` does not record, and the next start and the next stop
+    each end every recorded child; a `children.json` that names a running
+    process, also a `src/start.ts` process, under another start time is
+    removed and the process is left running; a second start refuses while
+    a supervisor answers, and starts after a supervisor was killed and
+    left a stale socket file. The secret scan tests are stated above. A test
     lints `content/` with the host CLI's manifest, blueprint, and
-    portfolio lints. The start and smoke entry points have no test of
-    their own in `task check`; the recorded live run on the task is their
-    proof.
+    portfolio lints. The live steps of start and smoke, which need
+    GitHub and Pinggy, have no test in `task check`; the recorded live run
+    on the task is their proof.
   content: >-
     `content/` is the default process repository content: `manifold.yml`
     naming `decision-models/intake.yml`; an intake decision model that
