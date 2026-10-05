@@ -935,7 +935,7 @@ proposed-design:
     `404` of kind `unknown-binding`; `unresolved` for `409` of kind
     `unresolved-project`; for an Apply, `stale` for `409` of kind
     `plan-stale`, `invalid` for `409` of kind `declaration-invalid`,
-    `pending` with the error's `commit` for `409` of kind
+    `pending` with the error's optional `commit` for `409` of kind
     `declaration-pending`, and `failed` with the error's kind and message,
     its `writes`, and each change's outcome for `502`, of kind
     `declaration-unsaved` or a GitHub write's kind; and `failed` with the
@@ -944,15 +944,19 @@ proposed-design:
     function, and each body is checked at this boundary with
     dependency-free guards in the same module, which a console test checks
     against `projects-api.openapi.yml` with fixtures that pass and fail.
-    The console reads these members: a list entry's `binding`, `owner`,
+    The console reads these members, with the types and optionality of
+    `projects-api.openapi.yml`: a list entry's `binding`, `owner`,
     `number`, `portfolioItem`, `environment`, `configuration` (`state`,
-    one of `in-sync`, `drift`, `pending`, and `not-applied`, with `count`
-    for `drift` and `pending`), and `lastApplied`; a plan's
-    `configuration`, `observation`, `observedAt`, `digest`, and `changes`,
-    each change with its `id`, `storage`, `description`, `target`
-    (`field`, `option`, `lifecycle`, and `taskField`), `action`, `side`,
-    `drift`, and `requiresRemoval`; and an Apply's `outcome`, `writes`,
-    and `configuration`. Reads go through TanStack Query under the keys
+    `in-sync` or `not-applied` alone, or `drift` or `pending` with
+    `count`), and `lastApplied`, `null` or `{ at, commit }`; a plan's
+    `configuration`, `observation` (`{ status: "fresh" }` or `{ status:
+    "stale", message }`), `observedAt`, an integer or `null`, `digest`,
+    and `changes`, each change with its `id`, `storage`, `description`,
+    `target` (`field` and `lifecycle`, with `option` and `taskField` when
+    present), `action`, `side`, `drift`, and `requiresRemoval`; an
+    Apply's `outcome`, `writes`, `configuration`, and each change's
+    `outcome`; and an error's `kind`, `message`, and, for
+    `declaration-pending`, `commit` when present. Reads go through TanStack Query under the keys
     `["projects"]` and `["project-plan", binding]`. An Apply is a mutation;
     when it settles it marks both keys and `["tasks"]` stale. No timer
     reads on a schedule.
@@ -1104,10 +1108,11 @@ proposed-design:
     "No bound Project has the name <binding>.", with a link to All
     Projects. A plan that answers `unresolved` shows the info alert
     "Manifold has not found this Project on GitHub yet." with "Try again"
-    in place of the plan card. A plan whose `observation` is `stale` shows
-    the warning alert "Cannot read this Project from GitHub: <message>.
-    The plan uses what Manifold read <time of observedAt>." above the
-    groups. A failed read shows an error alert with the message and "Try
+    in place of the plan card. A plan whose `observation.status` is
+    `stale` shows the warning alert "Cannot read this Project from GitHub:
+    <observation.message>." above the groups, followed by "The plan uses
+    what Manifold read <time of observedAt>." when `observedAt` is not
+    `null`. A failed read shows an error alert with the message and "Try
     again".
   plan-card: >-
     The plan card is "What Apply will change", with the switch "Also
@@ -1160,7 +1165,8 @@ proposed-design:
     are made and the change into the task fields is pushed as the commit
     the answer names but is not yet in force: an info alert reads
     "Applied on GitHub. The task fields change is saved as <short commit>
-    and not yet in force." with "Try again"; the list and the plan read
+    and not yet in force.", or "…is saved and not yet in force." when the
+    error has no `commit`, with "Try again"; the list and the plan read
     again, and "Try again" sends the Apply with the plan read again and
     its digest, which pushes nothing new and completes once the commit is
     in force. For `failed`, an error alert in the plan card shows the
@@ -1304,8 +1310,9 @@ proposed-design:
     a clean one answers `impact` from `options.planDeclaration`, one entry
     per GitHub Project binding that is not archived, with the counts of
     its changes by `action` and no counts when it answers none for the
-    binding, and each row's `onGitHub` from the entry's field status of
-    the same task field, or of the lifecycle field. A field edit applies `editTaskFields` and answers as a
+    binding, and each row's `onGitHub` from the entry's field status
+    whose `taskField` is the row's name, or, for the lifecycle field's
+    row, the status with `lifecycle` true and no `taskField`. A field edit applies `editTaskFields` and answers as a
     lint of the result. A save lints first and answers `422` for a
     finding, then awaits `revisions.save` and maps its result as the
     blueprints endpoint's `saveAnswer` does, with `loaded` true when the
@@ -1396,7 +1403,8 @@ proposed-design:
       readonly binding: string;
       readonly changes: readonly { readonly action: "create" | "change" | "remove" }[];
       readonly fields: readonly {
-        readonly taskField: string | null;
+        /** Absent for the lifecycle field. */
+        readonly taskField?: string;
         readonly lifecycle: boolean;
         readonly github: "present" | "missing" | "differs";
         readonly detail: string;
