@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - projects-api
+    - task-metadata
+title: Project Configuration Plan
+description: >-
+  The ordered changes an Apply would make to bring a bound Project's
+  custom fields to the task metadata declaration, each marked by whether
+  it undoes drift and whether it needs removal.

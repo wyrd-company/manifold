@@ -1,0 +1,567 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: projects-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold Projects API
+  version: 0.1.0
+  description: >-
+    The Project configuration endpoints of Manifold's API: each bound
+    Project's configuration state, the plan of an Apply, and the Apply.
+security: []
+paths:
+  /api/projects:
+    get:
+      operationId: listProjects
+      summary: List each bound Project with its configuration state.
+      responses:
+        "200":
+          description: Every bound Project, in the bindings declaration's order.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectsResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedGet"
+  /api/projects/{binding}/plan:
+    parameters:
+      - $ref: "#/components/parameters/Binding"
+    get:
+      operationId: planProject
+      summary: Observe a bound Project's fields and answer the changes an Apply would make.
+      responses:
+        "200":
+          description: The plan, from a fresh or a stale observation.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanResponse"
+        "404":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedGet"
+        "409":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/projects/{binding}/apply:
+    parameters:
+      - $ref: "#/components/parameters/Binding"
+    post:
+      operationId: applyProject
+      summary: Make a bound Project's fields hold the declaration in force.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyRequest"
+      responses:
+        "200":
+          description: The Apply completed.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "405":
+          description: A method other than POST.
+          headers:
+            Allow:
+              schema:
+                const: POST
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/Error"
+        "502":
+          description: A GitHub write failed; the Apply stopped at that change.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyFailedResponse"
+        "503":
+          $ref: "#/components/responses/Error"
+components:
+  parameters:
+    Binding:
+      name: binding
+      in: path
+      required: true
+      description: The GitHub Project binding's name.
+      schema:
+        type: string
+  headers:
+    NoStore:
+      schema:
+        const: no-store
+  responses:
+    MethodNotAllowedGet:
+      description: A method other than GET.
+      headers:
+        Allow:
+          schema:
+            const: GET
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Error:
+      description: An error, named by its kind.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    ProjectsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - projects
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectSummary"
+    ProjectSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - binding
+        - owner
+        - number
+        - projectNodeId
+        - portfolioItem
+        - environment
+        - configuration
+        - lastApplied
+        - observedAt
+      properties:
+        binding:
+          type: string
+        owner:
+          type: string
+        number:
+          type: integer
+          minimum: 1
+        projectNodeId:
+          type:
+            - string
+            - "null"
+        portfolioItem:
+          type: string
+        environment:
+          type: string
+        configuration:
+          $ref: "#/components/schemas/ConfigurationState"
+        lastApplied:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required:
+                - at
+                - commit
+              properties:
+                at:
+                  type: integer
+                commit:
+                  type: string
+        observedAt:
+          type:
+            - integer
+            - "null"
+    ConfigurationState:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - state
+          properties:
+            state:
+              enum:
+                - not-applied
+                - in-sync
+        - type: object
+          additionalProperties: false
+          required:
+            - state
+            - count
+          properties:
+            state:
+              enum:
+                - drift
+                - pending
+            count:
+              type: integer
+              minimum: 1
+    PlanResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - binding
+        - owner
+        - number
+        - projectNodeId
+        - declarationCommit
+        - observedAt
+        - observation
+        - configuration
+        - changes
+        - digest
+        - fields
+        - frontMatter
+      properties:
+        fields:
+          description: What GitHub holds of each owned field, in declared order, the lifecycle field first.
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldStatus"
+        binding:
+          type: string
+        owner:
+          type: string
+        number:
+          type: integer
+          minimum: 1
+        projectNodeId:
+          type: string
+        digest:
+          description: The SHA-256 of the changes' canonical JSON; the same state gives the same digest.
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        frontMatter:
+          description: >-
+            The issues whose front matter does not match the task fields;
+            null while no task field is stored in front matter, which holds
+            for every declaration, whose one storage kind is the Project
+            field.
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required:
+                - mismatched
+              properties:
+                mismatched:
+                  type: integer
+                  minimum: 0
+        declarationCommit:
+          type:
+            - string
+            - "null"
+        observedAt:
+          type:
+            - integer
+            - "null"
+        observation:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required:
+                - status
+              properties:
+                status:
+                  const: fresh
+            - type: object
+              additionalProperties: false
+              required:
+                - status
+                - message
+              properties:
+                status:
+                  const: stale
+                message:
+                  type: string
+        configuration:
+          $ref: "#/components/schemas/ConfigurationState"
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Change"
+    Change:
+      allOf:
+        - $ref: "#/components/schemas/ChangeMembers"
+      unevaluatedProperties: false
+    ChangeMembers:
+      description: The members of a planned change.
+      type: object
+      required:
+        - id
+        - storage
+        - target
+        - description
+        - action
+        - side
+        - drift
+        - requiresRemoval
+        - properties
+        - from
+        - to
+      properties:
+        id:
+          type: string
+        storage:
+          const: project-field
+        description:
+          description: One English sentence naming the target and what happens to it.
+          type: string
+        target:
+          type: object
+          additionalProperties: false
+          required:
+            - field
+            - lifecycle
+          properties:
+            field:
+              description: The Project field's name, as declared for an owned field and as GitHub holds it for an undeclared one.
+              type: string
+            option:
+              type: string
+            taskField:
+              description: The task field's name; absent for the lifecycle field and for an undeclared field.
+              type: string
+            lifecycle:
+              description: True for the lifecycle field.
+              type: boolean
+        action:
+          enum:
+            - create
+            - change
+            - remove
+        side:
+          enum:
+            - github
+            - declaration
+        drift:
+          type: boolean
+        requiresRemoval:
+          type: boolean
+        properties:
+          type: array
+          uniqueItems: true
+          items:
+            enum:
+              - name
+              - options
+              - order
+              - color
+              - description
+        from:
+          $ref: "#/components/schemas/Target"
+        to:
+          $ref: "#/components/schemas/Target"
+    FieldStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - field
+        - lifecycle
+        - github
+        - detail
+      properties:
+        taskField:
+          description: The task field's name; absent for the lifecycle field.
+          type: string
+        field:
+          description: The Project field's name as declared.
+          type: string
+        lifecycle:
+          type: boolean
+        github:
+          description: >-
+            `present` when GitHub's field needs no change, `differs` when it
+            needs one, and `missing` when the Project has no field that
+            matches.
+          enum:
+            - present
+            - missing
+            - differs
+        detail:
+          description: One English sentence naming what differs or what an Apply creates.
+          type: string
+    Target:
+      oneOf:
+        - type: "null"
+        - $ref: "#/components/schemas/Field"
+        - $ref: "#/components/schemas/Option"
+    Field:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+        type:
+          enum:
+            - text
+            - number
+            - date
+            - single-select
+            - multi-select
+            - iteration
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/Option"
+    Option:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - color
+        - description
+      properties:
+        name:
+          type: string
+        color:
+          enum:
+            - gray
+            - blue
+            - green
+            - yellow
+            - orange
+            - red
+            - pink
+            - purple
+        description:
+          type: string
+    ApplyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - removeUndeclared
+      properties:
+        removeUndeclared:
+          type: boolean
+        digest:
+          description: The digest of the plan the caller reviewed; an Apply whose plan differs answers 409 `plan-stale`.
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+    AppliedChange:
+      allOf:
+        - $ref: "#/components/schemas/ChangeMembers"
+      unevaluatedProperties: false
+      required:
+        - outcome
+      properties:
+        outcome:
+          enum:
+            - applied
+            - kept
+            - failed
+            - not-run
+    ApplyResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+        - changes
+        - writes
+        - configuration
+        - declarationCommit
+      properties:
+        outcome:
+          enum:
+            - applied
+            - in-sync
+        writes:
+          description: The number of GitHub writes the Apply made.
+          type: integer
+          minimum: 0
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/AppliedChange"
+        configuration:
+          $ref: "#/components/schemas/ConfigurationState"
+        declarationCommit:
+          type:
+            - string
+            - "null"
+    ApplyFailedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+        - changes
+        - writes
+      properties:
+        writes:
+          description: The number of GitHub writes the Apply made before the failure.
+          type: integer
+          minimum: 0
+        error:
+          type: object
+          additionalProperties: false
+          required:
+            - kind
+            - message
+          properties:
+            kind:
+              enum:
+                - field-missing
+                - option-missing
+                - forbidden
+                - transport
+                - rejected
+            message:
+              type: string
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/AppliedChange"
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required:
+            - kind
+            - message
+          properties:
+            kind:
+              enum:
+                - unknown-binding
+                - unresolved-project
+                - undeclared
+                - declaration-conflict
+                - invalid-request
+                - plan-stale
+                - unobserved
+                - unavailable
+                - method-not-allowed
+                - not-found
+            message:
+              type: string

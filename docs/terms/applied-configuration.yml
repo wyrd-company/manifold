@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - task-metadata-tables
+    - task-metadata
+title: Applied Configuration
+description: >-
+  A bound Project's custom fields as Manifold read them at the end of the
+  binding's last Apply, against which a plan tells drift on GitHub from a
+  change to the declaration.

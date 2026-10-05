@@ -40,7 +40,17 @@ status: mitigated
 # route takes only the owner parameter its path names, and answers 422 to
 # any other; a delivery attempt id can exceed the safe integer range; an
 # empty repository answers Git Data reads with 409; `deleteProjectV2`
-# returns `projectV2`. Residual: what no live run crosses, which is a
+# returns `projectV2`. The fake models a Project's fields as the GraphQL
+# schema documents them: an update that sends an option's `id` keeps the
+# option and the item values that hold it, and one that leaves an option out
+# clears its values. The Project configuration live check applies a
+# declaration to a fresh Project, changes a declared option by hand,
+# observes drift, and applies again, so the fake's field writes are
+# measured against GitHub. Residual: what no live run crosses, which is a
 # user-owned Project, the field value's `updatedAt` that card move
-# attribution could read, and a field or option recreated between a crash
-# and the replay of a card move.
+# attribution could read, whether GitHub refuses a second field of one
+# name, and the away-and-back case: a person who moves a card away and back
+# to a confirmed move's value before the source reads it is reported as
+# that move. A field or option recreated between a crash and a card move's
+# replay is covered by evidence per resolved id and a regression against
+# the fake.

@@ -45,15 +45,17 @@ description: |-
   names, so a new or archived item can be read with its owner's credential
   before the mirror holds that item. It is null for other pending kinds.
 
-  Card moves. `github_card_move` holds one row per card move whose value
-  GitHub may hold and the source has not yet attributed: the move's
-  invocation, its actor id, invoke id, and entry id, as its key; the item,
-  the single-select field, and the option it set, by node id and option
-  id; `state`; and `sequence`, which orders the moves. A move writes its
-  row with state `sent` before it sends the write, with a `sequence` one
-  more than the largest in the table, when its invocation has no row; a
-  move that one state entry repeats keeps the row it finds, with its state
-  and `sequence`. A write GitHub takes sets the row `confirmed`, a write
+  Card moves. `github_card_move` holds one row per card move write whose
+  value GitHub may hold and the source has not yet attributed: the move's
+  invocation, its actor id, invoke id, and entry id, with the field node
+  id and option id the move resolved, as its key; the item; `state`; and
+  `sequence`, which orders the moves. A move writes its row with state
+  `sent` before it sends the write, with a `sequence` one more than the
+  largest in the table, when its invocation has no row for the field and
+  option it resolved; a move that one state entry repeats and that
+  resolves the same ids keeps the row it finds, with its state and
+  `sequence`, and one that resolves other ids, after the field or option
+  was recreated, writes a row of its own beside it. A write GitHub takes sets the row `confirmed`, a write
   GitHub refuses deletes the row only when that attempt wrote it, and a
   write whose fate is unknown leaves the row as it is. A reconcile that publishes a change of the item's
   field deletes the rows it attributes or rules out, in its transaction, as
@@ -74,6 +76,16 @@ description: |-
   - `github_field_value`: an item's value of one custom field, as the JSON of
     a field value `github-events` defines, `NULL` for no value, and the
     field's name when last read.
+
+  - `github_project_field`: a custom field of a bound Project, as the last
+    field observation read it: its `position` in GitHub's order from 0,
+    its name, its data type in lower case with `_` read as `-`, and
+    `options`, the JSON array of a single-select field's options in order,
+    each `{ "id", "name", "color", "description" }` with the color in
+    lower case, and `[]` for another type. A field observation replaces
+    the Project's rows, so a field GitHub no longer shows has no row.
+    `github_project.fields_read_at` is when the last field observation of
+    the Project committed, `NULL` before the first.
 
   - `github_issue`: an issue's repository as `owner/name`, number, state,
     and state reason, and its title and web URL when last read, `NULL`

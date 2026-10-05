@@ -7,5 +7,6 @@ relationships:
 title: GitHub Mirror
 description: >-
   The last state the GitHub event source read of each Project, item, field
-  value, issue, dependency, and sub-issue it follows, against which it
+  value, issue, dependency, and sub-issue it follows, and of each bound
+  Project's custom fields, against which it
   compares GitHub's current state to find the changes it publishes.

@@ -321,7 +321,10 @@ description: |-
   the actor's write, and not someone else's, set the value, as after a
   move that failed with `transport`. A change no write of Manifold's set
   carries `movedBy` `null`, so a blueprint takes a person's move apart
-  from its own, and decides for itself how to take an unconfirmed one:
+  from its own, and decides for itself how to take an unconfirmed one.
+  `lifecycle` is true when the changed field is the lifecycle field the
+  task metadata declaration declares for the task's Project, so a guard
+  names no field:
 
   ```yaml
   on:
@@ -331,7 +334,7 @@ description: |-
         type: expression.guard
         params:
           expression: >-
-            event.movedBy = null and event.field.name = "Stage"
+            event.movedBy = null and event.lifecycle
             and event.to.name = "Sorting"
   ```
 

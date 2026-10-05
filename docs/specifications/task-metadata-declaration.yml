@@ -2,26 +2,31 @@ $schema: https://refinery.systems/ontology/specification
 relationships:
   # GAP-EDGE: the specification schema declares no edge to a technical
   # design; `realizes` is the best fit for the design that applies this
-  # declaration and moves cards from it.
+  # declaration, moves cards from it, and applies it to each bound Project.
   realizes:
     - task-metadata
   references:
     - bindings-declaration
     - blueprint
     - service-configuration
+    - projects-api
 terms:
   - lifecycle-field
   - card-move
   - binding
+  - task-field
+  - drift
 description: |-
   Defines `task-metadata.yml`, the file at the root of the process
   repository that declares the task metadata schema: the metadata of a
-  task that Manifold keeps on GitHub. It declares the lifecycle field of
-  each bound GitHub Project, the single-select field Manifold sets when a
-  blueprint moves a task's card. `docs/specifications/task-metadata-declaration.schema.yml`
-  is the machine-readable definition of the document and of a finding.
+  task that Manifold keeps on GitHub. It declares, for each bound GitHub
+  Project, the lifecycle field, the single-select field Manifold sets when
+  a blueprint moves a task's card, and the task fields, the other custom
+  fields of the Project that Manifold owns.
+  `docs/specifications/task-metadata-declaration.schema.yml` is the
+  machine-readable definition of the document and of a finding.
 
-  An absent file and an empty document both declare no lifecycle field.
+  An absent file and an empty document declare no Project.
 
   Document. The file is one YAML 1.2 document under the core schema with
   unique mapping keys. It is a mapping with one key:
@@ -30,12 +35,56 @@ description: |-
     `githubProjects` in `bindings.yml` at the same commit, to the metadata
     of that Project's tasks.
 
-  A Project's metadata is a mapping with one key:
+  A Project's metadata is a mapping with two keys:
 
   - `lifecycle`, required: the Project's lifecycle field, with `field`,
     the name of a single-select field of the Project, and `options`, the
     names of the field's options a blueprint may set, at least one, each
     once.
+  - `fields`, optional: the Project's task fields, a mapping from a task
+    field's name to the task field. Absent is the same as an empty
+    mapping.
+
+  A task field is a mapping with these keys:
+
+  - `type`, required: `text`, `number`, `date`, or `single-select`.
+  - `storage`: where GitHub stores the field, a mapping with `kind`, the
+    storage kind, and the kind's settings. Absent is
+    `{ kind: project-field }`.
+  - `options`: for a `single-select` field, required, its options in the
+    order the Project shows them, at least one. An option is a name, or a
+    mapping with `name`, required, `color`, and `description`. `color` is
+    one of `gray`, `blue`, `green`, `yellow`, `orange`, `red`, `pink`, and
+    `purple`, GitHub's option colors; `description` is a string, empty
+    allowed. A property an option does not declare is not owned: Manifold
+    gives a new option `gray` and an empty description, and leaves an
+    existing option's value as GitHub holds it. A field of another type
+    has no `options`.
+  - `whenChanged`: `revert`, the default, or `accept`. It says what an
+    Apply does with drift in the field: `revert` sets GitHub back to the
+    declaration, and `accept` writes GitHub's field into this file, as
+    `task-metadata` states.
+
+  Storage kinds. A storage kind names where GitHub holds a task field's
+  value, the types it can hold, and its settings:
+
+  | `kind` | Types | Settings |
+  |---|---|---|
+  | `project-field` | `text`, `number`, `date`, `single-select` | `name`: the name of the Project's custom field, default the task field's name |
+
+  A `project-field` task field is a custom field of the Project of data
+  type `TEXT`, `NUMBER`, `DATE`, or `SINGLE_SELECT`, one per type. A
+  Project field holds one value of its type per item, so a task field has
+  no required flag and no nested fields. `packages/shared` exports the
+  table as `taskFieldStorageKinds`, so the console offers each kind with
+  its types and settings from one source.
+
+  The lifecycle field is a task field too: Apply creates it as a
+  single-select field with its declared options when the Project lacks
+  it, adds a declared option the field lacks, and keeps the field's
+  options in declared order. Its options own their names only, and its
+  drift is always reverted. It is declared by `lifecycle` alone, so no
+  task field is stored in it.
 
   A name is a string that is not empty and has no leading or trailing
   white space. Names compare exactly, as GitHub shows them, case
@@ -47,30 +96,46 @@ description: |-
       lifecycle:
         field: Stage
         options: [Sorting, Packed, Shipped]
+      fields:
+        Priority:
+          type: single-select
+          storage:
+            kind: project-field
+            name: Urgency
+          options:
+            - name: Urgent
+              color: red
+              description: Leaves today
+            - Routine
+        Weight:
+          type: number
+        Courier notes:
+          type: text
+          whenChanged: accept
     returns:
       lifecycle:
         field: Stage
         options: [Received, Inspected]
   ```
 
-  Each Project declares its own lifecycle field, so two Projects may name
-  different fields and options. A bound Project the document does not
-  name has no lifecycle field, and a card move on it fails as
-  `undeclared`. An archived binding may be named; its tasks' cards still
-  move.
+  Each Project declares its own fields, so two Projects may name different
+  fields and options. A bound Project the document does not name has no
+  lifecycle field and no task fields: a card move on it fails as
+  `undeclared`, and Manifold owns none of its configuration. An archived
+  binding may be named; its tasks' cards still move.
 
   Declared options. The declared options of a declaration are the union
-  of the `options` of every Project it names. The blueprint lint checks a
-  literal `status` of a `github-card-move` invoke against them, as
-  `blueprint` states, so a name no Project declares fails the blueprint
-  before it loads. Which Project a task's actor runs on is decided at
-  intake, so the check at a card move is the declared options of the
-  actor's own Project.
+  of the lifecycle `options` of every Project it names. The blueprint lint
+  checks a literal `status` of a `github-card-move` invoke against them,
+  as `blueprint` states, so a name no Project declares fails the
+  blueprint before it loads. Which Project a task's actor runs on is
+  decided at intake, so the check at a card move is the declared options
+  of the actor's own Project.
 
-  The declaration names fields and options; it creates neither. The
-  operator creates the field and its options on the Project in GitHub.
-  Manifold resolves each name to GitHub's ids at every card move, so a
-  renamed or recreated option is found by its name.
+  A card move resolves the lifecycle field and option names to GitHub's
+  ids at every move, so a renamed or recreated option is found by its
+  name. Apply makes the Project hold the declared fields and options, as
+  `projects-api` states.
 
   Findings. Linting a task metadata document gives findings with a kind,
   a location, and a message. The location is the RFC 6901 JSON Pointer of
@@ -89,6 +154,14 @@ description: |-
     `bindings.yml` does not parse or does not validate against its own
     schema; `manifold-host portfolio lint` reports those.
 
+  - `duplicate-field`: a task field is stored in the Project's lifecycle
+    `field`, or in the Project field of an earlier task field. The
+    location is that task field's entry.
+
+  - `duplicate-option`: two options of one task field have the same name,
+    whether written as a name or as a mapping. The location is the later
+    option.
+
   Lint. `packages/shared` exports the lint and the declared options:
 
   ```ts
@@ -105,7 +178,13 @@ description: |-
 
   interface TaskMetadataDeclaration {
     /** Keyed by GitHub Project binding name. */
-    readonly projects: Readonly<Record<string, { readonly lifecycle: LifecycleField }>>;
+    readonly projects: Readonly<Record<string, ProjectMetadata>>;
+  }
+
+  interface ProjectMetadata {
+    readonly lifecycle: LifecycleField;
+    /** Keyed by task field name, in document order; empty when the document has no `fields`. */
+    readonly fields: Readonly<Record<string, TaskField>>;
   }
 
   interface LifecycleField {
@@ -113,16 +192,56 @@ description: |-
     readonly options: readonly string[];
   }
 
+  type TaskField =
+    | {
+        readonly type: "text" | "number" | "date";
+        readonly storage: TaskFieldStorage;
+        readonly whenChanged: "revert" | "accept";
+      }
+    | {
+        readonly type: "single-select";
+        readonly storage: TaskFieldStorage;
+        readonly options: readonly TaskFieldOption[];
+        readonly whenChanged: "revert" | "accept";
+      };
+
+  /** `name` is the Project field's name, the task field's name when the document does not set it. */
+  type TaskFieldStorage = { readonly kind: "project-field"; readonly name: string };
+
+  type TaskFieldType = "text" | "number" | "date" | "single-select";
+
+  interface TaskFieldStorageKind {
+    readonly kind: TaskFieldStorage["kind"];
+    readonly types: readonly TaskFieldType[];
+    readonly settings: readonly string[];
+  }
+
+  /** The storage kinds table: `[{ kind: "project-field", types: [...], settings: ["name"] }]`. */
+  const taskFieldStorageKinds: readonly TaskFieldStorageKind[];
+
+  interface TaskFieldOption {
+    readonly name: string;
+    /** Absent when the document does not declare it. */
+    readonly color?: OptionColor;
+    readonly description?: string;
+  }
+
+  type OptionColor = "gray" | "blue" | "green" | "yellow" | "orange" | "red" | "pink" | "purple";
+
   function declaredLifecycleOptions(declaration: TaskMetadataDeclaration): ReadonlySet<string>;
   ```
 
-  The lint reads no file, network, clock, or environment; the same texts
-  give the same result. An absent or empty `task-metadata.yml` lints
-  clean as `{ projects: {} }`. Findings are in document order.
+  The lint returns the declaration with each default applied: `fields`
+  present, `storage` with its `name`, `whenChanged` present, and each
+  option a `TaskFieldOption`.
+  It reads no file, network, clock, or environment; the same texts give
+  the same result. An absent or empty `task-metadata.yml` lints clean as
+  `{ projects: {} }`. Findings are in document order.
   `TaskMetadataFinding` is `#/$defs/finding`. The service lints the
   declaration of every revision it applies, and the host CLI command
-  `manifold-host task-metadata lint` lints a checkout, as
-  `host-cli-task-metadata-lint` states.
+  `manifold-host task-metadata lint` lints a checkout with the same
+  function, as `host-cli-task-metadata-lint` states, so the two give the
+  same findings for the same texts.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/task-metadata-declaration.schema.yml` is a valid
@@ -133,13 +252,26 @@ validation-criteria: >-
   location, and order for: text that is not YAML; a Project with no
   `lifecycle`; a lifecycle with an empty `options`, with an option listed
   twice, and with an option `" Packed"` that has a leading space, each a
-  `schema` finding; an unknown key at the root and in a lifecycle, each a
-  `schema` finding; a key of `projects` that no GitHub Project binding
-  names, an `unknown-binding` finding, and the same key with a
-  `bindings.yml` that does not parse, no finding; and a key that names a
-  T3code project binding, an `unknown-binding` finding. An absent file and
-  an empty document lint clean with no Projects. The example in this
-  specification lints clean against bindings that name `parcels` and
-  `returns`, and its declared options are the five option names. The same
-  call twice returns the same result. Fixtures use a domain unrelated to
-  Manifold.
+  `schema` finding; an unknown key at the root, in a lifecycle, in a task
+  field, in a storage, and in an option, each a `schema` finding; a
+  storage `kind` of `label`, a `schema` finding; a task field with an
+  unknown `type`, a `single-select` field with no `options` and with an
+  empty `options`, a `text` field with `options`, an option color
+  `teal`, and a `whenChanged` of `ignore`, each a `schema` finding; a key
+  of `fields` equal to the lifecycle field, a task field whose storage
+  `name` is the lifecycle field, and two task fields stored in one Project
+  field, each a `duplicate-field` finding; a
+  field whose options are `Routine` and `{ name: Routine, color: gray }`,
+  a `duplicate-option` finding at the second; a key of `projects` that no
+  GitHub Project binding names, an `unknown-binding` finding, and the same
+  key with a `bindings.yml` that does not parse, no finding; and a key
+  that names a T3code project binding, an `unknown-binding` finding. An
+  absent file and an empty document lint clean with no Projects. The
+  example in this specification lints clean against bindings that name
+  `parcels` and `returns`; its declared options are the five lifecycle
+  option names; its `parcels` fields are `Priority`, `Weight`, and
+  `Courier notes` in that order, with `Priority` stored in the Project
+  field `Urgency`, `Weight` in `Weight`, `Routine` as
+  `{ name: "Routine" }`, and every `whenChanged` but the last `revert`.
+  `taskFieldStorageKinds` equals the storage kinds table. The same call twice
+  returns the same result. Fixtures use a domain unrelated to Manifold.

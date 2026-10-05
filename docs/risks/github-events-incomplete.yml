@@ -40,4 +40,8 @@ status: mitigated
 # and redelivery. The durable-event-delivery design specifies organization
 # webhook registration, set-based idempotency on unordered GUIDs, redelivery
 # through the hook deliveries API, reconciliation queries on resume, and graph
-# expansion to forward blocking issue closures to blocked issues.
+# expansion to forward blocking issue closures to blocked issues. A change
+# to a Project's fields sends no delivery, as the spike measured for an added
+# field; the source reads a bound Project's fields at each sweep, at each
+# `projects_v2` delivery, and before each plan and Apply, so configuration
+# drift shows within one sweep interval, or at once on a plan.

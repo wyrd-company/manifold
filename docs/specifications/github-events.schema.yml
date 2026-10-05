@@ -330,7 +330,7 @@ $defs:
         $ref: "#/$defs/item"
   field-changed-event:
     type: object
-    required: [type, project, item, field, from, to, movedBy]
+    required: [type, project, item, field, from, to, movedBy, lifecycle]
     additionalProperties: false
     properties:
       type:
@@ -362,6 +362,12 @@ $defs:
                 minLength: 1
               confirmed:
                 type: boolean
+      lifecycle:
+        description: >-
+          True when the changed field is the lifecycle field the task
+          metadata declaration in force declares for the item's Project,
+          compared by the field's name as read.
+        type: boolean
   project-event:
     type: object
     required: [type, project]

@@ -12,24 +12,35 @@ relationships:
     - task-metadata-declaration
     - task-metadata-tables
     - host-cli-task-metadata-lint
+    - projects-api
+    - github-source-database-schema
     - blueprint
     - github-events
     - bindings-declaration
 objective: >-
-  Let a blueprint move its task's card on GitHub: set the lifecycle field
-  the process repository declares for the task's Project to a declared
-  option, so that a move repeated after a crash leaves one value, every
-  failure reaches the blueprint as a typed error, and the actor tells its
-  own move from a change a person made.
+  Keep each bound GitHub Project in step with the task metadata
+  declaration: let a blueprint move its task's card by setting the
+  lifecycle field the process repository declares for the task's Project
+  to a declared option, so that a move repeated after a crash leaves one
+  value, every failure reaches the blueprint as a typed error, and the
+  actor tells its own move from a change a person made; and own the
+  Project's lifecycle field and task fields, so that the operator sees
+  what an Apply would change, an Apply makes the Project hold the
+  declaration and converges however often it runs, and a change a person
+  makes on GitHub shows as drift and is reverted or accepted as the
+  declaration says.
 background:
   current-design: >-
-    Manifold reads GitHub and never writes to it. The GitHub event source
-    reads each bound Project's items and their field values into the GitHub
-    mirror and publishes each change as `github.project-item.field-changed`
-    to the actor of the item's issue. A task actor holds its Project's
-    node id and its issue's node id at `context.manifold`. The process
-    repository binds each GitHub Project to a portfolio item by binding
-    name, and declares nothing about a Project's fields.
+    The GitHub event source reads each bound Project's items and their
+    field values into the GitHub mirror, publishes each change as
+    `github.project-item.field-changed` to the actor of the item's issue,
+    and sets an item's single-select field for a card move. A task actor
+    holds its Project's node id and its issue's node id at
+    `context.manifold`. The process repository binds each GitHub Project to
+    a portfolio item by binding name. The operator console's GitHub
+    Projects screen shows each bound Project's configuration as in sync,
+    in drift, or not applied, and its Task fields section edits the task
+    metadata schema, as `DESIGN.md` draws them.
   problems:
     - >-
       A blueprint has no way to move its task's card, so the card on GitHub
@@ -43,34 +54,61 @@ background:
       restored actor runs its invoke again.
     - >-
       GitHub reports Manifold's own move as it reports a person's.
+    - >-
+      The operator creates a Project's fields and options by hand to match
+      the declaration, and a person who renames, removes, or adds one on
+      GitHub breaks card moves and the Board without anyone being told.
 design-challenges:
   declaration: >-
-    The lifecycle field is the first part of the task metadata schema. The
-    declaration must say which field and which options each Project uses,
-    and leave room for the rest of a Project's configuration.
+    The declaration must say which field and which options each Project
+    uses for its lifecycle, and which other fields it owns, in a shape a
+    person edits by hand and the console edits as a document.
   replay: >-
     A move that one state entry runs twice, before and after a crash, must
     leave GitHub holding one value and the actor past the move.
   attribution: >-
     The actor must take its own move and a person's change of the same
-    field apart, whether a webhook delivery or a sweep reads the change.
+    field apart, whether a webhook delivery or a sweep reads the change,
+    and whether or not the field or option was recreated between a crash
+    and the move's replay.
   startup: >-
     A restored actor's invoke can run during the router's resume, before
     the GitHub event source has started.
+  drift-or-edit: >-
+    The Project and the declaration can each change since the last Apply.
+    A difference must be told apart as drift, a change on GitHub, or as a
+    declaration not yet applied, from what GitHub and the store hold.
+  identity: >-
+    GitHub names fields and options by ids, and a person names them by
+    names. A renamed option must be renamed back, never removed and
+    recreated, since recreating it clears it from every card that holds
+    it.
+  partial-apply: >-
+    An Apply is several GitHub writes. A crash between two must leave a
+    state from which the next Apply finishes with no duplicate field or
+    option.
 proposed-design:
   high-level-overview: >-
     The task metadata module, `packages/service/src/task-metadata/`, holds
-    the task metadata declaration in force and gives the implementation
-    registry one promise implementation, `github-card-move`. It applies
-    `task-metadata.yml` from each revision the service follows, as
-    `task-metadata-declaration` defines, and keeps the last clean
-    declaration in force. A card move reads the invoking actor's Project
-    and issue from `context.manifold`, finds the lifecycle field the
-    declaration in force declares for the Project's binding, and asks the
-    GitHub event source to set it. The source runs the write in its serial
-    runner, records the move before it writes, and attributes the change it
-    later reads to the actor, as `github-event-source` states. The input,
-    output, and errors are specified in `blueprint`.
+    the task metadata declaration in force, gives the implementation
+    registry one promise implementation, `github-card-move`, and owns each
+    bound Project's configuration. It applies `task-metadata.yml` from each
+    revision the service follows, as `task-metadata-declaration` defines,
+    and keeps the last clean declaration in force. A card move reads the
+    invoking actor's Project and issue from `context.manifold`, finds the
+    lifecycle field the declaration in force declares for the Project's
+    binding, and asks the GitHub event source to set it. The source runs
+    the write in its serial runner, records the move before it writes, and
+    attributes the change it later reads to the actor, as
+    `github-event-source` states. The input, output, and errors are
+    specified in `blueprint`. For configuration, a pure function plans the
+    changes that bring a Project's custom fields to the declaration, from
+    the declaration, the fields the GitHub mirror holds, and the fields
+    the last Apply left; an Apply observes the fields, plans, makes each
+    change through the source's field writes, observes again, and records
+    what it left as the applied configuration. A change on GitHub since the
+    last Apply is drift. The module serves the Projects API at
+    `/api/projects`, as `projects-api` specifies.
   public-interface: |-
     `packages/service/src/task-metadata/index.ts` exports exactly these
     names.
@@ -78,13 +116,16 @@ proposed-design:
     ```ts
     import type {
       ProcessRepositoryRevision,
+      ProjectMetadata,
       TaskMetadataDeclaration,
       TaskMetadataFinding,
     } from "@wyrd-company/manifold-shared";
     import type { fromPromise } from "xstate";
     import type { ActorHost, Invocation } from "../actor-host/index.ts";
     import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
-    import type { GitHubProject, GitHubSource } from "../github-source/index.ts";
+    import type { GitHubProject, GitHubSource, ProjectField } from "../github-source/index.ts";
+    import type { HttpListener } from "../http-host/index.ts";
+    import type { Revisions } from "../service/index.ts";
     import type { StoreConnection } from "../store/index.ts";
 
     export function openTaskMetadata(options: TaskMetadataOptions): TaskMetadata;
@@ -95,11 +136,32 @@ proposed-design:
       /** The actor host's invocation reader receives the full creator args. */
       readonly invocationOf: (args: Parameters<Parameters<typeof fromPromise>[0]>[0]) => Invocation;
       /** The GitHub event source once it has started; rejects with the signal's reason. */
-      readonly source: (signal: AbortSignal) => Promise<Pick<GitHubSource, "project" | "moveCard">>;
+      readonly source: (
+        signal: AbortSignal,
+      ) => Promise<
+        Pick<
+          GitHubSource,
+          "project" | "projectByNumber" | "moveCard" | "projectFields" | "observeProjectFields" | "writeProjectField"
+        >
+      >;
       /** The name of the GitHub Project binding of a Project, at the current revision. */
       readonly bindingOf: (project: GitHubProject) => string | undefined;
+      /** The GitHub Project bindings in force that are not archived, in declaration order. */
+      readonly bindings: () => readonly BoundProject[];
+      /** The service's revisions, for the save that takes GitHub's fields into the declaration. */
+      readonly revisions: Pick<Revisions, "save">;
       /** The store's connection; the module's tables are migrated before it opens. */
       readonly connection: StoreConnection;
+      /** Defaults to Date.now. */
+      readonly now?: () => number;
+    }
+
+    export interface BoundProject {
+      readonly binding: string;
+      readonly owner: string;
+      readonly number: number;
+      readonly portfolioItem: string;
+      readonly environment: string;
     }
 
     export interface TaskMetadata {
@@ -109,36 +171,109 @@ proposed-design:
       apply(revision: ProcessRepositoryRevision): Promise<TaskMetadataApplied>;
       /** The declaration in force; undefined before the first clean apply. */
       current(): TaskMetadataDeclaration | undefined;
+      /** The bound Projects' configuration. */
+      readonly projects: ProjectConfiguration;
+      /** Serves `/api/projects`, as `projects-api` specifies. */
+      readonly requestListener: HttpListener;
+      /** Aborts every Apply in hand and resolves when each has settled; later calls answer `503`. */
+      close(): Promise<void>;
     }
 
-    export type TaskMetadataApplied =
-      | { readonly status: "applied"; readonly commit: string }
-      | {
-          readonly status: "rejected";
-          readonly commit: string;
-          readonly findings: readonly TaskMetadataFinding[];
-        };
+    export interface ProjectConfiguration {
+      /** Each bound Project with its configuration state, from the mirror. */
+      list(): readonly ProjectSummary[];
+      /** Observes the Project's fields and plans against the declaration in force. */
+      plan(binding: string, signal?: AbortSignal): Promise<PlanAnswer>;
+      /** Makes the plan's changes; one Apply runs at a time per binding. */
+      apply(binding: string, request: ApplyRequest, signal?: AbortSignal): Promise<ApplyAnswer>;
+      /** Plans a declaration that is not in force against each bound Project the mirror has read, with no read of GitHub. */
+      planDeclaration(declaration: TaskMetadataDeclaration): readonly DeclarationImpact[];
+    }
+
+    /** The plan of one Project: pure, reading no store, network, clock, or environment. */
+    export function planProjectConfiguration(input: PlanInput): ProjectPlan;
+
+    export interface PlanInput {
+      /** The binding's metadata in the declaration planned; undefined when it does not name the binding. */
+      readonly metadata: ProjectMetadata | undefined;
+      /** The Project's custom fields as the mirror holds them, in GitHub's order. */
+      readonly fields: readonly ProjectField[];
+      /** The binding's applied configuration; undefined before the first Apply. */
+      readonly applied: AppliedConfiguration | undefined;
+    }
+
+    export interface AppliedConfiguration {
+      /** The Project's custom fields as the observation that ended the last Apply read them. */
+      readonly fields: readonly ProjectField[];
+      /** The node id of the field each owned field matched. */
+      readonly owned: {
+        readonly lifecycle: string | undefined;
+        /** Keyed by task field name. */
+        readonly fields: Readonly<Record<string, string>>;
+      };
+    }
+
+    export interface ProjectPlan {
+      /** In the order an Apply makes them. */
+      readonly changes: readonly PlanChange[];
+      readonly configuration: ConfigurationState;
+      /** The SHA-256 of the changes' canonical JSON, 64 lower-case hexadecimal characters. */
+      readonly digest: string;
+      /** What GitHub holds of each owned field, in order. */
+      readonly fields: readonly FieldStatus[];
+    }
+
+    export interface DeclarationImpact {
+      readonly binding: string;
+      readonly owner: string;
+      readonly number: number;
+      /** The state the Project would show with the declaration in force and nothing applied. */
+      readonly configuration: ConfigurationState;
+      readonly changes: readonly PlanChange[];
+      readonly fields: readonly FieldStatus[];
+    }
 
     /** The migration steps of `task-metadata-tables`, applied with `migrate("metadata", steps)`. */
     export const taskMetadataMigrationSteps: readonly string[];
 
-    export type { CardMoveError, CardMoveErrorKind } from "./types.ts";
+    export type {
+      ApplyAnswer,
+      ApplyRequest,
+      CardMoveError,
+      CardMoveErrorKind,
+      ConfigurationState,
+      FieldStatus,
+      PlanAnswer,
+      PlanChange,
+      ProjectSummary,
+    } from "./types.ts";
     ```
 
     `CardMoveError` is `#/$defs/card-move-error` of `blueprint`.
+    `PlanChange` is `#/components/schemas/Change` of the `projects-api`
+    asset; `ConfigurationState`, `FieldStatus`, `ProjectSummary`, `PlanAnswer`,
+    `ApplyRequest`, and `ApplyAnswer` are its schemas of the same names,
+    `ApplyAnswer` being `ApplyResponse` or `ApplyFailedResponse`.
   module-layout: >-
     `index.ts` re-exports the public names. `declaration.ts` holds the
     declaration in force and `apply`. `records.ts` holds every SQL read and
-    write of the module's tables, and `migrations.ts` their steps. `card-move.ts` holds the pure function
-    from an actor's identity, its binding, the declaration in force, and an
-    input to a `CardMove` or a card move error, and the mapping from a
-    `GitHubWriteError` to a card move error. `implementations.ts` builds
-    the registry part. The lint, the schema, and `declaredLifecycleOptions`
-    live in `packages/shared`, in `task-metadata-declaration.ts` and the
+    write of the module's tables, and `migrations.ts` their steps.
+    `card-move.ts` holds the pure function from an actor's identity, its
+    binding, the declaration in force, and an input to a `CardMove` or a
+    card move error, and the mapping from a `GitHubWriteError` to a card
+    move error. `implementations.ts` builds the registry part. `plan.ts`
+    holds `planProjectConfiguration` and the pure function from a plan and
+    the observed fields to the field writes of an Apply. `accept.ts` holds
+    the pure function that writes accepted fields into the text of
+    `task-metadata.yml`. `projects.ts` holds `ProjectConfiguration`: the
+    observations, the Apply, and the per-binding queue. `endpoint.ts`
+    holds the request listener, and `wiring.ts` the module's service
+    wiring part. The lint, the schema, and `declaredLifecycleOptions` live
+    in `packages/shared`, in `task-metadata-declaration.ts` and the
     generated schema constants. The host CLI command lives in
     `packages/host-cli/src/task-metadata-lint/command.ts`. Tests import only
     `index.ts`, and the `index.ts` of the store, the router, the actor host,
-    the blueprint loader, and the GitHub source.
+    the blueprint loader, the HTTP host, and the GitHub source.
   declaration-in-force: >-
     `apply(revision)` reads `task-metadata.yml` and `bindings.yml` through
     the revision's `read`, and lints them with
@@ -153,9 +288,10 @@ proposed-design:
     module opens, before the router restores any actor. A restart on a
     revision whose declaration has findings therefore keeps the last clean
     declaration in force, and the rejection stays in the store for
-    diagnosis. A move reads the declaration in force when it runs, never the
-    one of the actor's blueprint version, since it describes the Project as
-    it is on GitHub now.
+    diagnosis. A row written before the declaration had `fields` reads with
+    `fields` empty for each Project. A move reads the declaration in force
+    when it runs, never the one of the actor's blueprint version, since it
+    describes the Project as it is on GitHub now.
   card-move: >-
     `github-card-move` is a `fromPromise` actor. It runs these steps, and
     each failure rejects with a card move error. (1) It validates its input
@@ -208,6 +344,203 @@ proposed-design:
     unconfirmed one, or lets its own pass with no transition. A
     move's promise resolves when GitHub has taken the write, before the
     change is read, so a blueprint never waits on its own move's event.
+    The event's `lifecycle` is true for a change of the lifecycle field the
+    declaration in force declares for the Project, so a guard on
+    `event.lifecycle` holds whatever the field is named. A move keeps its
+    attribution when a person or an Apply recreates its field or option
+    between a crash and the move's replay: the replay resolves the new ids
+    and writes evidence of its own beside the earlier move's, as
+    `github-event-source` states under card-moves, so each value GitHub
+    shows is attributed by the evidence of the ids it holds.
+  owned-configuration: >-
+    A bound Project's owned configuration is what the declaration in force
+    declares for its binding: the lifecycle field, a single-select field
+    named by the lifecycle `field`, whose options own their names and
+    whose drift is reverted, and each task field of `fields`, stored in the
+    Project field its storage `name` names, in that order. Owning a field
+    means owning its name, its data type, and for a single-select field its options: their
+    names, their order, and each color and description the declaration
+    declares. Every other custom field of a data type the mirror holds that
+    is not an organization issue field is undeclared, and so is every
+    option of an owned field that the declaration does not name. Manifold
+    removes an undeclared field or option only in an Apply that asks for
+    removal.
+  storage-kinds: >-
+    A task field is stored as a custom field of its Project, and a Project
+    field is the declaration's one storage kind. The others the console's
+    design names are kept by GitHub as people set them, each for its own
+    reason. Labels and milestones belong to repositories, and a bound
+    Project holds issues from repositories that no binding names, so an
+    Apply has no declared set of repositories to write them to.
+    Organization issue types and organization issue fields belong to the
+    organization, shared by every Project and repository of the owner, so
+    one binding's declaration cannot own them without overriding another
+    binding's on the same owner. Front matter is text in each issue's body,
+    with no configuration on GitHub to apply. The Project field data types
+    a task field takes are `text`, `number`, `date`, and `single-select`,
+    the types whose values the GitHub mirror reads; an iteration field's
+    configuration is a calendar of dated iterations GitHub extends as time
+    passes, which a declaration does not hold.
+  applied-configuration: >-
+    The applied configuration of a binding on a Project is the list of the
+    Project's custom fields, with their ids, names, types, and options with
+    ids, as the observation that ends the binding's last Apply read them;
+    the id of the field each owned field matched, the lifecycle field's and
+    each task field's by its name; and the commit of the declaration that
+    Apply planned against. It is a
+    row of `metadata_project_applies`, keyed by binding and Project node
+    id, which each Apply replaces, as `task-metadata-tables` states. It is
+    what Manifold last made GitHub hold, so a difference between GitHub's
+    fields and it is a change made on GitHub, and a difference between the
+    declaration and it is a change made to the declaration. A binding
+    pointed at another Project starts with no applied configuration.
+  plan: >-
+    `planProjectConfiguration` matches, then compares. With no metadata
+    for the binding, Manifold owns nothing of the Project and the plan has
+    no change. Matching takes each
+    owned field in order, and each matches at most one observed field and
+    each observed field at most one owned field: first the observed field
+    whose id the applied configuration records for the owned field, so a
+    field renamed on GitHub, or given another storage `name` in the
+    declaration, is still found and renamed rather than created; else the
+    first observed field whose name is the owned field's Project field
+    name. Within a matched single-select field,
+    each declared option matches the same way: first by the id of the
+    applied field's option of that name, then by name. Comparing gives the
+    changes. (1) An owned field with no match is a `create`. (2) A match
+    whose data type differs, which only a match by name can give, is a
+    `remove` of the observed field and a `create` of the owned one, both
+    `requiresRemoval`. (3) A match whose name differs is a `change` of
+    `name`; when an unmatched observed field holds the owned name, the
+    change is `requiresRemoval`, since GitHub names a Project's fields
+    uniquely and that field is removed first. (4) Each declared option with
+    no match is a `create` of the option; each match whose name differs, or
+    whose color or description differs from one the declaration declares,
+    is a `change` of those properties; each observed option no declared
+    option matched is a `remove`; and an order of the matched options that
+    differs from the declared order is one `change` of the field's
+    `order`. (5) Each observed field no owned field matched is a `remove`.
+    A change is `drift` when GitHub's side of what it sets differs from the
+    applied configuration's, compared by id: a create of a field or option
+    the applied configuration held, a change of a property whose observed
+    value differs from the applied value, a remove of a field or option the
+    applied configuration did not hold, and an order the applied
+    configuration did not have. With no applied configuration no change is
+    drift. (6) For a task field whose `whenChanged` is `accept`, when any
+    of its changes is drift, the plan holds one change in their place:
+    side `declaration`, action `change` with the observed field as `to`,
+    or `remove` when the field has no match, and `drift` true. The
+    lifecycle field's drift is always reverted. The plan orders changes as
+    an Apply makes them: removes of fields, creates of fields, changes of
+    fields with their options' creates, changes, and removes, then
+    declaration changes, each group in owned-field order and then GitHub's
+    field order. Each change gets `id`, `<action>:<field>` or
+    `<action>:<field>:<option>` with `:declaration` added for that side;
+    `description`, one English sentence naming the target and what
+    happens; and `properties`, `from`, and `to`, as `projects-api`
+    specifies. `digest` is the SHA-256 of the canonical JSON, keys sorted,
+    of the changes, so the same state gives the same digest. The plan
+    also answers `fields`, one status per owned field in order: the task
+    field's name, or none for the lifecycle field; the Project field name;
+    and what GitHub holds, `present` when the field's match needs no
+    change, `differs` when it needs one, and `missing` when it has no
+    match, with `detail`, one English sentence naming what differs or what
+    an Apply creates.
+  configuration-state: >-
+    The configuration state follows from the plan and the applied
+    configuration. With no applied configuration, or with metadata that
+    does not name the binding, it is `not-applied`. Otherwise it is `drift`
+    with the count of drift changes when there is one; else `pending` with
+    the count of creates and changes when there is one; else `in-sync`. A
+    `remove` that is not drift is an undeclared field or option an earlier
+    Apply kept, and leaves the state as it is. A declaration published and
+    not yet applied therefore shows `pending`, or `drift` when GitHub has
+    also changed, and a Project never applied shows `not-applied` whatever
+    the declaration says. The state is computed when asked, from the
+    mirror and the store, so it moves with each observation of the fields:
+    each sweep, each `projects_v2` delivery for the Project, each plan, and
+    each Apply. A Project whose fields the mirror has never read has had no
+    Apply, since every Apply observes before it records, so the list shows
+    it `not-applied` with `observedAt` `null`.
+  apply: >-
+    `apply(binding, { removeUndeclared, digest })` runs in the
+    binding's queue, so two Applies of one binding run one after the
+    other, and the second finds the first's changes made. (1) It reads the
+    declaration in force and its commit, the binding's Project node id
+    from the mirror through `projectByNumber`, and the applied
+    configuration. (2) It observes the Project's fields with
+    `observeProjectFields`. (3) It plans. With `digest` given and not
+    equal to the plan's digest, it answers `409` with kind `plan-stale`
+    and writes nothing, so a person who reviewed a plan applies that plan.
+    (4) It turns the plan into field writes: one `delete` per removed
+    field, one `create` per created field with its options, and one
+    `update` per field with changes, which sends the field's name when it
+    changes and, when any option changes, the whole option list: the
+    declared options in declared order, each with the id of its match, its
+    declared name, and its declared color and description or else the
+    observed ones, or `gray` and an empty description for a new option;
+    then each kept undeclared option, in GitHub's order, with its id and
+    observed properties. A change whose `requiresRemoval` is true is left
+    out unless `removeUndeclared` is true: a kept field is not deleted, a
+    kept option stays in the list with its id, and a kept rename or type
+    replacement is not made. (5) It sends the writes one at a time with
+    `writeProjectField`, in plan order; a failure stops it, answers `502`
+    with the error and each change's outcome, and records nothing, so the
+    next Apply plans from what GitHub then holds. (6) It saves the
+    declaration changes, as accept states. (7) It observes the fields
+    again, and in one transaction replaces the binding's applied
+    configuration with the observed fields, the id each owned field
+    matched, and the declaration's commit.
+    It answers with the outcome, each change's outcome, the number of
+    GitHub writes it made, the state after, and the save's commit. An Apply
+    whose plan has nothing to make writes nothing to GitHub and still
+    records the applied configuration, so the first Apply of a Project that
+    already holds the declaration takes it from `not-applied` to
+    `in-sync`. A binding the declaration does not name answers `409` with
+    kind `undeclared`, and a binding whose Project the mirror has not
+    resolved `409` with kind `unresolved-project`.
+  accept: >-
+    The declaration changes of an Apply are one save of
+    `task-metadata.yml` through `Revisions.save`, on the commit of the
+    declaration in force. `accept.ts` edits the file's text with the
+    `yaml` package's document model, so comments and the order of other
+    keys survive: for each accepted field it writes the observed field
+    under the task field's key in the binding's `fields`, writing GitHub's
+    field name as its storage `name`, or leaving `storage` out when that
+    name is the task field's own, writing `type`, keeping
+    `whenChanged: accept`, and writing each option as its name, or as a
+    mapping with GitHub's color and description when the declaration
+    declared them for that option; and it deletes the key of an accepted
+    field GitHub no longer holds. The message is `Accept GitHub changes to
+    the task fields of <binding>`, and the save id is the first 32
+    hexadecimal characters of the SHA-256 of the binding, the base commit,
+    and the new text, so a retried Apply that reaches the same text after
+    a crash finds its save and pushes nothing twice. `Revisions.save`
+    resolves when the saved commit is applied, so the declaration in force
+    already holds the accepted fields when the Apply records its applied
+    configuration and answers. A `conflict` answers `409` with kind
+    `declaration-conflict` after the GitHub writes are made and recorded.
+  plan-declaration: >-
+    `planDeclaration(declaration)` plans a declaration that is not in
+    force, such as a console draft before it is published, against every
+    bound Project whose fields the mirror has read, with each Project's
+    applied configuration, and answers the state and changes each Project
+    would show if it were in force. It reads only the mirror and the store,
+    so it answers at once, and a draft's impact moves with each
+    observation as a plan does.
+  endpoints: >-
+    `requestListener` serves `projects-api` under the prefix the service
+    mounts it at, `/api/projects`. `GET /` answers `list()`. `GET
+    /{binding}/plan` answers `plan(binding)`, with the Project's owner and
+    number, the declaration's commit, `observedAt`, the observation's
+    status, the state, the changes, and `digest`; an observation that
+    fails answers the plan from the mirror with status `stale`, and one
+    that fails for a Project the mirror has never read answers `502` with
+    kind `unobserved`. `POST /{binding}/apply` validates its body against
+    `ApplyRequest` and answers `apply(binding, body)`. The request's
+    signal aborts on the client's disconnect only for a plan; an Apply runs
+    to its end once it has started, so a closed connection never leaves a
+    write half asked. Each answer carries `Cache-Control: no-store`.
   lint: >-
     The service lints the declaration of each revision it applies, through
     `apply`, and the blueprint loader checks every literal `status` of a
@@ -217,32 +550,62 @@ proposed-design:
     and `manifold-host blueprint lint --repository <dir>` checks literal
     statuses against that checkout's declaration.
   wiring: >-
-    The service opens the module before it creates the blueprint loader,
-    with the store's connection, the actor host's `actorOf` read through the host once it opens,
-    `invocationOf`, a `source` that resolves with the GitHub event source
-    once `startGitHubSource` returns and rejects when its signal aborts
-    first, and a `bindingOf` that finds the GitHub Project binding of the
-    portfolio's declaration in force whose owner, compared without regard
-    to case, and number match. It adds `taskMetadata.implementations` to
-    `serviceImplementations` as `taskMetadata`, and adds
-    `github-card-move` to `manifoldImplementationNames`. The revision
-    follower calls `taskMetadata.apply(revision)` after `portfolio.apply`,
-    and logs `task-metadata-rejected` with the findings of a rejected
-    result.
+    The module joins the service through its own wiring part,
+    `task-metadata/wiring.ts`, a `ServiceWiringPart` named `task-metadata`
+    with one entry in `service/start.ts`'s part list, after the
+    `github-mirror`, portfolio, and process repository parts and before the
+    blueprint loader part. Its `start(members, context)` opens the module
+    with the store's connection; the actor host's `actorOf` and the GitHub
+    source read through `context.later`, the source resolving once the
+    GitHub source part has started and rejecting when the signal aborts
+    first; `invocationOf`; a `bindingOf` and a `bindings` that read the
+    portfolio's declaration in force through `portfolio.githubProject` and
+    its GitHub Project bindings that are not archived; and the service's
+    `Revisions`. It adds `taskMetadata.implementations` with
+    `context.addImplementations`, mounts `requestListener` at
+    `/api/projects` with `members.http.mount`, and calls
+    `context.onStop("requests", () => taskMetadata.close())` right after it
+    mounts, so the service stops taking Project requests and ends each
+    Apply in hand before it stops the sources. `github-card-move` is in
+    `manifoldImplementationNames`. The `metadata` migration steps run
+    where they run today, and the GitHub source's step 5 runs in the
+    `github-mirror` part with the source's other steps. The GitHub source
+    part passes `lifecycleField`, which maps a Project node id to its
+    mirror row, the row to its binding through `portfolio.githubProject`,
+    and the binding to the declaration in force's lifecycle `field`, read
+    through `context.later` of this part. The revision follower calls
+    `taskMetadata.apply(revision)` after `portfolio.apply`, and logs
+    `task-metadata-rejected` with the findings of a rejected result.
   convergence: >-
     `apply` twice with one revision gives the same declaration in force and
     writes one row. A crash before `apply` commits leaves the earlier
     declaration in force, and the follower applies the commit again at the
-    next start. A
-    move run twice for one invocation leaves GitHub holding one value, one
-    card move row, and one published change, as `github-event-source`
-    states. A crash before GitHub takes the write leaves the actor in the
-    invoking state, and the restored invoke sends the write as the first
-    time. A crash after GitHub takes the write and before the actor's save
-    restores the actor in the invoking state; its invoke writes again and
-    resolves, and the actor takes `onDone`. A `transport` error leaves
-    GitHub's value unknown; the blueprint that enters the state again sends
-    a new move, which sets the option whatever the first did.
+    next start. A move run twice for one invocation leaves GitHub holding
+    one value, one card move row per resolved field and option, and one
+    published change, as `github-event-source` states. A crash before
+    GitHub takes the write leaves the actor in the invoking state, and the
+    restored invoke sends the write as the first time. A crash after GitHub
+    takes the write and before the actor's save restores the actor in the
+    invoking state; its invoke writes again and resolves, and the actor
+    takes `onDone`. A `transport` error leaves GitHub's value unknown; the
+    blueprint that enters the state again sends a new move, which sets the
+    option whatever the first did. A Project Apply plans every write from
+    an observation made in the same Apply, so it never repeats a write
+    GitHub has taken: run twice, the second run observes the first's
+    result, plans no change, writes nothing to GitHub, replaces the applied
+    configuration with the same fields, and answers `in-sync`. A crash
+    after some writes and before the record leaves those writes on GitHub
+    and the earlier applied configuration in the store; the next Apply
+    observes them, finds those fields and options present by id or name,
+    and makes only the rest, so no field or option is created twice. A
+    change a crash left made is not drift, since drift is a planned change
+    and the plan has none for it. A crash after a save and before the
+    record leaves the saved commit, which the follower applies at the next
+    start; the next Apply plans against it, finds the accepted fields in
+    the declaration, and plans no declaration change, and a retried Apply
+    that reaches the same text finds its save by its id. A plan writes
+    only the mirror's fields, as an observation does, and twice gives the
+    same changes and digest.
   tests: >-
     Tests run through a real store file in a temporary directory, router, actor host, blueprint loader,
     and GitHub event source, against the GitHub fake of the source's test
@@ -283,3 +646,52 @@ proposed-design:
     `field-changed` for the item and field was published, with `movedBy`
     the actor, confirmed, and that the actor's snapshot is in the state its `onDone`
     enters. Values are generic and never drawn from Manifold's own domain.
+    Project configuration is tested in three layers, each red before
+    green. `planProjectConfiguration` is tested as a pure function over
+    literal declarations, fields, and applied configurations: an empty
+    Project with a declaration plans the lifecycle field and each task
+    field as creates, none drift, state `not-applied`; the same fields
+    applied and observed plan nothing, `in-sync`; an option renamed on
+    GitHub, matched by its applied id, plans a `change` of `name` with
+    `drift`, and the Apply's update keeps that option's id; an option
+    deleted on GitHub plans a `create` with `drift`; an option added on
+    GitHub plans a `remove` with `drift` and `requiresRemoval`; an
+    undeclared field held by the applied configuration plans a `remove`
+    that is not drift and leaves `in-sync`; a declared option added since
+    the Apply plans a `create`, not drift, `pending` 1; a declared color
+    changes the option's color and an undeclared color is left as GitHub
+    holds it; a reordered declaration plans one `order` change; a field of
+    the declared name and another type plans a `remove` and a `create`,
+    both `requiresRemoval`; a renamed field whose old name an undeclared
+    field holds plans its rename `requiresRemoval`; drift in a field whose
+    `whenChanged` is `accept` plans one `declaration` change, and drift in
+    the lifecycle field never does; the same input twice gives the same
+    changes and digest. `accept.ts` is tested on texts with comments: a
+    renamed field keeps its position and the comments around it, an added
+    option is written by name, an option with a declared color takes
+    GitHub's color, and a removed field's key goes. The Projects API is
+    tested through `requestListener` over a real store file, the GitHub
+    source against its fake, the revision follower, and a process
+    repository fixture, as `projects-api` states, and also: an Apply with
+    a stale `digest` answers `409` `plan-stale` and the fake logs no
+    mutation; two Applies of one binding sent together make each write
+    once and the second answers `in-sync`; an Apply of an accepted field
+    renamed in the fake saves one commit whose `task-metadata.yml` holds
+    the new name, and the state after is `in-sync`; `planDeclaration` of a
+    draft adding a field answers `pending` 1 for each Project that declares
+    it; and a binding never observed is `not-applied` with `observedAt`
+    `null`. The fault test runs the service in a child Node process that
+    kills itself with `SIGKILL` from `probeFieldWrite` after the fake
+    answers the second of three field writes; the test asserts the signal,
+    starts the service again on the same store file, sends one Apply, and
+    checks that the fake's Project holds each declared field and option
+    once, that the fake logged no second create of a field or option the
+    first run made, and that a third Apply makes no mutation and answers
+    `in-sync`. The recreation-during-restart regression runs the same
+    child process with `probeMove`: after the fake takes a card move and
+    the process dies, the fake deletes and recreates the move's option with
+    the same name, and after the restart the actor takes `onDone` and its
+    `field-changed` for the new value carries `movedBy` the actor,
+    confirmed, and `lifecycle` true. A blueprint guarded on
+    `event.lifecycle` takes a person's move of a lifecycle field named
+    `Phase` and not a change of another single-select field.

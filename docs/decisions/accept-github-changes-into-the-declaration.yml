@@ -1,0 +1,53 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - task-metadata
+    - task-metadata-declaration
+description: >-
+  A task field's `whenChanged` is `revert` or `accept`, the two choices
+  the console's Task fields section offers for "When changed on GitHub".
+  Revert has one meaning: an Apply sets GitHub back to the declaration.
+  Accept must say what Manifold does with a change a person made on GitHub
+  to a field the declaration owns, while the task metadata declaration in
+  the process repository stays the one source of a Project's task fields
+  and drift stays a difference between GitHub and what Manifold last
+  applied.
+considered-options:
+  "1": >-
+    An Apply writes GitHub's field into `task-metadata.yml` through the
+    service's save, as one commit on the declaration in force, so the
+    declaration follows GitHub and the drift clears when the commit comes
+    in force.
+  "2": >-
+    Manifold records the change as accepted in its store and stops
+    counting it as drift, and the declaration keeps its own value.
+  "3": >-
+    An accepted field is owned only until it exists: Manifold creates it
+    and then never plans a change to it.
+  "4": >-
+    Manifold writes GitHub's field into the declaration at the observation
+    that finds the drift, with no Apply.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 keeps the declaration the single source of truth: after an
+    accepting Apply, the process repository says what GitHub holds, and a
+    reader of `task-metadata.yml` sees the Project as it is. It reuses the
+    save the console's editors use, with its conflict answer and its
+    retry by save id, and it commits only when the operator applies, so no
+    commit lands in the process repository unasked. Option 2 leaves the
+    declaration and the Project disagreeing with no record in the
+    repository of which holds, and the next edit of the declaration would
+    undo the accepted change. Option 3 cannot tell a later edit of the
+    declaration from a person's change, so declaration edits to the field
+    stop applying. Option 4 commits to the process repository on every
+    observation of a person's edit, before anyone has reviewed it.
+expected-outcomes:
+  positive:
+    - The process repository states each Project's task fields as GitHub holds them after an accepting Apply.
+    - One Apply converges both directions, GitHub to the declaration and the declaration to GitHub, field by field.
+    - A retried Apply that reaches the same text finds its save and commits nothing twice.
+  negative:
+    - An Apply writes to the process repository, with the service's contents permission, as well as to GitHub.
+    - An accepting Apply conflicts when `task-metadata.yml` changed on the branch after the declaration in force, and the operator applies again.
+    - The YAML edit rewrites the accepted fields' entries, so comments inside those entries are not kept.

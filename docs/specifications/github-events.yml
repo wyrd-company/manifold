@@ -99,7 +99,7 @@ description: |-
   | `github.sub-issue.added`, `github.sub-issue.removed` | `parent`, `subIssue` | both issues |
   | `github.project-item.added` | `project`, `item`, `issue`, `archived`, `fields` | the Project, and the issue when `contentType` is `issue` |
   | `github.project-item.removed`, `github.project-item.archived`, `github.project-item.restored` | `project`, `item` | the Project, and the issue when `contentType` is `issue` |
-  | `github.project-item.field-changed` | `project`, `item`, `field`, `from`, `to`, `movedBy` | the Project, and the issue when `contentType` is `issue` |
+  | `github.project-item.field-changed` | `project`, `item`, `field`, `from`, `to`, `movedBy`, `lifecycle` | the Project, and the issue when `contentType` is `issue` |
   | `github.project.closed`, `github.project.reopened` | `project` | the Project |
 
   `blocks` lists the node ids of the issues the mirror shows the issue
@@ -118,7 +118,13 @@ description: |-
   attempted the value and the source cannot show that its write set it,
   as after a write whose fate is unknown; and `null` when no write
   Manifold recorded or attempted set the value: a person, a Project
-  workflow, or another integration. A
+  workflow, or another integration. `lifecycle` is true when the changed
+  field is the lifecycle field the task metadata declaration in force
+  declares for the item's Project, compared by the field's name as the
+  source read it, and false otherwise, so a blueprint guards on
+  `event.lifecycle` whatever its Project calls that field. A value whose
+  single-select option id, or iteration id, is unchanged is not a change,
+  whatever its name: renaming an option does not move a card. A
   card move reaches the actors of its item's issue through the same read,
   comparison, topics, and event id as any other change. A field is a custom field of data type `TEXT`,
   `NUMBER`, `DATE`, `SINGLE_SELECT`, or `ITERATION`, named by `nodeId` and
@@ -173,5 +179,8 @@ validation-criteria: >-
   `malformed` and publishes nothing. A delivery with a wrong signature, one
   signed with another hook's secret, and one whose body differs by one byte
   from the signed body are each rejected as `signature`. Every published
-  `github.project-item.field-changed` carries `movedBy`. Each published
+  `github.project-item.field-changed` carries `movedBy` and `lifecycle`,
+  and `lifecycle` is true only for the field the declaration names as
+  the Project's lifecycle field. Renaming an option that an item holds
+  publishes no `field-changed` for that item. Each published
   event's topics and event id match the tables above.

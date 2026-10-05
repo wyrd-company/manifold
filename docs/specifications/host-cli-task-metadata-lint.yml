@@ -15,6 +15,10 @@ description: >-
   `docs/specifications/host-cli-task-metadata-lint.cli.yml` is the
   machine-readable definition.
 
+  The findings the command prints are the lint's, so it prints every
+  kind `task-metadata-declaration` defines, as the service reports them
+  for the same texts.
+
   The command takes one optional argument, the directory of a process
   repository checkout, default the current directory. It reads
   `task-metadata.yml` and `bindings.yml` from that directory and passes
@@ -33,7 +37,10 @@ validation-criteria: >-
   CLI for the current platform and runs `task-metadata lint` from a
   directory with no `node_modules`. It observes exit 0 and no output for a
   clean checkout and for an empty directory; exit 1 with a `schema` line
-  for a lifecycle with no `options`; exit 1 with an `unknown-binding` line
+  for a lifecycle with no `options`; exit 1 with a `duplicate-field` line
+  for a task field stored in the lifecycle field, and a `duplicate-option`
+  line for an option named twice; exit 0 for a checkout whose
+  `task-metadata.yml` declares task fields of each type; exit 1 with an `unknown-binding` line
   for a Project key that `bindings.yml` does not bind; exit 1 with a
   `syntax` line for a `task-metadata.yml` that does not parse as YAML; and
   exit 2 with no standard output for a missing directory and for a

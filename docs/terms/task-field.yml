@@ -4,9 +4,9 @@ $schema: https://refinery.systems/ontology/term
 relationships:
   references:
     - task-metadata-declaration
-title: Lifecycle Field
+title: Task Field
 description: >-
-  The single-select field of a bound GitHub Project that shows where each
-  task is, declared with the option names a blueprint may set in the
-  process repository's task metadata declaration. It is the one field
-  Manifold sets on a task's card.
+  A field of a bound GitHub Project's tasks that the task metadata
+  declaration declares, with its type, its storage, and what an Apply does
+  when it changes on GitHub, and whose configuration Manifold owns on the
+  Project.

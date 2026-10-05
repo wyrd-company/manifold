@@ -59,6 +59,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **actual** exact usage recorded for a task actor from provider session data.
 - **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
 - **allocation** a guaranteed percentage of a parent's capacity assigned to a portfolio item.
+- **applied configuration** a bound Project's custom fields as Manifold read them at the end of the binding's last Apply, against which a plan tells drift from a change to the declaration.
 - **available balance** allocation less usage counted as it arrives, per portfolio item and account.
 - **binding** a declaration in the process repository that ties a GitHub Project or a T3code project to a portfolio item.
 - **blueprint** a declarative, static schema (YAML) specifying states, transitions, and structure of a state machine.
@@ -80,6 +81,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **deadline loop** the router's one timer that fires due deadlines into their actors' inboxes and re-arms at the earliest unfired deadline.
 - **decision model** a GoRules JDM graph in the process repository whose tables, expressions, and switches are JSONata, evaluated by the Zen engine.
 - **draft** the edited text of one blueprint in the console, with the commit it is based on, kept in the browser until it is published or discarded.
+- **drift** a change to a bound Project's owned configuration made on GitHub since Manifold last applied it, which the declaration in force does not hold.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **escalation** a question put to a person, with up to three choices or a free-text answer, by a blueprint state or by the service, closed by the first answer.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
@@ -102,6 +104,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **population** the task actors in a gated state that hold no token from its gate.
 - **portfolio item** a user-declared node in the portfolio tree that budget is allocated to and usage is attributed to.
 - **project** an adaptable table, board, and roadmap that integrates with your issues and pull requests on GitHub to help you plan and track your work
+- **project configuration plan** the ordered changes an Apply would make to bring a bound Project's custom fields to the task metadata declaration.
 - **promise** an invoked implementation actor that finishes once, with an output or an error.
 - **provider** means the agent runtime or harness T3 Code talks to, such as Codex, Claude, Cursor, Grok, or OpenCode.
 - **redelivery** a webhook delivery GitHub sends again with its original GUID when the source asks for a failed delivery.
@@ -123,6 +126,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **T3code project** means an environment-local workspace record rooted at a directory.
 - **sweep** a periodic comparison of bound GitHub Projects and tracked issue relationships with the GitHub mirror.
 - **task** a specific piece of work that needs to be completed, documented as an issue and executed as an actor
+- **task field** a field of a bound Project's tasks that the task metadata declaration declares, whose configuration Manifold owns on the Project.
 - **thread** means the durable conversation and work history for a T3code project.
 - **token** what a gate grants a task actor so it may leave the gated state.
 - **topic** a path of segments joined by `.` that names where an event comes from, whose first segment is its event source.

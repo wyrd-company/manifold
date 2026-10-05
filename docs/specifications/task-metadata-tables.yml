@@ -7,6 +7,7 @@ relationships:
   references:
     - store-database-schema
     - task-metadata-declaration
+    - projects-api
 description: >-
   Defines the tables the task metadata module holds in Manifold's store
   database. `docs/specifications/task-metadata-tables.sql` is the
@@ -31,6 +32,18 @@ description: >-
   `metadata_rejections` holds one row per commit whose declaration had
   findings: `findings`, the JSON array of the lint's findings, and
   `rejected_at`. A second rejection of the same commit writes nothing.
+
+  `metadata_project_applies` holds the applied configuration of each
+  binding on each Project: one row per binding name and Project node id,
+  which each completed Apply replaces. `commit_id` is the commit of the
+  declaration the Apply planned against, `fields` the JSON array of the
+  Project's custom fields as the observation that ended the Apply read
+  them, each `{ "nodeId", "name", "type", "options" }` as
+  `github-event-source` defines `ProjectField`, `owned` the JSON
+  `{ "lifecycle", "fields" }` of the node id of the field each owned field
+  matched, `lifecycle` `null` when it matched none and `fields` keyed by
+  task field name, and `applied_at` the time
+  the Apply recorded it, in epoch milliseconds. Step 2 creates it.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/task-metadata-tables.sql` runs without error on an
