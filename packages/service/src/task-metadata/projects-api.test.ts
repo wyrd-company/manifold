@@ -55,8 +55,17 @@ test("Projects API observes drift, converges, keeps ids, accepts through a real 
     f.api.fields.splice(0);
     await git.setConfig({ fs, gitdir: f.remote.gitdir, path: "http.receivepack", value: "true" });
     await f.commit(60, { bindings, taskMetadata: declaration });
+    let refuseAcceptanceFollow = true;
     service = await startService({
       configurationFile: f.file,
+      probes: {
+        save(step) {
+          if (step === "pushed" && refuseAcceptanceFollow) {
+            refuseAcceptanceFollow = false;
+            f.remote.state.refuseNextFetch = true;
+          }
+        },
+      },
       log: (entry) => {
         if (entry.event === "github-error" || entry.event === "portfolio-rejected")
           console.error(JSON.stringify(entry));
@@ -124,8 +133,25 @@ test("Projects API observes drift, converges, keeps ids, accepts through a real 
     });
     expect(f.api.fields.find((f) => f.name === "Stage")!.options[0]!.id).toBe(originalId);
     f.api.fields.find((f) => f.name === "Mass")!.name = "Weight";
-    const accepted = await apply({ removeUndeclared: false });
-    expect(accepted.status).toBe(200);
+    let accepted = await apply({ removeUndeclared: false });
+    if (accepted.status === 409) {
+      expect(accepted.body.error).toMatchObject({
+        kind: "declaration-pending",
+        commit: expect.any(String),
+      });
+      await expect
+        .poll(
+          async () => {
+            accepted = await apply({ removeUndeclared: false });
+            if (accepted.status === 409)
+              expect(accepted.body.error.kind).toBe("declaration-pending");
+            return accepted.status;
+          },
+          { timeout: childProcessLimit },
+        )
+        .toBe(200);
+    }
+    expect(accepted.status, JSON.stringify(accepted.body)).toBe(200);
     expect(accepted.body).toMatchObject({ writes: 0, configuration: { state: "in-sync" } });
     expect(await service.processRepository.current()!.read("task-metadata.yml")).toContain(
       "Weight",
