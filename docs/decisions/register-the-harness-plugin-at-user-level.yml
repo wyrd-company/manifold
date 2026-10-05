@@ -1,0 +1,40 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - agent-tools
+    - host-cli-mcp
+description: >-
+  An agent hands off and escalates through the harness plugin's tools, an
+  MCP server the host CLI serves. T3 Code gives no way to add an MCP
+  server to one thread, and each provider reads MCP servers only from its
+  own configuration. The plugin must be registered where every provider
+  loads it for the threads T3 Code starts.
+considered-options:
+  "1": >-
+    User-level registration. The operator registers `manifold-host mcp` in
+    each provider's user-level MCP configuration on each environment.
+    Every session of that provider on that machine sees `handoff` and
+    `escalate`, in T3 Code or not, and the service refuses a call from a
+    thread that no task follows.
+  "2": >-
+    Project-level registration, in a file in each repository a thread
+    works in.
+  "3": >-
+    No registration until an installer command exists.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 is the only registration that T3 Code loads for every
+    provider it runs. Option 2 writes into the user's repositories, and
+    Codex has no project-level MCP configuration. Option 3 leaves agents
+    with no way to hand off, so the acceptance scenario cannot pass. A
+    stray call from a session no task follows is refused and publishes
+    nothing, and the tools reach only the API that is already served
+    without authentication.
+expected-outcomes:
+  positive:
+    - Every thread T3 Code starts, with any provider, can hand off and escalate.
+    - One registration per provider per environment, and no file in a user's repository.
+  negative:
+    - Sessions outside T3 Code on that machine list two tools they cannot use.
+    - Registration is a manual step per provider and environment in the operator setup guide.

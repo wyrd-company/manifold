@@ -1,0 +1,45 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - portfolio
+    - portfolio-ledger
+    - gate-runtime
+description: >-
+  An account's capacity starts again at each reset, and the ledger counts
+  reservations and actuals only in a window that has been credited. A
+  window must be credited before a gate can reserve in it or usage intake
+  can post an actual to it. Something must decide when a window is
+  credited, and whether a gate that waits on a spent window hears that a
+  new window has opened.
+considered-options:
+  "1": >-
+    Credit on demand, with no timer. A window is credited, once, the first
+    time a reservation, a balance read, or an actual needs it, from the
+    declaration in force. A gate that waits on a spent window takes the
+    new window at its next input change.
+  "2": >-
+    A deadline at each window's close. The service schedules a timer per
+    account that credits the next window at its reset and tells the gates
+    their input changed.
+  "3": >-
+    Credit on the GitHub sweep's existing tick, every 15 minutes, for every
+    account whose window has closed since the last tick.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 adds no timing mechanic, and it is the rule the user chose for
+    pacing: gates notice budget growth at their next input change, with no
+    timer. A window that nothing needs is never credited, so a restart, a
+    replay, or an idle account writes nothing, and the idempotency key per
+    account and window makes a second credit impossible. Option 2 opens
+    windows on time, but it is a new timer per account to persist across
+    restarts and to reconcile with changed declarations. Option 3 ties
+    budget to an unrelated source's cadence and still credits up to 15
+    minutes late.
+expected-outcomes:
+  positive:
+    - No timer opens a window, so nothing about capacity has to survive a restart except the ledger rows.
+    - A window is credited once per account and window, whatever runs twice.
+  negative:
+    - A task that waits in a gated state for a window that has reset is released at the gate's next input change, not at the reset.
+    - The ledger holds no row for a window nothing needed, so a report of past windows reads only the windows that were used.

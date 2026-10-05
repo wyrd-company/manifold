@@ -29,9 +29,18 @@ impact: 3
 
 response-strategy: mitigate
 
-status: open
+status: mitigated
 
 # Mitigation: the live GitHub environment runs the assembled service against
 # a real organization through the App installation and a signed organization
-# hook, and its smoke check covers delivery, intake, and the sweep. A
-# difference it finds is fixed in the fake as well as in the module.
+# hook. Its smoke check covers delivery, intake, and the sweep, and the
+# default blueprint runs on it through both card moves. A difference it finds is fixed in the fake
+# as well as in the module. The fakes model what the live runs measured:
+# hook deliveries page by the `Link` cursor, not by page number; a hook
+# route takes only the owner parameter its path names, and answers 422 to
+# any other; a delivery attempt id can exceed the safe integer range; an
+# empty repository answers Git Data reads with 409; `deleteProjectV2`
+# returns `projectV2`. Residual: what no live run crosses, which is a
+# user-owned Project, the field value's `updatedAt` that card move
+# attribution could read, and a field or option recreated between a crash
+# and the replay of a card move.

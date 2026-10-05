@@ -62,10 +62,13 @@ We need to be on the same page with terminology. When communicating, use this la
 - **available balance** allocation less usage counted as it arrives, per portfolio item and account.
 - **binding** a declaration in the process repository that ties a GitHub Project or a T3code project to a portfolio item.
 - **blueprint** a declarative, static schema (YAML) specifying states, transitions, and structure of a state machine.
+- **blueprint version** a blueprint as it is at one process repository commit, named by the commit and its path, and for a bundled blueprint also by its bundle.
 - **board** a KANBAN board
+- **bundle** the blueprints one Manifold build ships, by path, identified by a digest of their texts; a process repository file at the same path replaces a bundled blueprint.
 - **call** one model request recorded in a provider session file, with its timestamp, model, and token counts.
 - **callback** an imperative actor that runs until its state exits, receiving and sending events.
 - **capacity** what an account can spend in a window.
+- **card move** Manifold setting the lifecycle field of a task's item on its Project to a declared option, when the task's actor invokes `github-card-move`.
 - **ceiling** the most of its parent's limit a portfolio item may use, its allocation and borrowed unallocated remainder together.
 - **cell** the JSONata expression at one rule and one column of a decision table.
 - **child state machine** a blueprint invoked or spawned by another state machine actor, for work the parent owns.
@@ -76,6 +79,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **deadline** a time at which an actor in a state receives an event.
 - **deadline loop** the router's one timer that fires due deadlines into their actors' inboxes and re-arms at the earliest unfired deadline.
 - **decision model** a GoRules JDM graph in the process repository whose tables, expressions, and switches are JSONata, evaluated by the Zen engine.
+- **draft** the edited text of one blueprint in the console, with the commit it is based on, kept in the browser until it is published or discarded.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **escalation** a question put to a person, with up to three choices or a free-text answer, by a blueprint state or by the service, closed by the first answer.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
@@ -83,12 +87,14 @@ We need to be on the same page with terminology. When communicating, use this la
 - **event source** a shared origin of events that Manifold routes to actors.
 - **gate** an implementation on a blueprint state that decides which waiting tasks may leave it.
 - **GitHub mirror** the last state the GitHub event source read of each entity it follows, against which it compares current GitHub state.
+- **harness plugin** the MCP server the host CLI serves to each provider T3 Code runs, giving the agent the tools to hand off and escalate.
 - **holder** a task actor holding a token from a gate.
 - **implementation** a named piece of code a blueprint binds: actor logic, an action, a guard, or a delay.
 - **inbox** the per-actor store of routed events not yet consumed.
 - **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
 - **invocation** the identity of an invoked implementation: its actor id, its invoke id, and the entry id of the state entry that invoked it.
 - **issue** a way to track tasks related to a repository on GitHub
+- **lifecycle field** the single-select field of a bound Project that shows where each task is, declared with its option names in the process repository's task metadata declaration.
 - **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, or an event payload assigned into context.
 - **notification destination** a name the process repository uses for where an escalation is sent, mapped in service configuration to an ntfy server, topic, security posture, and credential.
 - **pacing** a limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.
@@ -99,6 +105,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **promise** an invoked implementation actor that finishes once, with an output or an error.
 - **provider** means the agent runtime or harness T3 Code talks to, such as Codex, Claude, Cursor, Grok, or OpenCode.
 - **redelivery** a webhook delivery GitHub sends again with its original GUID when the source asks for a failed delivery.
+- **reset** the instant at which an account's capacity starts again, closing one window and opening the next.
 - **reservation** an estimate held against a portfolio item's available balance from a task's release until settlement.
 - **revision** the process repository's declared files at one commit, read-only.
 - **router** delivers an event from a source to the actors whose identity matches its topic.
