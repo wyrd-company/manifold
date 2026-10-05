@@ -11,5 +11,6 @@ export type {
   EnvironmentStatus,
   EnvironmentsConfiguration,
   ThreadChangeEvent,
+  MessagePlacement,
 } from "./types.ts";
 export { readThreadProject } from "./thread-project.ts";

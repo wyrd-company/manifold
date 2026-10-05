@@ -4,7 +4,7 @@
 // ---
 import { createActor, createMachine } from "xstate";
 import type { AnyActorRef, InspectionEvent, Snapshot } from "xstate";
-import { parseBlueprintVersionKey } from "@wyrd-company/manifold-shared";
+import { createSchemaCompiler, parseBlueprintVersionKey } from "@wyrd-company/manifold-shared";
 import type { LoadedBlueprint, VersionLoad } from "../blueprint-loader/index.ts";
 import { ActorNotLoadedError } from "../router/index.ts";
 import type { ActorRecord as RouterActorRecord, Router } from "../router/index.ts";
@@ -189,6 +189,7 @@ export async function openActorHost({
       },
     };
   }
+  const compileSchema = createSchemaCompiler();
   const host: ActorHost = {
     connect(value) {
       router = value;
@@ -280,6 +281,35 @@ export async function openActorHost({
         manifold: identityOf(record.root.getSnapshot()),
         commit: record.blueprint.version.commit,
       };
+    },
+    followers(environment, threadId) {
+      return store
+        .activeSnapshots()
+        .filter((stored) => {
+          const identity = identityOf(stored.snapshot);
+          return identity.environment === environment && identity.threads?.includes(threadId);
+        })
+        .map((stored) => stored.actorId)
+        .sort();
+    },
+    followedThreads(environment) {
+      return [
+        ...new Set(
+          store.activeSnapshots().flatMap((stored) => {
+            const identity = identityOf(stored.snapshot);
+            return identity.environment === environment ? (identity.threads ?? []) : [];
+          }),
+        ),
+      ].sort();
+    },
+    eventSchema(actorId, eventType) {
+      const stored = store.loadSnapshot(actorId);
+      const version = stored ? versions.get(stored.machine) : undefined;
+      if (version?.status !== "loaded") return { status: "unavailable" };
+      const schema = version.blueprint.document.schemas.events[eventType];
+      return schema === undefined
+        ? { status: "undeclared" }
+        : { status: "declared", validate: compileSchema([schema])[0]! };
     },
     async release(actorId) {
       const router = connected();

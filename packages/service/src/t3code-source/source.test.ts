@@ -1268,3 +1268,55 @@ test("thread view reads stored titles and turn state, encodes thread URLs, and m
   db.prepare("UPDATE t3_thread SET status='deleted' WHERE thread_id=?").run("a/b snow");
   expect(source.thread("station", "a/b snow")?.archived).toBe(true);
 });
+
+test("message placement runs in the publication transaction before turn changes", async () => {
+  const f = await setup();
+  const placements: unknown[] = [];
+  const source = startT3CodeSource({
+    ...f.options,
+    messagePlaced(placement) {
+      expect(f.store.connection.database.isTransaction).toBe(true);
+      expect(f.store.pendingInbox("reader")).toHaveLength(0);
+      placements.push(placement);
+    },
+  });
+  cleanup.push(() => source.stop());
+  expect(await source.environmentId("station")).toBe("server-one");
+  const base = fixtureThread();
+  const thread = schemas.orchestrationReadModel.OrchestrationThread.parse({
+    ...base,
+    messages: [
+      {
+        id: "answer",
+        role: "user",
+        turnId: null,
+        streaming: false,
+        text: "Selected option",
+        attachments: [],
+        createdAt: base.createdAt,
+        updatedAt: base.createdAt,
+      },
+    ],
+    latestTurn: {
+      turnId: "answer-turn",
+      state: "completed",
+      requestedAt: base.createdAt,
+      startedAt: base.createdAt,
+      completedAt: base.createdAt,
+      assistantMessageId: null,
+    },
+  });
+  f.server.change(thread);
+  await expect
+    .poll(() => placements)
+    .toEqual([
+      {
+        environment: "station",
+        threadId: thread.id,
+        messageId: "answer",
+        turnId: "answer-turn",
+        placement: "started",
+      },
+    ]);
+  await expect.poll(() => f.store.pendingInbox("reader").length).toBe(2);
+});

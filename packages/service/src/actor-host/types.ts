@@ -2,6 +2,7 @@
 // relationships:
 //   implements: actor-host
 // ---
+import type { ValidateFunction } from "ajv";
 import type { ManifoldIdentity } from "@wyrd-company/manifold-shared";
 import type { BlueprintLoader, LoadedBlueprint } from "../blueprint-loader/index.ts";
 import type { ActorHost as RouterActorHost } from "../router/index.ts";
@@ -23,6 +24,15 @@ export interface ActorHost extends RouterActorHost {
   actorOf(
     actorId: string,
   ): { readonly manifold: ManifoldIdentity; readonly commit: string } | undefined;
+  followers(environment: string, threadId: string): readonly string[];
+  followedThreads(environment: string): readonly string[];
+  eventSchema(
+    actorId: string,
+    eventType: string,
+  ):
+    | { readonly status: "declared"; readonly validate: ValidateFunction }
+    | { readonly status: "undeclared" }
+    | { readonly status: "unavailable" };
   release(actorId: string): Promise<void>;
 }
 export interface ActorStart {

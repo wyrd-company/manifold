@@ -2,7 +2,7 @@
 // relationships:
 //   verifies: escalations
 // ---
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
@@ -168,4 +168,115 @@ test("an answered cause with failed handling keeps its occurrence and retries on
   expect(calls).toBe(2);
   expect(after).toBe(1);
   expect(module.raise(request).raiser).toMatchObject({ occurrence: 2 });
+});
+
+test("agent questions accept title and free text and roll back with their caller", () => {
+  const { module, store } = fixture();
+  const question = {
+    kind: "agent-question" as const,
+    subject: { actorId: "parcel", callId: "question-call" },
+    title: "Delivery address",
+    question: "Where should the parcel go?",
+    choices: [],
+    freeText: true,
+  };
+  expect(() =>
+    store.connection.transaction(() => {
+      module.raise(question);
+      throw new Error("rollback");
+    }),
+  ).toThrow("rollback");
+  expect(module.list({})).toEqual([]);
+  const raised = module.raise(question);
+  expect(raised).toMatchObject({ title: question.title, freeText: true });
+  expect(module.raise(question).id).toBe(raised.id);
+  expect(module.answer(raised.id, { text: "Front desk" }, "api").status).toBe("answered");
+});
+
+test("upgrades populated escalations without losing answers, notifications or sequence", () => {
+  const directory = mkdtempSync(join(tmpdir(), "questions-"));
+  cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, "store.sqlite");
+  const old = openStore({ path });
+  old.connection.migrate("escalation", [
+    readFileSync(new URL("./test-fixtures/legacy-schema.sql", import.meta.url), "utf8"),
+  ]);
+  const id = "a".repeat(22);
+  old.connection.database
+    .prepare(
+      `INSERT INTO escalation(escalation_id,kind,subject,occurrence,title,question,choices,free_text,destinations,key_digest,status,answer,channel,raised_at,closed_at,handled_at) VALUES(?, 'held-actor', '{"actorId":"parcel"}', 1, 'Delivery', 'Retry?', '[]', 1, '["default"]', ?, 'answered', '{"text":"Front desk"}', 'api', 1, 2, 2)`,
+    )
+    .run(id, Buffer.alloc(32, 1));
+  old.connection.database
+    .prepare(
+      `INSERT INTO escalation_notification(notification_id,escalation_id,destination,purpose,message,status,attempts,next_attempt_at,created_at,settled_at) VALUES(9,?,'default','ask',NULL,'sent',1,1,1,2)`,
+    )
+    .run(id);
+  old.connection.database
+    .prepare(
+      `INSERT INTO escalation_notification(notification_id,escalation_id,destination,purpose,message,status,attempts,next_attempt_at,created_at,settled_at) VALUES(20,?,'default','close',NULL,'sent',1,1,1,2)`,
+    )
+    .run(id);
+  old.connection.database.exec("DELETE FROM escalation_notification WHERE notification_id=20");
+  const previous = old.connection.database.prepare("SELECT * FROM escalation").get();
+  const notifications = old.connection.database
+    .prepare("SELECT * FROM escalation_notification")
+    .all();
+  old.close();
+  const store = openStore({ path });
+  cleanup.push(() => store.close());
+  const module = openEscalations({
+    store,
+    configuration: {
+      destinations: {
+        default: {
+          server: "https://example.test",
+          topic: "opaque-topic",
+          posture: "open",
+          priority: 4,
+        },
+      },
+      publicUrl: "https://example.test",
+      requestTimeoutMs: 30000,
+      retryIntervalMs: 60000,
+    },
+    tokenFile: () => "",
+    handlers: {},
+  });
+  cleanup.push(() => {
+    void module.stop();
+  });
+  expect(store.connection.database.prepare("SELECT * FROM escalation").get()).toEqual(previous);
+  expect(store.connection.database.prepare("SELECT * FROM escalation_notification").all()).toEqual(
+    notifications,
+  );
+  expect(module.get(id)).toMatchObject({
+    status: "answered",
+    answer: { value: { text: "Front desk" } },
+  });
+  expect(
+    store.connection.database
+      .prepare("SELECT * FROM escalation_notification WHERE notification_id=9")
+      .get(),
+  ).toMatchObject({ escalation_id: id, status: "sent", attempts: 1 });
+  const raised = module.raise({
+    kind: "agent-question",
+    subject: { actorId: "parcel", callId: "question-call" },
+    title: "Address",
+    question: "Where?",
+    choices: [],
+    freeText: true,
+  });
+  expect(raised.raiser).toMatchObject({ kind: "agent-question" });
+  expect(
+    store.connection.database
+      .prepare("SELECT notification_id FROM escalation_notification WHERE escalation_id=?")
+      .get(raised.id)?.["notification_id"],
+  ).toBe(21);
+  expect(store.connection.database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  expect(
+    store.connection.database
+      .prepare("SELECT version FROM schema_migration WHERE owner='escalation'")
+      .get()?.["version"],
+  ).toBe(2);
 });

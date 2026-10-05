@@ -9,6 +9,7 @@ export function serviceSaveHooks(parts: Omit<ServiceParts, "actorHost">): readon
   return [
     parts.usage.saveHook,
     parts.escalations.saving,
+    ...(parts.agentTools ? [parts.agentTools.saving] : []),
     ...(parts.gates ? [parts.gates.saved] : []),
   ];
 }

@@ -26,6 +26,8 @@ import { ledgerMigrationSteps } from "../ledger/index.ts";
 import { openPortfolio, portfolioMigrationSteps } from "../portfolio/index.ts";
 import { openProcessRepository } from "../process-repository/index.ts";
 import { createBlueprintLoader } from "../blueprint-loader/index.ts";
+import { openAgentTools } from "../agent-tools/index.ts";
+import type { AgentTools } from "../agent-tools/index.ts";
 import { openAgentThreads } from "../agent-threads/index.ts";
 import type { AgentThreads } from "../agent-threads/index.ts";
 import { serviceImplementations } from "../implementations.ts";
@@ -64,6 +66,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
   let github: GitHubSource | undefined;
   let t3code: T3CodeSource | undefined;
   let agentThreads: AgentThreads | undefined;
+  let agentTools: AgentTools | undefined;
   let sourceStarted!: (source: T3CodeSource) => void;
   const sourceStarting = new Promise<T3CodeSource>((resolve) => {
     sourceStarted = resolve;
@@ -94,6 +97,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         }
       }
       if (http) await finish("http-closed", () => http!.close());
+      if (agentTools) await agentTools.stop();
       if (agentThreads) {
         try {
           await agentThreads.stop();
@@ -141,40 +145,6 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     store.connection.migrate("intake", intakeMigrationSteps);
     store.connection.migrate("gates", gatesMigrationSteps);
     step("store-opened", "start");
-    escalations = openEscalations({
-      store,
-      configuration: configuration.escalations,
-      tokenFile: (name) => {
-        const credential = configuration.credentials.resolve(name);
-        if (credential.kind !== "ntfy-token")
-          throw new TypeError("Requires an ntfy-token credential");
-        return credential.tokenFile;
-      },
-      handlers: {
-        "intake-failed": intakeFailedHandler(store, (id) => intake?.discovered([id])),
-        "comparator-failed": (escalation) => gates?.comparatorFailed(escalation),
-        "held-actor": heldActorHandler((actorId) => {
-          const release = actorHost!.release(actorId);
-          void Promise.resolve(release).catch(() =>
-            log({
-              level: "error",
-              event: "actor-release-failed",
-              message: "Held actor release failed",
-              detail: { actorId },
-            }),
-          );
-        }),
-        "stranded-token": (escalation) =>
-          (options.strandedTokenHandler ?? gates!.strandedToken)(escalation),
-      },
-      logger: {
-        warn: (message) =>
-          log({ level: "warn", event: "escalation-notification-warning", message }),
-        error: (message) =>
-          log({ level: "error", event: "escalation-notification-failed", message }),
-      },
-    });
-    step("escalations-opened", "start");
     const basePortfolio = openPortfolio({ connection: store.connection });
     capacity = openCapacity({
       connection: store.connection,
@@ -297,6 +267,53 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         });
       },
     });
+    agentTools = openAgentTools({
+      store,
+      configuration: configuration.agentTools,
+      environments: new Set(Object.keys(configuration.environments)),
+      router: () => router!,
+      actors: () => actorHost!,
+      escalations: () => escalations!,
+      threads: agentThreads,
+      environmentId: async (environment, signal) =>
+        (t3code ?? (await sourceStarting)).environmentId(environment, signal),
+      log,
+    });
+    escalations = openEscalations({
+      store,
+      configuration: configuration.escalations,
+      tokenFile: (name) => {
+        const credential = configuration.credentials.resolve(name);
+        if (credential.kind !== "ntfy-token")
+          throw new TypeError("Requires an ntfy-token credential");
+        return credential.tokenFile;
+      },
+      handlers: {
+        "intake-failed": intakeFailedHandler(store, (id) => intake?.discovered([id])),
+        "comparator-failed": (escalation) => gates?.comparatorFailed(escalation),
+        "agent-question": (question) => agentTools!.questionHandler(question),
+        "held-actor": heldActorHandler((actorId) => {
+          const release = actorHost!.release(actorId);
+          void Promise.resolve(release).catch(() =>
+            log({
+              level: "error",
+              event: "actor-release-failed",
+              message: "Held actor release failed",
+              detail: { actorId },
+            }),
+          );
+        }),
+        "stranded-token": (escalation) =>
+          (options.strandedTokenHandler ?? gates!.strandedToken)(escalation),
+      },
+      logger: {
+        warn: (message) =>
+          log({ level: "warn", event: "escalation-notification-warning", message }),
+        error: (message) =>
+          log({ level: "error", event: "escalation-notification-failed", message }),
+      },
+    });
+    step("escalations-opened", "start");
     const blueprints = createBlueprintLoader({
       implementations: serviceImplementations({
         escalations: escalationImplementations(escalations),
@@ -386,6 +403,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       ...(gates ? { gates } : {}),
       configuration,
       agentThreads,
+      agentTools,
       store,
       portfolio,
       usage,
@@ -421,6 +439,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     });
     step("router-started", "start");
     escalations.start();
+    agentTools.start();
     step("escalations-started", "start");
     github = startGitHubSource({
       configuration: configuration.github,
@@ -484,6 +503,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       router,
       environments: configuration.environments,
       tokenFile,
+      messagePlaced: agentTools.messagePlaced,
       logger: {
         debug: sourceLog("info"),
         info: sourceLog("info"),
@@ -514,6 +534,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           detail: { path: entry.path },
         }),
     });
+    http.mount("/api/agent-tools", agentTools.requestListener);
     http.mount("/api/usage", parts.usage.listener);
     mountEscalations(http, parts.escalations);
     const tasks = openTasks({

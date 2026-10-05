@@ -644,6 +644,7 @@ export const blueprintSchema = {
             "token-potential",
             "token-unknown",
             "lifecycle-option",
+            "event-unknown",
           ],
         },
         location: {
@@ -669,7 +670,7 @@ export const blueprintSchema = {
         },
         name: {
           description:
-            "For `implementation-unknown`, the name referenced; for `lifecycle-option`, the `status` that is not a declared option.",
+            "For `implementation-unknown`, the name referenced; for `lifecycle-option`, the `status` that is not a declared option; for `event-unknown`, the event type declared.",
           type: "string",
         },
         expression: {

@@ -2,6 +2,7 @@
 // relationships:
 //   implements: [blueprint-expressions, blueprint-loader]
 // ---
+import { agentToolsSchema } from "./agent-tools-schema.ts";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { serviceConfigurationSchemas } from "./service-configuration-schemas.ts";
 import { escalationContractSchema } from "./escalation-contract-schema.ts";
@@ -15,6 +16,7 @@ export function createSchemaCompiler() {
     try {
       for (const schema of serviceConfigurationSchemas) ajv.addSchema(schema);
       ajv.addSchema(escalationContractSchema);
+      ajv.addSchema(agentToolsSchema);
       return schemas.map((schema) => ajv.compile(schema));
     } finally {
       // Ajv retains meta-schemas and compiled validators remain usable.

@@ -124,11 +124,11 @@ description: |-
 
   | Provider | Registration loads in T3 Code threads | Call id in `_meta` | Identified by | Evidence |
   | --- | --- | --- | --- | --- |
-  | `claude` | yes: setting sources user, project, local; no strict MCP configuration | `claudecode/toolUseId`, equal to `toolCallId` | call id | read from source; measured on 0.0.45 with a stdio MCP server registered the same way |
-  | `codex` | yes: T3 Code's server layered over the home's `config.toml` | `callId`, equal to `toolCallId` | call id | read from source; measured on 0.0.45 with a stdio MCP server registered the same way |
-  | `cursor` | yes: `~/.cursor/mcp.json` | none | `thread` argument | measured on 0.0.45 with a stdio MCP server registered the same way |
-  | `grok` | not measured | not measured | `thread` argument | T3 Code records the ACP `toolCallId`, read from source; not measured, since Grok is disabled in the T3 Code the live test runs against |
-  | `opencode` | not established | not established | `thread` argument until a call id is measured | T3 Code records `part.callID` as `toolCallId`, read from source |
+  | `claude` | yes: temporary user configuration | `claudecode/toolUseId`, equal to `toolCallId`; also `progressToken` | call id | measured on 0.0.45 with the compiled plugin |
+  | `codex` | yes: temporary home's `config.toml` | `callId`, equal to `toolCallId`; also `itemId`, `progressToken`, `sessionId`, `threadId`, `windowId`, `x-codex-turn-metadata` | call id | measured on 0.0.45 with the compiled plugin |
+  | `cursor` | yes: temporary home's `.cursor/mcp.json` | none | `thread` argument | measured on 0.0.45 with the compiled plugin |
+  | `grok` | not measured | not measured | `thread` argument | Grok is disabled in the T3 Code the live test runs against |
+  | `opencode` | yes: temporary home's `.config/opencode/opencode.json` | `progressToken` only; no call id | `thread` argument | measured on 0.0.45 with the compiled plugin |
 
   The live test of `agent-tools` measures with the plugin itself each
   provider installed and enabled in the T3 Code it runs against, `claude`,

@@ -1,0 +1,321 @@
+// ---
+// relationships:
+//   implements: agent-tools
+// ---
+// Embedded from the specification asset; agreement is tested.
+export const agentToolsSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://manifold.wyrd.company/schemas/agent-tools",
+  title: "Agent tools",
+  description:
+    "The shapes of the agent tools: the input of `handoff` and `escalate`, the request the harness plugin sends the service for a tool call, the service's response, and the events the service publishes to the actors that follow the calling thread.",
+  $defs: {
+    tool: {
+      enum: ["handoff", "escalate"],
+    },
+    "thread-argument": {
+      description:
+        "The T3 Code thread id, given when the prompt names it; used when the provider sends no call id.",
+      type: "string",
+      minLength: 1,
+    },
+    "handoff-input": {
+      description: "The input of the `handoff` tool.",
+      type: "object",
+      additionalProperties: false,
+      required: ["handoff"],
+      properties: {
+        handoff: {
+          description: "The handoff, checked against the handoff schema of the task's process.",
+        },
+        thread: {
+          $ref: "#/$defs/thread-argument",
+        },
+      },
+    },
+    "escalate-input": {
+      description:
+        "The input of the `escalate` tool. Choice ids are unique within one input, a rule the service checks.",
+      type: "object",
+      additionalProperties: false,
+      required: ["question"],
+      properties: {
+        question: {
+          type: "string",
+          minLength: 1,
+          maxLength: 8000,
+        },
+        title: {
+          type: "string",
+          minLength: 1,
+          maxLength: 120,
+          default: "Question",
+        },
+        choices: {
+          $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/choices",
+          default: [],
+        },
+        freeText: {
+          type: "boolean",
+          default: false,
+        },
+        thread: {
+          $ref: "#/$defs/thread-argument",
+        },
+      },
+      anyOf: [
+        {
+          required: ["choices"],
+          properties: {
+            choices: {
+              type: "array",
+              minItems: 1,
+            },
+          },
+        },
+        {
+          required: ["freeText"],
+          properties: {
+            freeText: {
+              const: true,
+            },
+          },
+        },
+      ],
+    },
+    "call-request": {
+      description: "The body of `POST /api/agent-tools/calls`.",
+      type: "object",
+      additionalProperties: false,
+      required: ["environment", "tool", "arguments", "meta"],
+      properties: {
+        environment: {
+          $ref: "https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name",
+        },
+        tool: {
+          $ref: "#/$defs/tool",
+        },
+        arguments: {
+          type: "object",
+        },
+        meta: {
+          description: "The MCP request's `_meta` object as the provider sent it.",
+          type: "object",
+        },
+      },
+    },
+    issue: {
+      type: "object",
+      additionalProperties: false,
+      required: ["path", "message"],
+      properties: {
+        path: {
+          description: "RFC 6901 JSON Pointer into the tool's arguments.",
+          type: "string",
+        },
+        message: {
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    "refusal-code": {
+      enum: [
+        "invalid-request",
+        "unknown-environment",
+        "caller-unidentified",
+        "not-followed",
+        "not-accepted",
+        "task-held",
+        "invalid-handoff",
+        "invalid-escalation",
+        "environment-unavailable",
+        "service-unreachable",
+      ],
+    },
+    "call-response": {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "replay", "eventId", "threadId", "turnId", "message"],
+          properties: {
+            status: {
+              const: "accepted",
+            },
+            replay: {
+              type: "boolean",
+            },
+            eventId: {
+              type: "string",
+            },
+            threadId: {
+              type: "string",
+            },
+            turnId: {
+              type: "string",
+            },
+            message: {
+              type: "string",
+            },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "replay", "escalationId", "threadId", "turnId", "message"],
+          properties: {
+            status: {
+              const: "raised",
+            },
+            replay: {
+              type: "boolean",
+            },
+            escalationId: {
+              $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/escalation-id",
+            },
+            threadId: {
+              type: "string",
+            },
+            turnId: {
+              type: "string",
+            },
+            message: {
+              type: "string",
+            },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "code", "message"],
+          properties: {
+            status: {
+              const: "refused",
+            },
+            code: {
+              $ref: "#/$defs/refusal-code",
+            },
+            message: {
+              type: "string",
+              minLength: 1,
+            },
+            issues: {
+              type: "array",
+              minItems: 1,
+              items: {
+                $ref: "#/$defs/issue",
+              },
+            },
+          },
+        },
+      ],
+    },
+    "agent-handoff-event": {
+      type: "object",
+      additionalProperties: false,
+      required: ["type", "environment", "threadId", "turnId", "handoff"],
+      properties: {
+        type: {
+          const: "agent.handoff",
+        },
+        environment: {
+          type: "string",
+        },
+        threadId: {
+          type: "string",
+        },
+        turnId: {
+          type: "string",
+        },
+        handoff: {},
+      },
+    },
+    "agent-escalated-event": {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "type",
+        "environment",
+        "threadId",
+        "turnId",
+        "escalationId",
+        "title",
+        "question",
+        "choices",
+        "freeText",
+      ],
+      properties: {
+        type: {
+          const: "agent.escalated",
+        },
+        environment: {
+          type: "string",
+        },
+        threadId: {
+          type: "string",
+        },
+        turnId: {
+          type: "string",
+        },
+        escalationId: {
+          $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/escalation-id",
+        },
+        title: {
+          type: "string",
+        },
+        question: {
+          type: "string",
+        },
+        choices: {
+          $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/choices",
+        },
+        freeText: {
+          type: "boolean",
+        },
+      },
+    },
+    "agent-escalation-answered-event": {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "type",
+        "environment",
+        "threadId",
+        "escalationId",
+        "answer",
+        "channel",
+        "messageId",
+        "turnId",
+      ],
+      properties: {
+        type: {
+          const: "agent.escalation.answered",
+        },
+        environment: {
+          type: "string",
+        },
+        threadId: {
+          type: "string",
+        },
+        escalationId: {
+          $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/escalation-id",
+        },
+        answer: {
+          $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/answer",
+        },
+        channel: {
+          $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/channel",
+        },
+        messageId: {
+          type: "string",
+        },
+        turnId: {
+          description:
+            "The turn that holds the answer, started by it or running when it arrived; null when no turn can be told or the message was rejected.",
+          type: ["string", "null"],
+        },
+      },
+    },
+  },
+} as const;

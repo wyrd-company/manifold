@@ -134,6 +134,9 @@ const service = await startService({
     return {
       start: () => {},
       actorOf: () => undefined,
+      followers: () => [],
+      followedThreads: () => [],
+      eventSchema: () => ({ status: "unavailable" }),
       release: async () => {},
       subscription(record) {
         const blueprint = blueprints.get(record.machine)!;

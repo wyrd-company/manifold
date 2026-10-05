@@ -3,6 +3,7 @@
 //   implements: agent-threads
 // ---
 import type { fromPromise } from "xstate";
+import type { OrchestrationThread } from "@wyrd-company/t3code-client";
 import type { Logger } from "@wyrd-company/t3code-client";
 import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
 import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
@@ -34,6 +35,22 @@ export interface AcceptedCommand {
 }
 export interface AgentThreads {
   readonly implementations: ImplementationRegistry;
+  readThread(
+    environment: string,
+    threadId: string,
+    signal?: AbortSignal,
+  ): Promise<OrchestrationThread | null>;
+  runningThreads(
+    environment: string,
+    signal?: AbortSignal,
+  ): Promise<readonly OrchestrationThread[]>;
+  startTurn(request: {
+    readonly environment: string;
+    readonly threadId: string;
+    readonly messageId: string;
+    readonly text: string;
+    readonly signal?: AbortSignal;
+  }): Promise<{ readonly sequence: number }>;
   stop(): Promise<void>;
 }
 export type AgentThreadErrorKind =

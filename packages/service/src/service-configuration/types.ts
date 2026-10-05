@@ -12,6 +12,7 @@ export interface ServiceConfiguration {
   readonly store: StoreConfiguration;
   readonly blueprintLint: { readonly configurationBound: number };
   readonly escalations: EscalationsConfiguration;
+  readonly agentTools: AgentToolsConfiguration;
   readonly environments: EnvironmentsConfiguration;
   readonly github: GitHubConfiguration;
   readonly file: string;
@@ -108,4 +109,8 @@ export interface EscalationsConfiguration {
   >;
   readonly requestTimeoutMs: number;
   readonly retryIntervalMs: number;
+}
+
+export interface AgentToolsConfiguration {
+  readonly identifyTimeoutMs: number;
 }

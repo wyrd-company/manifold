@@ -37,7 +37,7 @@ export const parcel = (states: Record<string, unknown>, context: Record<string, 
     input: { type: "object" },
     output: true,
     context: { type: "object" },
-    events: { scanned: true, repeat: true },
+    events: { scanned: true, repeat: true } as Record<string, unknown>,
     actors: {},
   },
 });
@@ -182,7 +182,11 @@ test("start validates both schemas, initializes identity before actions, and con
   });
   expect(f.host.actorOf("parcel")).toEqual({ manifold: identity, commit });
   expect(f.host.subscription(f.store.loadSnapshot("parcel")!)).toEqual({
-    topics: ["github.issue.parcel-node", "t3.environment.station.thread.delivery%2E1"],
+    topics: [
+      "agent.environment.station.thread.delivery%2E1",
+      "github.issue.parcel-node",
+      "t3.environment.station.thread.delivery%2E1",
+    ],
     events: ["scanned", "repeat"],
   });
   expect(f.snapshot()["entries"]).toMatchObject({ count: 2 });
@@ -811,4 +815,53 @@ test("a queued save of a removed actor does nothing without logging", async () =
   expect(() => f.router.persist("parcel")).toThrow(TypeError);
   expect(() => queued.shift()!()).not.toThrow();
   expect(log).not.toHaveBeenCalled();
+});
+
+test("thread followers and event schemas include held snapshots and agent topics", async () => {
+  const f = await fixture();
+  f.start();
+  expect(f.host.followers("station", "delivery.1")).toEqual(["parcel"]);
+  expect(f.host.followedThreads("station")).toEqual(["delivery.1"]);
+  expect(
+    f.host.subscription({ actorId: "parcel", machine: f.blueprint.key, snapshot: f.snapshot() })
+      .topics,
+  ).toContain("agent.environment.station.thread.delivery%2E1");
+  expect(f.host.eventSchema("parcel", "scanned").status).toBe("declared");
+  expect(f.host.eventSchema("parcel", "absent")).toEqual({ status: "undeclared" });
+  f.store.saveSnapshot({
+    actorId: "held",
+    machine: "missing",
+    snapshot: {
+      status: "active",
+      value: "waiting",
+      context: { manifold: { environment: "station", threads: ["delivery.1", "second"] } },
+    },
+  });
+  expect(f.host.followers("station", "delivery.1")).toEqual(["held", "parcel"]);
+  expect(f.host.followedThreads("station")).toEqual(["delivery.1", "second"]);
+  expect(f.host.eventSchema("held", "scanned")).toEqual({ status: "unavailable" });
+  await f.send("scanned");
+  expect(f.host.followers("station", "delivery.1")).toEqual(["held"]);
+});
+
+test("event schema reads resolve the same bundled references as blueprint lint", async () => {
+  const document = parcel({ waiting: { on: { scanned: "delivered" } } });
+  document.schemas.events["scanned"] = {
+    $ref: "https://manifold.wyrd.company/schemas/agent-tools#/$defs/agent-handoff-event",
+  };
+  const f = await fixture(document);
+  f.start();
+  const schema = f.host.eventSchema("parcel", "scanned");
+  expect(schema.status).toBe("declared");
+  if (schema.status !== "declared") throw new Error("Missing event schema");
+  expect(
+    schema.validate({
+      type: "agent.handoff",
+      environment: "station",
+      threadId: "conversation",
+      turnId: "turn",
+      handoff: null,
+    }),
+  ).toBe(true);
+  expect(schema.validate({ type: "agent.handoff" })).toBe(false);
 });

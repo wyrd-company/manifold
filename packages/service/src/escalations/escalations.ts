@@ -42,7 +42,9 @@ export function openEscalations(options: EscalationsOptions): Escalations {
     const after = store.connection.transaction(() => {
       const row = rows.row(id)!;
       if (row.status !== "answered" || row.kind === null || row.handled_at !== null) return;
-      const after = options.handlers[row.kind](rows.decode(row));
+      const handler = options.handlers[row.kind];
+      if (!handler) return;
+      const after = handler(rows.decode(row));
       store.connection.database
         .prepare("UPDATE escalation SET handled_at=? WHERE escalation_id=?")
         .run(now(), id);

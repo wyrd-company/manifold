@@ -16,7 +16,8 @@
     "typecheck": "pnpm --filter @wyrd-company/manifold-shared build && tsc --noEmit",
     "test": "pnpm --filter @wyrd-company/manifold-console build && vp test run",
     "start": "node dist/main.js",
-    "test:live": "node src/agent-threads/live/receipt-check.ts"
+    "test:live": "node src/agent-threads/live/receipt-check.ts",
+    "test:live:agent-tools": "node src/agent-tools/live/provider-check.ts"
   },
   "dependencies": {
     "@gorules/zen-engine": "2.0.2",

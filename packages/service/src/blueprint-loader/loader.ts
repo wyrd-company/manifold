@@ -6,6 +6,7 @@ import { setup, enqueueActions } from "xstate";
 import type { AnyActorLogic, AnyActorRef, AnyStateMachine, Snapshot } from "xstate";
 import {
   blueprintVersionKey,
+  manifoldImplementationNames,
   lintBlueprint,
   lintTaskMetadataDeclaration,
   declaredLifecycleOptions,
@@ -100,6 +101,7 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
   if (Object.hasOwn(implementations.guards, "in"))
     throw new TypeError("Reserved implementation name: in");
   const names: ImplementationNames = {
+    events: manifoldImplementationNames.events!,
     ...(implementations.raises === undefined
       ? {}
       : { raises: new Map(Object.entries(implementations.raises)) }),

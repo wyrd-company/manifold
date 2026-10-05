@@ -22,11 +22,19 @@ export type ThreadChangeEvent = RoutedEvent & {
   readonly threadId: string;
   readonly projectId: string;
 };
+export interface MessagePlacement {
+  readonly environment: string;
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly turnId: string | null;
+  readonly placement: "joined" | "started" | "unknown";
+}
 export interface T3CodeSourceOptions {
   readonly store: Store;
   readonly router: Router;
   readonly environments: EnvironmentsConfiguration;
   readonly tokenFile: (credential: string) => string;
+  readonly messagePlaced?: (placement: MessagePlacement) => void;
   readonly logger?: Logger;
 }
 export interface EnvironmentStatus {
@@ -44,6 +52,7 @@ export interface ThreadView {
 }
 export interface T3CodeSource {
   thread(environment: string, threadId: string): ThreadView | undefined;
+  environmentId(environment: string, signal?: AbortSignal): Promise<string>;
   status(): readonly EnvironmentStatus[];
   ready(environment: string, signal?: AbortSignal): Promise<void>;
   write<T>(

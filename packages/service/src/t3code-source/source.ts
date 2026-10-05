@@ -80,6 +80,10 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
         archived: row.status !== "followed",
       };
     },
+    async environmentId(name, signal) {
+      await source.ready(name, signal);
+      return persistence(options.store, name).environment()!.environment_id;
+    },
     status: () => environments.map((e) => ({ ...e.status })),
     ready(name, signal) {
       const environment = environments.find((entry) => entry.status.environment === name);

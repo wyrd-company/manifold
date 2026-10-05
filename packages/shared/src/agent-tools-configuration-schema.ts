@@ -1,0 +1,24 @@
+// ---
+// relationships:
+//   implements: agent-tools-configuration
+// ---
+// Embedded from the specification asset; agreement is tested.
+export const agentToolsConfigurationSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://manifold.wyrd.company/schemas/agent-tools-configuration",
+  title: "Agent tools configuration",
+  description:
+    "The `agentTools` section of the service configuration: how long the service looks for a tool call among the activities T3 Code records.",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    identifyTimeoutMs: {
+      description:
+        "The most time, from a call's arrival, during which the service reads the followed threads' activities for the call's id.",
+      type: "integer",
+      minimum: 500,
+      maximum: 30000,
+      default: 3000,
+    },
+  },
+} as const;

@@ -3,7 +3,7 @@
 //   implements: agent-threads
 // ---
 import { assign, fromPromise } from "xstate";
-import { threadId, messageId } from "@wyrd-company/t3code-client";
+import { T3NotFoundError, threadId, messageId } from "@wyrd-company/t3code-client";
 import type { ClientOrchestrationCommand } from "@wyrd-company/t3code-client";
 import type { AgentThreadsOptions, AgentThreads, Invocation, ManifoldIdentity } from "./types.ts";
 import { failure } from "./types.ts";
@@ -119,7 +119,57 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
       };
     },
   );
+  function environment(name: string, signal?: AbortSignal) {
+    if (!Object.hasOwn(options.environments, name))
+      throw failure("environment", "Environment is not configured");
+    return AbortSignal.any([...(signal ? [signal] : []), lifetime.signal]);
+  }
+  async function readThread(name: string, id: string, signal?: AbortSignal) {
+    const currentSignal = environment(name, signal);
+    await options.sourceReady(name, currentSignal);
+    try {
+      return (await pool.get(name).threads.detail(threadId(id), {}, currentSignal)).thread;
+    } catch (error) {
+      if (error instanceof T3NotFoundError) return null;
+      throw error;
+    }
+  }
   return {
+    readThread,
+    async runningThreads(name, signal) {
+      const currentSignal = environment(name, signal);
+      await options.sourceReady(name, currentSignal);
+      const shells = await pool.get(name).threads.list({}, currentSignal);
+      const running = shells.filter(
+        (shell) => shell.session?.status === "running" || shell.session?.status === "starting",
+      );
+      const threads = await Promise.all(
+        running.map((shell) => readThread(name, shell.id, currentSignal)),
+      );
+      return threads.filter((thread) => thread !== null);
+    },
+    async startTurn(request) {
+      const { environment: name, threadId: id, messageId: requested, text } = request;
+      const signal = environment(name, request.signal);
+      let command: ClientOrchestrationCommand | undefined;
+      const result = await dispatch(options, name, signal, async () => {
+        const client = pool.get(name);
+        if (!command) {
+          const current = await client.threads.get(threadId(id), signal);
+          if (!current) throw failure("rejected", "Thread is absent from the server shell");
+          command = turnCommand(
+            { threadId: id, messageId: requested, prompt: text },
+            text,
+            current,
+            new Date().toISOString(),
+          );
+        }
+        return options.sourceWrite(name, id, signal, (writeSignal) =>
+          client.threads.dispatcher.dispatch(command!, writeSignal),
+        );
+      });
+      return { sequence: result.sequence };
+    },
     implementations: {
       actors: { "thread-create": create, "turn-prepare": prepare, "turn-start": turn },
       actions: { "follow-thread": follow },

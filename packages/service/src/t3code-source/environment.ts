@@ -22,6 +22,8 @@ import {
   snapshotAttribution,
   eventAttribution,
   emptyAttribution,
+  snapshotPlacements,
+  eventPlacements,
 } from "./state.ts";
 import { retryDelay } from "./retry.ts";
 import { needsSubscription, canClose } from "./follow.ts";
@@ -167,6 +169,17 @@ export function environmentLoop(
                           item.event,
                           before?.attribution ?? emptyAttribution,
                         );
+                  const placements =
+                    item.kind === "snapshot"
+                      ? snapshotPlacements(thread, attribution)
+                      : eventPlacements(
+                          thread,
+                          item.event,
+                          before?.attribution ?? emptyAttribution,
+                          attribution,
+                        );
+                  for (const placement of placements)
+                    options.messagePlaced?.({ environment, threadId: id, ...placement });
                   const compact = compactThread(thread);
                   for (const change of threadChanges(
                     before?.thread ? threadState(before.thread, before.attribution) : undefined,

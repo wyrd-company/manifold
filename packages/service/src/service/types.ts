@@ -4,6 +4,7 @@
 //     - service-assembly
 //     - gate-runtime
 // ---
+import type { AgentTools } from "../agent-tools/index.ts";
 import type { AgentThreads } from "../agent-threads/index.ts";
 import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
 import type { Intake, IntakeRevision } from "../intake/index.ts";
@@ -87,6 +88,7 @@ export interface ServiceParts {
   readonly escalations: Escalations;
   readonly actorHost: ActorHost;
   readonly agentThreads: AgentThreads;
+  readonly agentTools?: AgentTools;
   readonly configuration: ServiceConfiguration;
   readonly store: Store;
   readonly portfolio: Portfolio;

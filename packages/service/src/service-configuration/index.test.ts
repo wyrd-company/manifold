@@ -492,3 +492,24 @@ test("destinations require a public URL and the correct credential kind", async 
     ],
   });
 });
+
+test("agent tool identification defaults and bounds are validated", async () => {
+  const defaults = await config(minimal);
+  expect((await loadServiceConfiguration(defaults.file)).agentTools).toEqual({
+    identifyTimeoutMs: 3000,
+  });
+  for (const identifyTimeoutMs of [500, 5000, 30000]) {
+    const valid = await config({ ...minimal, agentTools: { identifyTimeoutMs } });
+    expect((await loadServiceConfiguration(valid.file)).agentTools.identifyTimeoutMs).toBe(
+      identifyTimeoutMs,
+    );
+  }
+  for (const identifyTimeoutMs of [499, 30001, 1.5, "3000"]) {
+    const invalid = await config({ ...minimal, agentTools: { identifyTimeoutMs } });
+    await expect(loadServiceConfiguration(invalid.file)).rejects.toMatchObject({
+      issues: expect.arrayContaining([
+        expect.objectContaining({ path: "/agentTools/identifyTimeoutMs" }),
+      ]),
+    });
+  }
+});

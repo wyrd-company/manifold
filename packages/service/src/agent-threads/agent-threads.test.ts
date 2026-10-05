@@ -476,3 +476,45 @@ test("missing token file fails unauthorized rather than retrying connection setu
     kind: "unauthorized",
   });
 });
+
+test("public thread reads and answer turns use the environment and stable message ids", async () => {
+  const f = await setup();
+  const thread = fixtureThread();
+  f.server.baseline(thread);
+  expect((await f.module.readThread("station", thread.id))?.id).toBe(thread.id);
+  expect(await f.module.runningThreads("station")).toEqual([]);
+  const request = {
+    environment: "station",
+    threadId: thread.id,
+    messageId: "answer-message",
+    text: "Use the selected option.",
+  };
+  expect(await f.module.startTurn(request)).toEqual({ sequence: 1 });
+  expect(await f.module.startTurn(request)).toEqual({ sequence: 1 });
+  expect(f.receipts.size).toBe(1);
+  expect(f.commands[0]).toMatchObject({
+    type: "thread.turn.start",
+    message: { messageId: "answer-message", text: request.text },
+  });
+});
+
+test.each(["running", "starting"])("public running threads include %s sessions", async (status) => {
+  const f = await setup();
+  const base = fixtureThread();
+  const thread = schemas.orchestrationReadModel.OrchestrationThread.parse({
+    ...base,
+    session: {
+      threadId: base.id,
+      status,
+      providerName: "provider",
+      runtimeMode: base.runtimeMode,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: base.createdAt,
+    },
+  });
+  f.server.baseline(thread);
+  expect((await f.module.runningThreads("station")).map((thread) => thread.id)).toEqual([
+    thread.id,
+  ]);
+});

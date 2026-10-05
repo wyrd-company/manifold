@@ -10,6 +10,7 @@ export type {
   HttpHostConfiguration,
   StoreConfiguration,
   EscalationsConfiguration,
+  AgentToolsConfiguration,
   NtfyTokenCredential,
   ProcessRepositoryConfiguration,
   Credentials,

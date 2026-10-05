@@ -6,7 +6,10 @@ import { homedir } from "node:os";
 import { banner } from "./index.ts";
 
 async function main() {
-  if (process.argv[2] === "comparator" && process.argv[3] === "lint") {
+  if (process.argv[2] === "mcp") {
+    const { mcpCommand } = await import("./mcp/command.ts");
+    process.exitCode = await mcpCommand(process.argv.slice(3));
+  } else if (process.argv[2] === "comparator" && process.argv[3] === "lint") {
     const { comparatorLintCommand } = await import("./comparator-lint/command.ts");
     process.exitCode = await comparatorLintCommand(process.argv.slice(4));
   } else if (process.argv[2] === "expressions" && process.argv[3] === "lint") {

@@ -46,6 +46,9 @@ export function identityTopics(identity: ManifoldIdentity): string[] {
     Array.isArray(identity.threads) &&
     identity.threads.every((thread) => typeof thread === "string")
   )
-    for (const thread of identity.threads) topics.push(threadTopic(identity.environment, thread));
+    for (const thread of identity.threads) {
+      const topic = threadTopic(identity.environment, thread);
+      topics.push(topic, topic.replace(/^t3\./, "agent."));
+    }
   return [...new Set(topics)].sort();
 }

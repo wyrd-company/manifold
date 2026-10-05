@@ -4,6 +4,7 @@
 // ---
 import { pendingRequests } from "@wyrd-company/t3code-client";
 import type { OrchestrationThread, OrchestrationEvent } from "@wyrd-company/t3code-client";
+import type { MessagePlacement } from "./types.ts";
 import type { RoutedEvent } from "../router/index.ts";
 import type { JsonValue } from "../store/index.ts";
 export interface TurnAttribution {
@@ -149,4 +150,51 @@ export function threadChanges(
       failedAt: after.session.updatedAt,
     });
   return changes;
+}
+
+export function snapshotPlacements(
+  thread: OrchestrationThread,
+  attribution = snapshotAttribution(thread),
+): Omit<MessagePlacement, "environment" | "threadId">[] {
+  const turn = threadState(thread).turn;
+  return thread.messages
+    .filter((message) => message.role === "user")
+    .map((message) => {
+      if (turn && attribution.messageId === message.id)
+        return { messageId: message.id, turnId: turn.turnId, placement: "started" as const };
+      if (
+        turn &&
+        turn.requestedAt < message.createdAt &&
+        (turn.state === "running" ||
+          (turn.completedAt !== null && turn.completedAt >= message.createdAt))
+      )
+        return { messageId: message.id, turnId: turn.turnId, placement: "joined" as const };
+      return { messageId: message.id, turnId: null, placement: "unknown" as const };
+    });
+}
+export function eventPlacements(
+  thread: OrchestrationThread,
+  event: OrchestrationEvent,
+  previous: TurnAttribution,
+  attribution: TurnAttribution,
+): Omit<MessagePlacement, "environment" | "threadId">[] {
+  const turn = threadState(thread).turn;
+  if (
+    "type" in event &&
+    event.type === "thread.message-sent" &&
+    event.payload.role === "user" &&
+    turn?.state === "running"
+  )
+    return [
+      { messageId: event.payload.messageId, turnId: turn.turnId, placement: "joined" as const },
+    ];
+  if (attribution.turnId !== previous.turnId && attribution.turnId && attribution.messageId)
+    return [
+      {
+        messageId: attribution.messageId,
+        turnId: attribution.turnId,
+        placement: "started" as const,
+      },
+    ];
+  return [];
 }

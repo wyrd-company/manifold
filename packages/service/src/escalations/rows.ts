@@ -229,6 +229,7 @@ export function escalationRows(
             question: request.question,
             choices: request.choices,
             ...(request.title === undefined ? {} : { title: request.title }),
+            ...(request.freeText === undefined ? {} : { freeText: request.freeText }),
           },
         );
       }),

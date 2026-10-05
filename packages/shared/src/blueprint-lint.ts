@@ -27,6 +27,7 @@ export type BlueprintFinding = {
     | "shape"
     | "schema-invalid"
     | "implementation-unknown"
+    | "event-unknown"
     | "machine"
     | "final-state-missing"
     | "lifecycle-option"
@@ -305,8 +306,18 @@ export async function lintBlueprint(
   if (!schemaInvalid)
     for (const row of await lintBlueprintExpressions(blueprint, compileSchema))
       findings.push({ ...row, path, location: `/machine${row.location}` });
+  const unknownEvents: BlueprintFinding[] = Object.keys(blueprint.schemas.events)
+    .sort(compareExpressionText)
+    .filter((type) => type.startsWith("agent.") && !names.events?.has(type))
+    .map((name) => ({
+      path,
+      kind: "event-unknown",
+      location: `/schemas/events/${pointer(name)}`,
+      message: "Agent event is not published by Manifold",
+      name,
+    }));
   if (findings.length)
-    return { ok: false, findings: [...findings, ...lifecycleFindings], warnings: [] };
+    return { ok: false, findings: [...findings, ...unknownEvents, ...lifecycleFindings], warnings: [] };
   const tokens = lintTokens(blueprint, { names, ...options });
   const warnings: BlueprintFinding[] = [];
   for (const gate of tokens.gates)
@@ -314,6 +325,7 @@ export async function lintBlueprint(
       const row = { ...item, path };
       (row.kind === "token-violation" ? findings : warnings).push(row);
     }
+  findings.push(...unknownEvents);
   findings.push(...lifecycleFindings);
   return findings.length
     ? { ok: false, findings, warnings }

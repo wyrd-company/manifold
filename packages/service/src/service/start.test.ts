@@ -23,8 +23,8 @@ async function fixture() {
 const startSteps: ServiceStep[] = [
   "configuration-loaded",
   "store-opened",
-  "escalations-opened",
   "portfolio-opened",
+  "escalations-opened",
   "process-repository-opened",
   "revision-followed",
   "pulled",
@@ -55,6 +55,9 @@ test("starts in order, awaits the actor host, follows revisions, and stops once"
   const host = {
     start: () => {},
     actorOf: () => undefined,
+    followers: () => [],
+    followedThreads: () => [],
+    eventSchema: () => ({ status: "undeclared" as const }),
     release: async () => {},
     subscription: () => ({ topics: [] }),
     restore: () => ({ status: "held" as const, reason: "test" }),
@@ -176,6 +179,9 @@ test("restores and drains a populated inbox before sources start", async () => {
     actorHost: () => ({
       start: () => {},
       actorOf: () => undefined,
+      followers: () => [],
+      followedThreads: () => [],
+      eventSchema: () => ({ status: "undeclared" }),
       release: async () => {},
       subscription: () => ({ topics: ["counter"] }),
       restore: (stored) => {
@@ -822,6 +828,9 @@ test("wires gates into revision following, router resume, and shutdown", async (
       return {
         start: () => {},
         actorOf: () => undefined,
+        followers: () => [],
+        followedThreads: () => [],
+        eventSchema: () => ({ status: "undeclared" }),
         release: async () => {},
         subscription: () => ({ topics: [] }),
         restore: () => ({ status: "held", reason: "test" }),

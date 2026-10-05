@@ -3,6 +3,7 @@
 //   implements: service-configuration
 // ---
 /* eslint-disable unicorn/no-thenable -- JSON Schema uses the then keyword. */
+import { agentToolsConfigurationSchema } from "./agent-tools-configuration-schema.ts";
 import { blueprintLintConfigurationSchema } from "./blueprint-lint-configuration-schema.ts";
 import { t3codeEnvironmentsConfigurationSchema } from "./t3code-environments-configuration-schema.ts";
 import { expressionsConfigurationSchema } from "./expressions-configuration-schema.ts";
@@ -59,6 +60,10 @@ export const serviceConfigurationSchema = {
     },
     blueprintLint: {
       $ref: "https://manifold.wyrd.company/schemas/blueprint-lint-configuration",
+      default: {},
+    },
+    agentTools: {
+      $ref: "https://manifold.wyrd.company/schemas/agent-tools-configuration",
       default: {},
     },
     escalations: {
@@ -267,6 +272,7 @@ export const storeConfigurationSchema = {
   },
 } as const;
 export const serviceConfigurationSchemas = [
+  agentToolsConfigurationSchema,
   blueprintLintConfigurationSchema,
   serviceConfigurationSchema,
   processRepositoryConfigurationSchema,

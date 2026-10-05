@@ -13,14 +13,15 @@ export type ServiceEscalationKind =
   | "held-actor"
   | "stranded-token"
   | "intake-failed"
-  | "comparator-failed";
+  | "comparator-failed"
+  | "agent-question";
 export type EscalationSubject = Readonly<Record<string, string>>;
 export type ServiceEscalationHandler = (escalation: Escalation) => void | (() => void);
 export interface EscalationsOptions {
   readonly store: Store;
   readonly configuration: EscalationsConfiguration;
   readonly tokenFile: (credential: string) => string;
-  readonly handlers: Readonly<Record<ServiceEscalationKind, ServiceEscalationHandler>>;
+  readonly handlers: Readonly<Partial<Record<ServiceEscalationKind, ServiceEscalationHandler>>>;
   readonly clock?: { now(): number };
   readonly fetch?: typeof globalThis.fetch;
   readonly logger?: { warn(message: string): void; error(message: string): void };
@@ -44,6 +45,7 @@ export interface ServiceEscalationRequest {
   readonly subject: EscalationSubject;
   readonly question: string;
   readonly choices: readonly EscalationChoice[];
+  readonly freeText?: boolean;
 }
 export type EscalationStatus = "open" | "answered" | "withdrawn";
 export type EscalationChannel = "link" | "api";
