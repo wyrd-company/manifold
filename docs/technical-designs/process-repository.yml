@@ -144,6 +144,8 @@ proposed-design:
       pull(request?: PullRequest): Promise<PullOutcome>;
       /** Commits one file on top of the current commit and pushes it to the branch. */
       save(request: SaveRequest): Promise<SaveOutcome>;
+      /** The commit, from the current commit down its first parents to `base`, that carries the save's trailer. Reads only. */
+      findSave(request: Pick<SaveRequest, "base" | "saveId">): Promise<string | undefined>;
     }
 
     export interface SaveRequest {
@@ -363,9 +365,13 @@ proposed-design:
     together: a save waits for a running pull or save, and a pull for a
     running save. Let H be the current commit; a save with no current
     commit throws a `TypeError`, since the follower pulls first. (1) It
-    walks H's first parents from H until it reaches `base` or a root
-    commit, and when one of the commits it walks carries the trailer
-    `Manifold-Save: <saveId>`, it returns `already-saved` with that commit.
+    calls `findSave`, and when it finds a commit, returns `already-saved`
+    with that commit. `findSave` walks the current commit's first parents
+    from the current commit until it reaches `base` or a root commit, and
+    resolves to the first commit it walks whose message carries the
+    trailer `Manifold-Save: <saveId>`, or to `undefined`; it writes
+    nothing and makes no request, and waits for a running pull or save as
+    a save does.
     (2) It reads `path` at H and at `base`. When `revisionAt(base)` is
     `undefined`, or the two differ, it returns `conflict` with H and the
     text at H. Two absent files are equal, so a save of a new path
@@ -475,7 +481,9 @@ proposed-design:
     commit, the same request returns `already-saved` with it. A remote
     commit that changes the same file returns `conflict` with its text; a
     remote commit that changes another file takes the save on top of it.
-    A remote that moves between the save's pull and its push fails the
+    `findSave` finds a pushed commit's trailer from a later descendant,
+    and resolves to `undefined` for a `saveId` no commit down to `base`
+    carries. A remote that moves between the save's pull and its push fails the
     push with kind `rejected`, and the branch keeps the other commit. A
     remote that refuses the token fails with kind `authentication`, and a
     server that stops during the push fails with kind `remote` after a

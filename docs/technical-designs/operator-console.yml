@@ -461,14 +461,18 @@ proposed-design:
     `DESIGN.md` states for tables, are Name, Version, Lint, Active actors,
     and an Edit button. Name is the path in mono with the description
     muted under it, and a "Draft" badge on its own line when the browser
-    holds a draft for the path. Version is the version's commit, first
-    seven characters, in mono, for a repository blueprint, and a "Bundled"
-    badge for a bundled one. Lint is a success dot and "Loaded" with no
+    holds a draft for the path. A path lists once, as the blueprint that
+    runs there. Version is the version's commit, first seven characters,
+    in mono, for a repository blueprint; for a bundled blueprint it is a
+    "Bundled" badge with the bundle digest's first seven characters muted
+    in mono under it. A repository blueprint that replaces a bundled one
+    has the muted line "Replaces the bundled blueprint" under its
+    description, and its Version is its commit. Lint is a success dot and "Loaded" with no
     finding or warning, an error dot and "N errors" for an invalid
     blueprint, and a warning dot and "N warnings" for a loaded one with
-    warnings. Active actors is the count, or a muted dash for zero. Edit,
-    or the name, opens the editor; for a bundled blueprint the button
-    reads "View". With no blueprint, the table is replaced by the empty
+    warnings. Active actors is the count, or a muted dash for zero; at a
+    replaced path it counts actors still running a bundled version too.
+    Edit, or the name, opens the editor. With no blueprint, the table is replaced by the empty
     state "No blueprints", "Blueprints appear here when the process
     repository holds files under blueprints/." Before the first applied
     revision the list shows the bundled blueprints and the info alert
@@ -482,8 +486,11 @@ proposed-design:
     <short commit>" in muted mono, a "Draft · N changes" warning badge when
     the text differs from the base text, where N is the count of changed
     lines, then "Discard draft" (ghost) and "Publish" (primary). A bundled
-    blueprint shows a "Bundled · read only" badge in place of the draft
-    badge and neither button, and its editor is read only. Under the
+    blueprint shows "Bundled <short digest>" in place of "Based on", and
+    is edited as any blueprint is: publishing it adds the file at its path
+    to the process repository, which replaces the bundled blueprint from
+    that commit on. Its Publish dialog shows the file with `A` and the
+    line "This file replaces the bundled blueprint." Under the
     header, the Source pane and the Graph pane sit side by side, each half
     the width; under 1024px of content width they become the tabs "Source"
     and "Graph". The Problems strip runs under both panes. Editing the
@@ -555,9 +562,20 @@ proposed-design:
     that answers `200` does not remove the draft: it sets `saved` to the
     answer's commit and keeps `message`, so the text stays in the browser
     until the service has loaded the saved commit. A draft with `saved` is
-    removed only when a source read answers the draft's text, or when a
-    save answer carries `blueprint` and the source read that follows it
-    succeeds. A draft whose `base` is
+    settled by a source read: one that answers the draft's text removes
+    the draft. When a save answer carries `blueprint`, the service holds
+    the saved commit, and the source read that follows it is the file as
+    the branch now holds it; when that text differs from the draft's, a
+    later commit changed the file after the save, and the draft becomes an
+    ordinary draft based on that source: `base` and `baseText` become the
+    source's commit and text, `text` stays the saved text, and `saved`,
+    `saveId`, and `message` are removed. The editor is then editable, the
+    header shows "Draft · N changes", and the info alert reads "Saved as
+    <short saved commit>. <branch> changed this file since, at <short
+    commit>. Your saved text is kept as a draft." with "Compare", the
+    conflict alert's dialog against the branch's text. The operator
+    discards the draft to accept the newer file, or publishes it to put
+    the saved text back. A draft whose `base` is
     older than the source's commit keeps its base, and the header shows
     the info line "A newer version exists. Publishing keeps changes made
     since, unless they changed this file." "Discard draft" asks first, in
@@ -584,9 +602,10 @@ proposed-design:
     `saved` and shows "Saved as <short commit>" in a success toast for
     `saved`, "Already saved as <short commit>" for `already-saved`, and "No
     change to save" for `unchanged`. When the answer carries `blueprint`,
-    the editor reads the list and the source again; the source read
-    removes the draft, and the editor shows the new source with its base
-    at the new commit. When the answer has no `blueprint`, or the source
+    the editor reads the list and the source again, and the source read
+    settles the draft as blueprint-drafts states: the editor shows the new
+    source with its base at the new commit, or the saved text as a draft
+    based on a later commit that changed the file. When the answer has no `blueprint`, or the source
     read fails, the pending alert opens. For `422`,
     the dialog closes and the findings mark the text. For `409`, the
     dialog closes and the conflict alert opens. For `502`, `503`, a
@@ -598,15 +617,20 @@ proposed-design:
     and the service has not yet answered a source read for it. The pending
     alert sits under the editor header in the info tint: "Saved as <short
     commit>. The service has not loaded it yet. Your text is kept." with
-    "Load saved version". The editor shows the draft's text, read only,
-    and Publish and "Discard draft" are hidden. "Load saved version" sends
+    "Load saved version". The editor shows the draft's text, read only;
+    Publish is hidden and "Discard draft" stays, since the saved commit is
+    on the branch whatever the browser keeps. "Load saved version" sends
     the save request again, with the draft's base, text, message, and
-    `saveId`; the service's follower pulls before it saves, so the answer
-    is `already-saved` with `blueprint` once the service holds the commit,
-    and the editor then reads the source and removes the draft. A failed
-    request shows its message in the alert and keeps the draft. A reload
-    reopens the draft with `saved` and the same alert, and a source read
-    that already answers the draft's text removes it at once.
+    `saveId`; the service's follower pulls before it saves and finds the
+    saved commit by its trailer even under later commits, so the answer is
+    `already-saved` with `blueprint` once the service holds the commit,
+    and the editor then reads the source, which settles the draft. A
+    failed request shows its message in the alert and keeps the draft. A
+    reload reopens the draft with `saved` and the same alert, and a source
+    read that already answers the draft's text removes it at once. A
+    pending save therefore ends in one of three states: no draft, the
+    saved text as a draft over a later commit, or the pending alert while
+    the service cannot reach the branch.
   conflict: >-
     The conflict alert sits under the editor header in the error tint. For
     reason `file-changed` it reads "<path> changed on <branch> at <short
@@ -639,14 +663,20 @@ proposed-design:
     `mountBlueprintsApi(host, options)` mounts one listener at
     `/api/blueprints` that implements `blueprints-api`, with the paths
     `""` (the list), `/source`, `/lint`, and `/save` under the prefix. The
-    list reads `revisions.latest()`: each path in `blueprints` is `loaded`
-    with its warnings counted and its document's `description`, and each
-    path in `failures` is `invalid` with its findings and warnings counted
-    apart; it counts active actors per path from `store.activeSnapshots()`
-    with `parseBlueprintVersionKey`; and it adds each bundled blueprint
-    with the lint of its text. Source reads the text through
-    `processRepository.revisionAt(latest.commit)` or from the bundled
-    blueprints, and lints it. Every lint, of source, lint, and save, calls
+    list reads `revisions.latest()` and the repository's files under
+    `blueprints/` at its commit through `processRepository.revisionAt`. A
+    path with a repository file is a `repository` item, with
+    `replacesBundled` when the bundle holds the path too; a bundled path
+    with no repository file is a `bundled` item with the bundle's digest.
+    Each path that the load holds in `blueprints` is `loaded` with its
+    warnings counted and its document's `description`, and each in
+    `failures` is `invalid` with its findings and warnings counted apart; a
+    bundled path the load does not hold takes its status and counts from
+    the lint of its text. It counts active actors per path from
+    `store.activeSnapshots()` with the blueprint version key parser, which
+    reads both `<commit>:<path>` and `<commit>:<path>@<bundle-digest>`.
+    Source reads the repository file at the latest commit, or the bundled
+    text when the revision holds no file at the path, and lints it. Every lint, of source, lint, and save, calls
     `lintBlueprint(path, text, manifoldImplementationNames, {
     configurationBound })` with `blueprintLint.configurationBound`, then
     `findingRanges` and `blueprintGraph`, so the endpoint answers what the
@@ -681,13 +711,18 @@ proposed-design:
     `range`; for a `yaml` finding it converts its line and column. It is
     pure, and `blueprintGraph` uses it for each state's range.
   bundled-blueprints: >-
-    `BlueprintsApiOptions.bundled` lists the blueprints Manifold bundles,
-    each with its path as intake names it and its text. Until the bundled
-    blueprints module of the default blueprint design merges, the option is
-    a structural stand-in of that shape, which the service passes as an
-    empty list. A bundled blueprint is listed, read, and linted as a
-    repository blueprint is, has no `commit`, and is never saved: its path
-    is not a repository blueprint path.
+    Manifold's bundle is the set of blueprints compiled into the service
+    as a generated module, with one digest, as the default process design
+    specifies. Each bundled blueprint has an ordinary blueprint path, such
+    as `blueprints/task.yml`, and a repository file at that path replaces
+    it, even when the file fails lint. Its version key is
+    `<commit>:<path>@<bundle-digest>`. `BlueprintsApiOptions.bundle` is the
+    bundle's digest and its blueprints by path and text; until the default
+    process design's bundle module merges, the option is a structural
+    stand-in of that shape, which the service passes as an empty bundle,
+    and the rebase replaces it with that module's export. A bundled
+    blueprint is listed, read, and linted as a repository blueprint is,
+    and a save of its path adds the repository file that replaces it.
   blueprints-public-interface: |-
     `packages/service/src/blueprints-api/index.ts` exports exactly these
     names.
@@ -707,13 +742,15 @@ proposed-design:
       /** `blueprintLint.configurationBound`. */
       readonly configurationBound: number;
       /** The blueprints Manifold bundles. */
-      readonly bundled: () => Promise<readonly BundledBlueprint[]>;
+      readonly bundle: BlueprintBundle;
       readonly log: (entry: { level: "error"; path: string; error: string }) => void;
     }
 
-    export interface BundledBlueprint {
-      readonly path: string;
-      readonly text: string;
+    export interface BlueprintBundle {
+      /** The digest a bundled version key carries after `@`. */
+      readonly digest: string;
+      /** Each bundled blueprint's text by its path. */
+      readonly blueprints: ReadonlyMap<string, string>;
     }
 
     /** Mounts the blueprints endpoints at `/api/blueprints`. */
@@ -774,6 +811,8 @@ proposed-design:
       readonly path: string;
       readonly source: "repository" | "bundled";
       readonly commit?: string;
+      readonly bundle?: string;
+      readonly replacesBundled?: true;
       readonly status: "loaded" | "invalid";
       readonly findings: number;
       readonly warnings: number;
@@ -791,6 +830,7 @@ proposed-design:
       readonly path: string;
       readonly source: "repository" | "bundled";
       readonly commit?: string;
+      readonly bundle?: string;
       readonly text: string;
       readonly findings: readonly ApiFinding[];
       readonly warnings: readonly ApiFinding[];
@@ -972,12 +1012,15 @@ proposed-design:
     result mapping, the draft functions (write, base text equality removes,
     malformed removed, `saveId` kept across a reload and removed by a
     change, a `200` sets `saved` and keeps the draft, and a draft with
-    `saved` is removed only by a source read of its text or by a save
-    answer with `blueprint` and a source read after it), `problems.ts`, and `graph-layout.ts` on a nested and a
+    `saved` is removed by a source read of its text, and becomes an
+    ordinary draft based on the source when a save answer with `blueprint`
+    is followed by a source read of other text), `problems.ts`, and `graph-layout.ts` on a nested and a
     parallel graph. `packages/service/src/blueprints-api/blueprints.browser.test.ts`
     starts the service on a fixture process repository served over smart
     HTTP with push enabled, launches headless Chromium, opens Blueprints,
-    and sees every fixture blueprint with its version and lint; opens one
+    and sees every fixture blueprint with its version and lint, a bundled
+    blueprint with its "Bundled" badge, and a repository blueprint that
+    replaces a bundled one with "Replaces the bundled blueprint"; opens one
     and sees its states in the graph; types a transition target that names
     no state and, once the lint answers, sees an error diagnostic on that
     line, the "!" badge on the state, and Publish disabled; fixes it and
@@ -992,7 +1035,13 @@ proposed-design:
     saved text, a reload shows the same, and "Load saved version", with
     the server healthy, answers `already-saved`, clears the alert and the
     draft, and the list shows the saved commit as the version, with one
-    new commit on the remote. In `packages/service/src/console/`, `mountConsole` uses the
+    new commit on the remote. A fourth case runs the third until the
+    pending alert, then commits a change to the same file on top of the
+    save on the remote, and, with the server healthy, "Load saved
+    version" answers `already-saved`; the editor is editable and shows the
+    saved text as a draft based on the later commit with the "changed this
+    file since" alert, Compare shows both texts, and "Discard draft" leaves
+    the later commit's text and no draft. In `packages/service/src/console/`, `mountConsole` uses the
     production HTTP host on a loopback port with no credentials: the actors
     endpoint behaviors in `actors-api`'s validation criteria; a client
     route under `/console/` answers `index.html`; a hashed asset answers

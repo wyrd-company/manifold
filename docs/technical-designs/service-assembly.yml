@@ -357,11 +357,13 @@ proposed-design:
     rejects, so a save always builds on the branch as just fetched. It then
     awaits `processRepository.save(request)`. For `pushed`, it awaits
     `processRepository.pull({ commit })` and the apply step, and resolves
-    `saved` with the commit and `latest` when `followed` is that commit,
-    or with no load when that pull rejected, since the commit is on the
-    branch and the next pull applies it. For `already-saved` and
-    `unchanged`, it resolves with that outcome, the commit, and `latest`
-    when `followed` is the commit, and for `conflict` with reason
+    `saved` with the commit and `latest` when that pull resolves, since the
+    applied commit is then the saved commit or a commit the branch took
+    after it, or with no load when that pull rejected, since the commit is
+    on the branch and the next pull applies it. For `already-saved` and
+    `unchanged`, the commit is the current commit or one of its first
+    parents, found after the job's own pull and apply, so it resolves with
+    that outcome, the commit, and `latest`, and for `conflict` with reason
     `file-changed`, the head, and its text. When the save rejects with
     `ProcessRepositorySaveError`, the job pulls and applies again; when the
     current commit is then the error's `head`, nothing else moved the
@@ -371,10 +373,14 @@ proposed-design:
     save on top of a branch that moved in other files, or answers
     `conflict`, and the job handles that second result as the first. When
     the second save also rejects with `ProcessRepositorySaveError`, the job
-    pulls and applies once more; when the current commit is then not the
-    second error's `head`, the branch moved again under the retry, and the
-    job resolves `conflict` with reason `branch-moved`, the current commit,
-    and the file's text at it; otherwise it rejects with the second error.
+    pulls and applies once more, then calls `processRepository.findSave`
+    with the request: a push the remote took whose reply was lost leaves
+    the save's commit on the branch, and the job resolves `already-saved`
+    with that commit and `latest`. Otherwise, when the current commit is
+    not the second error's `head`, the branch moved again under the retry,
+    and the job resolves `conflict` with reason `branch-moved`, the
+    current commit, and the file's text at it; otherwise it rejects with
+    the second error. No push follows the second one.
     A branch that moves under a save is therefore answered by what it
     changed, as a typed conflict and never as a remote error, and no save
     is retried more than once. No other pull runs
@@ -531,7 +537,15 @@ proposed-design:
     resolves `conflict` with reason `branch-moved` and the branch's last
     commit, and the remote holds the two other commits and no save
     commit; with the fixture server refusing every push for a policy
-    reason and the branch unmoved, the job rejects with kind `rejected`. Save crash: a child
+    reason and the branch unmoved, the job rejects with kind `rejected`;
+    with the fixture server moving the branch before the first push, then
+    taking the retry push and closing the connection before its reply, the
+    job resolves `already-saved` with the retry's commit and `latest`
+    holding it, and the remote holds exactly one save commit; with the
+    fixture server taking the push and refusing the fetch that follows,
+    then committing a change to the same file on top of the save, a
+    second `revisions.save` of the same request resolves `already-saved`
+    with the save's commit and `latest` at the later commit. Save crash: a child
     process runs `startService` with a `save` probe that sends the process
     `SIGKILL` at `committed`, and in a second run at `pushed`; the parent
     starts the service again on the same files, saves the same request

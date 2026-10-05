@@ -16,7 +16,7 @@ paths:
   /api/blueprints:
     get:
       operationId: listBlueprints
-      summary: List every blueprint at the latest applied revision, and every bundled blueprint.
+      summary: List every blueprint at the latest applied revision, bundled blueprints that no repository file replaces included.
       responses:
         "200":
           description: The blueprints, repository blueprints first, each group by path.
@@ -175,12 +175,17 @@ components:
     Commit:
       type: string
       pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    BundleDigest:
+      type: string
+      minLength: 1
+      description: The digest of the bundle a bundled blueprint belongs to, as its version key carries it.
     BlueprintPath:
       type: string
       minLength: 1
       description: >-
-        A repository blueprint path under `blueprints/` ending in `.yml` or
-        `.yaml`, or the name of a bundled blueprint.
+        A blueprint path under `blueprints/` ending in `.yml` or `.yaml`;
+        a bundled blueprint has such a path, and a repository file at it
+        replaces the bundled blueprint.
     Error:
       type: object
       required: [error, message]
@@ -228,6 +233,11 @@ components:
           enum: [repository, bundled]
         commit:
           $ref: "#/components/schemas/Commit"
+        bundle:
+          $ref: "#/components/schemas/BundleDigest"
+        replacesBundled:
+          const: true
+          description: A repository file at a path Manifold also bundles.
         status:
           enum: [loaded, invalid]
         findings:
@@ -252,6 +262,8 @@ components:
           enum: [repository, bundled]
         commit:
           $ref: "#/components/schemas/Commit"
+        bundle:
+          $ref: "#/components/schemas/BundleDigest"
         text:
           type: string
         findings:
