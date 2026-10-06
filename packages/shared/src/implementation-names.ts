@@ -2,6 +2,9 @@
 // relationships:
 //   implements: blueprint-loader
 // ---
+import { manifoldImplementationCatalog } from "./implementation-catalog.ts";
+import type { ImplementationKind } from "./implementation-catalog.ts";
+import { agentToolsSchema } from "./agent-tools-schema.ts";
 export interface ImplementationNames {
   readonly actors: ReadonlySet<string>;
   readonly actions: ReadonlySet<string>;
@@ -10,24 +13,24 @@ export interface ImplementationNames {
   readonly events?: ReadonlySet<string>;
   readonly delays: ReadonlySet<string>;
 }
-// Providers add their names here when their implementation joins the service registry.
+const names = (kind: ImplementationKind) =>
+  new Set(
+    manifoldImplementationCatalog.filter((entry) => entry.kind === kind).map((entry) => entry.name),
+  );
 export const manifoldImplementationNames: ImplementationNames = {
-  actors: new Set([
-    "github-card-move",
-    "escalate",
-    "thread-create",
-    "turn-prepare",
-    "turn-start",
-    "send-message",
-  ]),
-  actions: new Set(["follow-thread"]),
-  guards: new Set(),
-  delays: new Set(),
-  raises: new Map(),
+  actors: names("actor"),
+  actions: names("action"),
+  guards: names("guard"),
+  delays: names("delay"),
+  raises: new Map(
+    manifoldImplementationCatalog.flatMap((entry) =>
+      entry.raises ? [[entry.name, entry.raises] as const] : [],
+    ),
+  ),
   events: new Set([
-    "agent.handoff",
-    "agent.escalated",
-    "agent.escalation.answered",
-    "agent.message",
+    agentToolsSchema.$defs["agent-handoff-event"].properties.type.const,
+    agentToolsSchema.$defs["agent-escalated-event"].properties.type.const,
+    agentToolsSchema.$defs["agent-escalation-answered-event"].properties.type.const,
+    agentToolsSchema.$defs["agent-message-event"].properties.type.const,
   ]),
 };

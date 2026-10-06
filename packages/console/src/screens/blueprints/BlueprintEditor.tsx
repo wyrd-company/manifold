@@ -118,7 +118,7 @@ function Editor({
     void navigate({
       to: "/blueprints/$",
       params: { _splat: path },
-      search: (previous) => ({ ...previous, view: next === "yaml" ? "yaml" : undefined }),
+      search: { view: next === "yaml" ? "yaml" : undefined },
     });
   };
   const update = (next: BlueprintDraft) => {

@@ -20,12 +20,7 @@ export const manifoldImplementationCatalog: readonly ImplementationEntry[] = [
     kind: "actor",
     group: "GitHub",
     description: "Move the task card to a declared lifecycle option.",
-    input: {
-      type: "object",
-      properties: { status: { type: "string", minLength: 1 } },
-      required: ["status"],
-      additionalProperties: false,
-    },
+    ...implementationContracts["github-card-move"],
   },
   {
     name: "escalate",
@@ -54,6 +49,13 @@ export const manifoldImplementationCatalog: readonly ImplementationEntry[] = [
     kind: "actor",
     group: "Thread",
     description: "Start the prepared turn on its environment.",
+  },
+  {
+    name: "send-message",
+    kind: "actor",
+    group: "Task",
+    description: "Send a durable message to another task or thread.",
+    ...implementationContracts["send-message"],
   },
   {
     name: "follow-thread",

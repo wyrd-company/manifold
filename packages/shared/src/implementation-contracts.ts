@@ -1,9 +1,112 @@
 // ---
 // relationships:
-//   realizes: [agent-threads, escalation-contract]
+//   realizes: [agent-threads, escalation-contract, agent-tools, blueprint]
 // ---
 // Generated from specification schema assets.
 export const implementationContracts = {
+  "github-card-move": {
+    input: {
+      description: "The input of `github-card-move`.",
+      type: "object",
+      required: ["status"],
+      additionalProperties: false,
+      properties: {
+        status: {
+          description:
+            "A field or option name as GitHub shows it: not empty, with no leading or trailing white space.",
+          type: "string",
+          pattern: "^\\S(?:.*\\S)?$",
+        },
+      },
+    },
+    output: {
+      description: "The output of `github-card-move`, once GitHub holds the option.",
+      type: "object",
+      additionalProperties: false,
+      maxProperties: 0,
+    },
+  },
+  "send-message": {
+    input: {
+      description: "The input of the `send-message` actor.",
+      type: "object",
+      additionalProperties: false,
+      required: ["to", "text"],
+      properties: {
+        to: {
+          oneOf: [
+            {
+              description: "A task, by its issue node id.",
+              type: "object",
+              additionalProperties: false,
+              required: ["issue"],
+              properties: {
+                issue: {
+                  type: "string",
+                  minLength: 1,
+                },
+              },
+            },
+            {
+              description: "One thread on a declared environment.",
+              type: "object",
+              additionalProperties: false,
+              required: ["environment", "threadId"],
+              properties: {
+                environment: {
+                  description:
+                    "A name the user declares, such as a credential or environment name: a lower-case slug of at most 64 characters. A section names one with a `$ref` to `https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name`.",
+                  type: "string",
+                  maxLength: 64,
+                  pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+                },
+                threadId: {
+                  type: "string",
+                  minLength: 1,
+                },
+              },
+            },
+          ],
+        },
+        text: {
+          description: "Markdown.",
+          type: "string",
+          minLength: 1,
+          maxLength: 8000,
+        },
+      },
+    },
+    output: {
+      type: "object",
+      additionalProperties: false,
+      required: ["messages"],
+      properties: {
+        messages: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["messageId", "environment", "threadId"],
+            properties: {
+              messageId: {
+                description:
+                  "A UUID derived as `agent-tools/message` from the sending invocation and the thread.",
+                type: "string",
+                pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              },
+              environment: {
+                type: "string",
+              },
+              threadId: {
+                type: "string",
+              },
+            },
+          },
+        },
+      },
+    },
+  },
   "thread-create": {
     input: {
       type: "object",
@@ -260,7 +363,11 @@ export const implementationContracts = {
           type: "array",
           uniqueItems: true,
           items: {
-            $ref: "https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name",
+            description:
+              "A name the user declares, such as a credential or environment name: a lower-case slug of at most 64 characters. A section names one with a `$ref` to `https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name`.",
+            type: "string",
+            maxLength: 64,
+            pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
           },
           default: ["default"],
         },
