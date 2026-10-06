@@ -6,6 +6,7 @@ import * as fs from "node:fs/promises";
 import { readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, test } from "vite-plus/test";
 import {
   openProcessRepository,
@@ -246,9 +247,16 @@ test("a request from a settled-pull callback joins the already queued successor"
 test.each(["different", "absent", "initially-absent", "matching"] as const)(
   "joined %s commit hints determine whether the successor fetches",
   async (hint) => {
-    const { remote, configuration, a } = await setup(200);
+    const { remote, configuration, a } = await setup();
     const repository = await openProcessRepository({ configuration, credentials });
-    await repository.pull();
+    // Healthy Git transport may take longer than the old 200 ms stall budget.
+    const initialHold = remote.holdNext();
+    const initial = repository.pull();
+    void initial.catch(() => undefined);
+    await initialHold.reached;
+    await delay(250);
+    initialHold.release();
+    await initial;
     const b = await remote.commit("second");
     remote.state.mode = "pack";
     const started = new Promise<void>((resolve) => {
@@ -262,10 +270,19 @@ test.each(["different", "absent", "initially-absent", "matching"] as const)(
     );
     const repeated = repository.pull({ commit: a });
     remote.state.mode = "healthy";
+    const successorHold = hint === "matching" ? undefined : remote.holdNext();
     try {
       expect(repeated).toBe(next);
       expect(joined).toBe(next);
-      expect(await first).toMatchObject({ kind: "remote" });
+      expect(await first).toMatchObject({
+        kind: "remote",
+        message: expect.stringContaining(`Pull timeout after ${configuration.pullTimeoutMs} ms`),
+      });
+      if (successorHold) {
+        await successorHold.reached;
+        await delay(250);
+        successorHold.release();
+      }
       expect(await next).toEqual(
         hint === "matching"
           ? { kind: "unchanged", commit: a }
@@ -276,6 +293,7 @@ test.each(["different", "absent", "initially-absent", "matching"] as const)(
         hint === "matching" ? 2 : 3,
       );
     } finally {
+      successorHold?.release();
       await Promise.allSettled([first, next, joined, repeated]);
     }
   },
