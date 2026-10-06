@@ -6,6 +6,7 @@ import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
+import { createConnection } from "node:net";
 import { spawn } from "node:child_process";
 import { afterEach, expect, test } from "vite-plus/test";
 import {
@@ -44,6 +45,34 @@ test("control lease refuses second owner and answers status until shutdown compl
   await expect(recoverChildren(dir)).rejects.toThrow("owner");
   await control.close();
   expect(await controlRequest(dir, "status")).toBeUndefined();
+});
+test("stop stays pending while the control socket closes before its ownership guard", async () => {
+  const dir = await directory();
+  const control = await acquireControl(
+    dir,
+    () => status,
+    () => {},
+  );
+  // An accepted connection holds close open after the server stops listening.
+  const connection = createConnection(join(dir, "control.sock"));
+  await once(connection, "connect");
+  expect(await controlRequest(dir, "status")).toEqual(status);
+  const before = "[]\n";
+  await writeFile(join(dir, "children.json"), before);
+  const closing = control.close();
+  try {
+    expect(await controlRequest(dir, "status")).toBeUndefined();
+    expect(await stopEnvironment(dir)).toBe("pending");
+    expect(await readFile(join(dir, "children.json"), "utf8")).toBe(before);
+  } finally {
+    connection.destroy();
+    await closing;
+  }
+  expect(await stopEnvironment(dir)).toBe("stopped");
+});
+test("stop propagates acquisition failures other than guard contention", async () => {
+  const dir = await directory();
+  await expect(stopEnvironment(join(dir, "missing"))).rejects.toThrow();
 });
 test("child gate durably records identity before running program and recovery ends it", async () => {
   const dir = await directory();
@@ -112,13 +141,15 @@ test("recovery never signals a reused identity, including the start entrypoint",
 test("pending stop leaves ledger untouched while sole owner kills SIGTERM-ignoring children", async () => {
   const dir = await directory();
   let stopping = false;
+  let shutdown = Promise.resolve();
   const ledger = new ChildLedger(dir);
   const control = await acquireControl(
     dir,
     () => ({ ...status, stopping }),
     () => {
+      if (stopping) return;
       stopping = true;
-      void ledger.stopAll({ graceMs: 200, pollMs: 5 }).then(() => control.close());
+      shutdown = ledger.stopAll({ graceMs: 200, pollMs: 5 }).then(() => control.close());
     },
   );
   const child = await ledger.launch("service", process.execPath, [
@@ -130,6 +161,7 @@ test("pending stop leaves ledger untouched while sole owner kills SIGTERM-ignori
   expect(await stopEnvironment(dir, { waitMs: 30, pollMs: 5, graceMs: 100 })).toBe("pending");
   expect(await readFile(join(dir, "children.json"), "utf8")).toBe(before);
   await once(child.process, "exit");
+  await shutdown;
   expect(await stopEnvironment(dir, { waitMs: 100, pollMs: 5, graceMs: 100 })).toBe("stopped");
   expect(await processStartTime(child.record.pid)).toBeUndefined();
 });

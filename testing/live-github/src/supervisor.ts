@@ -68,6 +68,7 @@ export async function controlRequest(
     });
   });
 }
+class ControlHeldError extends Error {}
 export type ControlLease = { close: () => Promise<void>; owns: () => boolean };
 export async function acquireControl(
   directory: string,
@@ -80,8 +81,9 @@ export async function acquireControl(
   guard.listen(`\0manifold-live:${createHash("sha256").update(directory).digest("hex")}`);
   try {
     await once(guard, "listening");
-  } catch {
-    throw Error("Environment control socket already held");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+    throw new ControlHeldError("Environment control socket already held");
   }
   const releaseGuard = () => new Promise<void>((resolve) => guard.close(() => resolve()));
   const file = join(directory, "control.sock");
@@ -302,11 +304,18 @@ export async function stopEnvironment(
     }
     if (await controlRequest(directory, "status")) return "pending" as const;
   }
-  const lease = await acquireControl(
-    directory,
-    () => ({ instanceId: "recovery", answers: false, stopping: true }),
-    () => {},
-  );
+  let lease: ControlLease;
+  try {
+    lease = await acquireControl(
+      directory,
+      () => ({ instanceId: "recovery", answers: false, stopping: true }),
+      () => {},
+    );
+  } catch (error) {
+    // The server can stop answering before close releases its ownership guard.
+    if (error instanceof ControlHeldError) return "pending" as const;
+    throw error;
+  }
   try {
     await recoverChildren(directory, lease, options);
   } finally {
