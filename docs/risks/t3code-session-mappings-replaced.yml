@@ -42,5 +42,6 @@ status: open
 # Acceptance: a push on a timer, as the operator setup guide shows every ten
 # minutes, narrows the window to one push interval, and the late attribution
 # of a mapping that arrives after its calls covers every session whose
-# mapping T3 Code still holds. Attributing calls posted before their
-# thread's ownership is wave 6 task 1202.
+# mapping T3 Code still holds. The ownership gap is accepted on the same
+# terms: its calls count against their account and window, on the item of
+# the thread's T3code project rather than the task's.
