@@ -29,6 +29,7 @@ export type CanvasEdge = Edge<
     labelPosition?: { x: number; y: number };
     problem?: "error" | "warning" | undefined;
     onSelect?: () => void;
+    panning?: boolean;
   },
   "transition"
 >;

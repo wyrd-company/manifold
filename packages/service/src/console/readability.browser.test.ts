@@ -2,7 +2,7 @@
 // relationships:
 //   verifies: operator-console
 // ---
-import { chromium } from "playwright";
+import { chromium, type Locator, type Page } from "playwright";
 import { expect, test } from "vite-plus/test";
 import { serviceFixture } from "../service/test-fixtures/repository.ts";
 import { startService } from "../service/index.ts";
@@ -10,6 +10,55 @@ import { startService } from "../service/index.ts";
 const collection = "collection_with_a_long_name_for_the_selected_state_path";
 const inner = "another_collection_with_a_long_name";
 const first = `${collection}.${inner}.first`;
+
+const dragBy = async (
+  page: Page,
+  target: Locator,
+  delta: { x: number; y: number },
+  button: "left" | "middle" | "right" = "left",
+) => {
+  const box = await target.boundingBox();
+  if (!box) throw new Error("Drag target has no bounding box");
+  const start = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down({ button });
+  await page.mouse.move(start.x + delta.x, start.y + delta.y, { steps: 5 });
+  await page.mouse.up({ button });
+};
+
+const blankCanvasPoint = (pane: Locator) =>
+  pane.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    for (let y = box.bottom - 24; y > box.top + 64; y -= 32)
+      for (let x = box.left + 24; x < box.right - 24; x += 32)
+        if (document.elementFromPoint(x, y) === element) return { x, y };
+    throw new Error("Canvas has no blank pane point");
+  });
+
+const dragFrom = async (
+  page: Page,
+  start: { x: number; y: number },
+  delta: { x: number; y: number },
+  button: "left" | "middle" | "right" = "left",
+) => {
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down({ button });
+  await page.mouse.move(start.x + delta.x, start.y + delta.y, { steps: 5 });
+  await page.mouse.up({ button });
+};
+
+const canvasState = (page: Page, node: string) =>
+  page.evaluate((node) => {
+    const selected = document.querySelector<HTMLElement>(".react-flow__node.selected");
+    return {
+      viewport: document.querySelector<HTMLElement>(".react-flow__viewport")!.style.transform,
+      node: document.querySelector<HTMLElement>(`.react-flow__node[data-id="${node}"]`)!.style
+        .transform,
+      selected: selected?.dataset["id"],
+      inspected: document.querySelector<HTMLElement>(".inspector-path")?.textContent,
+      draft: localStorage.getItem("manifold.blueprint-draft.blueprints/counter.yml"),
+    };
+  }, node);
 
 const colorChannels = (color: string) => {
   const channels = color
@@ -330,6 +379,153 @@ test("portfolio dialog has inset controls, separated fields and a distinct surfa
     await page.setViewportSize({ width: 540, height: 700 });
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect.poll(() => page.getByRole("dialog").count()).toBe(0);
+  } finally {
+    await browser.close();
+    await service.stop();
+    await fixture.close();
+  }
+});
+
+test("Pan moves only the viewport and Select owns canvas selection and object movement", async () => {
+  const fixture = await serviceFixture();
+  await fixture.commit(
+    60,
+    {},
+    {
+      machine: {
+        id: "sample",
+        initial: "first",
+        states: {
+          first: { on: { NEXT: "second" } },
+          second: { type: "final" },
+        },
+      },
+      schemas: { input: true, output: true, context: true, events: { NEXT: true } },
+      layout: { states: { first: { x: 80, y: 120 }, second: { x: 360, y: 120 } } },
+    },
+  );
+  const service = await startService({ configurationFile: fixture.file, log: () => {} });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const address = service.http.address();
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(
+      `http://${address.host}:${address.port}/console/blueprints/blueprints/counter.yml`,
+    );
+    const pane = page.locator(".react-flow__pane");
+    const firstNode = page.locator('.react-flow__node[data-id="first"]');
+    const secondNode = page.locator('.react-flow__node[data-id="second"]');
+    const label = page.getByRole("button", { name: "NEXT", exact: true });
+    const toolbar = page.getByRole("toolbar", { name: "Canvas tools" });
+    await firstNode.waitFor();
+    await firstNode.click();
+
+    const panButton = toolbar.locator("button").nth(1);
+    expect.soft(await panButton.getAttribute("aria-label"), "viewport tool name").toBe("Pan");
+    await panButton.click();
+
+    const beforeNodePan = await canvasState(page, "first");
+    await dragBy(page, firstNode, { x: 72, y: 48 });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
+    const afterNodePan = await canvasState(page, "first");
+    expect(afterNodePan.viewport, "Pan drag over a node moves the viewport").not.toBe(
+      beforeNodePan.viewport,
+    );
+    expect(afterNodePan.node, "Pan drag keeps graph position").toBe(beforeNodePan.node);
+    expect(afterNodePan.draft, "Pan drag keeps pinned YAML").toBe(beforeNodePan.draft);
+    expect(afterNodePan.inspected, "Pan drag keeps selection").toBe("first");
+
+    const beforeLabelPan = await canvasState(page, "first");
+    await dragBy(page, label, { x: 56, y: 32 });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
+    const afterLabelPan = await canvasState(page, "first");
+    expect(afterLabelPan.viewport, "Pan drag over a transition label moves the viewport").not.toBe(
+      beforeLabelPan.viewport,
+    );
+    expect(afterLabelPan.inspected, "Pan label drag keeps selection").toBe("first");
+
+    await label.click();
+    expect((await canvasState(page, "first")).inspected, "Pan label click keeps selection").toBe(
+      "first",
+    );
+
+    const blank = await blankCanvasPoint(pane);
+    await page.mouse.click(blank.x, blank.y);
+    expect((await canvasState(page, "first")).inspected, "Pan pane click keeps selection").toBe(
+      "first",
+    );
+
+    await toolbar.getByRole("button", { name: "Select", exact: true }).click();
+    const beforeSelectionDrag = await canvasState(page, "first");
+    await dragFrom(page, await blankCanvasPoint(pane), { x: 144, y: -112 });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
+    expect((await canvasState(page, "first")).viewport, "Select blank drag does not pan").toBe(
+      beforeSelectionDrag.viewport,
+    );
+
+    const beforeMiddlePan = await canvasState(page, "first");
+    await dragFrom(page, await blankCanvasPoint(pane), { x: 44, y: 28 }, "middle");
+    expect((await canvasState(page, "first")).viewport, "middle drag still pans").not.toBe(
+      beforeMiddlePan.viewport,
+    );
+
+    const beforeRightPan = await canvasState(page, "first");
+    await dragFrom(page, await blankCanvasPoint(pane), { x: 36, y: 24 }, "right");
+    expect((await canvasState(page, "first")).viewport, "right drag still pans").not.toBe(
+      beforeRightPan.viewport,
+    );
+
+    const beforeWheel = await canvasState(page, "first");
+    const wheelPoint = await blankCanvasPoint(pane);
+    await page.mouse.move(wheelPoint.x, wheelPoint.y);
+    await page.mouse.wheel(0, -120);
+    await expect
+      .poll(() => canvasState(page, "first"))
+      .not.toMatchObject({
+        viewport: beforeWheel.viewport,
+      });
+    await toolbar.getByRole("button", { name: "Fit", exact: true }).click();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
+
+    const beforeSpacePan = await canvasState(page, "first");
+    await page.locator(".canvas-surface").focus();
+    await page.keyboard.down("Space");
+    await dragBy(page, firstNode, { x: 48, y: 24 });
+    await page.keyboard.up("Space");
+    const afterSpacePan = await canvasState(page, "first");
+    expect(afterSpacePan.viewport, "Space drag still pans").not.toBe(beforeSpacePan.viewport);
+    expect(afterSpacePan.node, "Space drag does not move an object").toBe(beforeSpacePan.node);
+    expect(afterSpacePan.draft, "Space drag does not change YAML").toBe(beforeSpacePan.draft);
+
+    await toolbar.locator('button[aria-label="Add transition"]').click();
+    const beforeTransitionDrag = await canvasState(page, "second");
+    await dragBy(page, secondNode, { x: 64, y: 32 });
+    const afterTransitionDrag = await canvasState(page, "second");
+    expect(afterTransitionDrag.node, "transition placement cannot move objects").toBe(
+      beforeTransitionDrag.node,
+    );
+    expect(afterTransitionDrag.draft, "transition placement cannot change pinned layout").toBe(
+      beforeTransitionDrag.draft,
+    );
+    await page.keyboard.press("Escape");
+
+    await toolbar.getByRole("button", { name: "Select", exact: true }).click();
+    const beforeObjectMove = await canvasState(page, "second");
+    await dragBy(page, secondNode, { x: 64, y: 32 });
+    await expect
+      .poll(() => canvasState(page, "second"))
+      .not.toMatchObject({
+        node: beforeObjectMove.node,
+        draft: beforeObjectMove.draft,
+      });
+    const afterObjectMove = await canvasState(page, "second");
+    expect(afterObjectMove.viewport, "Select object drag keeps viewport").toBe(
+      beforeObjectMove.viewport,
+    );
+    expect(afterObjectMove.draft, "Select object drag pins the layout").toContain("layout");
+
+    expect(await toolbar.locator('select[aria-label="Add state"]').isEnabled()).toBe(true);
+    expect(await toolbar.locator('button[aria-label="Add transition"]').isEnabled()).toBe(true);
   } finally {
     await browser.close();
     await service.stop();

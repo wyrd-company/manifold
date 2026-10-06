@@ -81,7 +81,7 @@ function Canvas({
     edges: [],
   });
   const [error, setError] = useState<string>();
-  const [tool, setTool] = useState<"select" | "move" | "transition">("select");
+  const [tool, setTool] = useState<"select" | "pan" | "transition">("select");
   const [space, setSpace] = useState(false);
   const [placing, setPlacing] = useState<StateType>();
   const [pointerPosition, setPointerPosition] = useState<{ x: number; y: number }>();
@@ -222,7 +222,8 @@ function Canvas({
       : warnings.some((f) => f.location === pointer || f.location.startsWith(pointer + "/"))
         ? ("warning" as const)
         : undefined;
-  const pan = tool === "move" || space;
+  const pan = tool === "pan" || space;
+  const selectObjects = tool === "select" && !space && !placing;
   return (
     <div className="canvas-editor">
       <section
@@ -251,7 +252,7 @@ function Canvas({
             e.preventDefault();
             remove();
           } else if (e.key.toLowerCase() === "v") setTool("select");
-          else if (e.key.toLowerCase() === "h") setTool("move");
+          else if (e.key.toLowerCase() === "h") setTool("pan");
           else if (!locked && e.key.toLowerCase() === "s") setPlacing("atomic");
           else if (!locked && e.key.toLowerCase() === "t") setTool("transition");
           else if (e.key === "+" || e.key === "=") void flow.zoomIn();
@@ -288,11 +289,11 @@ function Canvas({
           <Button
             variant="ghost"
             size="icon"
-            aria-label="Move"
-            title="Move (H)"
-            aria-pressed={tool === "move"}
+            aria-label="Pan"
+            title="Pan (H)"
+            aria-pressed={tool === "pan"}
             onClick={() => {
-              setTool("move");
+              setTool("pan");
               setPlacing(undefined);
             }}
           >
@@ -459,17 +460,22 @@ function Canvas({
             data: {
               ...edge.data,
               problem: edge.data?.transition ? problem(edge.data.transition.location) : undefined,
-              onSelect: () => {
-                if (edge.data?.transition) select(edge.data.transition.location);
-              },
+              panning: pan,
+              ...(selectObjects
+                ? {
+                    onSelect: () => {
+                      if (edge.data?.transition) select(edge.data.transition.location);
+                    },
+                  }
+                : {}),
             },
           }))}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          nodesDraggable={!locked && !pan && !placing}
-          nodesConnectable={!locked && !pan && !placing}
-          elementsSelectable={!pan}
-          panOnDrag={pan ? true : [0, 1, 2]}
+          nodesDraggable={!locked && selectObjects}
+          nodesConnectable={!locked && selectObjects}
+          elementsSelectable={selectObjects}
+          panOnDrag={pan ? true : [1, 2]}
           minZoom={0.25}
           maxZoom={2}
           fitView
@@ -519,20 +525,21 @@ function Canvas({
               openConnection(pending.source, target, pending.basis);
           }}
           onNodeClick={(event, node) => {
+            if (pan) return;
             if (placing) {
               placeAt({ x: event.clientX, y: event.clientY });
               return;
             }
-            if (pan) return;
             if (tool === "transition" && !node.id.startsWith("@initial:")) {
               if (connectionSource) openConnection(connectionSource, node.id);
               else setConnectionSource(node.id);
             } else select(node.id);
           }}
           onEdgeClick={(_, edge) => {
-            if (edge.data?.transition) select(edge.data.transition.location);
+            if (selectObjects && edge.data?.transition) select(edge.data.transition.location);
           }}
           onPaneClick={(e) => {
+            if (pan) return;
             if (!placing) {
               select(undefined);
               return;

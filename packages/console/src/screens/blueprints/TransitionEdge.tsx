@@ -60,7 +60,7 @@ export function TransitionEdge(props: EdgeProps<CanvasEdge>) {
             type="button"
             aria-pressed={!!props.selected}
             onClick={props.data?.onSelect}
-            className={`canvas-edge-label mono nodrag nopan ${trigger ?? "initial"} ${props.data?.problem ?? ""} ${props.selected ? "selected" : ""}`}
+            className={`canvas-edge-label mono nodrag ${props.data?.panning ? "" : "nopan"} ${trigger ?? "initial"} ${props.data?.problem ?? ""} ${props.selected ? "selected" : ""}`}
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${label.x}px,${label.y}px)`,

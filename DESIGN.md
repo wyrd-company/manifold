@@ -748,7 +748,7 @@ the `popover` surface, a 1px border, 10px radius, and the dialog shadow at
 its smallest. Its buttons are 28px ghost icon buttons with a tooltip that
 names the button and its key, in groups split by 1px vertical dividers:
 
-1. Select (`MousePointer2`, V) and Move (`Hand`, H). The active tool has
+1. Select (`MousePointer2`, V) and Pan (`Hand`, H). The active tool has
    the `accent` fill and a `foreground` icon.
 2. Add state (`SquarePlus` with a chevron, S), a menu of State, Compound
    state, Parallel state, Final state, and History state, each with its
@@ -758,6 +758,13 @@ names the button and its key, in groups split by 1px vertical dividers:
 3. Undo (`Undo2`) and Redo (`Redo2`).
 4. Zoom out (`ZoomOut`), Zoom in (`ZoomIn`), and Fit (`Maximize`).
 5. Automatic layout (`Network`).
+
+Select owns object interaction: a primary click selects, a node drag moves
+and pins the layout, and a primary drag on blank canvas leaves the viewport
+fixed. Pan owns viewport interaction: a primary drag pans even when it starts
+over a node or transition label, while clicks leave the inspected selection
+unchanged. Pan and temporary Space panning cannot move or connect objects.
+Middle- and right-button drags pan in either tool; the wheel continues to zoom.
 
 #### Event picker
 
