@@ -17,8 +17,13 @@ description: >-
   `_meta`, among the tool activities T3 Code records with the provider's
   `toolCallId`. Claude sends `claudecode/toolUseId` and Codex `callId`, and
   each equals the `toolCallId` T3 Code 0.0.45 records, measured with a
-  stdio MCP server registered as the plugin is. Neither T3 Code nor the
-  providers document either side. A provider release that moves or drops
+  stdio MCP server registered as the plugin is. Cursor and OpenCode send
+  no call id to the MCP server. The post-tool-use hook that tells an agent
+  of mail identifies its thread the same way: the call id a provider gives
+  its hook equals `toolCallId` for Claude, Codex, and OpenCode, and not for
+  Cursor, and every provider's hook session id maps to its thread through
+  T3 Code's `provider_session_runtime`. Grok is not measured. Neither T3
+  Code nor the providers document either side. A provider release that moves or drops
   the id, or a T3 Code release that records another id, leaves every call
   from that provider unidentified by call id, and an agent whose prompt does
   not name its thread gets `caller-unidentified` and cannot hand off.

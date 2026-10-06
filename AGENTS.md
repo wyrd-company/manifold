@@ -96,8 +96,10 @@ We need to be on the same page with terminology. When communicating, use this la
 - **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
 - **invocation** the identity of an invoked implementation: its actor id, its invoke id, and the entry id of the state entry that invoked it.
 - **issue** a way to track tasks related to a repository on GitHub
+- **late attribution** the actor, portfolio item, and state visit a call is counted for when the thread of its provider session reaches the service after the call posted; the ledger keeps the call's actual where it posted.
 - **lifecycle field** the single-select field of a bound Project that shows where each task is, declared with its option names in the process repository's task metadata declaration.
 - **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, or an event payload assigned into context.
+- **message** text a task sends to one thread, which reaches the thread's agent only once an actor that follows the thread takes it as an event, and which the agent reads once with `get-messages`.
 - **notification destination** a name the process repository uses for where an escalation is sent, mapped in service configuration to an ntfy server, topic, security posture, and credential.
 - **pacing** a limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.
 - **parent** a task with subtasks
