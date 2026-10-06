@@ -22,8 +22,9 @@ description: >-
   the task. They still count against their account and window, so
   capacity stays right; only the task's actual and variance miss them. The
   window opens at a session's first call and closes at the first push
-  that runs while T3 Code still holds that session's mapping. A related gap: a call posted after its mapping arrives but
-  before the thread's actor saves its ownership of the thread posts under
+  that runs while T3 Code still holds that session's mapping. A related
+  gap: a call posted after its mapping arrives but before the thread's
+  actor saves its ownership of the thread posts under
   the ledger actor `thread:<environment>:<thread id>` on the item of the
   thread's T3code project, not to the task, and a later ownership does not
   move it.
@@ -41,5 +42,5 @@ status: open
 # Acceptance: a push on a timer, as the operator setup guide shows every ten
 # minutes, narrows the window to one push interval, and the late attribution
 # of a mapping that arrives after its calls covers every session whose
-# mapping T3 Code still holds. Attributing calls posted
-# before their thread's ownership is a backlog task.
+# mapping T3 Code still holds. Attributing calls posted before their
+# thread's ownership is wave 6 task 1202.
