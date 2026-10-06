@@ -1,12 +1,14 @@
 // ---
 // relationships:
-//   verifies: [default-process, service-assembly, intake, gate-runtime, agent-threads, agent-tools, usage-intake, host-cli-usage, tasks-api]
+//   verifies: [default-process, service-assembly, intake, gate-runtime, agent-threads, agent-tools, usage-intake, host-cli-usage, tasks-api, declarations-api, portfolio-api, projects-api]
 // ---
 import { afterEach, expect, it } from "vite-plus/test";
 import { readFile, writeFile } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
-import { fork, execFile } from "node:child_process";
+import { createInterface } from "node:readline";
+import { once } from "node:events";
+import { fork, execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { isTaskResponse } from "@wyrd-company/manifold-shared/tasks-api";
@@ -28,6 +30,7 @@ afterEach(async () => {
 async function fixture(refuseMove = false) {
   const f = await serviceFixture();
   cleanup.push(f.close);
+  await git.setConfig({ fs, gitdir: f.remote.gitdir, path: "http.receivepack", value: true });
   const t3 = await commandServer();
   cleanup.push(t3.close);
   f.api.fields.splice(0, f.api.fields.length, {
@@ -88,6 +91,36 @@ async function fixture(refuseMove = false) {
         async (path) => [path, await readFile(new URL(path, starterRoot), "utf8")] as const,
       ),
     ),
+  );
+  const intake = parse(files.get("decision-models/intake.yml")!);
+  intake.nodes[1].content.config.rules[0].blueprint =
+    'task.issue.nodeId = "I_B" ? "blueprints/notice.yml" : "blueprints/task.yml"';
+  files.set("decision-models/intake.yml", stringify(intake));
+  files.set(
+    "blueprints/notice.yml",
+    stringify({
+      machine: {
+        initial: "sending",
+        context: {},
+        states: {
+          sending: {
+            invoke: {
+              src: "send-message",
+              input: { to: { issue: "I_A" }, text: "The parcel label changed." },
+              onDone: "sent",
+            },
+          },
+          sent: { type: "final" },
+        },
+      },
+      schemas: {
+        input: true,
+        output: true,
+        context: true,
+        events: {},
+        actors: { "send-message": { input: true, output: true } },
+      },
+    }),
   );
   const bindings = parse(files.get("bindings.yml")!);
   Object.assign(bindings.githubProjects["work-board"], {
@@ -199,23 +232,27 @@ async function fixture(refuseMove = false) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ environment: "workstation", tool, arguments: args, meta }),
     });
-  async function add() {
-    f.api.addItem("item-one", "I_A");
-    f.api.items.get("item-one")!.fieldValues.nodes.push({
+  async function add(issue = "I_A", item = "item-one") {
+    f.api.addItem(item, issue);
+    f.api.items.get(item)!.fieldValues.nodes.push({
       __typename: "ProjectV2ItemFieldNumberValue",
       number: 0.00001,
       field: { id: "F_estimate", name: "Estimate", dataType: "NUMBER" },
     });
-    const delivery = signedDelivery("projects_v2_item", {
-      action: "created",
-      projects_v2_item: {
-        node_id: "item-one",
-        project_node_id: "P_one",
-        content_node_id: "I_A",
-        content_type: "Issue",
+    const delivery = signedDelivery(
+      "projects_v2_item",
+      {
+        action: "created",
+        projects_v2_item: {
+          node_id: item,
+          project_node_id: "P_one",
+          content_node_id: issue,
+          content_type: "Issue",
+        },
+        organization: { login: "sample" },
       },
-      organization: { login: "sample" },
-    });
+      "delivery-" + item,
+    );
     expect(
       (
         await fetch(running.url + "/webhooks/github", {
@@ -299,8 +336,57 @@ async function fixture(refuseMove = false) {
     handoff,
   };
 }
-it("runs the starter acceptance scenario through SIGKILL recovery, plugin handoff and host CLI settlement", async () => {
+it("runs the starter acceptance scenario through recovery, plugin messages, Project drift, portfolio save and settlement", async () => {
   const f = await fixture();
+  const get = async (path: string) => {
+    const response = await fetch(f.url + path);
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    return body;
+  };
+  const post = async (path: string, body: unknown) => {
+    const response = await fetch(f.url + path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const answer = await response.json();
+    expect(response.status, JSON.stringify(answer)).toBe(200);
+    return answer;
+  };
+  await expect
+    .poll(async () => (await fetch(f.url + "/api/projects/work-board/plan")).status)
+    .toBe(200);
+  const planned = await get("/api/projects/work-board/plan");
+  expect(planned).toMatchObject({
+    observation: { status: "fresh" },
+    configuration: { state: "not-applied" },
+  });
+  const applied = await post("/api/projects/work-board/apply", {
+    removeUndeclared: false,
+    digest: planned.digest,
+  });
+  expect(applied).toMatchObject({ configuration: { state: "in-sync" } });
+  const option = f.api.fields.find((field) => field.name === "Status")!.options[0]!;
+  const optionId = option.id;
+  option.name = "Ready";
+  expect(await get("/api/projects/work-board/plan")).toMatchObject({
+    configuration: { state: "drift", count: 1 },
+    changes: [
+      expect.objectContaining({
+        drift: true,
+        target: expect.objectContaining({ lifecycle: true, option: "Todo" }),
+      }),
+    ],
+  });
+  expect(await post("/api/projects/work-board/apply", { removeUndeclared: false })).toMatchObject({
+    writes: 1,
+    configuration: { state: "in-sync" },
+  });
+  expect(f.api.fields.find((field) => field.name === "Status")!.options[0]).toMatchObject({
+    id: optionId,
+    name: "Todo",
+  });
   await f.add();
   await f.waiting();
   expect(f.moves()).toEqual(["In Progress"]);
@@ -357,6 +443,74 @@ it("runs the starter acceptance scenario through SIGKILL recovery, plugin handof
     ).length,
   ).toBeGreaterThanOrEqual(2);
   expect(f.moves()).toEqual(["In Progress"]);
+  // A second issue invokes send-message; the recipient's actor saves its routed event.
+  await f.add("I_B", "item-two");
+  await expect.poll(() => f.store.loadSnapshot("task:I_B")?.snapshot.status).toBe("done");
+  const plugin = spawn(childArtifacts().host, [
+    "mcp",
+    "--service",
+    f.url,
+    "--environment",
+    "workstation",
+  ]);
+  const pluginExited = once(plugin, "exit");
+  const replies: Record<string, unknown>[] = [];
+  createInterface({ input: plugin.stdout }).on("line", (line) => replies.push(JSON.parse(line)));
+  cleanup.push(async () => {
+    if (plugin.exitCode === null && plugin.signalCode === null) {
+      plugin.stdin.end();
+      await pluginExited;
+    }
+  });
+  const request = (value: unknown) => plugin.stdin.write(JSON.stringify(value) + "\n");
+  request({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-03-26",
+      capabilities: {},
+      clientInfo: { name: "parcel", version: "1" },
+    },
+  });
+  await expect.poll(() => replies.find((reply) => reply["id"] === 1)).toHaveProperty("result");
+  request({ jsonrpc: "2.0", method: "notifications/initialized" });
+  const read = (id: number) =>
+    request({
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: {
+        name: "get-messages",
+        arguments: { thread: thread.id },
+      },
+    });
+  read(2);
+  await expect
+    .poll(() => replies.find((reply) => reply["id"] === 2))
+    .toMatchObject({
+      result: {
+        isError: false,
+        structuredContent: {
+          status: "read",
+          threadId: thread.id,
+          turnId: turn,
+          messages: [
+            {
+              from: { actorId: "task:I_B", issue: "I_B" },
+              text: "The parcel label changed.",
+              deliveredAt: expect.any(String),
+            },
+          ],
+        },
+      },
+    });
+  read(3);
+  await expect
+    .poll(() => replies.find((reply) => reply["id"] === 3)?.["result"])
+    .toEqual(replies.find((reply) => reply["id"] === 2)?.["result"]);
+  plugin.stdin.end();
+  expect(await pluginExited).toEqual([0, null]);
   expect(
     (
       await f.agentCall("handoff", {
@@ -443,6 +597,56 @@ it("runs the starter acceptance scenario through SIGKILL recovery, plugin handof
   expect(f.moves()).toEqual(["In Progress", "Done"]);
   expect(f.t3.threads.size).toBe(1);
   expect(f.notifications).toEqual([]);
+  const source = await get("/api/declarations/source?path=portfolio.yml");
+  const edited = parse(source.text);
+  edited.items.work.allocations.agents.guarantee = 80;
+  const text = stringify(edited);
+  const saved = await post("/api/declarations/save", {
+    path: "portfolio.yml",
+    base: source.commit,
+    text,
+    message: "Change sample allocation",
+    saveId: "1".repeat(32),
+  });
+  expect(saved).toMatchObject({ outcome: "saved", commit: expect.any(String) });
+  expect(saved.commit).not.toBe(source.commit);
+  expect(await get("/api/declarations/source?path=portfolio.yml")).toMatchObject({
+    commit: saved.commit,
+    text,
+  });
+  expect(await get("/api/portfolio")).toMatchObject({
+    commit: saved.commit,
+    items: expect.arrayContaining([
+      expect.objectContaining({
+        id: "work",
+        allocations: [expect.objectContaining({ account: "agents", guarantee: 80 })],
+      }),
+    ]),
+  });
+  const remoteHead = await git.resolveRef({ fs, gitdir: f.remote.gitdir, ref: "main" });
+  expect(remoteHead).toBe(saved.commit);
+  expect(
+    Buffer.from(
+      (
+        await git.readBlob({
+          fs,
+          gitdir: f.remote.gitdir,
+          oid: remoteHead,
+          filepath: "portfolio.yml",
+        })
+      ).blob,
+    ).toString(),
+  ).toBe(text);
+  await f.restart();
+  expect(await get("/api/portfolio")).toMatchObject({
+    commit: saved.commit,
+    items: expect.arrayContaining([
+      expect.objectContaining({
+        id: "work",
+        allocations: [expect.objectContaining({ account: "agents", guarantee: 80 })],
+      }),
+    ]),
+  });
   f.worker.send("stop");
   expect(await f.exited).toBe(0);
 });
