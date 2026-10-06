@@ -30,7 +30,7 @@ import { Button } from "../../ui/button.tsx";
 import { layoutCanvas } from "./canvas-layout.ts";
 import type { CanvasNode, CanvasEdge, BlueprintLayout } from "./canvas-layout.ts";
 import { CanvasStateNode, InitialNode } from "./CanvasStateNode.tsx";
-import { TransitionEdge } from "./TransitionEdge.tsx";
+import { TransitionEdge, transitionColor } from "./TransitionEdge.tsx";
 import { findingSelection } from "./problems.ts";
 import { Inspector } from "./Inspector.tsx";
 import { applyBlueprintEdit, atPointer, statePointer } from "./blueprint-edits.ts";
@@ -447,10 +447,21 @@ function Canvas({
               edge.data?.transition?.location === selection ||
               edge.source === selection ||
               edge.target === selection,
-            markerEnd: { type: MarkerType.ArrowClosed, color: "var(--edge)" },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: transitionColor(
+                edge.data?.transition?.trigger,
+                edge.data?.transition?.location === selection ||
+                  edge.source === selection ||
+                  edge.target === selection,
+              ),
+            },
             data: {
               ...edge.data,
               problem: edge.data?.transition ? problem(edge.data.transition.location) : undefined,
+              onSelect: () => {
+                if (edge.data?.transition) select(edge.data.transition.location);
+              },
             },
           }))}
           nodeTypes={nodeTypes}

@@ -3,7 +3,7 @@ name: Manifold
 description: >-
   Operator dashboard for Manifold. It uses the visual language of T3 Code so that
   a T3 Code user reads it without learning a new vocabulary.
-source: T3 Code web client (apps/web/src/index.css, components/ui)
+source: T3 Code semantic tokens and primitives, with the Manifold contrast palette
 relationships:
   # GAP-EDGE: no ontology type covers a visual design document; `related-to`
   # names the technical design that builds the console from it.
@@ -11,16 +11,16 @@ relationships:
     - operator-console
 colors:
   light:
-    background: "#fcfcfc"
-    sidebar: "#fafafa"
+    background: "#f5f7fb"
+    sidebar: "#edf1f7"
     card: "#ffffff"
     popover: "#ffffff"
-    accent: "#f4f4f5"
-    border: "#e4e4e7"
-    input: "#d4d4d8"
-    foreground: "#27272a"
-    muted-foreground: "#71717a"
-    icon-muted: "#8b8b93"
+    accent: "#e3ebf6"
+    border: "#c5d0df"
+    input: "#8192aa"
+    foreground: "#202d40"
+    muted-foreground: "#52647d"
+    icon-muted: "#657891"
     primary: "#1b4ed8"
     primary-foreground: "#ffffff"
     link: "#1b4ed8"
@@ -32,24 +32,24 @@ colors:
     error-foreground: "#b91c1c"
     info: "#3b82f6"
     info-foreground: "#1d4ed8"
-    lane: "#f4f4f5"
+    lane: "#eaf0f8"
     tile: "#ffffff"
-    edge: "#a1a1aa"
-    grid: "#e9e9ec"
+    edge: "#526985"
+    grid: "#d4deec"
   dark:
-    background: "#0a0a0a"
-    sidebar: "#111111"
-    card: "#111111"
-    popover: "#141414"
-    accent: "#1c1c1c"
-    border: "#1f1f1f"
-    input: "#2a2a2a"
-    foreground: "#f5f5f5"
-    muted-foreground: "#8a8a8a"
-    icon-muted: "#7a7a7a"
-    primary: "#346bf1"
-    primary-foreground: "#ffffff"
-    link: "#7ea2ff"
+    background: "#101722"
+    sidebar: "#151f2e"
+    card: "#1c2839"
+    popover: "#25354b"
+    accent: "#30445e"
+    border: "#435974"
+    input: "#6b839f"
+    foreground: "#eef4ff"
+    muted-foreground: "#b2c1d7"
+    icon-muted: "#96abc7"
+    primary: "#729fff"
+    primary-foreground: "#0b1728"
+    link: "#9fc1ff"
     success: "#10b981"
     success-foreground: "#34d399"
     warning: "#f59e0b"
@@ -58,10 +58,10 @@ colors:
     error-foreground: "#f87171"
     info: "#3b82f6"
     info-foreground: "#60a5fa"
-    lane: "#0e0e0e"
-    tile: "#141414"
-    edge: "#3f3f46"
-    grid: "#1a1a1a"
+    lane: "#152031"
+    tile: "#223149"
+    edge: "#9db2ce"
+    grid: "#2b3c52"
 typography:
   font-sans: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif'
   font-mono: 'ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace'
@@ -154,10 +154,10 @@ components:
     titleHeight: 32px
     padding: 24px
   transition-edge:
-    strokeColor: "{colors.muted-foreground}"
-    strokeWidth: 1.5px
+    strokeColor: "{colors.edge}"
+    strokeWidth: 1.75px
     selectedStrokeColor: "{colors.primary}"
-    selectedStrokeWidth: 2px
+    selectedStrokeWidth: 2.5px
     pillBackgroundColor: "{colors.card}"
     pillBorderColor: "{colors.input}"
     pillHeight: 20px
@@ -199,15 +199,16 @@ Manifold does is in the Manifold specification; this document says how it looks.
 ## Colors
 
 The token names are T3 Code's semantic names. The hex values in the front
-matter are the resolved values of T3 Code's defaults. The source of truth is
-T3 Code's `index.css`; when T3 Code changes a default, change it here.
+matter define Manifold's palette. Text, graph routes, controls, and overlay
+surfaces stay distinguishable in both themes.
 
-- **Neutrals.** Light theme uses the zinc scale on a near-white background.
-  Dark theme uses near-black neutrals, with surfaces made by mixing a small
-  percentage of white into the background.
-- **Primary.** One blue (`oklch(0.488 0.217 264)` light,
-  `oklch(0.571 0.21 264)` dark). Use it for the one main action in a view and
-  for focus rings. Do not use it for status.
+- **Neutrals.** Light theme uses slate surfaces on a cool near-white background.
+  Dark theme uses deep slate, with distinct canvas, card, and popover surfaces.
+  Dialogs have a visible border and a dark scrim; their controls have 24px
+  of inset space. Muted text remains readable on every surface.
+- **Primary.** One blue (`primary`), with contrasting `primary-foreground` text.
+  Use it for the one main action in a view and for focus rings. Do not use it
+  for status.
 - **Status.** Success is emerald, warning is amber, error is red, info is
   blue. A status fill (dot, solid badge) uses the base color. Status text uses
   the `-foreground` variant, so that text keeps a 4.5:1 contrast.
@@ -530,6 +531,10 @@ remainder of the sub-items shows next to the heading. While the sub-item
 allocations add up to more than 100%, their inputs have error borders, the
 heading shows the sum in error color, and "Save" is disabled.
 
+The dialog has 24px insets. Allocation, Ceiling, and Weight share a row with
+20px gaps. Name, Pacing, and Sub-items span the full width. Below 420px the
+allocation controls stack. The fields scroll while the footer stays reachable.
+
 The footer has "Archive item" on the left (error text, outline). Items are
 archived, never deleted: an archived item keeps its history and its
 allocation goes back to the parent's unallocated remainder. A muted note
@@ -670,7 +675,8 @@ other view of the same draft, and the two are never shown side by side.
   solid error.
 - Canvas view: the canvas toolbar over the canvas's top-left corner, the
   ReactFlow canvas on the dotted grid, and the inspector (320px) at the
-  right. Under 1024px of content width the inspector is a sheet over the
+  right. Selected paths wrap inside the panel; the controls do not expand its
+  width. Under 1024px of content width the inspector is a sheet over the
   canvas from the right.
 - YAML view: the code editor, full width.
 - Under either view: the Problems strip (below).
@@ -678,12 +684,13 @@ other view of the same draft, and the two are never shown side by side.
 #### Canvas
 
 The canvas reads at a glance in both themes. Nodes are solid surfaces with
-`input`-colored borders and `foreground` text, edges are drawn in
-`muted-foreground`, and color appears only for selection (primary) and for
-state (success, warning, error). Every node and edge type differs by shape,
+`input`-colored borders and `foreground` text. Invoke icons and gate badges
+use info, final states use success, and history markers use warning. Event
+edges use `edge`; completion edges use success, error edges use error, and
+delay edges use warning. Selection uses primary. Every node and edge type differs by shape,
 border, stroke, or icon, never by color alone.
 
-`StateNode` is 200×56: a 24px icon chip on the `accent` surface, the state
+`StateNode` is 200×56: a 24px icon chip on a tinted info surface, the state
 key in mono (weight 600), and under it the source of its first invoke in
 mono `muted-foreground`, with "+N" when it invokes more. A state that
 declares a gate has a "Gate" badge (info tint) after the source. The chip's
@@ -696,15 +703,18 @@ implementation, and `FileCode2` for a child blueprint.
 | Final state    | `StateNode` with a 3px double `input` border and the `CircleCheckBig` chip                                                                                         |
 | Compound state | `GroupNode`: a 32px title bar with the `SquareStack` icon and the key in mono (weight 600), its children inside with 24px padding, 1px `input` border, 10px radius |
 | Parallel state | `GroupNode` with the `Columns2` icon and a "Parallel" badge; each region, a child state, has a dashed `input` border                                               |
-| History state  | `HistoryNode`: a 40px circle, 1px `input` border, `H` (shallow) or `H*` (deep) in mono (weight 600), the key in 12px mono `muted-foreground` under it              |
+| History state  | `HistoryNode`: a 40px circle, 1px warning border, `H` (shallow) or `H*` (deep) in mono (weight 600), the key in 12px mono `muted-foreground` under it              |
 | Initial marker | `InitialNode`: a 10px `foreground` dot joined by an unlabeled `foreground` edge with an arrowhead to the initial child                                             |
 
-Nested groups alternate the `lane` and `card` surfaces, so each level
-stands apart from the one around it.
+Nested groups alternate solid `lane` and `card` surfaces, so each level
+stands apart from the one around it. Their title bars remain above their
+children. Edge routes and labels use root coordinates, including transitions
+that enter or leave a nested group. Label buttons stay above the group surfaces;
+clicking or keyboard-activating a label selects its transition in the inspector.
 
-`TransitionEdge` draws a transition with a 1.5px `muted-foreground`
+`TransitionEdge` draws a transition with a 1.75px semantic-color
 stroke, an arrowhead, and a label pill: 20px high, `card` surface, 1px
-`input` border, 6px radius, 12px mono `foreground` text.
+`input` border, 6px radius, 12px mono text in the edge’s semantic color.
 
 | Edge      | Stroke       | Pill                                                                  |
 | --------- | ------------ | --------------------------------------------------------------------- |
@@ -718,7 +728,7 @@ A guarded transition has the `Filter` icon first in its pill. A
 transition with no target is a short loop on its source.
 
 - Selection is a 2px primary border with a ring, as for `TaskNode`. The
-  selected edge, and the edges into and out of the selected node, are 2px
+  selected edge, and the edges into and out of the selected node, are 2.5px
   primary, with a primary pill border.
 - A state changed in the draft has a 6px warning dot at its top-left
   corner.

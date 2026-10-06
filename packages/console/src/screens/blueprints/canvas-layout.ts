@@ -28,6 +28,7 @@ export type CanvasEdge = Edge<
     points?: { x: number; y: number }[];
     labelPosition?: { x: number; y: number };
     problem?: "error" | "warning" | undefined;
+    onSelect?: () => void;
   },
   "transition"
 >;
@@ -109,6 +110,8 @@ export async function layoutCanvas(
         "elk.direction": "DOWN",
         "elk.hierarchyHandling": "INCLUDE_CHILDREN",
         "elk.edgeRouting": "ORTHOGONAL",
+        // Nested edges and their labels must use the same coordinates as the rendered edges.
+        "elk.json.edgeCoords": "ROOT",
         "elk.spacing.nodeNode": "48",
         "elk.layered.spacing.nodeNodeBetweenLayers": "64",
         "elk.spacing.edgeNode": "24",
@@ -157,14 +160,13 @@ export async function layoutCanvas(
     result = { id: "@root", children, edges };
   }
   const positions = new Map<string, ElkNode>();
-  const routed = new Map<string, { edge: ElkExtendedEdge; offset: { x: number; y: number } }>();
-  function visit(node: ElkNode, offset: { x: number; y: number }) {
-    const next = { x: offset.x + (node.x ?? 0), y: offset.y + (node.y ?? 0) };
+  const routed = new Map<string, ElkExtendedEdge>();
+  function visit(node: ElkNode) {
     positions.set(node.id, node);
-    for (const edge of node.edges ?? []) routed.set(edge.id, { edge, offset: next });
-    for (const child of node.children ?? []) visit(child, next);
+    for (const edge of node.edges ?? []) routed.set(edge.id, edge);
+    for (const child of node.children ?? []) visit(child);
   }
-  visit(result, { x: 0, y: 0 });
+  visit(result);
   const nodes: CanvasNode[] = graph.states.map((state) => {
     const node = positions.get(state.path)!;
     return {
@@ -191,13 +193,11 @@ export async function layoutCanvas(
     });
   }
   const flowEdges: CanvasEdge[] = edges.map((input, i) => {
-    const routing = routed.get(input.id);
-    const edge = routing?.edge;
-    const offset = routing?.offset ?? { x: 0, y: 0 };
+    const edge = routed.get(input.id);
     const sections = edge?.sections ?? [];
     const points = sections
       .flatMap((section) => [section.startPoint, ...(section.bendPoints ?? []), section.endPoint])
-      .map((point) => ({ x: point.x + offset.x, y: point.y + offset.y }));
+      .map((point) => ({ x: point.x, y: point.y }));
     const label = edge?.labels?.[0];
     return {
       id: input.id,
@@ -211,8 +211,8 @@ export async function layoutCanvas(
         ...(!layout && label?.x !== undefined && label.y !== undefined
           ? {
               labelPosition: {
-                x: label.x + offset.x + (label.width ?? 0) / 2,
-                y: label.y + offset.y + (label.height ?? 0) / 2,
+                x: label.x + (label.width ?? 0) / 2,
+                y: label.y + (label.height ?? 0) / 2,
               },
             }
           : {}),

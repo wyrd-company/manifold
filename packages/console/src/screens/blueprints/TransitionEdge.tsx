@@ -5,6 +5,19 @@
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath } from "@xyflow/react";
 import type { EdgeProps } from "@xyflow/react";
 import type { CanvasEdge } from "./canvas-layout.ts";
+export function transitionColor(trigger: string | undefined, selected: boolean) {
+  return selected
+    ? "var(--primary)"
+    : trigger === "done"
+      ? "var(--success-foreground)"
+      : trigger === "error"
+        ? "var(--error-foreground)"
+        : trigger === "after"
+          ? "var(--warning-foreground)"
+          : trigger === undefined
+            ? "var(--foreground)"
+            : "var(--edge)";
+}
 function roundedPath(points: { x: number; y: number }[]) {
   if (!points.length) return "";
   let path = `M ${points[0]!.x},${points[0]!.y}`;
@@ -36,15 +49,18 @@ export function TransitionEdge(props: EdgeProps<CanvasEdge>) {
         path={path}
         {...(props.markerEnd ? { markerEnd: props.markerEnd } : {})}
         style={{
-          stroke: props.selected ? "var(--primary)" : "var(--edge)",
-          strokeWidth: props.selected ? 2 : 1.5,
+          stroke: transitionColor(trigger, !!props.selected),
+          strokeWidth: props.selected ? 2.5 : 1.75,
           strokeDasharray: trigger === "always" ? "6 4" : trigger === "after" ? "2 4" : undefined,
         }}
       />
       {props.label ? (
         <EdgeLabelRenderer>
-          <div
-            className={`canvas-edge-label mono nodrag nopan ${props.selected ? "selected" : ""} ${props.data?.problem ?? ""}`}
+          <button
+            type="button"
+            aria-pressed={!!props.selected}
+            onClick={props.data?.onSelect}
+            className={`canvas-edge-label mono nodrag nopan ${trigger ?? "initial"} ${props.data?.problem ?? ""} ${props.selected ? "selected" : ""}`}
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${label.x}px,${label.y}px)`,
@@ -53,7 +69,7 @@ export function TransitionEdge(props: EdgeProps<CanvasEdge>) {
           >
             {props.label}
             {props.data?.problem ? " !" : ""}
-          </div>
+          </button>
         </EdgeLabelRenderer>
       ) : null}
     </>

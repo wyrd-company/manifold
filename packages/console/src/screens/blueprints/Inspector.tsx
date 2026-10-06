@@ -547,7 +547,9 @@ export function Inspector({
           ×
         </Button>
       </header>
-      <p className="mono muted">{edge ?? path}</p>
+      <p className="inspector-path mono" title={edge ?? path}>
+        {edge ?? path}
+      </p>
       {path && !edge ? (
         <TextField
           key={path}
