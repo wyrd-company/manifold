@@ -63,7 +63,12 @@ async function run(
     { cwd: directory },
   );
   const start = performance.now();
-  const exited = once(child, "exit");
+  // A command can reject its flags before it reads the fixture's input.
+  let inputError: NodeJS.ErrnoException | undefined;
+  child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code !== "EPIPE") inputError = error;
+  });
+  const exited = once(child, "close");
   let stdout = "",
     stderr = "";
   child.stdout.on("data", (data) => (stdout += String(data)));
@@ -71,6 +76,7 @@ async function run(
   if (open) child.stdin.write(input);
   else child.stdin.end(input);
   const [code] = await exited;
+  if (inputError) throw inputError;
   return { code, stdout, stderr, ms: performance.now() - start };
 }
 test.each(["claude", "codex", "cursor"])(
@@ -148,6 +154,14 @@ test.each(["not json", "[]", '{"session_id":"missing"}', "x".repeat(1024 * 1024 
     expect([result.code, result.stdout]).toEqual([0, ""]);
   },
 );
+test("invalid flags close stdin while a large fixture input is pending", async () => {
+  const result = await run("http://127.0.0.1:1", "codex", "x".repeat(1024 * 1024 + 1), [
+    "--unknown",
+  ]);
+  expect([result.code, result.stdout]).toEqual([2, ""]);
+  expect(result.stderr).toContain("unknown flag");
+});
+
 test.each([
   ["--unknown"],
   ["--timeout-ms", "99"],
