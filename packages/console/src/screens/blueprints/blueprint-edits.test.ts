@@ -309,3 +309,45 @@ it("rejects completion transitions when the chosen invoke is missing", () => {
     ).toMatchObject({ ok: false, reason: "missing" });
   }
 });
+
+it.each([
+  ["entry", "type: expression.assign", "params"],
+  ["invoke", "src: thread-create", "input: { type: expression.map, params"],
+  ["on:\n        NEXT", "target: ready, guard: { type: expression", "params"],
+])(
+  "preserves untouched sequence items and their comments when editing a nested expression (%s)",
+  (collection, item, field) => {
+    const extraClose = collection === "entry" ? "" : " }";
+    const basis = text.replace(
+      "      entry: { type: expression.assign, params: { expression: 'context' } }",
+      `      ${collection}:\n        - { ${item}, ${field}: { expression: 'context.first' }${extraClose} } # first comment\n        # between items\n        - { ${item}, ${field}: { expression: "context.second" }${extraClose} } # keep second`,
+    );
+    const pointer =
+      collection === "entry"
+        ? "/machine/states/waiting/entry/0/params/expression"
+        : collection === "invoke"
+          ? "/machine/states/waiting/invoke/0/input/params/expression"
+          : "/machine/states/waiting/on/NEXT/0/guard/params/expression";
+    // Transition fixture uses its own event collection, without a duplicate on key.
+    const source = collection.startsWith("on:")
+      ? basis.replace("      on:\n        NEXT: ready # reference\n", "")
+      : basis;
+    expect(edit({ kind: "set", pointer, value: "context.changed" }, source)).toBe(
+      source.replace("'context.first'", "'context.changed'"),
+    );
+  },
+);
+
+it("keeps edits of anchored sequences in the YAML view", () => {
+  const basis = text.replace(
+    "entry: { type: expression.assign, params: { expression: 'context' } }",
+    "entry: &steps [{ type: expression.assign, params: { expression: 'context' } }]",
+  );
+  expect(
+    applyBlueprintEdit(basis, {
+      kind: "set",
+      pointer: "/machine/states/waiting/entry/0/params/expression",
+      value: "context.changed",
+    }),
+  ).toMatchObject({ ok: false, reason: "unsafe" });
+});

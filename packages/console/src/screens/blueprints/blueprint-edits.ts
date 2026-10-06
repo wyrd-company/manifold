@@ -527,6 +527,21 @@ export function applyBlueprintEdit(text: string, edit: BlueprintEdit, graph?: Bl
               "\n",
           });
         }
+      } else if (
+        isSeq(node) &&
+        !node.anchor &&
+        Array.isArray(old) &&
+        Array.isArray(next) &&
+        old.length === next.length
+      ) {
+        for (let index = 0; index < next.length; index++)
+          patch(
+            node.items[index] as YamlNode | null,
+            old[index],
+            next[index],
+            indent + 2,
+            flowContext || !!node.flow,
+          );
       } else {
         if (unsafe(node))
           fail("unsafe", "This edit cannot be made on the canvas. Make it in the YAML view.");

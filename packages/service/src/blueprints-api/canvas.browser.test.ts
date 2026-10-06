@@ -189,3 +189,77 @@ test("canvas edits, dragged transition, expression findings, YAML toggle, layout
     await fixture.close();
   }
 }, 30000);
+
+test("inspector adds gates without meta and edits invoked input expressions with positioned marks", async () => {
+  const fixture = await serviceFixture();
+  await fixture.commit(
+    60,
+    {},
+    {
+      schemas: {
+        input: true,
+        output: true,
+        context: true,
+        events: {},
+        actors: { "thread-create": { input: true, output: true } },
+      },
+      machine: {
+        id: "sample",
+        initial: "waiting",
+        states: {
+          waiting: {},
+          described: { meta: { note: "keep this" } },
+          invoked: {
+            invoke: [
+              {
+                src: "thread-create",
+                input: { type: "expression.map", params: { expression: "input" } },
+              },
+              { src: "thread-create", input: { retained: true } },
+            ],
+          },
+        },
+      },
+    },
+  );
+  const service = await startService({ configurationFile: fixture.file, log: () => {} });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const address = service.http.address();
+    const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+    await page.goto(
+      `http://${address.host}:${address.port}/console/blueprints/blueprints/counter.yml`,
+    );
+    for (const state of ["waiting", "described"]) {
+      await page.locator(`.react-flow__node[data-id="${state}"]`).click();
+      await page.getByRole("button", { name: "Add gate", exact: true }).click();
+      await page.getByRole("button", { name: "Remove gate", exact: true }).waitFor();
+    }
+    await page.locator('.react-flow__node[data-id="invoked"]').click();
+    const invocation = page.locator(".invoke-card").first();
+    expect(await invocation.getByLabel("Input kind", { exact: true }).inputValue()).toBe(
+      "expression",
+    );
+    await invocation.getByLabel("Input expression", { exact: true }).fill("1 + ) + 2");
+    const mark = invocation.locator(".cm-lintRange-error");
+    await mark.first().waitFor();
+    expect((await mark.first().innerText()).length).toBe(1);
+    await invocation.getByLabel("Input expression", { exact: true }).fill("input.value");
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    const document = parse(await page.locator(".blueprint-source .cm-content").innerText());
+    expect(document.machine.states.waiting.meta.gate).toEqual({
+      comparator: "compare.ts",
+      return: "exit",
+    });
+    expect(document.machine.states.described.meta).toEqual({
+      note: "keep this",
+      gate: { comparator: "compare.ts", return: "exit" },
+    });
+    expect(document.machine.states.invoked.invoke[0].input.params.expression).toBe("input.value");
+    expect(document.machine.states.invoked.invoke[1].input).toEqual({ retained: true });
+  } finally {
+    await browser.close();
+    await service.stop();
+    await fixture.close();
+  }
+}, 30_000);

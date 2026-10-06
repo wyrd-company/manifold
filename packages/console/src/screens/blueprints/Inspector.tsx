@@ -271,7 +271,9 @@ export function Inspector({
           <Button
             variant="outline"
             disabled={disabled}
-            onClick={() => set(point, { comparator: "compare.ts", return: "exit" })}
+            onClick={() =>
+              set(at, { ...obj(meta), gate: { comparator: "compare.ts", return: "exit" } })
+            }
           >
             Add gate
           </Button>
@@ -445,7 +447,8 @@ export function Inspector({
                   onChange={(next) => set(location + "/" + key, next)}
                 />
               ))}
-              {["input", "onDone", "onError", "onSnapshot"].map((key) => (
+              {renderMapping(invocation["input"], location + "/input", "Input")}
+              {["onDone", "onError", "onSnapshot"].map((key) => (
                 <ValueField
                   key={key}
                   label={key}
