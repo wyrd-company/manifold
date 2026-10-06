@@ -3,14 +3,14 @@
 //   implements: [declarations-api, service-assembly]
 // ---
 import { mountDeclarationsApi } from "./index.ts";
-import type { DeclarationsApiOptions, DeclarationImpact } from "./types.ts";
+import type { DeclarationsApiOptions } from "./types.ts";
+import { wiringPart } from "../service/wiring.ts";
 import type { ServiceConfiguration } from "../service-configuration/index.ts";
 import type { HttpHost } from "../http-host/index.ts";
 import type { T3CodeSource } from "../t3code-source/index.ts";
 import type { TaskMetadata } from "../task-metadata/index.ts";
 import type { ServiceLogEntry } from "../service/types.ts";
-// Structural wiring part until the service wiring parts and planner merge.
-export const declarationsApiPart = {
+export const declarationsApiPart = wiringPart({
   name: "declarations-api",
   start(
     members: {
@@ -22,11 +22,8 @@ export const declarationsApiPart = {
       taskMetadata: TaskMetadata;
       log: (entry: ServiceLogEntry) => void;
     },
-    _context?: unknown,
-  ) {
-    const planner = members.taskMetadata as TaskMetadata & {
-      planDeclaration?: DeclarationsApiOptions["planDeclaration"];
-    };
+    _context,
+  ): Record<never, never> {
     mountDeclarationsApi(members.http, {
       revisions: members.revisions,
       processRepository: members.processRepository,
@@ -36,8 +33,7 @@ export const declarationsApiPart = {
       },
       environments: Object.keys(members.configuration.environments),
       t3codeProjects: members.t3code.projects,
-      planDeclaration: (declaration) =>
-        planner.planDeclaration?.(declaration) ?? ([] as readonly DeclarationImpact[]),
+      planDeclaration: members.taskMetadata.projects.planDeclaration,
       log: (entry) =>
         members.log({
           level: entry.level,
@@ -46,5 +42,6 @@ export const declarationsApiPart = {
           detail: { path: entry.path },
         }),
     });
+    return {};
   },
-};
+});

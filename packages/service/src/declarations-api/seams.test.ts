@@ -3,12 +3,12 @@
 //   verifies: declarations-api
 // ---
 import { expect, test } from "vite-plus/test";
-import { lintTaskMetadata } from "./seams.ts";
+import { lintTaskMetadataDeclaration as lintTaskMetadata } from "@wyrd-company/manifold-shared";
 const bindings =
   "githubProjects:\n  sample:\n    owner: example\n    number: 1\n    environment: local\n    item: work\n";
 const text =
   "projects:\n  sample:\n    lifecycle:\n      field: Stage\n      options: [Open, Done]\n    fields:\n      Priority:\n        type: single-select\n        options: [Urgent, Routine]\n      Notes:\n        type: text\n";
-test("structural metadata seam accepts and normalizes declared fields", () => {
+test("merged metadata declaration accepts and normalizes declared fields", () => {
   const result = lintTaskMetadata({ taskMetadata: text, bindings });
   expect(result.ok).toBe(true);
   if (result.ok)
@@ -18,7 +18,7 @@ test("structural metadata seam accepts and normalizes declared fields", () => {
       options: [{ name: "Urgent" }, { name: "Routine" }],
     });
 });
-test("structural metadata seam validates full shape and duplicates", () => {
+test("merged metadata declaration validates full shape and duplicates", () => {
   const schema = lintTaskMetadata({
     taskMetadata: text.replace("type: text", "type: unknown"),
     bindings,

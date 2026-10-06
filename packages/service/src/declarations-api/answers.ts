@@ -29,7 +29,11 @@ import type {
 } from "@wyrd-company/manifold-shared/declarations-api";
 import { taskFieldRows } from "./task-fields.ts";
 import type { DeclarationsApiOptions } from "./types.ts";
-import { lintTaskMetadata, taskFieldStorageKinds, lintAllocatedAccounts } from "./seams.ts";
+import {
+  lintTaskMetadataDeclaration as lintTaskMetadata,
+  taskFieldStorageKinds,
+  lintAllocatedAccounts,
+} from "@wyrd-company/manifold-shared";
 export async function lintAnswer(
   options: DeclarationsApiOptions,
   revision: ProcessRepositoryRevision,

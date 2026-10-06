@@ -53,7 +53,7 @@ test("Projects reviews drift, reconfirms stale removals, and recognizes another 
     await capture(page, "projects-in-sync");
     await page.goto(fixture.url + "/console/projects/secondary");
     await page.getByRole("button", { name: "Apply 1 changes", exact: true }).waitFor();
-    const plan = fixture.plan("secondary");
+    const plan = await fixture.plan("secondary");
     const applied = await fetch(fixture.url + "/api/projects/secondary/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
