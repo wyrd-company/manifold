@@ -10,7 +10,7 @@ import type { ProcessRepository } from "../process-repository/index.ts";
 import type { UsageAccount } from "@wyrd-company/manifold-shared";
 import type { PortfolioWarning } from "@wyrd-company/manifold-shared/portfolio-api";
 import { portfolioRead } from "./read.ts";
-import { lintAllocatedAccounts } from "./account-lint-stand-in.ts";
+import { lintAllocatedAccounts } from "@wyrd-company/manifold-shared";
 export interface PortfolioApiOptions {
   readonly portfolio: {
     current(): PortfolioInForce;

@@ -3,7 +3,7 @@
 //   implements: operator-console
 // ---
 import type { PortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api";
-import type { DeclarationLint } from "../../api/portfolio-declarations-stand-in.ts";
+import type { LintDeclarationResponse as DeclarationLint } from "@wyrd-company/manifold-shared/declarations-api";
 import { formatPercent } from "@wyrd-company/manifold-shared/amounts";
 export function StatusBar({
   read,

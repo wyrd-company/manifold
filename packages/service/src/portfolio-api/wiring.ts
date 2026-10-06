@@ -4,13 +4,17 @@
 // ---
 import { mountPortfolioApi } from "./index.ts";
 import type { HttpHost } from "../http-host/index.ts";
-import type { ServiceParts } from "../service/index.ts";
-import { mountDeclarationStandIn } from "./declarations-stand-in.ts";
-// Structural ServiceWiringPart stand-in until 1171 and 1174 merge.
-export const portfolioApiPart = {
+import { wiringPart } from "../service/wiring.ts";
+import type { Service } from "../service/types.ts";
+export const portfolioApiPart = wiringPart({
   name: "portfolio-api",
-  start(members: ServiceParts & { http: HttpHost }, _context: unknown) {
-    mountDeclarationStandIn(members.http, members);
+  start: (
+    members: Required<
+      Pick<Service, "portfolio" | "usage" | "processRepository" | "store" | "log">
+    > & {
+      http: HttpHost;
+    },
+  ): Record<never, never> => {
     mountPortfolioApi(members.http, {
       portfolio: members.portfolio,
       accounts: () => members.usage.accounts(),
@@ -24,5 +28,6 @@ export const portfolioApiPart = {
           detail: { path: entry.path },
         }),
     });
+    return {};
   },
-};
+});

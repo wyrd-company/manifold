@@ -4,7 +4,7 @@
 // ---
 import { ProjectNames } from "./ProjectNames.tsx";
 import type { PortfolioResponse, PortfolioItem } from "@wyrd-company/manifold-shared/portfolio-api";
-import type { PortfolioFinding } from "@wyrd-company/manifold-shared";
+import type { DeclarationFinding } from "@wyrd-company/manifold-shared/declarations-api";
 import { formatPercent } from "@wyrd-company/manifold-shared/amounts";
 import { ChevronRight, Pencil } from "lucide-react";
 import { Button } from "../../ui/button.tsx";
@@ -24,7 +24,7 @@ export function AllocationInput({
   account: string;
   field: "guarantee" | "ceiling" | "weight" | "burst";
   value: number | undefined;
-  findings: readonly PortfolioFinding[];
+  findings: readonly DeclarationFinding[];
   onChange: (value: number | null) => void;
 }) {
   const finding = inputFinding(findings, item, account, field);
@@ -65,7 +65,7 @@ export function PortfolioTable({
   expanded: readonly string[];
   onExpand: (id: string) => void;
   editing: boolean;
-  findings: readonly PortfolioFinding[];
+  findings: readonly DeclarationFinding[];
   onAllocation: (item: string, field: "guarantee" | "ceiling", value: number | null) => void;
   onEdit: (item: PortfolioItem) => void;
 }) {

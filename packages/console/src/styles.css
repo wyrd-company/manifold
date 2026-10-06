@@ -1210,6 +1210,7 @@ select:focus-visible {
 }
 .task-fields-editor .blueprint-tabs {
   display: flex;
+}
 /* Portfolio — implements operator-console */
 .portfolio-screen {
   position: relative;

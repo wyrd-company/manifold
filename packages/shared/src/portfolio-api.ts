@@ -14,14 +14,8 @@ import {
   string,
 } from "./api-guards.ts";
 export const portfolioApiPath = "/api/portfolio";
-export interface PortfolioWarning {
-  readonly file: "portfolio";
-  readonly kind: string;
-  readonly location: string;
-  readonly severity: "warning";
-  readonly message: string;
-  readonly details?: Readonly<Record<string, unknown>>;
-}
+import type { PortfolioWarning } from "./allocated-accounts.ts";
+export type { PortfolioWarning } from "./allocated-accounts.ts";
 export interface PortfolioAccount {
   readonly name: string;
   readonly declared: boolean;

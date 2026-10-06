@@ -10,13 +10,7 @@ export interface PortfolioDraft extends BlueprintDraft {
   edits: readonly PortfolioEdit[];
 }
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-const mapped = (storage: StorageLike) => ({
-  getItem: (key: string) => storage.getItem(key.replace("blueprint-draft", "declaration-draft")),
-  setItem: (key: string, value: string) =>
-    storage.setItem(key.replace("blueprint-draft", "declaration-draft"), value),
-  removeItem: (key: string) =>
-    storage.removeItem(key.replace("blueprint-draft", "declaration-draft")),
-});
+const prefix = "manifold.declaration-draft.";
 function isEdit(v: unknown): v is PortfolioEdit {
   if (typeof v !== "object" || v === null || !("kind" in v)) return false;
   if (v.kind === "add")
@@ -42,16 +36,16 @@ function isEdit(v: unknown): v is PortfolioEdit {
   });
 }
 export function readPortfolioDraft(storage: StorageLike): PortfolioDraft | undefined {
-  const draft = readDraft(mapped(storage), "portfolio.yml");
+  const draft = readDraft(storage, "portfolio.yml", prefix);
   if (!draft) return;
   if ("edits" in draft && Array.isArray(draft.edits) && draft.edits.every(isEdit)) {
     const applied = applyEdits(draft.baseText, draft.edits);
     if (applied.ok && applied.text === draft.text) return draft as PortfolioDraft;
   }
-  mapped(storage).removeItem("manifold.blueprint-draft.portfolio.yml");
+  storage.removeItem(prefix + "portfolio.yml");
 }
 export function writePortfolioDraft(storage: StorageLike, draft: PortfolioDraft | undefined) {
-  writeDraft(mapped(storage), "portfolio.yml", draft);
+  writeDraft(storage, "portfolio.yml", draft, prefix);
 }
 export function appendEdit(draft: PortfolioDraft, edit: PortfolioEdit): PortfolioDraft {
   const edits = [...draft.edits, edit],

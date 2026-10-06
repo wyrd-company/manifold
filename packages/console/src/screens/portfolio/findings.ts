@@ -2,20 +2,25 @@
 // relationships:
 //   implements: operator-console
 // ---
-import type { PortfolioFinding } from "@wyrd-company/manifold-shared";
+import type { DeclarationFinding } from "@wyrd-company/manifold-shared/declarations-api";
 import type { PortfolioItem } from "@wyrd-company/manifold-shared/portfolio-api";
 export function inputFinding(
-  findings: readonly PortfolioFinding[],
+  findings: readonly DeclarationFinding[],
   item: PortfolioItem,
   account: string,
   field: string,
 ) {
-  return findings.find(
-    (f) =>
+  return findings.find((f) => {
+    const details = f["details"];
+    return (
       (f.kind === "guarantee-limit" &&
         field === "guarantee" &&
-        f.details?.["parent"] === item.parent &&
-        f.details?.["account"] === account) ||
+        typeof details === "object" &&
+        details !== null &&
+        "parent" in details &&
+        details.parent === item.parent &&
+        "account" in details &&
+        details.account === account) ||
       (f.file === "portfolio" &&
         f.location.endsWith(
           `/allocations/${account}/${field === "burst" ? "pacing/burst" : field}`,
@@ -23,6 +28,7 @@ export function inputFinding(
         f.location.split("/allocations/")[0]?.split("/").at(-1) ===
           (item.other ? "other" : item.id) &&
         (!item.other ||
-          (f.location.split("/allocations/")[0]?.split("/").at(-3) || null) === item.parent)),
-  );
+          (f.location.split("/allocations/")[0]?.split("/").at(-3) || null) === item.parent))
+    );
+  });
 }

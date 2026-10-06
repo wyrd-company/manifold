@@ -13,11 +13,11 @@ import {
   fetchDeclarationSource,
   lintDeclarationText,
   saveDeclaration,
-} from "../../api/portfolio-declarations-stand-in.ts";
+} from "../../api/declarations.ts";
 import type {
-  DeclarationLint,
-  DeclarationConflict,
-} from "../../api/portfolio-declarations-stand-in.ts";
+  LintDeclarationResponse as DeclarationLint,
+  SaveConflictResponse as DeclarationConflict,
+} from "@wyrd-company/manifold-shared/declarations-api";
 import type { PortfolioItem } from "@wyrd-company/manifold-shared/portfolio-api";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../../ui/dialog.tsx";
 import { Button } from "../../ui/button.tsx";
@@ -71,7 +71,7 @@ export function PortfolioContent() {
     }),
     sourceQuery = useQuery({
       queryKey: ["declaration", "portfolio.yml"],
-      queryFn: fetchDeclarationSource,
+      queryFn: () => fetchDeclarationSource("portfolio.yml"),
       retry: false,
     });
   const [draft, setDraft] = useState<PortfolioDraft | undefined>(() =>
@@ -336,7 +336,7 @@ export function PortfolioContent() {
                 onChange={(e) =>
                   void navigate({
                     to: "/portfolio",
-                    search: (previous) => ({ ...previous, account: e.target.value }),
+                    search: () => ({ ...search, account: e.target.value }),
                   })
                 }
               >

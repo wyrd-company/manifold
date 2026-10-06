@@ -57,6 +57,7 @@ export const tasks = wiringPart({
           }),
       github,
       actorUsage: usage.actorUsage,
+      accountUnit: (account) => usage.accounts()[account]?.unit,
       listEscalations: escalations.list,
       thread: t3code.thread,
       tokenHolder: gates.tokenHolder,

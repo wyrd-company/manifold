@@ -6,7 +6,7 @@ import { useState } from "react";
 import { formatPercent } from "@wyrd-company/manifold-shared/amounts";
 import type { PortfolioItem, PortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api";
 import type { PortfolioEdit } from "./edits.ts";
-import type { DeclarationLint } from "../../api/portfolio-declarations-stand-in.ts";
+import type { LintDeclarationResponse as DeclarationLint } from "@wyrd-company/manifold-shared/declarations-api";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../../ui/dialog.tsx";
 import { Button } from "../../ui/button.tsx";
 import { AllocationInput } from "./PortfolioTable.tsx";

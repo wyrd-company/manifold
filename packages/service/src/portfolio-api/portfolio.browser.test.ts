@@ -187,7 +187,10 @@ test("built Portfolio reads settled balances, lints allocations, saves one commi
       const response = await route.fetch();
       if (saveIds.length === 1) {
         expect(response.status()).toBe(200);
-        await route.fulfill({ status: 502, json: { message: "Sample reply lost after push" } });
+        await route.fulfill({
+          status: 502,
+          json: { error: "remote", message: "Sample reply lost after push" },
+        });
       } else await route.fulfill({ response });
     });
     await page.getByRole("button", { name: "Commit and push", exact: true }).click();
