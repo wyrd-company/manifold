@@ -249,7 +249,7 @@ test.each(["different", "absent", "initially-absent", "matching"] as const)(
   async (hint) => {
     const { remote, configuration, a } = await setup();
     const repository = await openProcessRepository({ configuration, credentials });
-    // Healthy Git transport may take longer than the old 200 ms stall budget.
+    // Healthy fetches must complete with a 250 ms transport delay.
     const initialHold = remote.holdNext();
     const initial = repository.pull();
     void initial.catch(() => undefined);

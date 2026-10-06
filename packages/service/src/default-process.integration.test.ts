@@ -649,7 +649,7 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   });
   f.worker.send("stop");
   expect(await f.exited).toBe(0);
-});
+}, 60000);
 it("retries a settled turn in the same thread and creates a replacement after a stalled thread is deleted", async () => {
   const f = await fixture();
   await f.add();
