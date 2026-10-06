@@ -11,7 +11,7 @@ relationships:
   --popover: #ffffff;
   --accent: #e3ebf6;
   --border: #c5d0df;
-  --input: #8192aa;
+  --input: #7588a1;
   --foreground: #202d40;
   --muted-foreground: #52647d;
   --icon-muted: #657891;
@@ -21,7 +21,7 @@ relationships:
   --success: #10b981;
   --success-foreground: #047857;
   --warning: #f59e0b;
-  --warning-foreground: #b45309;
+  --warning-foreground: #a64b07;
   --error: #ef4444;
   --error-foreground: #b91c1c;
   --info: #3b82f6;
@@ -50,7 +50,7 @@ relationships:
   --warning: #f59e0b;
   --warning-foreground: #fbbf24;
   --error: #ef4444;
-  --error-foreground: #f87171;
+  --error-foreground: #ff8585;
   --info: #3b82f6;
   --info-foreground: #60a5fa;
   --lane: #152031;
@@ -1330,7 +1330,7 @@ select:focus-visible {
 .portfolio-item-fields input,
 .portfolio-account select {
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--input);
   border-radius: 6px;
   background: var(--background);
   color: var(--foreground);

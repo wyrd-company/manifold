@@ -17,7 +17,7 @@ colors:
     popover: "#ffffff"
     accent: "#e3ebf6"
     border: "#c5d0df"
-    input: "#8192aa"
+    input: "#7588a1"
     foreground: "#202d40"
     muted-foreground: "#52647d"
     icon-muted: "#657891"
@@ -27,7 +27,7 @@ colors:
     success: "#10b981"
     success-foreground: "#047857"
     warning: "#f59e0b"
-    warning-foreground: "#b45309"
+    warning-foreground: "#a64b07"
     error: "#ef4444"
     error-foreground: "#b91c1c"
     info: "#3b82f6"
@@ -55,7 +55,7 @@ colors:
     warning: "#f59e0b"
     warning-foreground: "#fbbf24"
     error: "#ef4444"
-    error-foreground: "#f87171"
+    error-foreground: "#ff8585"
     info: "#3b82f6"
     info-foreground: "#60a5fa"
     lane: "#152031"
@@ -700,7 +700,7 @@ implementation, and `FileCode2` for a child blueprint.
 | Node           | Look                                                                                                                                                               |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | State          | `StateNode`, 1px `input` border, 8px radius                                                                                                                        |
-| Final state    | `StateNode` with a 3px double `input` border and the `CircleCheckBig` chip                                                                                         |
+| Final state    | `StateNode` with a 3px double `success` border and the `CircleCheckBig` chip                                                                                       |
 | Compound state | `GroupNode`: a 32px title bar with the `SquareStack` icon and the key in mono (weight 600), its children inside with 24px padding, 1px `input` border, 10px radius |
 | Parallel state | `GroupNode` with the `Columns2` icon and a "Parallel" badge; each region, a child state, has a dashed `input` border                                               |
 | History state  | `HistoryNode`: a 40px circle, 1px warning border, `H` (shallow) or `H*` (deep) in mono (weight 600), the key in 12px mono `muted-foreground` under it              |
