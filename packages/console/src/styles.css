@@ -239,6 +239,10 @@ main {
   overflow: auto;
   padding: 28px 32px;
 }
+main:has(> .blueprint-editor) {
+  display: flex;
+  flex-direction: column;
+}
 .page-title {
   display: flex;
   flex-direction: column;
@@ -557,6 +561,10 @@ small {
   color: var(--warning-foreground);
 }
 .blueprint-editor {
+  flex: 1;
+  min-height: 560px;
+  display: flex;
+  flex-direction: column;
   container-type: inline-size;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -576,9 +584,10 @@ small {
   gap: 8px;
 }
 .blueprint-panes {
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  height: 560px;
 }
 .blueprint-source,
 .blueprint-graph {
