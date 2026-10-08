@@ -3261,9 +3261,11 @@ proposed-design:
     and reads `acct-a` with `env-one`, "$250.00 · Monthly", its current
     use, and a last report in minutes, and the Pricing card's commit. It
     adds an account: Subscription, `acct-b`, provider `claude`, reads
-    `env-one` disabled with "Used by acct-a", checks `env-two`, sets
-    $120.50, Weekly, and a reset, sees the lint answer with no finding,
-    saves, and reads the toast and the new row. It edits `acct-b`, sets
+    "Used by acct-a" muted beside the unchecked `env-one`; checks
+    `env-one` and reads "Used by acct-a" in error color under its empty
+    Instance input and Save disabled; types the instance `alt` and reads
+    the mark clear; checks `env-two`, sets $120.50, Weekly, and a reset,
+    sees the lint answer with no finding, saves, and reads the toast and the new row. It edits `acct-b`, sets
     the limit to $150, saves, and reads "$150.00 · Weekly". `GET
     /api/portfolio` then lists `acct-b` declared with a capacity amount
     of 150,000,000, and the fixture remote holds two new commits whose

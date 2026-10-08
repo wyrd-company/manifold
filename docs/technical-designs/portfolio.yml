@@ -125,10 +125,15 @@ proposed-design:
     covers the read, and each item's balance per account, from the
     ledger's `balance` with no other item waiting, its `totals`, and its
     `windowAt`. An account that an allocation names and the accounts
-    declaration does not declare, or archives, is listed with balances of
-    0, and the read carries the `account-undeclared` and
-    `account-archived` warnings of the declaration in force. The read credits each declared account's current window as
-    a gate's balance read does, and changes nothing else. The operator
+    declaration does not declare is listed with balances of 0. One the
+    declaration archives is listed with nothing reservable: its window
+    credited before the archive, when one covers the read, and its actual
+    and outstanding stay as the ledger holds them, and its available is
+    at most 0, as `capacity-module` states. The read carries the
+    `account-undeclared` and `account-archived` warnings of the
+    declaration in force. The read credits the current window of each
+    declared account that is not archived as a gate's balance read does,
+    and changes nothing else. The operator
     edits `portfolio.yml` from the Portfolio screen, which reads, lints,
     and saves it through the `portfolio.yml` path of `declarations-api`,
     as `operator-console` states.
