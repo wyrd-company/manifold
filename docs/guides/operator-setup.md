@@ -508,8 +508,9 @@ stay on disk.
 
 Upgrade replaces the entire install; never extract over an install.
 `manifold-upgrade.sh`, built beside the archive in `dist/packages/`, does each
-directory change. It needs a POSIX `sh`, `tar`, `diff`, `mv`, and `rm`, which
-a glibc Linux host has. It works in the directory that holds it, whatever your
+directory change. It needs a POSIX `sh` and GNU `tar`, `find`, `sort`, `cmp`,
+`diff`, `mv`, `rm`, `rmdir`, and `mkdir`, which a glibc Linux host has from its
+base packages. It works in the directory that holds it, whatever your
 working directory is.
 
 1. Copy the new archive and the `manifold-upgrade.sh` built with it to the
@@ -523,7 +524,8 @@ working directory is.
 
    Check: `manifold-service.next/` holds the new install. If the script reports
    that the archive is already the current install, the upgrade is done; start
-   the service if it is stopped.
+   the service if it is stopped. The archive is the current install when every
+   path matches in kind, permission bits, link target, and file bytes.
 
 3. Stop the service.
 4. Make the new install current:

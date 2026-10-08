@@ -185,49 +185,81 @@ proposed-design:
     signature answers a 4xx, and `SIGTERM` logs `stopped` and exits 0.
     The smoke then checks `manifold-upgrade.sh` from the build's
     `dist/packages/`, copied into the temporary install directory, against
-    three archives it derives from the one under test: `A`, the archive
-    itself; `B`, `A` with one added file; and `F`, `A` whose
-    `dist/main.js` exits 1 at once. Each case starts from a known install
-    directory, runs the script with `sh`, and ends with these checks:
+    archives it derives from the one under test: `A`, the archive itself;
+    `B`, `A` with one added file; `F`, `A` whose `dist/main.js` exits 1 at
+    once; `M`, `A` with one regular file's permission bits changed from
+    0644 to 0755 and its bytes unchanged; `K`, `A` with two added files of
+    equal bytes and a symbolic link to the first; and `L`, `K` with the
+    link to the second. Each case starts from a known install directory,
+    runs the script with `sh`, and ends with these checks:
     `manifold-service/` and `manifold-service.previous/` each equal a fresh
-    extraction of the archive the case expects, or are absent where it
-    expects that; no scratch directory and no other entry is left beside
-    them unless the case names it; the deployment directory's
-    configuration and `state/` files are unchanged byte for byte, compared
-    before the service starts; and the service starts on that
-    configuration and store, logs `started`, and stops on `SIGTERM` with
-    exit 0. The cases are: (1) upgrade: from an install of `A` that holds
-    an added file and directory the archive does not hold, as an older
-    install would, `prepare` and `swap` with `B` give current `B` and
-    previous the old `A` tree, added file included, and the added file is
-    absent from current; (2) repeated completion: `prepare` and `swap`
-    with `B` again, and `swap` alone again, change nothing; (3) rollback:
-    from current `F` and previous `A`, the start fails with exit 1,
-    `rollback` gives current `A` and no previous, and `rollback` again
-    changes nothing; (4) interrupted upgrade: from current `A` and a
-    previous holding an older tree, for every rename and removal the
-    upgrade makes, a run of `prepare` and `swap` with `B` is stopped just
-    after that operation, and, for each recursive removal and the
-    extraction, during it; running `prepare` and `swap` with `B` again
-    gives current `B` and previous `A`; (5) interrupted upgrade, then
-    rollback: for every point of case 4 inside `swap`, running `rollback`
-    instead gives current `A`: where the swap had moved current aside,
-    with no previous; where it had not, with current unchanged,
-    `manifold-service.next/` holding `B`, and previous as the swap left
-    it; (6) interrupted
-    rollback: from current `F` and previous `A`, for every rename and
-    removal `rollback` makes, a run stopped after it, and during each
-    recursive removal, then `rollback` again, gives current `A` and no
-    previous. The smoke stops a run at an operation by putting a directory
-    first on the script's `PATH` that holds a stand-in for each command the
-    script mutates the install directory with (`mv`, `rm`, `rmdir`,
-    `mkdir`, and `tar`): each stand-in counts its calls in a file the
-    smoke names, runs the real command, and on the call the smoke selects
-    sends `SIGKILL` to the script's shell; stopped during a recursive
-    removal, it removes one entry of its target first, and during the
-    extraction, it removes one extracted file after the real command. The
-    smoke counts each command's operations by a run without a stop, and
-    fails if a stopped run exits other than by `SIGKILL`. The smoke
+    extraction of the archive the case expects, as `install-and-upgrade`
+    defines equal, or are absent where it expects that; no scratch
+    directory and no other entry is left beside them unless the case names
+    it; the deployment directory's configuration and `state/` files are
+    unchanged byte for byte, compared before the service starts; and the
+    service starts on that configuration and store, logs `started`, and
+    stops on `SIGTERM` with exit 0. The cases are: (1) upgrade: from an
+    install of `A` that holds an added file and directory the archive does
+    not hold, as an older install would, `prepare` and `swap` with `B` give
+    current `B` and previous the old `A` tree, added file included, and
+    the added file is absent from current; (2) repeated completion:
+    `prepare` and `swap` with `B` again, and `swap` alone again, change
+    nothing; (3) rollback: from current `F` and previous `A`, the start
+    fails with exit 1, `rollback` gives current `A` and no previous, and
+    `rollback` again changes nothing; (4) a difference only in modes: from
+    current `A` and previous `B`, `prepare` and `swap` with `M` give
+    current `M` and previous `A`; (5) a difference only in a link target:
+    from current `K` and previous `A`, `prepare` and `swap` with `L` give
+    current `L` and previous `K`; (6) interruption sweeps, below.
+
+    The interruption sweeps cover every rename and removal that any run
+    reaches, recovery runs included. A state of the install directory is
+    named by which archive's tree, or none, each of `manifold-service/`,
+    `manifold-service.previous/`, and `manifold-service.next/` holds, and
+    whether each scratch directory is present. A sweep starts from an
+    origin, a state with a recovery and an expected end: (a) current `A`,
+    previous `B`, recovered by `prepare` and `swap` with `M`, ending at
+    current `M` and previous `A`; (b) the end of case 2,
+    current `B` and previous `A`, recovered by `prepare` and `swap` with
+    `B`, ending unchanged, so the discard of an equal prepared tree is
+    swept; (c) current `F` and previous `A`, recovered by `rollback`,
+    ending at current `A` and no previous; and (d) every state that a stop
+    inside `swap` of origin (a) leaves, recovered by `rollback`, ending at
+    current `A`: where the swap had moved current aside, with no previous;
+    where it had not, with current unchanged, `manifold-service.next/`
+    holding `M`, and previous as the swap left it. For a state on the
+    worklist, the smoke builds the state from fresh extractions, putting a
+    partial tree in each present scratch directory, and runs its recovery
+    once without a stop to count its operations. Then, for each operation,
+    it rebuilds the state and runs the recovery stopped just after that
+    operation, and, for each recursive removal and the extraction, during
+    it. It names the state the stop left; a state not yet swept joins the
+    worklist with the same recovery and expected end. It then runs the
+    recovery again to completion from the stopped state and checks the
+    expected end. The worklist starts with the origins and ends when no
+    stop leaves a new state, which it reaches because the states are
+    finite. The smoke records which script operation each stop hit, and
+    fails unless the sweeps stopped each of these recovery-only operations
+    at least once: the discard of a present `manifold-service.next/` in
+    `prepare`, reached from a stop after `prepare` renamed the prepared
+    tree in and from the states of origin (d); the discard of a prepared
+    tree equal to current, reached from origin (b); the discard of
+    `manifold-service.next/` in `rollback` with current absent, reached
+    from a stop between the two renames of `swap`; and the removal of each
+    present scratch directory at a command's start. The checks above apply to every completed
+    recovery. The service starts once for each distinct expected end of
+    each origin; another completed recovery with the same end has trees
+    equal to the started ones and a deployment unchanged byte for byte. The
+    smoke stops a run at an operation by putting a directory first on the
+    script's `PATH` that holds a stand-in for each command the script
+    mutates the install directory with (`mv`, `rm`, `rmdir`, `mkdir`, and
+    `tar`): each stand-in counts its calls in a file the smoke names, runs
+    the real command, and on the call the smoke selects sends `SIGKILL` to
+    the script's shell; stopped during a recursive removal, it removes one
+    entry of its target first, and during the extraction, it removes one
+    extracted file after the real command. The smoke fails if a stopped
+    run exits other than by `SIGKILL`. The smoke
     removes its temporary directory when it ends. It is a
     Node script in `packages/service/scripts/` and is not part of
     `task check`, so `task check` stays free of a package build.
@@ -410,11 +442,23 @@ proposed-design:
     `manifold-service.staging/`, extract the archive into it, discard
     `manifold-service.next/`, rename
     `manifold-service.staging/manifold-service/` to
-    `manifold-service.next/`, and remove the empty staging directory; then,
-    if `manifold-service/` is present and `diff -r -q` finds no difference
-    between it and `manifold-service.next/`, discard
-    `manifold-service.next/` and report that the archive is already the
-    current install. `swap`, run while the service is stopped: if
+    `manifold-service.next/`; then, if `manifold-service/` is present and
+    equals `manifold-service.next/`, discard `manifold-service.next/` and
+    report that the archive is already the current install; and last
+    remove the staging directory. Two install trees are equal when they hold the same
+    relative paths, and each path has the same kind (regular file,
+    directory, or symbolic link), the same permission bits, the same
+    target if it is a link, read without following it, and the same bytes
+    if it is a regular file; owner, group, and timestamps are not
+    compared, since an extraction sets them. The script compares in two
+    parts, and both must agree: `find <tree> -printf '%P\t%y\t%m\t%l\n'`
+    under `LC_ALL=C sort` lists every path with its kind, octal permission
+    bits, and link target for each tree into a file in
+    `manifold-service.staging/`, and `cmp -s` compares the two listings; then `diff -r -q --no-dereference` compares the bytes of
+    every regular file and compares links as links. A plain `diff -r -q`
+    is not enough: it ignores permission bits and follows links, so a
+    prepared tree that differs only in an executable bit or a link target
+    would be dropped as current. `swap`, run while the service is stopped: if
     `manifold-service.next/` is absent, change nothing and report that
     nothing is prepared; otherwise, if `manifold-service/` is present,
     discard `manifold-service.previous/` and rename `manifold-service/` to
@@ -467,9 +511,10 @@ proposed-design:
     moved to a later schema step stays at that step: the previous install
     refuses it, as `store` states for a schema version beyond a build's
     steps, and the guide says so beside rollback. The script is a tool
-    the operator runs, not service code, so it may run `tar`, `diff`,
-    `mv`, and `rm`; it needs a POSIX shell and those commands, which the
-    guide names where it states the upgrade.
+    the operator runs, not service code, so it may run commands; it needs a POSIX shell, GNU `tar`, `find`, `sort`,
+    `cmp`, and `diff`, and `mv`, `rm`, `rmdir`, and `mkdir`, which a glibc
+    Linux host has from its base packages, and which the guide names where
+    it states the upgrade.
   t3code-token: >-
     The scopes approved for Manifold 0.1.0's T3 Code token are
     `orchestration:read` and `orchestration:operate`, the whole set, and
@@ -567,8 +612,12 @@ proposed-design:
     old `manifold-service/` (the added file survives). The recovery
     cases fail first against a script without the guards: a `prepare` with
     no comparison makes a repeated upgrade discard the previous install
-    (case 2); a `swap` that does
+    (case 2); a comparison by `diff -r -q` alone drops the prepared tree
+    as current in cases 4 and 5; a sweep of the origins' own operations
+    alone never stops the discard of a present next in `prepare`, the
+    discard of an equal prepared tree, or the discard of next in a
+    `rollback` with current absent, which the smoke's check of the stopped operations reports; a `swap` that does
     not discard the previous install before the rename fails on a present
     previous (case 1); and a `rollback` with no guard for a present current
-    and next removes the install that still works (case 5). `task check` runs the example test; CI's
+    and next removes the install that still works (origin (d)). `task check` runs the example test; CI's
     `package` job runs the build and the smoke on both architectures.
