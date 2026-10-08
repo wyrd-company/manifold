@@ -3572,7 +3572,7 @@ proposed-design:
     not edited. The screen only reads. It reads, each through TanStack
     Query with the policy of the Actors screen (read when the screen opens
     and when the window regains focus, no retry):
-    `GET /api/actors` under `["actors"]`; `GET /api/tasks` under
+    `GET /api/actors` under `["actors", "active"]`; `GET /api/tasks` under
     `["tasks"]`; `GET /api/portfolio` under `["portfolio"]`; `GET
     /api/escalations?status=open` under `["escalations", "open"]`; `GET
     /api/environments` of the environment control seam under

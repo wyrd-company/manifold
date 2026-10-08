@@ -25,7 +25,11 @@ const policy = {
   retry: false,
 } as const;
 export function OverviewContent() {
-  const actorsQuery = useQuery({ queryKey: ["actors"], queryFn: () => fetchActors(), ...policy });
+  const actorsQuery = useQuery({
+    queryKey: ["actors", "active"],
+    queryFn: () => fetchActors("active"),
+    ...policy,
+  });
   const tasksQuery = useQuery({ queryKey: ["tasks"], queryFn: fetchTasks, ...policy });
   const portfolioQuery = useQuery({ queryKey: ["portfolio"], queryFn: fetchPortfolio, ...policy });
   const escalationsQuery = useQuery({
