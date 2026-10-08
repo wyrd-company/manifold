@@ -222,7 +222,11 @@ proposed-design:
     `environmentId`, and answers through `platform(environment, signal)`
     after readiness. On `linux` and `darwin` a root is absolute when it
     begins with `/`; on `windows` when it begins with a drive letter, a
-    colon, and a separator, or with two separators and a host name; on
+    colon, and a separator, or is a complete UNC root of two separators,
+    a host name, a separator, and a non-empty share name, since a UNC path
+    with a host and no share, such as `//host`, resolves under the
+    server's current drive, `C:\host` from a working directory on `C:`;
+    on
     every platform `~`, `~/`, and `~\` are accepted, since the server
     expands them to its home directory on either platform. A root with a
     control character is refused on every platform. A root that fails the
@@ -743,7 +747,8 @@ proposed-design:
     `\\host\share` on a fake server whose descriptor reports `linux`
     each fail with `template`, and the fake server receives no
     `project.create`; `C:/parcels/one` on a fake server that reports
-    `windows` is sent; a fake server that reports `unknown` fails the
+    `windows` is sent, and `//host` and `\\host\` on that server each fail
+    with `template` before any `project.create` is sent; a fake server that reports `unknown` fails the
     invoke with `environment`; a missing root without
     `createWorkspaceRoot` and a root an active project has each fail with
     `rejected` and the server's message; in each of these failures the

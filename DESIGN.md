@@ -1040,8 +1040,8 @@ Project's page with its first Apply.
   "Nothing to apply" and disabled when in sync).
 - A "T3code projects" card with the count and "Associate existing"
   (outline) in its header, and one row per associated T3code project: name
-  and path in mono, and its active threads. With none it says that Manifold
-  adds one each time it creates a T3code project for the Project.
+  and path in mono, and its active threads. With none it says that no
+  T3code project is associated, and that "Associate existing" adds one.
 - Apply on this page is for Projects with drift, pending changes, or never
   applied.
 - One card, "What Apply will change", with a switch "Also remove what the

@@ -204,8 +204,9 @@ features:
     project and every thread a name that says what it is for.
   attribute-operator-threads: >-
     Attributes usage from threads an operator opened outside Manifold by the
-    T3code project's binding, or to the top-level Other, and lets the operator
-    move it to an item or a task.
+    T3code project's binding, by the item of the task whose process created
+    the project, or to the top-level Other, and lets the operator move it to
+    an item or a task.
   attribute-cost-exactly: >-
     Records tokens and dollars per actor and state visit from provider
     session files, flags work on unpriced models, keeps estimate, actual,
