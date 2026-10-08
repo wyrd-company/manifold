@@ -161,7 +161,8 @@ export async function recoveryService(config: RecoveryConfiguration) {
             : undefined;
     },
     store,
-    configuration: { identifyTimeoutMs: config.identifyTimeoutMs ?? 100 },
+    // Live caller identification uses the service default; deadline tests override it.
+    configuration: { identifyTimeoutMs: config.identifyTimeoutMs ?? 3000 },
     environments: new Set(["station"]),
     router: () => router,
     actors: () => host,

@@ -366,7 +366,10 @@ describe("comparator sandbox", () => {
       "return 1n;",
       'const result = { task: "a" }; result.self = result; return result;',
     ]) {
-      const { comparator } = await loaded(`export default () => { ${body} };`);
+      const { comparator } = await loaded(`export default () => { ${body} };`, {
+        timeoutMs: 500,
+        memoryLimitMiB: 32,
+      });
       expect(comparator.evaluate(input, 1)).toMatchObject({
         ok: false,
         failure: { kind: "invalid-output" },

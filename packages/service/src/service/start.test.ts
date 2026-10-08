@@ -939,7 +939,10 @@ test("default service resumes gates with real token lint, save hooks, and escala
       .prepare("SELECT return_reason FROM gates_token WHERE actor_id='parcel-00'")
       .get()?.["return_reason"],
   ).toBe("escalation");
-  expect(resumed.store.loadSnapshot("parcel-01")?.snapshot["value"]).toBe("holding");
+  // Granting the token precedes the router consuming its event and saving the actor.
+  await expect
+    .poll(() => resumed.store.loadSnapshot("parcel-01")?.snapshot["value"])
+    .toBe("holding");
 });
 
 test("retries failed intake through a committed GitHub mirror change on the same revision", async () => {
