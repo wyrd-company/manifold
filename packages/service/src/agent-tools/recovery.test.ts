@@ -469,6 +469,11 @@ test("two task actors deliver a message read through the compiled MCP plugin and
         task: { repository: "sample/records", number: 1, title: "Repaint the garden shed" },
       },
     });
+  expect(service.snapshot()["context"]).toHaveProperty("lastSender", {
+    actorId: "depot",
+    issue: "I_A",
+    task: { repository: "sample/records", number: 1, title: "Repaint the garden shed" },
+  });
   const t3Home = join(f.config.path, "..", "t3-home");
   await mkdir(join(t3Home, "userdata"), { recursive: true });
   const t3db = new DatabaseSync(join(t3Home, "userdata/state.sqlite"));
@@ -822,4 +827,23 @@ test("one send reads the mirror once and stores the same sender for two threads"
       messages: [{ from: { actorId: "depot", issue: "shipment", task: senderTask } }],
     });
   expect(service.issueReads).toEqual(["shipment"]);
+});
+
+test("a mirror issue with an empty title sends only its repository and number", async () => {
+  const f = await fixture(true);
+  const service = await recoveryService({
+    ...f.config,
+    senderTask: { repository: "sample/records", number: 7, title: "" },
+  });
+  cleanup.push(() => service.stop());
+  await service.send({ issue: "shipment-recipient" }, "The depot schedule changed.");
+  await expect.poll(() => service.snapshot()["context"]).toMatchObject({ messages: 1 });
+  expect(service.snapshot()["context"]).toHaveProperty("lastSender", {
+    actorId: "depot",
+    issue: "shipment",
+    task: { repository: "sample/records", number: 7 },
+  });
+  const read = await service.call("get-messages", { thread: "conversation" });
+  expect(read).toHaveProperty("messages.0.from.task", { repository: "sample/records", number: 7 });
+  expect(read["message"]).toContain("from task sample/records#7, sent ");
 });

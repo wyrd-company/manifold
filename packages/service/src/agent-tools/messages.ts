@@ -54,10 +54,19 @@ export function messages(options: AgentToolsOptions) {
       (a, b) => a.environment.localeCompare(b.environment) || a.threadId.localeCompare(b.threadId),
     );
     const issue = actors.actorOf(invocation.actorId)?.manifold.issue ?? null;
+    const task = issue === null ? undefined : options.trackedIssue(issue);
     const from: ThreadMessage["from"] = {
       actorId: invocation.actorId,
       issue,
-      task: issue === null ? null : (options.trackedIssue(issue) ?? null),
+      task: task
+        ? {
+            repository: task.repository,
+            number: task.number,
+            ...(typeof task.title === "string" && task.title.length > 0
+              ? { title: task.title }
+              : {}),
+          }
+        : null,
     };
     const sent = options.store.connection.transaction(() => {
       const sent: { messageId: string; environment: string; threadId: string }[] = [];
