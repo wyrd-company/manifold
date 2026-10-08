@@ -979,3 +979,42 @@ test("project templates and includes use the actor's pinned revision", async () 
   expect(revisions).toEqual([commit]);
   expect(f.commands[0]).toMatchObject({ title: "Original sample" });
 });
+
+test("project sending runs after root validation, once before retries, with acceptance identity", async () => {
+  const sent: unknown[] = [],
+    accepted: unknown[] = [];
+  let attempts = 0;
+  const f = await setup({
+    sending: (command) => sent.push(command),
+    probe: (command) => accepted.push(command),
+    sourceWrite: async (_environment, _thread, signal, send) => {
+      const result = await send(signal);
+      if (++attempts === 1) throw new T3ConnectionError("closed", "Fixture retry");
+      return result;
+    },
+  });
+  f.server.hooks.dispatch = (raw) => {
+    expect(sent).toHaveLength(1);
+    const command = raw as Record<string, unknown>;
+    expect(sent[0]).toEqual({
+      invocation,
+      implementation: "t3code-project-create",
+      commandId: command["commandId"],
+      environment: "station",
+      projectId: command["projectId"],
+    });
+    return { sequence: 1 };
+  };
+  await f.run("t3code-project-create", projectInput);
+  expect(attempts).toBe(2);
+  expect(sent).toHaveLength(1);
+  expect(accepted).toEqual([{ ...(sent[0] as object), sequence: 1 }]);
+  const invalid = await setup({
+    sourcePlatform: async () => "windows",
+    sending: (command) => sent.push(command),
+  });
+  await expect(invalid.run("t3code-project-create", projectInput)).rejects.toMatchObject({
+    kind: "template",
+  });
+  expect(sent).toHaveLength(1);
+});

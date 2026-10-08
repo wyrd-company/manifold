@@ -59,6 +59,7 @@ export interface Usage {
 }
 export type UsageOptions = {
   connection: LedgerConnection;
+  visits: Pick<import("../history/index.ts").History, "visits" | "visitAt">;
   ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage" | "reattribute">;
   portfolio: Pick<Portfolio, "t3codeProject" | "current">;
   threadProject(environment: string, threadId: string): string | undefined;

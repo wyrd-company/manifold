@@ -94,7 +94,7 @@ test("migration matches the specified schema and rejects invalid records", () =>
     expect(() => db.exec("INSERT INTO history_event VALUES ('parcel','event',1)")).toThrow();
     expect(() =>
       db.exec(
-        "INSERT INTO history_command VALUES ('command','parcel','turn-start','send','1','station','thread','message',1,2,NULL)",
+        "INSERT INTO history_command VALUES ('command','parcel','turn-start','send','1','station','thread',NULL,'message',1,2,NULL)",
       ),
     ).toThrow();
   } finally {
@@ -367,4 +367,81 @@ test("a failed command write blocks only the actor that sent it", () => {
   save({ status: "done", value: "delivered" }, { actorId: "other" });
   expect(history.read("other")!.commands).toHaveLength(1);
   expect(history.read("parcel")!.commands).toEqual([]);
+});
+
+test("visit readers share history numbering, blueprint boundaries and time ties", () => {
+  expect(history.visits("unknown")).toEqual([]);
+  expect(history.visitAt("unknown", 1000)).toBeUndefined();
+  save({ status: "active", value: "waiting" });
+  at = 2000;
+  save(
+    { status: "active", value: "waiting" },
+    { machine: `${"b".repeat(40)}:blueprints/parcel.yml` },
+  );
+  save(
+    { status: "active", value: "delivered" },
+    { machine: `${"b".repeat(40)}:blueprints/parcel.yml` },
+  );
+  expect(history.visits("parcel")).toEqual(history.read("parcel")!.visits);
+  expect([0, 1000, 1500, 2000, 3000].map((time) => history.visitAt("parcel", time))).toEqual([
+    1, 1, 1, 3, 3,
+  ]);
+});
+test.each([false, true])(
+  "project commands keep identity and recover a failed write: %s",
+  (fault) => {
+    save({ status: "active", value: "creating" });
+    const project = {
+      implementation: "t3code-project-create" as const,
+      commandId: "project-command",
+      invocation: command.invocation,
+      environment: "station",
+      projectId: "project-one",
+    };
+    const db = store.connection.database;
+    if (fault)
+      db.exec(
+        "CREATE TRIGGER reject_project BEFORE INSERT ON history_command BEGIN SELECT RAISE(FAIL,'fixture fault'); END",
+      );
+    history.commandSending(project);
+    at = 2000;
+    history.commandAccepted({ ...project, sequence: 3 });
+    if (fault) {
+      expect(logs).toHaveLength(2);
+      expect(() => save({ status: "active", value: "waiting" })).toThrow("fixture fault");
+      expect(history.read("parcel")!.visits).toHaveLength(1);
+      db.exec("DROP TRIGGER reject_project");
+      save({ status: "active", value: "waiting" });
+    }
+    history.commandSending(project);
+    history.commandAccepted({ ...project, sequence: 4 });
+    expect(history.read("parcel")!.commands).toEqual([
+      {
+        commandId: "project-command",
+        kind: "project-create",
+        environment: "station",
+        projectId: "project-one",
+        invokeId: "send",
+        entryId: "1",
+        sentAt: new Date(1000).toISOString(),
+        acceptedAt: new Date(2000).toISOString(),
+      },
+    ]);
+  },
+);
+
+test("command identities reject projects with threads and thread commands with projects", () => {
+  const insert = store.connection.database.prepare(
+    "INSERT INTO history_command (command_id,actor_id,kind,invoke_id,entry_id,environment,thread_id,project_id,sent_at) VALUES (?,'parcel',?,'create','one','station',?,?,1)",
+  );
+  insert.run("project", "project-create", null, "project-one");
+  insert.run("thread", "thread-create", "thread-one", null);
+  for (const [kind, thread, project] of [
+    ["project-create", "thread-one", "project-one"],
+    ["project-create", null, null],
+    ["thread-create", "thread-one", "project-one"],
+    ["turn-start", null, null],
+    ["unknown", "thread-one", null],
+  ] as const)
+    expect(() => insert.run("invalid", kind, thread, project)).toThrow();
 });

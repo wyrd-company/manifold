@@ -32,11 +32,13 @@ export const agentThreads = wiringPart({
     const commandLog = (level: "info" | "warn" | "error") => (message: string) =>
       log({ level, event: "agent-threads-log", message });
     const agentThreads = openAgentThreads({
-      sending: members.history.commandSending,
+      sending: (command) => {
+        members.history.commandSending(command);
+        context.options.probes?.sending?.(command);
+      },
       probe: (command) => {
         context.options.probes?.command?.(command);
-        if (command.implementation !== "t3code-project-create")
-          members.history.commandAccepted(command);
+        members.history.commandAccepted(command);
       },
       environments: configuration.environments,
       tokenFile,

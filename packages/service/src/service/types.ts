@@ -57,6 +57,7 @@ export interface StartServiceOptions {
 }
 
 export interface ServiceProbes {
+  readonly sending?: AgentThreadsOptions["sending"];
   readonly command?: AgentThreadsOptions["probe"];
   readonly migrated?: (step: "migrated", actorId: string) => void;
   readonly capacityCredited?: (credit: import("../capacity/index.ts").CapacityCredit) => void;

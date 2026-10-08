@@ -2,14 +2,14 @@
 // relationships:
 //   implements: actor-history
 // ---
-import type { ActorHistory } from "@wyrd-company/manifold-shared/actors-api";
+import type { ActorHistory, StateVisit } from "@wyrd-company/manifold-shared/actors-api";
 import type { Store } from "../store/index.ts";
 import type { SaveHook } from "../actor-host/index.ts";
 import type { SendingCommand, InvokedCommand } from "../agent-threads/index.ts";
 import { historySteps } from "./migrations.ts";
 import { visitChange } from "./visits.ts";
 import type { VisitRow } from "./visits.ts";
-import { assembleHistory } from "./read.ts";
+import { assembleHistory, stateVisit } from "./read.ts";
 import type { CommandRow } from "./read.ts";
 export interface HistoryOptions {
   readonly store: Store;
@@ -26,6 +26,8 @@ export interface History {
   commandSending(command: SendingCommand): void;
   commandAccepted(command: InvokedCommand): void;
   read(actorId: string): ActorHistory | undefined;
+  visits(actorId: string): readonly StateVisit[];
+  visitAt(actorId: string, at: number): number | undefined;
 }
 interface Pending {
   command: SendingCommand;
@@ -38,7 +40,7 @@ export function openHistory({ store, log, now = Date.now }: HistoryOptions): His
   connection.migrate("history", historySteps);
   const pending = new Map<string, Pending>();
   const insert = db.prepare(
-    "INSERT INTO history_command (command_id,actor_id,kind,invoke_id,entry_id,environment,thread_id,message_id,sent_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+    "INSERT INTO history_command (command_id,actor_id,kind,invoke_id,entry_id,environment,thread_id,project_id,message_id,sent_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
   );
   const accept = db.prepare(
     "UPDATE history_command SET sequence=?,accepted_at=? WHERE command_id=? AND sequence IS NULL",
@@ -48,12 +50,13 @@ export function openHistory({ store, log, now = Date.now }: HistoryOptions): His
     insert.run(
       c.commandId,
       c.invocation.actorId,
-      c.implementation,
+      c.implementation === "t3code-project-create" ? "project-create" : c.implementation,
       c.invocation.invokeId,
       c.invocation.entryId,
       c.environment,
-      c.threadId,
-      c.messageId ?? null,
+      c.implementation === "t3code-project-create" ? null : c.threadId,
+      c.implementation === "t3code-project-create" ? c.projectId : null,
+      c.implementation === "t3code-project-create" ? null : (c.messageId ?? null),
       write.sentAt,
     );
     if (write.acceptance) accept.run(write.acceptance.sequence, write.acceptance.at, c.commandId);
@@ -137,6 +140,21 @@ export function openHistory({ store, log, now = Date.now }: HistoryOptions): His
         db.prepare(
           "UPDATE history_visit SET exited_at=? WHERE actor_id=? AND visit=? AND exited_at IS NULL",
         ).run(at, save.actorId, visit);
+    },
+    visits(actorId) {
+      return (
+        db
+          .prepare("SELECT * FROM history_visit WHERE actor_id=? ORDER BY visit")
+          .all(actorId) as unknown as VisitRow[]
+      ).map(stateVisit);
+    },
+    visitAt(actorId, at) {
+      const row = db
+        .prepare(
+          "SELECT visit FROM history_visit WHERE actor_id=? ORDER BY (entered_at<=?) DESC, CASE WHEN entered_at<=? THEN entered_at END DESC,CASE WHEN entered_at<=? THEN visit END DESC,entered_at ASC,visit ASC LIMIT 1",
+        )
+        .get(actorId, at, at, at);
+      return row?.["visit"] as number | undefined;
     },
     read(actorId) {
       const snapshot = store.loadSnapshot(actorId);

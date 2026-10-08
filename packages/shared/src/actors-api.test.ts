@@ -152,3 +152,29 @@ test("validates history members and encodes actor ids once", async () => {
   ).toBe(true);
   expect(isActorHistoryResponse({ history, extra: true })).toBe(false);
 });
+
+test("project command boundary requires a project and excludes thread identities", async () => {
+  const { isActorHistoryResponse } = await import("./actors-api.ts");
+  const project = {
+    commandId: "create",
+    kind: "project-create",
+    environment: "station",
+    projectId: "project",
+    invokeId: "create",
+    entryId: "one",
+    sentAt: actor.savedAt,
+  };
+  const valid = (command: unknown) =>
+    isActorHistoryResponse({ history: { actor, visits: [], events: [], commands: [command] } });
+  expect(valid(project)).toBe(true);
+  for (const malformed of [
+    { ...project, projectId: undefined },
+    { ...project, projectId: "" },
+    { ...project, threadId: "thread" },
+    { ...project, messageId: "message" },
+    { ...project, turnId: "turn" },
+    { ...project, kind: "thread-create" },
+    { ...project, kind: "turn-start", threadId: "thread" },
+  ])
+    expect(valid(malformed)).toBe(false);
+});

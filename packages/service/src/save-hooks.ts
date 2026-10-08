@@ -7,8 +7,8 @@ import type { ServiceParts } from "./service/index.ts";
 /** Providers add their hooks here, in registration order. */
 export function serviceSaveHooks(parts: Omit<ServiceParts, "actorHost">): readonly SaveHook[] {
   return [
-    parts.usage.saveHook,
     parts.history.saveHook,
+    parts.usage.saveHook,
     parts.escalations.saving,
     ...(parts.agentTools ? [parts.agentTools.saving] : []),
     ...(parts.gates ? [parts.gates.saved] : []),

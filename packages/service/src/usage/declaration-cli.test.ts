@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
 import { openUsage, usageMigrationSteps } from "./index.ts";
+import { openHistory } from "../history/index.ts";
 import { openStore } from "../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../ledger/index.ts";
 import {
@@ -35,6 +36,7 @@ test.each(usageLintCases)(
       store.connection.migrate("ledger", ledgerMigrationSteps);
       store.connection.migrate("usage", usageMigrationSteps);
       const usage = openUsage({
+        visits: openHistory({ store: store, log: () => {} }),
         connection: store.connection,
         ledger: createLedger({
           connection: store.connection,

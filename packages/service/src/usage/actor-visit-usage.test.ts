@@ -48,8 +48,8 @@ it("sums sparse visits, pending tokens and provider totals, listing each posting
     "actor-a",
     rows,
     [
-      { visit: 2, entered_at: 5 },
-      { visit: 4, entered_at: 15 },
+      { visit: 2, enteredAt: new Date(5).toISOString() },
+      { visit: 4, enteredAt: new Date(15).toISOString() },
     ],
     { first: "usd" },
   );

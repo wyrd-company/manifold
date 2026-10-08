@@ -221,7 +221,7 @@ test("dropped response retries the exact command and gives one turn", async () =
   server.settle(service.actor.getSnapshot().context.thread);
   await expect.poll(() => service.actor.getSnapshot().status).toBe("done");
 });
-test.each(["t3code-project-create", "thread-create", "turn-start"] as const)(
+test.each(["project-sending", "t3code-project-create", "thread-create", "turn-start"] as const)(
   "SIGKILL after %s receipt restores one thread and one turn",
   async (crash) => {
     const { server, config } = await setup();
@@ -231,7 +231,10 @@ test.each(["t3code-project-create", "thread-create", "turn-start"] as const)(
         [
           JSON.stringify({
             ...config,
-            projectCreate: crash === "t3code-project-create" || config.projectCreate,
+            projectCreate:
+              crash === "t3code-project-create" ||
+              crash === "project-sending" ||
+              config.projectCreate,
             crash,
           }),
         ],
@@ -279,7 +282,8 @@ test.each(["t3code-project-create", "thread-create", "turn-start"] as const)(
       }
       return { child, waitFor, error: () => error };
     }
-    if (crash === "t3code-project-create") config.projectCreate = true;
+    if (crash === "t3code-project-create" || crash === "project-sending")
+      config.projectCreate = true;
     const first = start(crash);
     const [, signal] = await once(first.child, "exit");
     expect(signal, first.error()).toBe("SIGKILL");
@@ -288,6 +292,28 @@ test.each(["t3code-project-create", "thread-create", "turn-start"] as const)(
       const db = new DatabaseSync(config.path);
       try {
         expect(db.prepare("SELECT * FROM t3_created_project").all()).toEqual([]);
+      } finally {
+        db.close();
+      }
+    }
+    if (crash === "project-sending") {
+      expect(server.projects.size).toBe(0);
+      const db = new DatabaseSync(config.path);
+      try {
+        expect(
+          db
+            .prepare(
+              "SELECT kind,project_id,thread_id,accepted_at FROM history_command WHERE actor_id='worker'",
+            )
+            .all(),
+        ).toEqual([
+          {
+            kind: "project-create",
+            project_id: expect.any(String),
+            thread_id: null,
+            accepted_at: null,
+          },
+        ]);
       } finally {
         db.close();
       }
@@ -314,6 +340,34 @@ test.each(["t3code-project-create", "thread-create", "turn-start"] as const)(
         db.close();
       }
     }
+    if (crash === "project-sending" || crash === "t3code-project-create") {
+      expect(server.projects.size).toBe(1);
+      expect(server.commands.filter((c) => c.type === "project.create")).toHaveLength(
+        crash === "project-sending" ? 1 : 2,
+      );
+      const db = new DatabaseSync(config.path);
+      try {
+        expect(db.prepare("SELECT project_id FROM t3_created_project").all()).toEqual([
+          { project_id: [...server.projects.keys()][0] },
+        ]);
+        expect(
+          db
+            .prepare(
+              "SELECT kind,project_id,thread_id,accepted_at FROM history_command WHERE kind='project-create'",
+            )
+            .all(),
+        ).toEqual([
+          {
+            kind: "project-create",
+            project_id: [...server.projects.keys()][0],
+            thread_id: null,
+            accepted_at: expect.any(Number),
+          },
+        ]);
+      } finally {
+        db.close();
+      }
+    }
     expect(server.threads.size).toBe(1);
     const thread = [...server.threads.values()][0]!;
     expect(thread.messages).toHaveLength(1);
@@ -331,6 +385,14 @@ test("task creates a templated project, attributes it, and starts its thread the
   cleanup.push(() => service.stop());
   await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
   expect(server.projects.size).toBe(1);
+  const commands = service.history.read("worker")!.commands;
+  expect(commands.map((c) => c.kind)).toEqual(["project-create", "thread-create", "turn-start"]);
+  expect(commands[0]).toMatchObject({
+    environment: "station",
+    projectId: [...server.projects.keys()][0],
+    acceptedAt: expect.any(String),
+  });
+  expect(commands[0]).not.toHaveProperty("threadId");
   const project = [...server.projects.values()][0]!;
   expect(project).toMatchObject({ title: "Parcel sample", workspaceRoot: "/work/sample" });
   expect([...server.threads.values()][0]!.projectId).toBe(project["id"]);
@@ -355,6 +417,12 @@ test.each([
     cleanup.push(() => service.stop());
     await expect.poll(() => service.actor.getSnapshot().value).toBe("failed");
     expect(service.actor.getSnapshot().context.error).toMatchObject({ kind });
+    const commands = service.history.read("worker")!.commands;
+    if (kind === "rejected") {
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({ kind: "project-create" });
+      expect(commands[0]).not.toHaveProperty("acceptedAt");
+    } else expect(commands).toEqual([]);
     expect(server.projects.size).toBe(0);
     expect(server.threads.size).toBe(0);
     expect(
@@ -417,3 +485,18 @@ test.each(["file", "occupied"])(
     ).toEqual([]);
   },
 );
+
+test("a failed project history write is applied by the actor's next save", async () => {
+  const { server, config } = await setup();
+  const service = await fixtureService({ ...config, projectCreate: true, historyFault: true });
+  cleanup.push(() => service.stop());
+  await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
+  const commands = service.history
+    .read("worker")!
+    .commands.filter((c) => c.kind === "project-create");
+  expect(commands).toHaveLength(1);
+  expect(commands[0]).toMatchObject({
+    projectId: [...server.projects.keys()][0],
+    acceptedAt: expect.any(String),
+  });
+});

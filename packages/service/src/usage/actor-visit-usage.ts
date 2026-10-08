@@ -31,7 +31,7 @@ const zero = (): ActorTokens => ({
 export function visitUsage(
   actorId: string,
   rows: readonly Row[],
-  visits: readonly { visit: number; entered_at: number }[],
+  visits: readonly { visit: number; enteredAt: string }[],
   units: Readonly<Record<string, string>>,
 ): ActorUsageResponse {
   const sum = (group: readonly Row[]) => {
@@ -69,7 +69,7 @@ export function visitUsage(
       .filter((v) => rows.some((r) => r.visit === v.visit))
       .map((v) => ({
         visit: v.visit,
-        enteredAt: new Date(v.entered_at).toISOString(),
+        enteredAt: v.enteredAt,
         ...sum(rows.filter((r) => r.visit === v.visit)),
       })),
     calls: rows
@@ -102,8 +102,5 @@ export function actorVisitUsage(
        ORDER BY p.used_at, p.seq`,
     )
     .all(actor) as unknown as Row[];
-  const visits = options.connection.database
-    .prepare("SELECT visit,entered_at FROM usage_visits WHERE actor_id=? ORDER BY visit")
-    .all(actor) as { visit: number; entered_at: number }[];
-  return visitUsage(actor, rows, visits, units);
+  return visitUsage(actor, rows, options.visits.visits(actor), units);
 }

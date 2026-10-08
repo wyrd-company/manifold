@@ -14,6 +14,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { T3Client, schemas, threadId, projectId } from "@wyrd-company/t3code-client";
 
+import { memoryRevision } from "@wyrd-company/manifold-shared";
+import { createActor, toPromise } from "xstate";
+import { openAgentThreads } from "../index.ts";
+import { openHistory } from "../../history/index.ts";
+import { openStore } from "../../store/index.ts";
+
 // Resolve the executable itself so SIGKILL targets the server, not its npm launcher.
 const require = createRequire(import.meta.url);
 const release = createRequire(require.resolve("t3/package.json"));
@@ -299,9 +305,83 @@ try {
     started,
   );
   await verify();
+  const store = openStore({ path: join(directory, "history.sqlite") });
+  const history = openHistory({
+    store,
+    log: (entry) => {
+      throw new Error(entry.message);
+    },
+  });
+  const invocation = { actorId: "recipe", invokeId: "create", entryId: "one" };
+  store.saveSnapshot({
+    actorId: invocation.actorId,
+    machine: "recipe",
+    snapshot: { status: "active", value: "creating" },
+  });
+  const module = openAgentThreads({
+    environments: {
+      fixture: {
+        url: baseUrl,
+        credential: "writer",
+        reconnect: { initialMs: 1, factor: 2, maxMs: 5, jitter: 0 },
+        heartbeat: { intervalMs: 5000, missedPongLimit: 3 },
+        openTimeoutMs: 10000,
+      },
+    },
+    tokenFile: () => join(directory, "token"),
+    actorOf: () => ({
+      manifold: { environment: "fixture", portfolioItem: "recipes" },
+      commit: "a".repeat(40),
+    }),
+    invocationOf: () => invocation,
+    bindingArchived: () => false,
+    sourceReady: async () => {},
+    sourcePlatform: async () => descriptor.platform.os,
+    sourceWrite: (_environment, _thread, signal, send) => send(signal),
+    revisionAt: async () => memoryRevision("a".repeat(40), {}),
+    recordProject: () => {},
+    sending: (command) => {
+      history.commandSending(command);
+      assert.equal(history.read(invocation.actorId)!.commands.length, 1);
+    },
+    probe: history.commandAccepted,
+  });
+  try {
+    await writeFile(join(directory, "token"), accessToken);
+    const create = () => {
+      const actor = createActor(module.implementations.actors["t3code-project-create"]!, {
+        input: {
+          title: "Recipe collection",
+          workspaceRoot: join(directory, "collection"),
+          createWorkspaceRoot: true,
+        },
+      });
+      actor.start();
+      return toPromise(actor);
+    };
+    const result = (await create()) as { projectId: string };
+    const commands = history.read(invocation.actorId)!.commands;
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0]!.kind, "project-create");
+    assert.equal(commands[0]!.projectId, result.projectId);
+    assert.equal("threadId" in commands[0]!, false);
+    assert(commands[0]!.acceptedAt);
+    // The repeated invoke reads the original receipt and keeps one history row.
+    assert.deepEqual(await create(), result);
+    assert.deepEqual(history.read(invocation.actorId)!.commands, commands);
+    assert.equal(
+      (await client.shell.readModel()).projects.filter((p) => p.id === result.projectId).length,
+      1,
+    );
+  } finally {
+    await module.stop();
+    store.close();
+  }
   console.log(
     JSON.stringify({
       serverVersion: descriptor.serverVersion,
+      historyProjectCreate: true,
+      historyCommands: 1,
       projectCreateSequence: projectCreated.sequence,
       projects: 1,
       projectUpserted: true,
@@ -317,6 +397,9 @@ try {
       observedMessageCreatedAt,
     }),
   );
+} catch (error) {
+  console.error(error);
+  throw error;
 } finally {
   try {
     await client?.close();
@@ -324,7 +407,7 @@ try {
     try {
       await kill();
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }
 }

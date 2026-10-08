@@ -3,6 +3,7 @@
 //   verifies: usage-intake
 // ---
 import { createHttpHost } from "../../http-host/index.ts";
+import { openHistory } from "../../history/index.ts";
 import { openStore } from "../../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../../ledger/index.ts";
 import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
@@ -29,7 +30,9 @@ const pause = (message: string) => {
   process.send?.(message);
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
 };
+const history = openHistory({ store, log: () => {} });
 const usage = openUsage({
+  visits: history,
   connection: store.connection,
   ledger: {
     reattribute: ledger.reattribute,
@@ -62,16 +65,18 @@ await usage.apply({
       ? "accounts:\n  acct:\n    unit: usd\n    kind: api\n    capacity: { amount: 1, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }\n    usage: [{ environment: env-one, provider: codex, instance: instance-one }]"
       : "unit: usd\nmodels:\n  model-a: { standard: { input: 2, output: 8 } }",
 });
-usage.saveHook({
+const save = {
   actorId: "actor-one",
   snapshot: {
-    status: "active",
+    status: "active" as const,
     value: "working",
     context: {
       manifold: { environment: "env-one", portfolioItem: "alpha", threads: ["thread-one"] },
     },
   },
-});
+};
+history.saveHook({ ...save, machine: "machine-one", activeInvokes: [], entries: {}, entered: [] });
+usage.saveHook(save);
 const http = createHttpHost({
   configuration: { host: "127.0.0.1", port: 0 },
   onError: (error) => {

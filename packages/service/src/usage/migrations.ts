@@ -58,17 +58,6 @@ CREATE TABLE usage_threads (
   PRIMARY KEY (environment, thread_id)
 ) STRICT, WITHOUT ROWID;
 
--- State visits: one row per run of an actor's saves with one state value.
-CREATE TABLE usage_visits (
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
-  visit INTEGER NOT NULL CHECK (visit >= 1),
-  state_value TEXT NOT NULL CHECK (json_valid(state_value)),
-  entered_at INTEGER NOT NULL,
-  PRIMARY KEY (actor_id, visit)
-) STRICT, WITHOUT ROWID;
-
-CREATE INDEX usage_visits_by_time ON usage_visits (actor_id, entered_at);
-
 -- The call record held for each call key of an environment: the first
 -- record of a \`call\`, and the greatest copy of a \`session-total\`.
 -- \`charged\` is the tokens the key has charged: each class at the greatest

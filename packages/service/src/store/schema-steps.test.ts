@@ -61,14 +61,31 @@ const schema = (db: DatabaseSync) =>
           : row["sql"],
     }));
 
+const expectedSteps = (owner: string, steps: string[]) => {
+  const specification =
+    owner === "history"
+      ? "history-database-schema"
+      : owner === "usage"
+        ? "usage-tables"
+        : undefined;
+  return specification
+    ? [
+        readFileSync(
+          new URL(`../../../../docs/specifications/${specification}.sql`, import.meta.url),
+          "utf8",
+        ),
+      ]
+    : steps;
+};
+
 for (const [index, { owner, steps }] of predecessors.entries()) {
-  test(`${owner} creates the predecessor schema in one step`, () => {
+  test(`${owner} creates its declared schema in one step`, () => {
     const current = currentSteps[index]!;
     expect(current).toHaveLength(1);
     const old = new DatabaseSync(":memory:");
     const fresh = new DatabaseSync(":memory:");
     try {
-      for (const step of steps) old.exec(step);
+      for (const step of expectedSteps(owner, steps)) old.exec(step);
       for (const step of current) fresh.exec(step);
       expect(schema(fresh)).toEqual(schema(old));
     } finally {
@@ -115,7 +132,7 @@ test("fresh public migrations run once and reopen with one version per owner", (
       ),
     );
     for (const [index, { owner, steps }] of predecessors.entries()) {
-      if (owner !== "store") for (const step of steps) reference.exec(step);
+      if (owner !== "store") for (const step of expectedSteps(owner, steps)) reference.exec(step);
       store.connection.migrate(owner, currentSteps[index]!);
       store.connection.migrate(owner, currentSteps[index]!);
     }

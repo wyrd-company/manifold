@@ -52,19 +52,27 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
     const title = await render(revision, input.title, input.values ?? {}, true);
     const root = await render(revision, input.workspaceRoot, input.values ?? {}, true);
     const command = projectCommand(input, invocation, title, root, new Date().toISOString());
+    const sending = {
+      invocation,
+      implementation: "t3code-project-create" as const,
+      commandId: command.commandId,
+      environment,
+      projectId: command.projectId,
+    };
+    let recorded = false;
     const result = await dispatch(options, environment, signal, () =>
       options.sourceWrite(environment, null, signal, async (writeSignal) => {
         validateWorkspaceRoot(root, await options.sourcePlatform(environment, writeSignal));
         writeSignal.throwIfAborted();
+        if (!recorded) {
+          options.sending?.(sending);
+          recorded = true;
+        }
         return pool.get(environment).threads.dispatcher.dispatch(command, writeSignal);
       }),
     );
+    options.probe?.({ ...sending, sequence: result.sequence });
     signal.throwIfAborted();
-    options.probe?.({
-      implementation: "t3code-project-create",
-      commandId: command.commandId,
-      sequence: result.sequence,
-    });
     if (owner.manifold.portfolioItem)
       options.recordProject({
         environment,

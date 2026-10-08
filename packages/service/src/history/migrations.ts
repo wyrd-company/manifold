@@ -30,16 +30,19 @@ CREATE TABLE history_event (
 CREATE TABLE history_command (
   command_id TEXT PRIMARY KEY CHECK (length(command_id) > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
-  kind TEXT NOT NULL CHECK (length(kind) > 0),
+  kind TEXT NOT NULL CHECK (kind IN ('project-create', 'thread-create', 'turn-start')),
   invoke_id TEXT NOT NULL CHECK (length(invoke_id) > 0),
   entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
   environment TEXT NOT NULL CHECK (length(environment) > 0),
-  thread_id TEXT NOT NULL CHECK (length(thread_id) > 0),
+  thread_id TEXT CHECK (length(thread_id) > 0),
+  project_id TEXT CHECK (length(project_id) > 0),
   message_id TEXT CHECK (length(message_id) > 0),
   sent_at INTEGER NOT NULL,
   sequence INTEGER CHECK (sequence >= 0),
   accepted_at INTEGER,
-  CHECK ((sequence IS NULL) = (accepted_at IS NULL))
+  CHECK ((sequence IS NULL) = (accepted_at IS NULL)),
+  CHECK ((kind = 'project-create') = (project_id IS NOT NULL)),
+  CHECK ((kind = 'project-create') = (thread_id IS NULL))
 ) STRICT;
 
 CREATE INDEX history_command_by_actor ON history_command (actor_id, sent_at, command_id);

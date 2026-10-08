@@ -27,6 +27,7 @@ export async function actorWorld() {
   if (!portfolio.ok) throw new Error("Invalid fixture portfolio");
   const usage = openUsage({
     connection: f.store.connection,
+    visits: history,
     ledger: f.ledger,
     portfolio: {
       current: () => ({ commit: revision.commit, declaration: portfolio.declaration }),

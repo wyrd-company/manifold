@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { openHistory } from "../history/index.ts";
 import { openStore } from "../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../ledger/index.ts";
 import { openUsage, usageMigrationSteps } from "./index.ts";
@@ -73,6 +74,7 @@ async function setup(credited = true) {
     ],
   });
   let now = 50;
+  let history = openHistory({ store, now: () => now, log: () => {} });
   let ledger = createLedger({ connection, portfolio, now: () => now });
   const credit = () =>
     ledger.credit({
@@ -87,6 +89,10 @@ async function setup(credited = true) {
   let inputChanges = 0;
   const options = {
     connection,
+    visits: {
+      visits: (id: string) => history.visits(id),
+      visitAt: (id: string, at: number) => history.visitAt(id, at),
+    },
     ledger,
     portfolio: {
       current: currentPortfolio,
@@ -123,8 +129,13 @@ async function setup(credited = true) {
         : [],
       records,
     });
-  const save = (status = "active", value: unknown = "working", item = "alpha") =>
-    usage.saveHook({
+  const save = (
+    status = "active",
+    value: unknown = "working",
+    item = "alpha",
+    machine = "machine-one",
+  ) => {
+    const write = {
       actorId: "actor-1",
       snapshot: {
         status,
@@ -133,10 +144,26 @@ async function setup(credited = true) {
           manifold: { environment: "env-one", portfolioItem: item, threads: ["thread-1"] },
         },
       },
+    };
+    store.connection.transaction(() => {
+      if (status !== "error")
+        history.saveHook({
+          ...write,
+          snapshot: write.snapshot as import("../store/index.ts").PersistedSnapshot,
+          machine,
+          activeInvokes: [],
+          entered: [],
+          entries: {},
+        });
+      usage.saveHook(write);
     });
+  };
   cleanups.push(() => store.close());
   return {
     store,
+    get history() {
+      return history;
+    },
     connection,
     get inputChanges() {
       return inputChanges;
@@ -159,6 +186,7 @@ async function setup(credited = true) {
     restart: () => {
       store.close();
       store = openStore({ path });
+      history = openHistory({ store, now: () => now, log: () => {} });
       ledger = createLedger({ connection: store.connection, portfolio, now: () => now });
       usage = openUsage({ ...options, connection: store.connection, ledger });
       return usage;
@@ -208,7 +236,7 @@ it.each(["done", "stopped"])(
       db.close();
     }
     expect(
-      s.connection.database.prepare("SELECT count(*) n FROM usage_visits").get(),
+      s.connection.database.prepare("SELECT count(*) n FROM history_visit").get(),
     ).toMatchObject({ n: 1 });
     expect(
       s.connection.database.prepare("SELECT count(*) n FROM usage_threads").get(),
@@ -224,9 +252,11 @@ it("holds error saves without settlement or new visits", async () => {
     settled: false,
     accounts: [{ outstanding: 10 }],
   });
-  expect(s.connection.database.prepare("SELECT count(*) n FROM usage_visits").get()).toMatchObject({
-    n: 1,
-  });
+  expect(s.connection.database.prepare("SELECT count(*) n FROM history_visit").get()).toMatchObject(
+    {
+      n: 1,
+    },
+  );
 });
 it.each([false, true])(
   "charges high-water classes independent of conflicting copy order (reverse=%s)",
@@ -486,9 +516,11 @@ it("canonicalizes parallel state values and assigns an early call to the first v
   expect(s.connection.database.prepare("SELECT visit FROM usage_postings").get()).toMatchObject({
     visit: 1,
   });
-  expect(s.connection.database.prepare("SELECT count(*) n FROM usage_visits").get()).toMatchObject({
-    n: 2,
-  });
+  expect(s.connection.database.prepare("SELECT count(*) n FROM history_visit").get()).toMatchObject(
+    {
+      n: 2,
+    },
+  );
 });
 it("rolls back the entire request when a ledger write fails, and contains listener rejection", async () => {
   const s = await setup();
@@ -496,6 +528,7 @@ it("rolls back the entire request when a ledger write fails, and contains listen
   const errors: unknown[] = [];
   const broken = openUsage({
     connection: s.connection,
+    visits: s.history,
     onError: (error) => errors.push(error),
     ledger: {
       reattribute: s.ledger.reattribute,
@@ -548,6 +581,7 @@ it("falls back to other with missing project and ignores malformed identity memb
   const s = await setup();
   const usage = openUsage({
     connection: s.connection,
+    visits: s.history,
     ledger: s.ledger,
     portfolio: {
       current: currentPortfolio,
@@ -588,6 +622,7 @@ it("a failed settlement rolls back ownership and visits with the actor save", as
   const s = await setup();
   const usage = openUsage({
     connection: s.connection,
+    visits: s.history,
     ledger: {
       reattribute: s.ledger.reattribute,
       actorUsage: s.ledger.actorUsage,
@@ -610,6 +645,14 @@ it("a failed settlement rolls back ownership and visits with the actor save", as
         machine: "machine-one",
         snapshot: { status: "done", value: "finished" },
       });
+      s.history.saveHook({
+        actorId: "actor-new",
+        machine: "machine-one",
+        snapshot: { status: "done", value: "finished" },
+        activeInvokes: [],
+        entered: [],
+        entries: {},
+      });
       usage.saveHook({
         actorId: "actor-new",
         snapshot: {
@@ -623,7 +666,7 @@ it("a failed settlement rolls back ownership and visits with the actor save", as
   expect(s.store.loadSnapshot("actor-new")).toBeUndefined();
   expect(
     s.connection.database
-      .prepare("SELECT count(*) n FROM usage_visits WHERE actor_id='actor-new'")
+      .prepare("SELECT count(*) n FROM history_visit WHERE actor_id='actor-new'")
       .get(),
   ).toMatchObject({ n: 0 });
   expect(
@@ -637,6 +680,7 @@ it("the save hook itself rolls back when settlement fails", async () => {
   const s = await setup();
   const usage = openUsage({
     connection: s.connection,
+    visits: s.history,
     ledger: {
       reattribute: s.ledger.reattribute,
       actorUsage: s.ledger.actorUsage,
@@ -835,6 +879,7 @@ it("rolls back late attribution and mapping when a later call fails, then replay
   s.push([call("held", 1, 1)], false);
   const broken = openUsage({
     connection: s.connection,
+    visits: s.history,
     ledger: {
       ...s.ledger,
       postActual: () => {
@@ -1297,6 +1342,7 @@ it("move and unowned listener failures are contained and roll the entire move ba
   let writes = 0;
   const broken = openUsage({
     connection: s.connection,
+    visits: s.history,
     ledger: {
       ...s.ledger,
       reattribute: (request) => {
@@ -1550,5 +1596,71 @@ it("reads actor usage through the HTTP host, including pending and late calls wi
     );
   } finally {
     await host.close();
+  }
+});
+
+it("attributes late and early calls across a blueprint change once without moving ledger spend", async () => {
+  const s = await setup();
+  s.now(50);
+  s.save();
+  s.push([
+    { ...call("before"), timestamp: new Date(100).toISOString() },
+    { ...call("ahead"), timestamp: new Date(300).toISOString() },
+  ]);
+  const spend = s.connection.database
+    .prepare("SELECT * FROM ledger_entries WHERE kind='actual' ORDER BY seq")
+    .all();
+  s.now(200);
+  s.save("active", "working", "alpha", "machine-two");
+  s.push([
+    { ...call("after"), timestamp: new Date(250).toISOString() },
+    { ...call("late"), timestamp: new Date(150).toISOString() },
+  ]);
+  const result = s.usage.actorVisitUsage("actor-1");
+  expect(result.visits.map((v) => [v.visit, v.enteredAt])).toEqual(
+    s.history.visits("actor-1").map((v) => [v.visit, v.enteredAt]),
+  );
+  expect(result.calls.map((c) => c.visit)).toEqual([1, 1, 2, 1]);
+  expect(
+    s.connection.database
+      .prepare("SELECT * FROM ledger_entries WHERE kind='actual' ORDER BY seq")
+      .all()
+      .slice(0, 2),
+  ).toEqual(spend);
+  expect(
+    s.connection.database.prepare("SELECT name FROM sqlite_schema WHERE name='usage_visits'").all(),
+  ).toEqual([]);
+});
+
+it("an unchanged blueprint keeps visits one, two and three in both answers", async () => {
+  const s = await setup();
+  for (const [time, value] of [
+    [50, "packing"],
+    [200, "waiting"],
+    [300, "delivered"],
+  ] as const) {
+    s.now(time);
+    s.save("active", value);
+    s.push([{ ...call(value), timestamp: new Date(time).toISOString() }]);
+  }
+  expect(s.history.visits("actor-1").map((v) => v.visit)).toEqual([1, 2, 3]);
+  expect(s.usage.actorVisitUsage("actor-1").visits.map((v) => [v.visit, v.enteredAt])).toEqual(
+    s.history.visits("actor-1").map((v) => [v.visit, v.enteredAt]),
+  );
+  expect(s.usage.actorVisitUsage("actor-1").calls.map((c) => c.visit)).toEqual([1, 2, 3]);
+});
+it("a move and a late mapping both select the history visit after migration", async () => {
+  for (const move of [false, true]) {
+    const s = await setup();
+    s.save();
+    s.now(200);
+    s.save("active", "working", "alpha", "machine-two");
+    s.push([{ ...call(), timestamp: new Date(250).toISOString() }], false);
+    if (move) s.usage.move({ from: "session:env-one:codex:session-1", to: { actor: "actor-1" } });
+    else s.push([]);
+    expect(s.usage.actorVisitUsage("actor-1").calls.map((c) => c.visit)).toEqual([2]);
+    expect(s.usage.actorVisitUsage("actor-1").visits[0]?.enteredAt).toBe(
+      s.history.visits("actor-1")[1]!.enteredAt,
+    );
   }
 });

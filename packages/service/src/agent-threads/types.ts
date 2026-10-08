@@ -36,24 +36,24 @@ export interface AgentThreadsOptions {
   readonly recordProject: (record: CreatedProject) => void;
   readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
   readonly sending?: (command: SendingCommand) => void;
-  readonly probe?: (
-    accepted:
-      | InvokedCommand
-      | (AcceptedCommand & { readonly implementation: "t3code-project-create" }),
-  ) => void;
+  readonly probe?: (accepted: InvokedCommand) => void;
   readonly logger?: Logger;
 }
-export interface SendingCommand {
+interface SendingIdentity {
   readonly invocation: Invocation;
-  readonly implementation: "thread-create" | "turn-start";
   readonly commandId: string;
   readonly environment: string;
-  readonly threadId: string;
-  readonly messageId?: string;
 }
-export interface InvokedCommand extends SendingCommand {
-  readonly sequence: number;
-}
+export type SendingCommand = SendingIdentity &
+  (
+    | { readonly implementation: "t3code-project-create"; readonly projectId: string }
+    | {
+        readonly implementation: "thread-create" | "turn-start";
+        readonly threadId: string;
+        readonly messageId?: string;
+      }
+  );
+export type InvokedCommand = SendingCommand & { readonly sequence: number };
 export interface AcceptedCommand {
   readonly implementation: "t3code-project-create" | "thread-create" | "turn-start";
   readonly commandId: string;

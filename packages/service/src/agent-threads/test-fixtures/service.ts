@@ -22,7 +22,8 @@ export interface FixtureConfiguration {
   path: string;
   token: string;
   environments: EnvironmentsConfiguration;
-  crash?: "t3code-project-create" | "thread-create" | "turn-start";
+  crash?: "project-sending" | "t3code-project-create" | "thread-create" | "turn-start";
+  historyFault?: boolean;
   projectCreate?: boolean;
   projectInput?: Record<string, unknown>;
   onSave?: (snapshot: PersistedSnapshot) => void;
@@ -31,6 +32,10 @@ export interface FixtureConfiguration {
 export async function fixtureService(configuration: FixtureConfiguration) {
   const store = openStore({ path: configuration.path });
   const history = openHistory({ store, log: () => {} });
+  if (configuration.historyFault)
+    store.connection.database.exec(
+      "CREATE TRIGGER reject_project BEFORE INSERT ON history_command WHEN NEW.kind='project-create' BEGIN SELECT RAISE(FAIL,'fixture fault'); END",
+    );
   store.connection.migrate("ledger", ledgerMigrationSteps);
   store.connection.migrate("portfolio", portfolioMigrationSteps);
   const portfolio = openPortfolio({
@@ -164,11 +169,20 @@ export async function fixtureService(configuration: FixtureConfiguration) {
       source.write(environment, thread, signal, send),
     sourceReady: (environment, signal) => source.ready(environment, signal),
     revisionAt: async () => revision,
-    sending: history.commandSending,
+    sending(command) {
+      history.commandSending(command);
+      if (
+        configuration.crash === "project-sending" &&
+        command.implementation === "t3code-project-create"
+      )
+        process.kill(process.pid, "SIGKILL");
+    },
     probe(command) {
       configuration.probe?.(command);
       if (configuration.crash === command.implementation) process.kill(process.pid, "SIGKILL");
-      if (command.implementation !== "t3code-project-create") history.commandAccepted(command);
+      history.commandAccepted(command);
+      if (configuration.historyFault && command.implementation === "t3code-project-create")
+        store.connection.database.exec("DROP TRIGGER reject_project");
     },
   });
   const loader = createBlueprintLoader({

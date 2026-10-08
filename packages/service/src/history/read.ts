@@ -6,6 +6,7 @@ import type {
   ActorHistory,
   ActorCommand,
   StateValue,
+  StateVisit,
 } from "@wyrd-company/manifold-shared/actors-api";
 import type { InboxRow, StoredSnapshot } from "../store/index.ts";
 import { actorSummaries, leaves } from "../console/actors-api.ts";
@@ -15,7 +16,8 @@ export interface CommandRow {
   command_id: string;
   kind: ActorCommand["kind"];
   environment: string;
-  thread_id: string;
+  thread_id: string | null;
+  project_id: string | null;
   message_id: string | null;
   invoke_id: string;
   entry_id: string;
@@ -33,27 +35,7 @@ export function assembleHistory(
   const actor = actorSummaries([snapshot])[0]!;
   return {
     actor,
-    visits: visits.map((row) => {
-      const value = JSON.parse(row.state_value) as StateValue;
-      const version = parseBlueprintVersionKey(row.machine);
-      return {
-        visit: row.visit,
-        value,
-        states: leaves(value),
-        machine: row.machine,
-        ...(version ? { blueprint: { path: version.path, commit: version.commit } } : {}),
-        enteredAt: iso(row.entered_at),
-        ...(row.exited_at !== null ? { exitedAt: iso(row.exited_at) } : {}),
-        ...(row.exit_event_type !== null
-          ? {
-              exitEvent: {
-                type: row.exit_event_type,
-                ...(row.exit_event_id !== null ? { eventId: row.exit_event_id } : {}),
-              },
-            }
-          : {}),
-      };
-    }),
+    visits: visits.map(stateVisit),
     events: inbox.map((row) => ({
       eventId: row.eventId,
       type: (row.payload as { type: string }).type,
@@ -81,11 +63,15 @@ export function assembleHistory(
           : undefined;
       return {
         commandId: row.command_id,
-        kind: row.kind,
         environment: row.environment,
-        threadId: row.thread_id,
-        ...(row.message_id !== null ? { messageId: row.message_id } : {}),
-        ...(started ? { turnId: (started.payload as { turnId: string }).turnId } : {}),
+        ...(row.kind === "project-create"
+          ? { kind: row.kind, projectId: row.project_id! }
+          : {
+              kind: row.kind,
+              threadId: row.thread_id!,
+              ...(row.message_id !== null ? { messageId: row.message_id } : {}),
+              ...(started ? { turnId: (started.payload as { turnId: string }).turnId } : {}),
+            }),
         invokeId: row.invoke_id,
         entryId: row.entry_id,
         sentAt: iso(row.sent_at),
@@ -100,6 +86,28 @@ export function assembleHistory(
             ...(snapshot.snapshot["output"] !== undefined
               ? { output: snapshot.snapshot["output"] as ActorHistory["events"][number]["payload"] }
               : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+export function stateVisit(row: VisitRow): StateVisit {
+  const value = JSON.parse(row.state_value) as StateValue;
+  const version = parseBlueprintVersionKey(row.machine);
+  return {
+    visit: row.visit,
+    value,
+    states: leaves(value),
+    machine: row.machine,
+    ...(version ? { blueprint: { path: version.path, commit: version.commit } } : {}),
+    enteredAt: iso(row.entered_at),
+    ...(row.exited_at !== null ? { exitedAt: iso(row.exited_at) } : {}),
+    ...(row.exit_event_type !== null
+      ? {
+          exitEvent: {
+            type: row.exit_event_type,
+            ...(row.exit_event_id !== null ? { eventId: row.exit_event_id } : {}),
           },
         }
       : {}),

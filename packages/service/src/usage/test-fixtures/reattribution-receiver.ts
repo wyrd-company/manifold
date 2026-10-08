@@ -3,12 +3,13 @@
 //   verifies: usage-intake
 // ---
 import { createHttpHost } from "../../http-host/index.ts";
+import { openHistory } from "../../history/index.ts";
 import { openStore } from "../../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../../ledger/index.ts";
 import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
 import type { LedgerConnection } from "../../ledger/index.ts";
 import { openUsage, usageMigrationSteps } from "../index.ts";
-import type { UsageActorSave } from "../index.ts";
+import type { ActorSave } from "../../actor-host/index.ts";
 const config = JSON.parse(process.argv[2]!) as { path: string; crash: boolean };
 const store = openStore({ path: config.path });
 store.connection.migrate("ledger", ledgerMigrationSteps);
@@ -48,7 +49,9 @@ ledger.credit({
   closesAt: 10000,
   amount: 1000,
 });
+const history = openHistory({ store, log: () => {} });
 const usage = openUsage({
+  visits: history,
   connection,
   ledger,
   portfolio: {
@@ -76,7 +79,17 @@ http.mount("/fixture/save", (request, response) => {
   void (async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    usage.saveHook(JSON.parse(Buffer.concat(chunks).toString()) as UsageActorSave);
+    const save = JSON.parse(Buffer.concat(chunks).toString()) as ActorSave;
+    store.connection.transaction(() => {
+      history.saveHook({
+        ...save,
+        machine: "machine-one",
+        activeInvokes: [],
+        entries: {},
+        entered: [],
+      });
+      usage.saveHook(save);
+    });
     response.end("saved");
   })().catch((error) => {
     response.writeHead(500);

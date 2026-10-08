@@ -108,18 +108,31 @@ export interface ReceivedEvent {
   readonly visit?: number;
   readonly payload: JsonValue;
 }
-export interface ActorCommand {
+interface CommandIdentity {
   readonly commandId: string;
-  readonly kind: "thread-create" | "turn-start";
   readonly environment: string;
-  readonly threadId: string;
-  readonly messageId?: string;
-  readonly turnId?: string;
   readonly invokeId: string;
   readonly entryId: string;
   readonly sentAt: string;
   readonly acceptedAt?: string;
 }
+export type ActorCommand = CommandIdentity &
+  (
+    | {
+        readonly kind: "project-create";
+        readonly projectId: string;
+        readonly threadId?: never;
+        readonly messageId?: never;
+        readonly turnId?: never;
+      }
+    | {
+        readonly kind: "thread-create" | "turn-start";
+        readonly projectId?: never;
+        readonly threadId: string;
+        readonly messageId?: string;
+        readonly turnId?: string;
+      }
+  );
 export interface ActorEnd {
   readonly status: "done" | "stopped";
   readonly endedAt: string;
@@ -222,6 +235,7 @@ function sent(v: unknown) {
       "kind",
       "environment",
       "threadId",
+      "projectId",
       "messageId",
       "turnId",
       "invokeId",
@@ -229,8 +243,12 @@ function sent(v: unknown) {
       "sentAt",
       "acceptedAt",
     ]) &&
-    ["commandId", "environment", "threadId", "invokeId", "entryId"].every((k) => nonempty(v[k])) &&
-    (v["kind"] === "thread-create" || v["kind"] === "turn-start") &&
+    ["commandId", "environment", "invokeId", "entryId"].every((k) => nonempty(v[k])) &&
+    (v["kind"] === "project-create"
+      ? nonempty(v["projectId"]) && !["threadId", "messageId", "turnId"].some((k) => k in v)
+      : (v["kind"] === "thread-create" || v["kind"] === "turn-start") &&
+        nonempty(v["threadId"]) &&
+        !("projectId" in v)) &&
     date(v["sentAt"]) &&
     optional(v, "acceptedAt", date) &&
     optional(v, "messageId", nonempty) &&

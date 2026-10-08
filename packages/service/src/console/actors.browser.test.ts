@@ -12,6 +12,15 @@ test("built Actors shows active and completed histories, usage, sequence and the
     server = await consoleHost(),
     browser = await chromium.launch({ headless: true });
   try {
+    const project = {
+      implementation: "t3code-project-create" as const,
+      commandId: "project-command",
+      invocation: { actorId: "task:parcel", invokeId: "create", entryId: "one" },
+      environment: "sample-host",
+      projectId: "project-one",
+    };
+    f.history.commandSending(project);
+    f.history.commandAccepted({ ...project, sequence: 1 });
     mountConsole(
       {
         ...server.host,
@@ -50,6 +59,8 @@ test("built Actors shows active and completed histories, usage, sequence and the
     await page.getByRole("button", { name: "Sequence", exact: true }).click();
     await page.getByText("Manifold", { exact: true }).last().waitFor();
     await page.getByText("Start thread", { exact: false }).waitFor();
+    await page.getByText("Create project", { exact: true }).waitFor();
+    await page.getByText("T3 Code project · project-", { exact: true }).waitFor();
     await page.getByText("Move to Delivered · confirmed", { exact: true }).waitFor();
     expect(await page.locator(".actor-message-usage").allTextContents()).toContain(
       "15 tokenssample · <$0.0001",

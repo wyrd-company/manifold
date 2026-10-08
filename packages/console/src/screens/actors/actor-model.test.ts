@@ -125,11 +125,16 @@ it("joins sparse numbered usage runs across a migration with no exit event", () 
     ...input.usage!,
     visits: [
       { ...input.usage!.visits[0]!, visit: 2 },
+      {
+        ...input.usage!.visits[0]!,
+        visit: 3,
+        tokens: { ...input.usage!.visits[0]!.tokens, total: 20 },
+      },
       { ...input.usage!.visits[0]!, visit: 4 },
     ],
   };
   const rows = actorTimeline(input).rows;
-  expect(rows.map((r) => r.tokens)).toEqual([0, 10, 0, 0, 10]);
+  expect(rows.map((r) => r.tokens)).toEqual([0, 10, 20, 10, 0]);
   expect(rows[2]?.commit).toBe("b".repeat(40));
   input.history = {
     ...input.history,
@@ -375,4 +380,46 @@ it("closes only a consumed event from the same thread and turn", () => {
   };
   expect(actorPasses(input)[0]).toMatchObject({ running: true });
   expect(actorPasses(input)[0]?.close).toBeUndefined();
+});
+
+it("shows project creation on its project lifeline without a pass", () => {
+  const input = sampleInput();
+  input.history = {
+    ...input.history,
+    commands: [
+      {
+        commandId: "create-project",
+        kind: "project-create",
+        projectId: "project-a",
+        environment: "sample",
+        invokeId: "create",
+        entryId: "one",
+        sentAt: at(1),
+      },
+      ...input.history.commands,
+    ],
+  };
+  const sequence = actorSequence(input);
+  expect(sequence.messages.find((m) => m.id === "create-project")).toMatchObject({
+    from: "manifold",
+    to: "project:sample/project-a",
+    label: "Create project · not accepted",
+    style: "solid",
+    tone: "warning",
+  });
+  expect(sequence.lifelines).toContainEqual({
+    id: "project:sample/project-a",
+    label: "T3 Code project · project-",
+  });
+  expect(actorPasses(input)).toHaveLength(1);
+  input.history = {
+    ...input.history,
+    commands: input.history.commands.map((c) =>
+      c.kind === "project-create" ? { ...c, acceptedAt: at(2) } : c,
+    ),
+  };
+  expect(actorSequence(input).messages.find((m) => m.id === "create-project")).toMatchObject({
+    label: "Create project",
+    tone: "edge",
+  });
 });

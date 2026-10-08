@@ -84,7 +84,8 @@ const eventThread = (input: ActorModelInput, e: ReceivedEvent) => {
     id = text(p["threadId"]),
     environment =
       text(p["environment"]) ||
-      input.history.commands.find((c) => c.threadId === id)?.environment ||
+      input.history.commands.find((c) => c.kind !== "project-create" && c.threadId === id)
+        ?.environment ||
       input.history.actor.environment ||
       "";
   return threadKey(environment, id);
@@ -126,6 +127,7 @@ export function actorPasses(input: ActorModelInput): readonly Pass[] {
   const { history, usage } = input;
   const starts = [
     ...history.commands
+      .filter((c) => c.kind !== "project-create")
       .filter((c) => c.kind === "turn-start")
       .map((c) => ({
         id: c.commandId,
@@ -253,30 +255,18 @@ function exitLabel(
     return `${type.slice("xstate.error.actor.".length)} failed`;
   return type;
 }
-const canonical = (v: unknown): string =>
-  JSON.stringify(v, (_k, item: unknown) =>
-    typeof item === "object" && item !== null && !Array.isArray(item)
-      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
-      : item,
-  );
 export function actorTimeline(input: ActorModelInput): ActorTimeline {
   const { history, usage, now } = input,
     passes = actorPasses(input),
     active = history.actor.status === "active";
-  let run = 0,
-    lastValue: string | undefined;
   const rows = history.visits.map((v, index): TimelineRow => {
-    const value = canonical(v.value),
-      first = value !== lastValue;
-    if (first) run++;
-    lastValue = value;
     const start = time(v.enteredAt),
       end = v.exitedAt
         ? time(v.exitedAt)
         : active
           ? now
           : time(history.end?.endedAt ?? v.enteredAt);
-    const counted = first ? usage?.visits.find((u) => u.visit === run) : undefined;
+    const counted = usage?.visits.find((u) => u.visit === v.visit);
     const events = history.events.filter((e) => e.visit === v.visit && e.consumedAt !== undefined);
     const answered = input.escalations.find(
       (e) =>
@@ -360,11 +350,13 @@ export function actorSequence(input: ActorModelInput): ActorSequence {
     if (id) threads.set(key, `T3 Code thread · ${id.slice(0, 8)}`);
   };
   const ordered = [
-    ...input.history.commands.map((c) => ({
-      at: time(c.sentAt),
-      thread: threadKey(c.environment, c.threadId),
-      id: c.threadId,
-    })),
+    ...input.history.commands
+      .filter((c) => c.kind !== "project-create")
+      .map((c) => ({
+        at: time(c.sentAt),
+        thread: threadKey(c.environment, c.threadId),
+        id: c.threadId,
+      })),
     ...input.history.events.map((e) => ({
       at: time(e.receivedAt),
       thread: eventThread(input, e),
@@ -372,6 +364,26 @@ export function actorSequence(input: ActorModelInput): ActorSequence {
     })),
   ].toSorted((a, b) => a.at - b.at);
   for (const t of ordered) addThread(t.thread, t.id);
+  const projects = new Map<string, string>();
+  for (const c of input.history.commands) {
+    if (c.kind !== "project-create") continue;
+    const key = `project:${c.environment}/${c.projectId}`;
+    projects.set(key, `T3 Code project · ${c.projectId.slice(0, 8)}`);
+    const at = time(c.sentAt);
+    const visit = input.history.visits.findLast(
+      (v) => time(v.enteredAt) <= at && (v.exitedAt === undefined || at <= time(v.exitedAt)),
+    );
+    const unaccepted = c.acceptedAt === undefined && visit?.exitedAt !== undefined;
+    messages.push({
+      id: c.commandId,
+      at,
+      from: "manifold",
+      to: key,
+      label: unaccepted ? "Create project · not accepted" : "Create project",
+      style: "solid",
+      tone: unaccepted ? "warning" : "edge",
+    });
+  }
   for (const p of passes)
     messages.push({
       id: `pass-${p.number}`,
@@ -478,6 +490,7 @@ export function actorSequence(input: ActorModelInput): ActorSequence {
   return {
     lifelines: [
       { id: "manifold", label: "Manifold" },
+      ...[...projects].map(([id, label]) => ({ id, label })),
       ...[...threads].map(([id, label]) => ({ id, label })),
       { id: "github", label: "GitHub" },
     ],

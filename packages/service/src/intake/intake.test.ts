@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: [intake, intake-records-table]
 // ---
+import { openHistory } from "../history/index.ts";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
@@ -575,6 +576,7 @@ it("captures the previous whole publication while the follower awaits load and a
     usage: (() => {
       s.store.connection.migrate("usage", usageMigrationSteps);
       return openUsage({
+        visits: openHistory({ store: s.store, log: () => {} }),
         connection: s.store.connection,
         ledger: realPortfolio.ledger,
         portfolio: realPortfolio,

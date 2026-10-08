@@ -5,7 +5,6 @@
 import { postingAttribution, resolvePosting } from "./push.ts";
 import type { UsageDeclaration } from "@wyrd-company/manifold-shared";
 import type { Posting } from "./types.ts";
-import { canonical } from "./types.ts";
 import type { UsageActorSave, UsageOptions } from "./types.ts";
 const object = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -27,19 +26,6 @@ export function saveActor(
     db.prepare(
       "INSERT INTO usage_actors (actor_id,environment,item) VALUES (?,?,?) ON CONFLICT(actor_id) DO UPDATE SET environment=excluded.environment,item=excluded.item",
     ).run(save.actorId, environment, item);
-    const latest = db
-      .prepare(
-        "SELECT visit,state_value FROM usage_visits WHERE actor_id=? ORDER BY visit DESC LIMIT 1",
-      )
-      .get(save.actorId) as { visit: number; state_value: string } | undefined;
-    const value = canonical(save.snapshot.value);
-    if (!latest || latest.state_value !== value)
-      db.prepare("INSERT INTO usage_visits VALUES (?,?,?,?)").run(
-        save.actorId,
-        (latest?.visit ?? 0) + 1,
-        value,
-        now(),
-      );
     if (environment && Array.isArray(identity["threads"]))
       for (const thread of identity["threads"]) {
         if (typeof thread !== "string") continue;

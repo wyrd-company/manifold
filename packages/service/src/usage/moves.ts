@@ -14,12 +14,7 @@ export class UsageMoveError extends Error {
   }
 }
 export function visitAt(options: UsageOptions, actor: string, usedAt: number): number | null {
-  const row = options.connection.database
-    .prepare(
-      "SELECT visit FROM usage_visits WHERE actor_id=? ORDER BY (entered_at<=?) DESC, CASE WHEN entered_at<=? THEN entered_at END DESC,CASE WHEN entered_at<=? THEN visit END DESC,entered_at ASC,visit ASC LIMIT 1",
-    )
-    .get(actor, usedAt, usedAt, usedAt) as { visit: number } | undefined;
-  return row?.visit ?? null;
+  return options.visits.visitAt(actor, usedAt) ?? null;
 }
 export function moveUsage(
   options: UsageOptions,

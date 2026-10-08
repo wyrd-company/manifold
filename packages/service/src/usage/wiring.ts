@@ -12,7 +12,9 @@ import { gates as gatesPart } from "../gates/wiring.ts";
 export const usage = wiringPart({
   name: "usage",
   start: (
-    members: Required<Pick<Service, "store" | "portfolio" | "configuration" | "log">> & {
+    members: Required<
+      Pick<Service, "store" | "portfolio" | "configuration" | "log" | "history">
+    > & {
       http: HttpHost;
     },
     context,
@@ -22,6 +24,7 @@ export const usage = wiringPart({
     const usageConnection = store.connection;
     const usage = openUsage({
       connection: usageConnection,
+      visits: members.history,
       ledger: {
         actorUsage: portfolio.ledger.actorUsage,
         reattribute: portfolio.ledger.reattribute,

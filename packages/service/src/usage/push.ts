@@ -135,13 +135,7 @@ export function postingAttribution(
         | { actor_id: string; item: string | null }
         | undefined)
     : undefined;
-  const visit = actor
-    ? (db
-        .prepare(
-          "SELECT visit FROM usage_visits WHERE actor_id=? ORDER BY (entered_at<=?) DESC, CASE WHEN entered_at<=? THEN entered_at END DESC,CASE WHEN entered_at<=? THEN visit END DESC,entered_at ASC,visit ASC LIMIT 1",
-        )
-        .get(actor.actor_id, usedAt, usedAt, usedAt) as { visit: number } | undefined)
-    : undefined;
+  const visit = actor ? options.visits.visitAt(actor.actor_id, usedAt) : undefined;
   const project = session ? options.threadProject(environment, session.thread_id) : undefined;
   return attribute({
     environment,
@@ -157,7 +151,7 @@ export function postingAttribution(
           }).item,
         }
       : {}),
-    ...(visit ? { visit: visit.visit } : {}),
+    ...(visit ? { visit } : {}),
   });
 }
 export function pushUsage(
