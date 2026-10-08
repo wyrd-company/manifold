@@ -317,6 +317,14 @@ fi
         if (
           command === "prepare" &&
           description === "mv -- manifold-service.next manifold-service.discard" &&
+          !stopped.operations.includes(
+            "mv -- manifold-service.staging/manifold-service manifold-service.next",
+          )
+        )
+          covered.add("present-next");
+        if (
+          command === "prepare" &&
+          description === "mv -- manifold-service.next manifold-service.discard" &&
           stopped.operations.includes(
             "mv -- manifold-service.staging/manifold-service manifold-service.next",
           )
@@ -355,10 +363,7 @@ fi
       startedEnds.add(endKey);
     }
   }
-  assert(
-    covered.has("prepare:mv -- manifold-service.next manifold-service.discard"),
-    "Present next discard was not interrupted",
-  );
+  assert(covered.has("present-next"), "Present next discard was not interrupted");
   assert(covered.has("equal-next"), "Equal next discard was not interrupted");
   assert(
     covered.has("rollback-next-without-current"),
