@@ -28,6 +28,10 @@ import type { FoundationWorkerConfiguration } from "./test-fixtures/foundation-w
 import { createActor, fromPromise, setup } from "xstate";
 import { lintBlueprintExpressions, lintDecisionModel } from "@wyrd-company/manifold-shared";
 import type { ExpressionBlueprint, ExpressionError } from "@wyrd-company/manifold-shared";
+import { openHistory } from "./history/index.ts";
+import { openRetention } from "./retention/index.ts";
+import { routerSteps } from "./router/migrations.ts";
+import { gatesMigrationSteps } from "./gates/index.ts";
 import { openStore } from "./store/index.ts";
 import type { DeliveryTarget, Store } from "./store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "./ledger/index.ts";
@@ -158,7 +162,7 @@ describe("store and ledger on one database file", () => {
     store.close();
   });
 
-  it("posts an actual once when a delivery crashes after send and replays on a fresh store", () => {
+  it("prunes expired UAT rows and posts an actual once when an active delivery crashes and replays", async () => {
     const path = directory();
     const setupStore = open(path);
     setupStore.ledger.credit({
@@ -169,10 +173,51 @@ describe("store and ledger on one database file", () => {
       closesAt: 1000,
       amount: 100,
     });
+    setupStore.store.connection.migrate("router", routerSteps);
+    setupStore.store.connection.migrate("gates", gatesMigrationSteps);
+    const history = openHistory({ store: setupStore.store, now: () => 10, log: () => {} });
+    const write = {
+      actorId: "meter-01",
+      machine: "meter",
+      snapshot: { status: "active" as const, value: "running", context: 0 },
+      activeInvokes: [],
+      entered: [],
+      entries: {},
+    };
+    setupStore.store.saveSnapshot(write);
+    history.saveHook(write);
     setupStore.store.writeInbox({ eventId: "e-1", topic: "meter.read", payload: { amount: 7 } }, [
       "meter-01",
     ]);
+    const activeHistory = history.read("meter-01")!;
     setupStore.store.close();
+
+    await promisify(execFile)(process.execPath, [
+      new URL("../../../testing/uat/seed-retention.mjs", import.meta.url).pathname,
+      "--store",
+      path,
+      "--service-stopped",
+    ]);
+    const pruning = open(path);
+    const pruneHistory = openHistory({ store: pruning.store, now: () => 10, log: () => {} });
+    const retention = openRetention({
+      store: pruning.store,
+      history: pruneHistory,
+      escalations: { list: () => [] },
+      configuration: { historyDays: 90, sourceEventDays: { default: 30 }, gateEvaluationDays: 30 },
+      log: () => {},
+    });
+    expect(await retention.prune()).toEqual({
+      actors: 1,
+      inboxRows: 1,
+      historyRows: 2,
+      sourceEvents: 1,
+      gateEvaluations: 1,
+    });
+    expect(pruneHistory.read("meter-01")).toEqual(activeHistory);
+    expect(pruning.store.pendingInbox("meter-01").map((row) => row.eventId)).toEqual(["e-1"]);
+    await retention.stop();
+    pruning.store.close();
 
     const crashing = open(path, (step) => {
       if (step === "sent") throw new Error("crash");
@@ -194,7 +239,28 @@ describe("store and ledger on one database file", () => {
     expect(
       restarted.ledger.balance({ item: "north", account: "meter", waiting: [] }),
     ).toMatchObject({ actual: 7, available: 53 });
+    expect(
+      restarted.store.writeInbox({ eventId: "e-1", topic: "meter.read", payload: { amount: 7 } }, [
+        "meter-01",
+      ]),
+    ).toEqual([]);
+    expect(restarted.store.drain(meterActor(restarted.ledger, restarted.store)).delivered).toBe(0);
+    const replayedHistory = openHistory({
+      store: restarted.store,
+      now: () => 10,
+      log: () => {},
+    }).read("meter-01")!;
+    expect(replayedHistory.visits).toEqual(activeHistory.visits);
+    expect(replayedHistory.events).toEqual([
+      expect.objectContaining({ eventId: "e-1", consumedAt: new Date(10).toISOString() }),
+    ]);
     restarted.store.close();
+    const reopened = open(path);
+    expect(
+      openHistory({ store: reopened.store, now: () => 10, log: () => {} }).read("meter-01"),
+    ).toEqual(replayedHistory);
+    expect(reopened.store.drain(meterActor(reopened.ledger, reopened.store)).delivered).toBe(0);
+    reopened.store.close();
   });
 });
 
