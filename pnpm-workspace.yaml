@@ -6,7 +6,7 @@ catalog:
   "@types/node": 24.19.0
   bun: 1.4.2
   typescript: 6.0.3
-  vite-plus: 0.3.3
+  vite-plus: 1.1.0
 
 allowBuilds:
   bun: true
