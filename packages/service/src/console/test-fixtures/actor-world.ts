@@ -104,7 +104,7 @@ export async function actorWorld() {
     const topic =
       source === "github"
         ? `github.issue.${id}`
-        : threadTopic("sample-host", String(payload.threadId)).replace(/^t3\./, `${source}.`);
+        : threadTopic("sample-host", String(payload["threadId"])).replace(/^t3\./, `${source}.`);
     router.publish({
       source,
       eventId: `${id}-${type}-${n}`,
