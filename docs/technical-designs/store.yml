@@ -4,6 +4,7 @@ relationships:
     - durable-event-delivery
     - gates
     - portfolio
+    - actor-history
   mitigates:
     - gate-durability-unproven
 objective: >-
@@ -77,9 +78,11 @@ proposed-design:
       loadErroredSnapshot(actorId: string): StoredErroredSnapshot | undefined;
       findActorsInState(query: StateQuery): StoredSnapshot[];
       activeSnapshots(): StoredSnapshot[];
+      endedSnapshots(): StoredSnapshot[];
 
       writeInbox(event: InboxEvent, actorIds: readonly string[]): InboxRow[];
       pendingInbox(actorId: string): InboxRow[];
+      actorInbox(actorId: string): InboxRow[];
       markConsumed(actorId: string, eventId: string): void;
       deliver(target: DeliveryTarget, row: InboxRow): DeliveryOutcome;
       drain(target: DeliveryTarget): DrainResult;
@@ -268,6 +271,9 @@ proposed-design:
     `activeSnapshots()` returns the stored snapshot of every actor whose
     status is `active`, ordered by actor id. The router calls it once at
     resume to derive every subscription and restore every actor.
+    `endedSnapshots()` returns the stored snapshot of every actor whose
+    status is `done` or `stopped`, ordered by actor id. The actors API
+    lists completed actors from it.
   inbox: >-
     `writeInbox(event, actorIds)` inserts one row per actor id in one
     transaction, with `received_at` from `now`, and `INSERT ... ON CONFLICT
@@ -275,7 +281,11 @@ proposed-design:
     insertion order; a row that already existed, consumed or not, is not
     returned, so a router publishes only what is new and a duplicate source
     delivery is accepted once. `pendingInbox(actorId)` returns the actor's
-    rows with `consumed_at` null, ordered by `sequence`. `markConsumed` sets
+    rows with `consumed_at` null, ordered by `sequence`. `actorInbox(actorId)`
+    returns every row of the actor, consumed or pending, ordered by
+    `sequence`, through the `(actor_id, event_id)` unique index; a consumed
+    row stays in the inbox, so the history module reads an actor's events
+    from it. `markConsumed` sets
     `consumed_at` where it is null; marking a consumed or absent row changes
     nothing. A payload is stored with `JSON.stringify` and returned with
     `JSON.parse`.
@@ -390,7 +400,9 @@ proposed-design:
     path, including ancestor paths and parallel regions, filtered by
     machine, and with no machine returns the actors in that path on every
     machine; `activeSnapshots` returns exactly the `active` actors in actor
-    id order; `nextDeadlineAt` returns the earliest unfired fire time,
+    id order; `endedSnapshots` returns exactly the `done` and `stopped`
+    actors in actor id order; `actorInbox` returns one actor's consumed and
+    pending rows in `sequence` order and no other actor's; `nextDeadlineAt` returns the earliest unfired fire time,
     skips fired rows, and is `undefined` with no armed row; `writeInbox` holds one row for a repeated event id and returns
     only new rows; `pendingInbox` returns insertion order; a deadline
     survives closing and reopening the store; a save that leaves a state

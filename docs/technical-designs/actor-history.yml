@@ -1,0 +1,339 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - actor-host
+    - store
+    - durable-event-delivery
+    - agent-threads
+    - usage-intake
+    - service-assembly
+terms:
+  - actor-history
+  - state-visit
+  - inbox
+  - snapshot
+  - invocation
+objective: >-
+  Keep the actor history of every actor the store has run, ended ones
+  included, and answer it through the actors API, so that an operator can
+  see which event an actor took a transition on and with what payload, and
+  so that the console can draw an actor's timeline and sequence diagram and
+  list completed actors. Every history row commits with the save, or the
+  server answer, that it records, so a crash never leaves a consumed event
+  without its row and never keeps a row for a save that rolled back.
+background:
+  current-design: >-
+    The store keeps every inbox row after its delivery consumes it, with
+    the event id, topic, payload, and received and consumed times, and it
+    keeps the last snapshot of an actor that ended, with status `done` or
+    `stopped`. The usage intake module records state visits in
+    `usage_visits` by state value alone, for attribution. The agent
+    threads module derives every T3 Code command id from the invocation
+    that sends it, and the environment source keeps each followed thread's
+    latest state, not the commands sent to it. `GET /api/actors` lists only
+    active snapshots.
+  problems:
+    - >-
+      Nothing ties a consumed inbox row to the state the actor was in when
+      it took the event, or to the transition it caused, so an operator
+      cannot show why an actor moved.
+    - >-
+      No record holds the blueprint version of each state visit or the
+      event a visit exited on.
+    - >-
+      No record holds which T3 Code commands an actor sent; command ids can
+      be derived again, but not whether the server accepted them or when.
+    - >-
+      No endpoint answers an actor that ended.
+design-challenges:
+  transaction: >-
+    A history row for a consumed event or an entered state must commit in
+    the transaction of the save that consumes or enters it, through the
+    actor host's save hooks, without a change to the router's delivery,
+    replay, or inbox.
+  reuse: >-
+    The store already keeps each event's payload. A second copy doubles
+    the largest part of the history and gives two records of one event.
+  commands: >-
+    A command is accepted by the T3 Code server inside an invoked promise,
+    outside any save. Its record must survive a crash between the server's
+    answer and the actor's save of the result, and must not be written for
+    a command the server never accepted.
+  exit-event: >-
+    A save outside a delivery, such as the save of an invoked promise's
+    result, consumes no inbox row, so its event is known only to the actor
+    host.
+proposed-design:
+  high-level-overview: >-
+    The history module, `packages/service/src/history/`, owns the tables
+    named `history_` in the store's file, migrated under the owner
+    `history`, as `history-database-schema` specifies. It gives the actor
+    host one save hook, which records each state visit with its blueprint
+    version and the event it exited on, and links each consumed inbox row
+    to the visit that took it. It gives the agent threads module one probe,
+    which records each command the server accepts. It reads an actor's
+    history from its tables, the store's inbox rows, and the store's
+    snapshot. The console's actors listener answers `GET
+    /api/actors/{actorId}/history` and `GET /api/actors?status=completed`
+    through it, as `actors-api` specifies.
+  public-interface: |-
+    `packages/service/src/history/index.ts` exports exactly these names.
+
+    ```ts
+    import type { Store } from "../store/index.ts";
+    import type { SaveHook } from "../actor-host/index.ts";
+    import type { InvokedCommand } from "../agent-threads/index.ts";
+    import type { ActorHistory } from "@wyrd-company/manifold-shared/actors-api";
+
+    export function openHistory(options: HistoryOptions): History;
+
+    export interface HistoryOptions {
+      readonly store: Store;
+      readonly log: (entry: {
+        readonly level: "error";
+        readonly event: "history-write-failed";
+        readonly message: string;
+        readonly detail: { readonly actorId: string; readonly commandId: string };
+      }) => void;
+      /** Milliseconds since the Unix epoch. Defaults to Date.now. */
+      readonly now?: () => number;
+    }
+
+    export interface History {
+      /** Registered in `serviceSaveHooks`; runs inside each save's transaction. */
+      readonly saveHook: SaveHook;
+      /** The agent threads module's `probe`; records one accepted command. */
+      commandAccepted(command: InvokedCommand): void;
+      /** The actor's history, or undefined when the store holds no snapshot for it. */
+      read(actorId: string): ActorHistory | undefined;
+    }
+    ```
+
+    `ActorHistory` and its members are the `history` member of the
+    response body of `GET /api/actors/{actorId}/history`, exported from
+    `packages/shared/src/actors-api.ts` as `shared-types` states.
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `history.ts`
+    implements `openHistory` over the store's connection. `migrations.ts`
+    holds the step list. `visits.ts` holds the pure function that decides,
+    from the latest visit and a save, whether the save continues the visit,
+    starts the next, or ends the actor. `read.ts` holds the pure function
+    that assembles an `ActorHistory` from the snapshot, the inbox rows, and
+    the history rows. `wiring.ts` exports the `history` part. Tests live
+    beside the module and import only `index.ts`, the store's, the actor
+    host's, and the router's `index.ts`.
+  what-history-holds: >-
+    An actor's history is four members. Each comes from one record; the
+    visits, the event links, and the commands are new rows.
+
+    | Member | Source | New rows |
+    | --- | --- | --- |
+    | `actor`, `end` | the store's `store_snapshot` row: the actor summary, and for a `done` or `stopped` snapshot its status, `savedAt`, and `output` | none |
+    | `visits` | `history_visit`, written by the save hook | one per state visit |
+    | `events` | the store's inbox rows of the actor, consumed and pending, joined to `history_event` for the visit that took each | one link per consumed event, no payload |
+    | `commands` | `history_command`, written by the probe; a turn's id from the actor's `t3.turn.started` inbox row | one per accepted command |
+
+    The payload of an event is read from its inbox row and never copied,
+    as `read-event-history-from-the-inbox` records. Visits are not read
+    from `usage_visits`, which holds no blueprint version and no exit
+    event, and which splits only on the state value for attribution.
+  state-visits: >-
+    A state visit is one run of an actor's saves with the same state value
+    and blueprint version, as the `state-visit` term defines. The save hook
+    reads the actor's latest `history_visit` row and compares the canonical
+    JSON of the save's `snapshot.value`, keys sorted, and the save's
+    `machine` with it. When there is no row, or either differs, it sets the
+    latest row's `exited_at` to `now()` and its exit event to the save's
+    `eventType` and `eventId`, and inserts the next visit, numbered one more,
+    with the value, the machine, and `entered_at` `now()`. When both are the
+    same the save continues the visit and the hook writes no visit. A save
+    whose status is `done` or `stopped` ends the actor: after any new visit
+    it sets `exited_at` of the latest visit to `now()` where it is null,
+    and gives it no exit event. A migration of a running actor to a later
+    blueprint version restores the actor on the later version, through a
+    record that holds no event type, and saves the same or a mapped state
+    value with a new `machine`, so it starts a visit whose blueprint
+    commit changes and whose previous visit has no exit event. A
+    self-transition that re-enters the same state value continues the
+    visit; the event that caused it is linked to that visit.
+  exit-event: >-
+    The actor host gives each save `eventType`: the type of the last event
+    the root actor's machine took before the save was built, as XState's
+    inspection reports it with an `@xstate.event` whose actor is the root,
+    `xstate.init` excluded. The host keeps it on the actor's record across
+    saves and replaces it with each later event, so a save that rolls back
+    and is made again gives the same type. A record the host creates by
+    `start` or `restore` holds none until the root takes an event. A save
+    that changes the state value or the blueprint version therefore names
+    the event that changed it: the delivered event's `type` for a
+    delivery, `xstate.after.<after key>.<state node id>` for a root delay,
+    and `xstate.done.actor.<invoke id>` or `xstate.error.actor.<invoke id>`
+    for an invoked promise or callback's result. `eventId`, which the host
+    already gives a save that consumes an inbox row, is recorded beside it.
+  event-links: >-
+    When a save carries `eventId`, the hook inserts the `history_event`
+    row of the actor and that event id with the visit the actor was in
+    when it took the event: the latest visit before this save's new visit,
+    or null when the history holds no visit for the actor. It uses `INSERT
+    ... ON CONFLICT DO NOTHING`. The row commits with the consume, since
+    the store calls the save hooks inside the delivery's transaction before
+    the consume, so a consumed event always has its link, and a delivery
+    that rolls back leaves neither. A deadline row is an inbox row like
+    any other and is linked the same way.
+  commands: >-
+    The agent threads module calls its `probe` after the server answers a
+    command and before the invoking promise resolves, as `agent-threads`
+    states. The service's probe for it calls `history.commandAccepted`.
+    `commandAccepted` inserts the `history_command` row keyed by command
+    id, with the kind, the invocation's actor, invoke, and entry ids, the
+    environment, the thread and message ids, and the sequence, in its own
+    transaction, with `INSERT ... ON CONFLICT DO NOTHING`,
+    and `accepted_at` `now()`. The row commits before the promise resolves,
+    so the actor's save of the command's result always follows its row. A
+    crash after the server accepts a command and before its row commits
+    leaves the invoking state active in the saved snapshot; the restarted
+    promise sends the same command id, the server answers with the first
+    receipt, and the probe writes the row then. A crash after the row
+    commits and before the result's save restarts the promise, which
+    writes nothing more. A write that throws logs `history-write-failed`
+    with the actor and command ids and returns, so the history observes an
+    actor and never fails its invoke. A promise stopped by a state exit
+    while its command is in flight calls no probe, and its command has no
+    row. The commands the agent tools module sends for an escalation's
+    answer go through `startTurn`, which calls no probe; they are kept on
+    the escalation and are not an actor's commands.
+  turn-ids: >-
+    A command's `turnId` is not stored. The read takes, for a `turn-start`
+    command, the `turnId` of the actor's first `t3.turn.started` inbox row,
+    in sequence order, whose payload holds the command's `threadId` and
+    `messageId`, as `t3code-thread-events` defines them; it is absent
+    until that event reaches the actor's inbox, and for `thread-create`.
+  read: >-
+    `read(actorId)` loads the actor's snapshot with `store.loadSnapshot`
+    and returns undefined when there is none. Otherwise it reads the
+    actor's inbox rows with `store.actorInbox`, its visits ordered by
+    number, its event links, and its commands ordered by `accepted_at` and
+    command id, and assembles the body with the pure function in
+    `read.ts`. Each read is a sequence of synchronous statements on the
+    one connection, which no write interleaves. The read writes nothing.
+  completed-actors: >-
+    `GET /api/actors?status=completed` lists every actor whose stored
+    snapshot's status is `done` or `stopped`, read with
+    `store.endedSnapshots()`, in the summary the active list gives, with
+    `status` telling the two apart. It reads no history table, so an actor
+    that ended before history was recorded is listed.
+  actors-before-history: >-
+    History tables start empty when the `history` migration runs. An actor
+    that ended before then answers its summary and end from its last
+    snapshot, its output included, and every inbox row the store kept for
+    it, consumed and pending, each with its payload and with `visit` null;
+    it has no visits and no commands. An actor active across the migration
+    answers the same for the events it took before its first save after
+    the migration; that save records its first visit, entered at that
+    save's time, and the history is complete from then.
+  shared-types: >-
+    `packages/shared/src/actors-api.ts` holds the API's types and guards
+    for the console and the service: `ActorSummary` gains `status`;
+    `ActorHistory`, `StateVisit`, `ReceivedEvent`, `ActorCommand`,
+    and `ActorEnd` are the history's members; `isActorsResponse` checks
+    `status` and `isActorHistoryResponse` checks a history body, each
+    member as `actors-api` states; and `actorHistoryPath(actorId)` gives
+    `/api/actors/<actorId percent-encoded>/history`. The console's
+    `ConsoleOptions` gains `history: Pick<History, "read">`, and its store
+    pick gains `endedSnapshots`. The listener in
+    `packages/service/src/console/actors-api.ts` answers the list by its
+    `status` and the history through `history.read`, and builds every
+    summary with `actorSummaries`.
+  service-wiring: >-
+    The `history` part in `history/wiring.ts` opens the module from the
+    store and the log, after the `store` part and before `agent-threads`,
+    and adds `history` to `ServiceParts` and to `Service`. It migrates its
+    tables with `store.connection.migrate("history", historySteps)` when
+    it opens. It registers no stop: the store's stop closes its tables.
+    `serviceSaveHooks` appends `parts.history.saveHook`. The
+    `agent-threads` part passes a probe that calls the service probe
+    `command`, which `ServiceProbes` gains for fault tests, and then
+    `history.commandAccepted`, since the agent threads module takes its
+    probe when it opens. The
+    `console` part passes the store and `history` to `mountConsole`, whose
+    actors listener answers the two new requests, as `actors-api`
+    specifies; the console part mounts nothing new, since `mount` matches
+    `/api/actors` by exact prefix.
+  growth: >-
+    Event payloads are the store's inbox rows, which the router writes
+    whether or not history is kept, so history adds only its own rows: one
+    `history_event` link per consumed event, of the actor id, the event id,
+    and a visit number; one `history_visit` row per visit, of the actor id,
+    the machine key, the state value's JSON, and three times; and one
+    `history_command` row per accepted command, of its ids and two numbers.
+    The acceptance scenario test counts each kind of row and sums the byte
+    lengths of the columns of the actor's history rows and inbox rows
+    after the actor ends, and the counts are recorded here as the measured growth
+    per actor on the starter repository's default blueprint.
+  convergence: >-
+    The save hook run twice for one save writes one visit, since the
+    second run finds the visit it inserted with the same value and
+    machine, and one link, by its key; setting `exited_at` where it is
+    null keeps the first time. A save that rolls back after the hook ran,
+    by a later hook, the delivery probe, or the consume, rolls back the
+    hook's rows with it; the replayed delivery runs the hook again on the
+    same saved history and writes the same rows. A crash between an inbox
+    row's commit and its delivery's commit leaves the row pending and no
+    link; the drain after restart delivers it once and writes one link.
+    `commandAccepted` twice for one command id keeps the first row. The
+    migration twice runs nothing more.
+  errors: >-
+    A save hook that throws rolls back the save, as `actor-host` states;
+    the hook throws only what SQLite throws. `commandAccepted` never
+    throws. `read` propagates store and SQLite errors, and the listener
+    answers `500`. Inputs are trusted: the hook and the probe are called by
+    service code with values the actor host and the agent threads module
+    built.
+  dependencies: >-
+    No new third-party library. The module uses the store's connection and
+    `node:sqlite` through it.
+  tests: >-
+    Tests run against a real store file in a temporary directory with the
+    real router and actor host, and fixture blueprints of a generic domain;
+    the store is populated with other actors, inbox rows, and visits
+    before each test. Behaviours proved, each written red before green:
+    the migration produces `history-database-schema`; an actor's first
+    save records visit 1 with its value, machine, and entry time; an event
+    that changes the state value ends the visit with the event's type and
+    id and starts the next; an event that leaves the value unchanged
+    links to the current visit and writes no visit; a self-transition
+    that re-enters a state continues the visit; an invoked promise's
+    result exits a visit with `xstate.done.actor.<invoke id>` and no event
+    id; a root delay exits with its `xstate.after` type; a save with the
+    same value and another machine starts a visit with the new blueprint
+    commit and no exit event on the one before; a `done` save closes the
+    last visit and the read gives `end` with the output; a save whose
+    hooks run and whose transaction then rolls back, by a throwing
+    `saved` probe, leaves no visit and no link, and its replay writes one
+    of each; an accepted `thread-create` and `turn-start` each give one
+    command, and the turn's id once its `t3.turn.started` reaches the
+    inbox; `commandAccepted` twice keeps one row; a throwing write is
+    logged and does not reject; `read` of an unknown id is undefined; an
+    actor ended before the migration, built by writing its snapshot and
+    inbox rows before the history tables exist, reads its summary, end,
+    and events with `visit` null, and no visits or commands. Fault tests,
+    in a child Node process running the service that sends itself
+    `SIGKILL`, whose kill signal the parent asserts before it starts the
+    service again on the same file: a kill at the store's `sent` probe, after the
+    event's inbox row commits and before its delivery commits, after which
+    `GET /api/actors/{actorId}/history` lists the event once, consumed and
+    linked to one visit, and the store holds one `history_event` row for
+    it; and a kill from the service's `command` probe, after the fake T3 Code
+    server accepts a `turn-start` and before the history records it, after
+    which the history holds the command once and the server one turn.
+    The acceptance scenario test, beside `default-process.integration.test.ts`
+    and with its fixtures, drives a task actor on the starter repository's
+    default blueprint through intake, both card moves, and handoff against
+    the fake GitHub and fake T3 Code servers, reads `GET
+    /api/actors?status=completed` and the actor's history after it ends,
+    and finds each visit with the default blueprint's path and commit, the
+    `thread-create` and `turn-start` commands with the turn's id, and the
+    `github.project-item.field-changed` event of each card move with
+    `movedBy.confirmed` true and linked to the visit that took it. It
+    measures the growth the `growth` section records. Values are generic
+    and never drawn from Manifold's own domain.

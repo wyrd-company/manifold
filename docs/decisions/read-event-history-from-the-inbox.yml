@@ -1,0 +1,43 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - actor-history
+description: >-
+  An actor's history must show every routed event the actor received, with
+  its payload, so an operator can see which event an actor took a
+  transition on. The store already writes one inbox row per actor and
+  event, with the event id, topic, payload, and received time, sets its
+  consumed time in the transaction of the save that takes it, and never
+  deletes a row. Event payloads are the largest part of an actor's
+  history. Pruning old rows, of the inbox and of history alike, belongs to
+  one retention decision that is not yet taken.
+considered-options:
+  "1": >-
+    Copy each consumed event, payload included, into a history table in
+    the save's transaction, so history stands apart from the inbox.
+  "2": >-
+    Read each event from the store's inbox rows, and write only a link
+    from the actor and event id to the visit that took it, in the save's
+    transaction.
+  "3": >-
+    Read each event from the inbox rows with no link, placing it in a
+    visit by comparing its consumed time with the visits' times.
+decision-outcome:
+  chosen-option: 2
+  justification: >-
+    Option 2 keeps one record of each event, so the payload a blueprint
+    took and the payload an operator reads are the same row, and history
+    adds a few ids per event instead of a second payload. It answers the
+    events of actors that ended before history was kept, since their inbox
+    rows remain. Option 1 doubles the largest rows and gives two records
+    that must agree. Option 3 writes nothing, but the consumed time and a
+    visit's times come from separate clock reads, so an event taken in the
+    save that left a visit cannot be placed with certainty.
+expected-outcomes:
+  positive:
+    - An actor's events, payloads included, cost no storage beyond what the router already writes.
+    - The events of actors that ended before history was kept are readable.
+    - Each consumed event's visit is recorded in the transaction that consumes it.
+  negative:
+    - A retention rule that prunes consumed inbox rows prunes the same actors' event history; the two share one retention window.
+    - History reads an actor's events through the store's interface, so the store gains a read of every row of one actor.

@@ -8,16 +8,27 @@ openapi: 3.1.0
 info:
   title: Manifold actors API
   version: 0.1.0
-  description: The actors read endpoint of Manifold's API.
+  description: The actors read endpoints of Manifold's API.
 security: []
 paths:
   /api/actors:
     get:
-      operationId: listActiveActors
-      summary: List every active actor.
+      operationId: listActors
+      summary: List the active or the completed actors.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: >-
+            `active`, the default, lists active actors; `completed` lists
+            actors whose status is `done` or `stopped`.
+          schema:
+            type: string
+            enum: [active, completed]
+            default: active
       responses:
         "200":
-          description: Every active actor, newest saved first, then by actor id.
+          description: The selected actors, newest saved first, then by actor id.
           headers:
             Cache-Control:
               schema:
@@ -26,13 +37,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ActorsResponse"
+        "400":
+          description: A `status` with another value, or given more than once. The body is empty.
         "405":
-          description: A method other than GET.
+          $ref: "#/components/responses/MethodNotAllowed"
+  /api/actors/{actorId}/history:
+    get:
+      operationId: getActorHistory
+      summary: One actor's history, active or ended.
+      parameters:
+        - name: actorId
+          in: path
+          required: true
+          description: The actor id, percent-encoded as one path segment.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The actor's history.
           headers:
-            Allow:
+            Cache-Control:
               schema:
-                const: GET
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorHistoryResponse"
+        "404":
+          description: The store holds no snapshot for the id. The body is empty.
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
 components:
+  responses:
+    MethodNotAllowed:
+      description: A method other than GET.
+      headers:
+        Allow:
+          schema:
+            const: GET
   schemas:
     ActorsResponse:
       type: object
@@ -46,11 +89,14 @@ components:
     ActorSummary:
       type: object
       additionalProperties: false
-      required: [actorId, machine, states, savedAt]
+      required: [actorId, status, machine, states, savedAt]
       properties:
         actorId:
           type: string
           minLength: 1
+        status:
+          type: string
+          enum: [active, done, stopped]
         machine:
           type: string
           minLength: 1
@@ -58,11 +104,7 @@ components:
         blueprint:
           $ref: "#/components/schemas/BlueprintVersion"
         states:
-          type: array
-          items:
-            type: string
-            minLength: 1
-          description: Leaf state paths, keys from the root joined with `.`.
+          $ref: "#/components/schemas/LeafStatePaths"
         environment:
           type: string
         project:
@@ -72,8 +114,7 @@ components:
         portfolioItem:
           type: string
         savedAt:
-          type: string
-          format: date-time
+          $ref: "#/components/schemas/Time"
     BlueprintVersion:
       type: object
       additionalProperties: false
@@ -85,3 +126,151 @@ components:
         commit:
           type: string
           pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    LeafStatePaths:
+      type: array
+      items:
+        type: string
+        minLength: 1
+      description: Leaf state paths, keys from the root joined with `.`.
+    StateValue:
+      oneOf:
+        - type: string
+          minLength: 1
+        - type: object
+          additionalProperties:
+            $ref: "#/components/schemas/StateValue"
+    Time:
+      type: string
+      format: date-time
+      pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    ActorHistoryResponse:
+      type: object
+      additionalProperties: false
+      required: [history]
+      properties:
+        history:
+          $ref: "#/components/schemas/ActorHistory"
+    ActorHistory:
+      type: object
+      additionalProperties: false
+      required: [actor, visits, events, commands]
+      properties:
+        actor:
+          $ref: "#/components/schemas/ActorSummary"
+        visits:
+          type: array
+          items:
+            $ref: "#/components/schemas/StateVisit"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReceivedEvent"
+        commands:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActorCommand"
+        end:
+          $ref: "#/components/schemas/ActorEnd"
+    StateVisit:
+      type: object
+      additionalProperties: false
+      required: [visit, value, states, machine, enteredAt]
+      properties:
+        visit:
+          type: integer
+          minimum: 1
+        value:
+          $ref: "#/components/schemas/StateValue"
+        states:
+          $ref: "#/components/schemas/LeafStatePaths"
+        machine:
+          type: string
+          minLength: 1
+        blueprint:
+          $ref: "#/components/schemas/BlueprintVersion"
+        enteredAt:
+          $ref: "#/components/schemas/Time"
+        exitedAt:
+          $ref: "#/components/schemas/Time"
+        exitEvent:
+          type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type:
+              type: string
+              minLength: 1
+            eventId:
+              type: string
+              minLength: 1
+    ReceivedEvent:
+      type: object
+      additionalProperties: false
+      required: [eventId, type, topic, receivedAt, payload]
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          minLength: 1
+        topic:
+          type: string
+          minLength: 1
+        receivedAt:
+          $ref: "#/components/schemas/Time"
+        consumedAt:
+          $ref: "#/components/schemas/Time"
+        visit:
+          type: integer
+          minimum: 1
+        payload:
+          type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              minLength: 1
+    ActorCommand:
+      type: object
+      additionalProperties: false
+      required: [commandId, kind, environment, threadId, invokeId, entryId, acceptedAt]
+      properties:
+        commandId:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          minLength: 1
+          description: The implementation that sent the command, such as `thread-create` or `turn-start`.
+        environment:
+          type: string
+          minLength: 1
+        threadId:
+          type: string
+          minLength: 1
+        messageId:
+          type: string
+          minLength: 1
+        turnId:
+          type: string
+          minLength: 1
+        invokeId:
+          type: string
+          minLength: 1
+        entryId:
+          type: string
+          minLength: 1
+        acceptedAt:
+          $ref: "#/components/schemas/Time"
+    ActorEnd:
+      type: object
+      additionalProperties: false
+      required: [status, endedAt]
+      properties:
+        status:
+          type: string
+          enum: [done, stopped]
+        endedAt:
+          $ref: "#/components/schemas/Time"
+        output: {}

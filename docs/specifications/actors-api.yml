@@ -4,55 +4,129 @@ relationships:
   # design or another specification; `references` is the best fit.
   references:
     - operator-console
+    - actor-history
     - store-database-schema
+    - history-database-schema
+    - t3code-thread-events
+terms:
+  - actor-history
+  - state-visit
+  - inbox
 description: >-
-  Defines the actors read endpoint of Manifold's API: `GET /api/actors`,
-  which lists every active actor with its blueprint, current state, and
-  environment. `docs/specifications/actors-api.openapi.yml` is the
-  machine-readable definition. The Actors screen of the operator console
-  reads it, and any automation may.
+  Defines the actors read endpoints of Manifold's API: `GET /api/actors`,
+  which lists the active or the completed actors with their blueprint,
+  current or final state, and environment, and `GET
+  /api/actors/{actorId}/history`, which answers one actor's history.
+  `docs/specifications/actors-api.openapi.yml` is the machine-readable
+  definition. The operator console's Actors screens read them, and any
+  automation may.
 
-  The endpoint is mounted with the HTTP host's `mount` at the prefix
-  `/api/actors` and is always served without authentication. Access control
-  belongs to the deployment.
+  The endpoints are mounted with the HTTP host's `mount` at the prefix
+  `/api/actors` and are always served without authentication. Access
+  control belongs to the deployment. They change nothing.
 
-  The endpoint reads the store's active snapshots, the rows of
-  `store_snapshot` whose status is `active`, and changes nothing. An actor
-  is listed once for each active snapshot, child state machine actors
-  included. A snapshot whose status is `done` or `stopped`, and an errored
-  snapshot, is not listed.
-
-  The response body is `{ "actors": [...] }`, one actor summary per active
-  snapshot, ordered by `savedAt` newest first, then by `actorId`. A summary
-  holds:
+  Actor summary. A summary describes one stored snapshot, a row of
+  `store_snapshot`, and holds:
 
   - `actorId`: the actor's id.
+  - `status`: the snapshot's status, `active`, `done`, or `stopped`.
   - `machine`: the key the snapshot was saved with.
   - `blueprint`: `{ path, commit }` when `machine` is a blueprint version
     key, `<commit>:<path>`, and absent otherwise.
-  - `states`: the snapshot's current state as leaf state paths, the keys
-    from the root to each active leaf joined with `.`, in the order the
-    state value holds them. A snapshot in one atomic state has one path; a
-    parallel state has one path for each active leaf.
+  - `states`: the snapshot's state as leaf state paths, the keys from the
+    root to each active leaf joined with `.`, in the order the state value
+    holds them. A snapshot in one atomic state has one path; a parallel
+    state has one path for each active leaf.
   - `environment`, `project`, `issue`, `portfolioItem`: the string values of
     the same names at `context.manifold` in the snapshot. A value that is
     absent or is not a string is absent from the summary.
   - `savedAt`: when the snapshot was last saved, as an ISO 8601 UTC date and
-    time with milliseconds.
+    time with milliseconds. For an ended actor it is when the actor ended.
 
-  The answer is `200` with `Content-Type: application/json` and
-  `Cache-Control: no-store`. With no active actor, `actors` is empty. The
-  query string is ignored. A path under the prefix other than
-  `/api/actors` itself answers `404`. A method other than `GET` answers
-  `405` with `Allow: GET`. The list is not paged.
+  List. `GET /api/actors` answers `{ "actors": [...] }`. The `status`
+  query parameter selects the list: absent or `active`, one summary per
+  snapshot whose status is `active`; `completed`, one summary per
+  snapshot whose status is `done` or `stopped`. Either list is ordered by
+  `savedAt` newest first, then by `actorId`, and is not paged. Errored
+  snapshots are not listed. A `status` with any other value, or given more
+  than once, answers `400` with an empty body. Other query parameters are
+  ignored.
+
+  History. `GET /api/actors/{actorId}/history` answers `{ "history":
+  {...} }` for an actor the store holds a snapshot for, whatever its
+  status, and `404` with an empty body for any other id, an actor with
+  only an errored snapshot included. The segment is percent-decoded once
+  before it is compared. The history holds:
+
+  - `actor`: the actor's summary.
+  - `visits`: the actor's state visits in the order they were entered,
+    each `{ visit, value, states, machine, blueprint, enteredAt,
+    exitedAt, exitEvent }`. `visit` is its number from 1. `value` is the
+    state value and `states` its leaf state paths, as in a summary.
+    `machine` and `blueprint` are as in a summary, for the blueprint
+    version the visit ran on. `enteredAt` and `exitedAt` are ISO 8601 UTC
+    times with milliseconds; `exitedAt` is absent for the visit an active
+    actor is in. `exitEvent` is `{ type, eventId }` for the event the save
+    that left the visit took, `eventId` absent when that save consumed no
+    inbox row; it is absent for a visit left by a save that took no event,
+    such as a migration to a later blueprint version, and for the visit
+    the actor ended in. A visit whose blueprint commit differs from the
+    visit before it, with the same `blueprint.path`, is a migration.
+  - `events`: every routed event the store holds in the actor's inbox, in
+    the order it was received, each `{ eventId, type, topic, receivedAt,
+    consumedAt, visit, payload }`. `type` is the payload's `type`;
+    `payload` is the event as routed, a deadline's included. `receivedAt`
+    and `consumedAt` are ISO 8601 UTC times with milliseconds;
+    `consumedAt` is absent for an event the actor has not taken. `visit`
+    is the number of the visit the actor was in when it took the event,
+    and is absent for a pending event and for an event taken before the
+    actor's first recorded visit.
+  - `commands`: every T3 Code command the server accepted for the actor,
+    in the order accepted, then by command id, each `{ commandId, kind,
+    environment, threadId, messageId, turnId, invokeId, entryId,
+    acceptedAt }`. `kind` is the implementation that sent it,
+    `thread-create` or `turn-start`. `messageId` is the user message id a
+    `turn-start` carries, and absent otherwise. `turnId` is the `turnId`
+    of the first `t3.turn.started` event in the actor's inbox whose
+    `threadId` and `messageId` are the command's, and absent until one is
+    there and for a `thread-create`. `invokeId` and `entryId` name the
+    invocation that sent it. `acceptedAt` is when Manifold recorded the
+    server's acceptance.
+  - `end`: absent for an active actor; for an ended one `{ status,
+    endedAt, output }`: `status` `done` or `stopped`, `endedAt` the
+    summary's `savedAt`, and `output` the snapshot's `output` when it has
+    one.
+
+  An actor that ended before the history tables existed answers its
+  summary, its end, and its events, each consumed event with no `visit`;
+  its `visits` and `commands` are empty. An actor active then has visits
+  and commands from its first save after them.
+
+  Every answer is `200` with `Content-Type: application/json` and
+  `Cache-Control: no-store`, or the empty-bodied status stated. A path
+  under the prefix other than `/api/actors` and
+  `/api/actors/{actorId}/history` answers `404`. A method other than
+  `GET` answers `405` with `Allow: GET`. A read that throws answers `500`
+  with an empty body.
 format: openapi
 validation-criteria: >-
   `docs/specifications/actors-api.openapi.yml` is a valid OpenAPI 3.1
   document. A test in `packages/service` saves snapshots in a store,
   including one in a parallel state, one whose machine is not a blueprint
-  version key, one with no `context.manifold`, and one that is `done`;
-  requests `GET /api/actors` without authentication through the service's
-  HTTP host; and checks that the body validates against the response schema in
-  the OpenAPI document, lists exactly the active snapshots in the order
-  stated, and gives each summary the fields stated. The same test checks
-  the `405` and the `404` for a sub-path.
+  version key, one with no `context.manifold`, one that is `done` with an
+  output, one that is `stopped`, and one with only an errored snapshot;
+  requests the endpoints without authentication through the service's
+  HTTP host; and checks that each body validates against its response
+  schema in the OpenAPI document. The list test checks that the default
+  and `active` lists hold exactly the active snapshots and `completed`
+  exactly the `done` and `stopped` ones, in the order stated, with each
+  summary's fields, and the `400` for an unknown and a repeated `status`.
+  The history test drives an actor through visits, a self-transition, an
+  invoked promise's result, a migration-shaped save with a new machine, a
+  `thread-create`, a `turn-start` and its `t3.turn.started`, a pending
+  event, and its end, and checks each member stated above; it also reads
+  an actor whose snapshot and inbox rows were written before the history
+  tables, and an actor id holding `/` given percent-encoded. The same tests check
+  the `404` for an unknown id, an errored-only actor, and another
+  sub-path, and the `405`. Fixture values are generic and never drawn
+  from Manifold's own domain.

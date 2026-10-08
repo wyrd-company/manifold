@@ -56,6 +56,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **account** a user profile that provides access to an artificial intelligence platform, tracks usage limits or subscription billing such as Anthropic, Cursor, GitHub, OpenAI, Opencode, OpenRouter, Command Code, X-AI, etc.
 - **actor** a state machine, promise, callback, observer, or transition instance.
 - **actor host** the service module that creates, restores, and saves state machine actors for the router, and derives each actor's subscription.
+- **actor history** what Manifold keeps of what one actor did, for as long as the store keeps it: its state visits, the routed events it received with their payloads, the T3 Code commands it sent, and its end.
 - **actual** exact usage recorded for a task actor from provider session data.
 - **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
 - **allocation** a guaranteed percentage of a parent's capacity assigned to a portfolio item.
@@ -92,7 +93,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **harness plugin** the MCP server the host CLI serves to each provider T3 Code runs, giving the agent the tools to hand off and escalate.
 - **holder** a task actor holding a token from a gate.
 - **implementation** a named piece of code a blueprint binds: actor logic, an action, a guard, or a delay.
-- **inbox** the per-actor store of routed events not yet consumed.
+- **inbox** the per-actor store of routed events, each pending until the actor consumes it and kept after.
 - **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
 - **invocation** the identity of an invoked implementation: its actor id, its invoke id, and the entry id of the state entry that invoked it.
 - **issue** a way to track tasks related to a repository on GitHub
@@ -122,7 +123,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **state entry** one entry of an actor into a state, named by an entry id that a replay reproduces and a re-entry changes.
 - **state machine** a declarative stateful actor, built from a blueprint.
 - **state machine actor** an actor running a blueprint.
-- **state visit** one run of a state machine actor's saves with the same state value, from the save that entered it until the next save with another value.
+- **state visit** one run of a state machine actor's saves with the same state value and blueprint version, from the save that entered it until the next save with another value or version.
 - **stop stage** one of the ordered points at which the service's stop closes what wiring parts registered, the latest registered first within a stage.
 - **subscription** (events) the topics an actor hears and the event types it takes, derived from its snapshot and its blueprint.
 - **T3code project** means an environment-local workspace record rooted at a directory.

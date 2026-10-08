@@ -1,4 +1,5 @@
 $schema: https://refinery.systems/ontology/term
 title: Inbox
 description: >-
-  The per-actor store of routed events not yet consumed.
+  The per-actor store of routed events, each pending until the actor
+  consumes it and kept after.

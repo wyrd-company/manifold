@@ -1,0 +1,66 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables these are.
+  realizes:
+    - actor-history
+  references:
+    - store-database-schema
+terms:
+  - actor-history
+  - state-visit
+  - inbox
+description: >-
+  Defines the tables the history module holds in Manifold's store
+  database. `docs/specifications/history-database-schema.sql` is the
+  machine-readable definition: the schema that the module's migration
+  steps produce. The module's owner name is `history`, and every table and
+  index it creates is named `history_<name>`. Its steps are applied by the
+  store's `migrate("history", steps)`; the module never runs DDL itself.
+  Step 1 creates every table and index here. Steps are append-only: an
+  applied step never changes, a change to the tables is a new step, and
+  this file is rewritten to the schema all steps produce.
+
+  Visits. `history_visit` holds one row per state visit of an actor,
+  numbered from 1 in the order the visits were entered. `machine` is the
+  blueprint version key the visit's saves were made with, and
+  `state_value` the canonical JSON of the snapshot's state value, keys
+  sorted. `entered_at` and `exited_at` are milliseconds since the Unix
+  epoch; `exited_at` is null for the visit an active actor is in.
+  `exit_event_type` is the type of the event the save that left the visit
+  took, and `exit_event_id` its inbox event id when that save consumed an
+  inbox row. Both are null for a visit left by a save that took no event,
+  such as a migration to a later blueprint version, and for the visit
+  closed by the actor's end. Only `exited_at` and the exit event of an
+  actor's latest visit are ever set after its insert, and each only from
+  null.
+
+  Events. `history_event` holds one row per inbox event an actor consumed,
+  keyed by the actor id and event id of the store's `store_inbox` row,
+  which keeps the event's topic, payload, and received and consumed times.
+  `visit` is the visit the actor was in when it took the event, or null
+  for an event taken before the actor's first recorded visit. A row is
+  never changed.
+
+  Commands. `history_command` holds one row per T3 Code command the server
+  accepted for an actor's invoke, keyed by command id. `kind` is the name
+  of the implementation that sent it, such as `thread-create` or
+  `turn-start`. `invoke_id` and `entry_id` are the invocation's, as
+  `actor-host` defines them. `message_id` is the user message id a
+  `turn-start` carries, and null for other kinds. `sequence` is the
+  server's answer to the command, and `accepted_at` the time the module
+  recorded it. A row is never changed.
+
+  Retention. No row is deleted. Every row stays for the life of the store
+  file.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/history-database-schema.sql` runs without error on
+  an empty SQLite database with `foreign_keys = ON`. A test applies the
+  module's exported migration steps in order to an empty database and
+  compares the `type`, `name`, `tbl_name`, and `sql` of every
+  `sqlite_schema` row whose name starts with `history_` with the rows this
+  file produces on a second empty database, with each run of whitespace in
+  `sql` read as one space; they are equal. A visit with an exit event and
+  no `exited_at`, an exit event id with no exit event type, and an event
+  link to a visit that does not exist each fail a constraint.

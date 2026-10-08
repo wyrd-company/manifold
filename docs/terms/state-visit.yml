@@ -5,7 +5,10 @@ relationships:
   related-to:
     - usage-intake
     - usage-tables
+    - actor-history
+    - history-database-schema
 title: State visit
 description: >-
-  One run of a state machine actor's saves with the same state value,
-  from the save that entered it until the next save with another value.
+  One run of a state machine actor's saves with the same state value and
+  blueprint version, from the save that entered it until the next save
+  with another value or version.
