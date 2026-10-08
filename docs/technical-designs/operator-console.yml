@@ -78,7 +78,7 @@ objective: >-
   It lands on Overview: the active actors and which are held, everything
   that waits on the operator (open escalations, held actors, paused
   environments) with a link to where each is resolved, the budget source
-  account closest to its limit, each top-level portfolio item's budget,
+  account closest to its limit, each portfolio item's budget,
   and how many environments are connected, every number from a read the
   service already serves.
 background:
@@ -3630,12 +3630,15 @@ proposed-design:
     N scheduled threads" as the detail, with no time, since the seam holds
     no pause time. The link is the item's `target`: "Open task" to the Task
     page, where the escalation is answered; "Open blueprint" to the
-    blueprint editor of the gate's blueprint path; "Open actors" to Actors;
+    blueprint editor of the gate's blueprint path; "Open actors" to Actors,
+    which the Rebase step points at the Actors screen's actor page when
+    that page has merged;
     "Open board" to Board; "Open environments" to Environments. Overview
     answers no escalation and changes no environment.
   item-budgets: >-
     `ItemBudgets` shows one row per entry of `itemBudgets` of the portfolio
-    read: the item title, the account and `windowLabel`, a meter of the
+    read, in its order: the item title, indented 16px for each level of
+    `depth`, the account and `windowLabel`, a meter of the
     share capped at 100%, warning with a "Near limit" badge after it at 85%
     or more, and "<used> of <amount> · <share>" with `formatAmount` in the
     account's unit and `formatPercent`. An entry with no account shows "No
@@ -3665,6 +3668,7 @@ proposed-design:
     export interface ItemBudget {
       readonly itemId: string;
       readonly title: string;
+      readonly depth: number; // 0 for a top-level item
       readonly usage?: {
         readonly account: PortfolioAccount;
         readonly used: number; // actual plus outstanding
@@ -3709,8 +3713,8 @@ proposed-design:
     ```
 
     `EnvironmentSummary` is the environment entry of the environment
-    control seam. A read that failed or has not answered is `undefined`,
-    and contributes nothing.
+    control seam. A read whose latest result is `failed`, or that has not
+    answered, is `undefined`, and contributes nothing.
 
     `closestToLimit` considers each declared account with a `window` whose
     `capacity` is above 0; its share is `used` over `capacity` times 100,
@@ -3718,8 +3722,11 @@ proposed-design:
     the read's order among equal shares. `count` is the number of declared
     accounts.
 
-    `itemBudgets` takes the items whose `parent` is `null` and that are not
-    archived, in the read's order, an Other included. Its usage is the
+    `itemBudgets` takes every item that is not archived, sub-items and
+    Others included, in the read's order, which is depth first, so a
+    sub-item follows its parent. `depth` is the number of ancestors. A
+    sub-item has its own allocations and meter, so a sub-item near its
+    limit shows "Near limit" whatever its parent's share. Its usage is the
     first entry of Portfolio's `currentUsage(item)`, the allocation with
     the greatest share of its guarantee amount, with the account from the
     read's `accounts`; an item with no allocation whose amount is above 0
@@ -3778,16 +3785,22 @@ proposed-design:
     portfolio read's credit of an account's current window, which converges
     as `portfolio-convergence` states, and it keeps nothing in browser
     storage. A read that runs twice answers twice from the service as it
-    is, and a read that fails leaves the last good answer in the cache and
-    the alert on its part.
+    is. The clients resolve a failure as a `failed` result, as every
+    console client does, so a failed read replaces the cached answer under
+    its key: its part shows the alert, its tile shows "—", and the joins
+    read it as `undefined` until a read answers `ok` again. Overview keeps
+    no earlier answer of its own, so a screen that shares the key and
+    Overview always show the same result.
   overview-tests: >-
     Each behavior is red before green, and tests go through public
     interfaces. In `packages/console`, unit tests cover `closestToLimit`
     (the greatest share, the first of equal shares, a share over 100, an
     undeclared account, an account with no window, a window of capacity 0,
-    no account, and `count`); `itemBudgets` (top-level items only, an
+    no account, and `count`); `itemBudgets` (every level in the read's
+    order with its depth, an archived item and the sub-items of an
     archived item absent, an Other, an item with no allocation amount, a
-    share of exactly 85 near and of 84.99 not); `activeActorRows` (a task
+    share of exactly 85 near and of 84.99 not, and a sub-item at 85% near
+    under a parent at 40% not); `activeActorRows` (a task
     actor, an actor that is not a task, an actor held by its summary, an
     actor held by an open `held-actor` escalation, and an undefined tasks
     read); `currentThread`; `elapsedLabel` at each boundary;
@@ -3806,7 +3819,8 @@ proposed-design:
     dismissed, and a child actor that is not a task; a thread with a `url`
     on the first task; two declared accounts, one whose window is 85% used,
     and items `alpha` and `beta`, with `alpha`'s usage 85% of its guarantee
-    amount; and two environments, one connected and one paused. Until the
+    amount, and `beta` below 85% with a sub-item `beta-one` at 85% of its
+    own guarantee amount; and two environments, one connected and one paused. Until the
     environment control seam merges, the environments endpoint is a
     stand-in listener at `/api/environments` answering the fixture; the
     rebase replaces it with the seam's module and pauses the second
@@ -3817,11 +3831,20 @@ proposed-design:
     connected" with "1 paused"; the held row's "Held"; the first row's
     "Open thread" `href`; the needs-attention titles in order, with "Open
     task" on the escalation opening its Task page; `alpha`'s row with
-    "Near limit" and its amounts in dollars; and `beta`'s with no badge. It
+    "Near limit" and its amounts in dollars; `beta`'s with no badge; and
+    `beta-one`'s row, indented under `beta`, with "Near limit". It
     then raises a second escalation, presses "Refresh", and reads Needs
     attention 4. A second case answers `500` from the environments
     endpoint and reads the Environments tile "—", the alert in Needs attention
-    above its escalation and held actor, and every other part drawn. Fixture
+    above its escalation and held actor, and every other part drawn. A
+    third case opens `/console/` with every endpoint answering, reads
+    Environments "1 of 2 connected" and Needs attention 3, then has the
+    environments endpoint answer `500`, presses "Refresh", and reads the
+    Environments tile "—", Needs attention 2 with "1 escalation · 1 held",
+    no paused item, the environments alert with "Try again", and the
+    other tiles, the table, and Budget unchanged; with the endpoint
+    answering again, "Try again" restores "1 of 2 connected" and Needs
+    attention 3. Fixture
     values are generic and never drawn from Manifold's own domain.
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It

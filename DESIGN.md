@@ -390,7 +390,9 @@ The shell reference screen. From top to bottom:
   detail, the time it has waited in muted 12px text, and one outline link
   button. With no item, the empty state "Nothing needs attention",
   "Escalations, held actors, and paused environments appear here."
-- Budget: one row per top-level portfolio item. Each row has the item title,
+- Budget: one row per portfolio item that is not archived, sub-items
+  included, in Portfolio's order. A sub-item's title is indented 16px per
+  level. Each row has the item title,
   the account and window ("acct-a · Weekly") in muted text, a meter, and
   "<used> of <amount> · 85%" under it. At 85% or more the fill changes to
   warning and a "Near limit" badge follows the meter. An item with no
