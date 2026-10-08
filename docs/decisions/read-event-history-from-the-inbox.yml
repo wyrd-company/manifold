@@ -7,10 +7,10 @@ description: >-
   its payload, so an operator can see which event an actor took a
   transition on. The store already writes one inbox row per actor and
   event, with the event id, topic, payload, and received time, sets its
-  consumed time in the transaction of the save that takes it, and never
-  deletes a row. Event payloads are the largest part of an actor's
-  history. Pruning old rows, of the inbox and of history alike, belongs to
-  one retention decision that is not yet taken.
+  consumed time in the transaction of the save that takes it. Event
+  payloads are the largest part of an actor's history. Retention removes
+  eligible ended actors' consumed inbox rows and their history links in
+  one transaction under one history window, keeping their visits.
 considered-options:
   "1": >-
     Copy each consumed event, payload included, into a history table in

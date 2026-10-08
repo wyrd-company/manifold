@@ -30,30 +30,11 @@ objective: >-
   converges on the next start.
 background:
   current-design: >-
-    Each module is built and tested alone. `loadServiceConfiguration` loads
-    the file, `openStore` opens the database, `startRouter` resumes
-    delivery, `openProcessRepository` and `pull` keep the clone,
-    `createBlueprintLoader` builds machines from a revision, `openPortfolio`
-    and `apply` keep the declaration in force, and `startGitHubSource` and
-    `startT3CodeSource` publish events. The GitHub source exports a
-    `requestListener` and calls a `ProcessRepositoryTrigger` on a push and
-    at each sweep.
-  problems:
-    - >-
-      No process starts the modules together, so a push reaches the
-      process repository and no loader, and the GitHub source's listener is
-      served by nothing.
-    - >-
-      A pull publishes the new commit before any loader reads it. A crash
-      between the two leaves a current commit whose portfolio declaration
-      is not in force.
-    - >-
-      Modules of later waves serve HTTP endpoints and start beside these
-      ones, and each needs one place to join.
-    - >-
-      When every module's start, stop, endpoints, and late references are
-      written in one function, two tasks that each add a module edit the
-      same lines, and a reader traces one module through all of them.
+    `startService` opens modules through an ordered list of wiring parts.
+    Each part mounts its endpoints and registers its stop stage. Revisions
+    apply declarations and load blueprints before intake and migration
+    use them. The router restores delivery from the store before sources
+    publish live events. Stop closes registered modules in stage order.
 design-challenges:
   order: >-
     Every live event must reach an actor after its pending rows, so no

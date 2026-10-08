@@ -1,5 +1,9 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
+  contextualized-by:
+    - keep-accounting-records-through-retention
+  mitigates:
+    - retained-store-growth
   related-to:
     - store
     - actor-history
@@ -32,25 +36,18 @@ objective: >-
   escalation, or a posted call's attribution depends on.
 background:
   current-design: >-
-    The store keeps every inbox row after its delivery consumes it, and the
-    history module reads an actor's events from those rows, as
-    `read-event-history-from-the-inbox` records. The history module keeps
-    every visit, event link, and command of every actor, ended ones
-    included. The router keeps one `router_source_event` row per accepted
-    source event, so a later publish of it is a replay. The gates module
-    keeps one `gates_evaluation` row per comparator call, with the whole
-    population in its input, so a grant can be replayed. No row of these
-    tables is deleted.
+    History reads events from inbox rows and stores visits, event links,
+    and commands. The router records accepted source events for duplicate
+    detection. Gates record comparator inputs for replay. Retention
+    removes eligible events, links, commands, and evaluations within the
+    configured windows. Snapshots, visits, usage, ledger entries, and
+    token rows stay for the life of the store.
   problems:
     - >-
-      The inbox, the history tables, the source events, and the gate
-      evaluations grow with every event, every actor, and every grant round
-      for the life of the file.
-    - >-
-      A row of one module is kept for a row of another: an event's visit
-      link for its inbox row, a held token for its evaluation, a source
-      event for the duplicate it stops. Deleting one by age alone breaks
-      what reads the other.
+      Event payloads and comparator inputs grow with routed events and
+      grant rounds. Rows of one module can protect rows of another:
+      a held token needs its evaluation and a running actor needs its
+      inbox and history. Age alone does not determine what is eligible.
 design-challenges:
   dependencies: >-
     Each module owns its tables and never reads another's. Pruning must

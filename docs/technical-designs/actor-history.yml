@@ -1,5 +1,7 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
+  contextualized-by:
+    - share-state-visits-between-history-and-usage
   related-to:
     - actor-host
     - store
@@ -17,7 +19,8 @@ terms:
   - retention-window
 objective: >-
   Keep the actor history of every actor the store has run, ended ones
-  included until their retention window passes, and answer it through the actors API, so that an operator can
+  included, with consumed events and commands kept within their retention
+  window, and answer it through the actors API, so that an operator can
   see which event an actor took a transition on and with what payload, and
   so that the console can draw an actor's timeline and sequence diagram and
   list completed actors, and so that the usage module attributes each
@@ -29,32 +32,13 @@ objective: >-
   next save.
 background:
   current-design: >-
-    The store keeps every inbox row after its delivery consumes it, with
-    the event id, topic, payload, and received and consumed times, and it
-    keeps the last snapshot of an actor that ended, with status `done` or
-    `stopped`. The usage intake module attributes each call to the actor
-    and state visit that made it. The agent threads module derives every
-    T3 Code command id from the invocation that sends it, and the
-    environment source keeps each followed thread's latest state and each
-    project an actor created, not the commands sent for them. `GET
-    /api/actors` lists only active snapshots.
-  problems:
-    - >-
-      Nothing ties a consumed inbox row to the state the actor was in when
-      it took the event, or to the transition it caused, so an operator
-      cannot show why an actor moved.
-    - >-
-      No record holds the blueprint version of each state visit or the
-      event a visit exited on.
-    - >-
-      No record holds which T3 Code commands an actor sent; command ids can
-      be derived again, but not whether the server accepted them or when.
-    - >-
-      Usage needs the visit each call was spent in, and an operator reads
-      an actor's usage beside its visits, so both need one numbering of
-      visits.
-    - >-
-      No endpoint answers an actor that ended.
+    The store keeps routed events in the inbox and the last snapshot of
+    every actor. History records state visits, links consumed events to
+    those visits, and records T3 Code commands and their acceptance.
+    Usage intake reads the same visit numbers and entry times. The actors
+    API lists active and completed snapshots and reads their history;
+    retention removes eligible ended actors' consumed events and commands
+    while keeping their snapshots and visits.
 design-challenges:
   transaction: >-
     A history row for a consumed event or an entered state must commit in
@@ -325,19 +309,16 @@ proposed-design:
     snapshot's status is `done` or `stopped`, read with
     `store.endedSnapshots()`, in the summary the active list gives, with
     `status` telling the two apart. It reads no history table, so an actor
-    that ended before history was recorded is listed.
-  actors-before-history: >-
-    History tables start empty when the `history` migration runs. An actor
-    that ended before then answers its summary and end from its last
-    snapshot, its output included, and every inbox row the store kept for
-    it, consumed and pending, each with its payload and with `visit` null;
-    it has no visits and no commands. An actor active across the migration
-    answers the same for the events it took before its first save after
-    the migration; that save records its first visit, entered at that
-    save's time, and the history is complete from then.
+    with no history rows is listed.
+  snapshots-without-history: >-
+    An actor with a stored snapshot and no history rows answers its summary,
+    end, and output from the snapshot, and every retained inbox row with
+    its payload and `visit` null. It answers no visits or commands. A save
+    creates the first visit when none exists, entered at that save's time;
+    events without a recorded visit retain `visit` null.
   shared-types: >-
     `packages/shared/src/actors-api.ts` holds the API's types and guards
-    for the console and the service: `ActorSummary` gains `status`;
+    for the console and the service: `ActorSummary` carries `status`;
     `ActorHistory`, `StateVisit`, `ReceivedEvent`, `ActorCommand`,
     and `ActorEnd` are the history's members, beside its optional
     `prunedAt`; `ActorCommand` a union on
@@ -347,8 +328,8 @@ proposed-design:
     `status` and `isActorHistoryResponse` checks a history body, each
     member as `actors-api` states; and `actorHistoryPath(actorId)` gives
     `/api/actors/<actorId percent-encoded>/history`. The console's
-    `ConsoleOptions` gains `history: Pick<History, "read">`, and its store
-    pick gains `endedSnapshots`. The listener in
+    `ConsoleOptions` carries `history: Pick<History, "read">`, and its store
+    pick includes `endedSnapshots`. The listener in
     `packages/service/src/console/actors-api.ts` answers the list by its
     `status` and the history through `history.read`, and builds every
     summary with `actorSummaries`.
@@ -479,8 +460,8 @@ proposed-design:
     links and commands and no other actor's, keeps every one of its
     visits, and its read then answers its summary, end, the same visits,
     pending events, `prunedAt`, and empty commands; an
-    actor ended before the migration, built by writing its snapshot and
-    inbox rows before the history tables exist, reads its summary, end,
+    actor with no history rows, built by writing only its snapshot and
+    inbox rows, reads its summary, end,
     and events with `visit` null, and no visits or commands. Fault tests,
     in a child Node process running the service that sends itself
     `SIGKILL`, whose kill signal the parent asserts before it starts the

@@ -1,5 +1,8 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
+  mitigates:
+    - github-mirror-read-scale
+    - shared-machine-check-contention
   related-to:
     - store
     - escalations
@@ -85,28 +88,12 @@ objective: >-
   service already serves.
 background:
   current-design: >-
-    `packages/console` holds a `package.json` and a README, and no framework.
-    `DESIGN.md` is the console's visual design. The service has one HTTP host
-    on which a module mounts request listeners under a path prefix with
-    `mount(pathPrefix, listener)`. Access control belongs to the deployment. The
-    store lists the active snapshots with `activeSnapshots()`, and the
-    engine keeps an actor's identity at `context.manifold` in its snapshot.
-  problems:
-    - >-
-      No package builds a user interface, so no screen can be built and no
-      operator can see what Manifold runs.
-    - >-
-      The service has no listener that serves the console's files, and no
-      endpoint that answers which actors are running.
-    - >-
-      A blueprint changes only by a push to the process repository from a
-      host with a clone, and its author sees the lint's findings only after
-      running `manifold-host blueprint lint` or after the service loads it.
-    - >-
-      A graph that only shows the text is hard to read and cannot be
-      edited: its colors are faint, its layout lets nodes and labels
-      overlap, and selecting a state leads to the YAML rather than to
-      controls for it, so what an invoke's `src` names is not visible.
+    `packages/console` builds the React console. `DESIGN.md` defines its
+    visual design. The service's HTTP host serves the built files and
+    mounts each module's API under its path prefix. Screens read actors,
+    usage, GitHub mirror state, and declarations through those APIs.
+    Draft edits are linted in the console and saved as commits and pushes
+    to the process repository. Access control belongs to the deployment.
 design-challenges:
   client-routes: >-
     The console's routes exist only in the browser. A reload or a pasted
@@ -116,10 +103,9 @@ design-challenges:
     The service serves files that the console package builds, and the
     service's tests drive the built console. The build and test order must
     follow from the package graph, with no step a person remembers.
-  shell-before-screens: >-
-    Most screens are built in later tasks. The shell must give
-    each its route, its navigation entry, and its title now, so that a later
-    task replaces one component and touches nothing else.
+  screen-routes: >-
+    The shell gives every screen its route, navigation entry, and title.
+    Each screen's content component owns its interaction and reads.
   lint-parity: >-
     The editor must mark the same findings, at the same places, as the
     service reports when it loads the text and as `manifold-host blueprint
@@ -288,13 +274,6 @@ proposed-design:
     class on the root element. `public/theme.js`, loaded before the
     stylesheet, sets the class from the kept choice before the first paint,
     so that a reload in dark theme does not flash light.
-  empty-screens: >-
-    The Settings tab General shows
-    their title row and the empty state from `DESIGN.md`: a dashed border,
-    the screen's icon, the title "Nothing here yet", and the line "This
-    screen is not built in this version of Manifold." A later task
-    replaces the screen's `<Name>Content` component and changes nothing in
-    the shell.
   settings-general: >-
     The General tab of Settings shows its heading and the shared empty
     state: "Nothing here yet", "This screen is not built in this version

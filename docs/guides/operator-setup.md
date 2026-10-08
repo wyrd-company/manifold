@@ -481,7 +481,7 @@ and ntfy services to exercise intake and recovery with generic process
 declarations. The archive
 smoke verifies a standalone service and proxy-facing responses; it does not
 claim real GitHub or real T3 Code acceptance. For live acceptance, use the shared
-live test environment with the wave orchestrator's coordination, then repeat
+live test environment with its owner's coordination, then repeat
 this section against its Project and record the actor returned by the API.
 
 ## 13. When something is wrong

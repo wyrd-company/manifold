@@ -40,9 +40,9 @@ background:
     over items with waiting work, and pacing as a wrapper.
   problems:
     - >-
-      The store and the ledger share one SQLite database file, and the store
-      is built in parallel, so the ledger needs a seam that does not depend
-      on the store module.
+      The store and ledger share one SQLite database file through
+      `StoreConnection`, so ledger operations can join the caller's
+      transaction without reading store-owned tables.
     - >-
       A gate writes a token and its reservation in one transaction, so a
       ledger write must join a transaction the caller already holds.

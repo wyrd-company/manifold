@@ -40,28 +40,14 @@ objective: >-
   not only inside the test suite.
 background:
   current-design: >-
-    The service package's `build` emits `dist/main.js`, and
-    `node dist/main.js <configuration-file>` starts the assembled service
-    from a checkout whose `node_modules` pnpm installed for the workspace.
-    The host CLI compiles to one Bun binary per target with
-    `task build:targets`. Every module runs inside the test suite against
-    fakes of GitHub and T3 Code. The service configuration specification
-    holds a short inline example of three sections.
-  problems:
-    - >-
-      The service runs only from a developer's checkout. It reads
-      `node:sqlite`, a native decision engine whose binary differs per
-      platform, a WebAssembly file, a worker file, and the console's static
-      files by module resolution, so no single file can be copied to
-      another machine and started.
-    - >-
-      No document tells an operator how to create the GitHub App, the
-      organization hook and its events, the T3 Code token, the ntfy
-      destinations, the process repository, or the proxy that admits
-      GitHub, and an operator who guesses exposes the whole API.
-    - >-
-      The inline example covers three of ten sections, and no test shows
-      that it loads.
+    The service archive contains the built Node entry point, its runtime
+    dependencies, native binaries for its Linux target, workers, bundled
+    blueprints, and console files. The host CLI is a Bun binary per
+    supported target. The operator setup guide and the complete service
+    configuration example describe the deployment. The upgrade script
+    prepares, swaps, and rolls back complete install directories while
+    keeping configuration, credentials, process repository, and store in
+    the separate deployment directory.
 design-challenges:
   native-binaries: >-
     The decision engine ships one optional package per platform. An archive
@@ -252,9 +238,9 @@ proposed-design:
     each origin; another completed recovery with the same end has trees
     equal to the started ones and a deployment unchanged byte for byte. The
     smoke stops a run at an operation by putting a directory first on the
-    script's `PATH` that holds a stand-in for each command the script
+    script's `PATH` that holds a test wrapper for each command the script
     mutates the install directory with (`mv`, `rm`, `rmdir`, `mkdir`, and
-    `tar`): each stand-in counts its calls in a file the smoke names, runs
+    `tar`): each test wrapper counts its calls in a file the smoke names, runs
     the real command, and on the call the smoke selects sends `SIGKILL` to
     the script's shell; stopped during a recursive removal, it removes one
     entry of its target first, and during the extraction, it removes one
@@ -297,14 +283,12 @@ proposed-design:
     comment naming the section's schema file, so no default is restated
     in a second place. Every value the operator sets carries a comment
     that says what it is and where the operator gets it. A section that
-    joins the root in a later task joins the example in the same change,
-    and the test below fails until it does. Account capacity is declared in
+    joins the root schema also joins the example, and the example test
+    verifies that every section is represented. Account capacity is declared in
     the process repository's `accounts.yml`, not here, so it adds no
     section. The `agentTools` section, which `agent-tools-configuration`
-    specifies, is in the example at its defaults; the example test passes
-    once that section is in the root schema, which the merge order puts
-    before this design's implementation. The specification's own inline example is replaced by a
-    reference to this asset.
+    specifies, is in the example at its defaults. The service configuration
+    specification references this complete example asset.
   example-test: >-
     A test in `packages/service/src/service-configuration/` copies the
     example into a temporary directory, creates an empty placeholder file
@@ -603,14 +587,13 @@ proposed-design:
     the service twice on the same configuration converges as
     `service-assembly` states.
   tests: >-
-    Red before green. The example test fails first against the current
-    inline example (it is not a file) and against a copy with one section
-    removed and with one comment removed. The smoke fails first against an
+    The example test rejects a copy with one section removed or one
+    comment removed. The smoke rejects an
     archive packed without `files` fields (it finds `src/` and test
-    files), and against one built for the other architecture (the engine
-    binding fails to load), and against an upgrade that extracts over the
+    files), one built for the other architecture (the engine
+    binding fails to load), and an upgrade that extracts over the
     old `manifold-service/` (the added file survives). The recovery
-    cases fail first against a script without the guards: a `prepare` with
+    cases detect a script without the guards: a `prepare` with
     no comparison makes a repeated upgrade discard the previous install
     (case 2); a comparison by `diff -r -q` alone drops the prepared tree
     as current in cases 4 and 5; a sweep of the origins' own operations

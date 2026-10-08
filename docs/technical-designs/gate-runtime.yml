@@ -13,6 +13,7 @@ relationships:
     - blueprint-migration
     - retention
   mitigates:
+    - github-mirror-read-scale
     - gate-durability-unproven
 terms:
   - grant-round
@@ -41,10 +42,9 @@ background:
     spike proved grants from token rows and inbox rows, holders counted from
     consumed and pending token rows, rebuild from snapshot rows with no
     actor loaded, and exactly-once tokens at three crash points under a real
-    `SIGKILL`. The router, the store, the ledger, the portfolio, the
-    comparator sandbox, the blueprint loader, and the GitHub event source
-    are built. The token lint, the actor host, and the escalations module
-    are built beside this module, against seams the orchestrator has named.
+    `SIGKILL`. The module reads the router, store, ledger, portfolio,
+    comparator sandbox, blueprint loader, GitHub event source, token lint,
+    actor host, and escalations through their public interfaces.
   problems:
     - >-
       The store's state query finds actors by one machine, and a machine is
@@ -541,16 +541,14 @@ proposed-design:
     `index.ts` of the store, the router, the ledger, the portfolio, and the
     comparator sandbox.
   router-and-store-changes: >-
-    The module needs three changes in modules that are built. The router
-    gains `schedule(actorId)`, which schedules a loaded actor to drain rows
+    The router's `schedule(actorId)` schedules a loaded actor to drain rows
     another module wrote with `store.writeInbox`, and supplies itself to
     `afterDrain`; `durable-event-delivery` states both. The store's
     `StateQuery` takes `machine` as optional, so that one query returns the
-    actors in a state path on every machine, through a new index on state
-    path; `store` and `store-database-schema` state both. The actor host's
-    save hook carries `machine`, `entered`, and `entries` beside the members
-    of the shape the orchestrator ruled; the actor host owns that seam and
-    builds them.
+    actors in a state path on every machine through its state-path index;
+    `store` and `store-database-schema` define both. The actor host's save
+    hook carries `machine`, `entered`, and `entries` with the snapshot and
+    event identity, as `actor-host` defines.
   service-wiring: >-
     The service applies `gatesMigrationSteps`, creates the gates with its
     store, loader, process repository, comparator sandbox, portfolio, GitHub

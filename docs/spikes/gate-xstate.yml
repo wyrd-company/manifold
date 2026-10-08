@@ -566,7 +566,7 @@ findings:
 
       Assumed: Named action bodies are inert for structural exploration; their presence makes the result unknown. The graph key omits context and event payload because stateIn is exact and other guards are independently abstracted. Internal queue keys contain event types only; payload-dependent execution is not proved. No fairness or eventual external-event delivery is assumed. A graph result is a structural proof under these conditions, not a proof that an actor will eventually receive an event.
 
-      Measured: The earlier disposable gate-xstate branch is unavailable locally. The valid two-gate fixture is reconstructed from this artifact's described states and transitions; both declared returns pass. It preserves structural behavior, not every original action implementation. Exact original fixture equivalence is not established. The complete reconstructed fixture is:
+      Measured: The two-gate fixture below implements the states and transitions described in this artifact; both declared returns pass. This measurement covers structural behavior. It does not establish action implementation equivalence with the disposable spike fixture. The complete measured fixture is:
 
       The complete blueprint is recorded in this finding's measurements.
 

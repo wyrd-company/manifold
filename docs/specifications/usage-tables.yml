@@ -70,7 +70,7 @@ description: >-
   or, while its `actor` is a ledger actor of unowned usage, to the
   attribution its session's mapping or its thread's ownership gives; a
   posted one never changes. A posting's `visit` stays after retention
-  removes its actor's history, as `retention` states; no posting is
+  removes its actor's consumed events and commands, as `retention` states; no posting is
   deleted. The `usage_postings_by_account` index holds each posting that
   names an account, by account and `used_at`, and serves each account's
   latest call.

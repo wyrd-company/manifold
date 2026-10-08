@@ -21,7 +21,7 @@ description: >-
   A retention window is a whole number of days from 1 to 36500, or
   `forever`. A row is past its window when its time is more than the
   window's days of 86,400,000 milliseconds before the start of the prune
-  pass that reads it. `forever` removes nothing of its kind.
+  run that reads it. `forever` removes nothing of its kind.
 
   `historyDays` is the window of an ended actor's events and commands, counted from
   the actor's end. Past it, retention removes the actor's consumed inbox
