@@ -359,7 +359,8 @@ proposed-design:
     query reads the counted postings of the actor: each posting with no
     late attribution whose `actor` is the actor, and each posted posting
     whose late attribution's `actor` is the actor, with the visit, the
-    account, the amount, the status, and the tokens of each, the visit
+    account, the amount, the status, the provider, and the tokens of
+    each, the visit
     being the late attribution's when it has one. A pure function,
     `visitUsage(rows, visits, units)`, sums the token classes and the
     posted amounts in total, per account, and per visit, and gives each

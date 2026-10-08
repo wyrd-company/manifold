@@ -79,7 +79,7 @@ components:
     Tokens:
       type: object
       additionalProperties: false
-      required: [input, output, cacheRead, cacheWrite, reasoning]
+      required: [input, output, cacheRead, cacheWrite, reasoning, total]
       properties:
         input:
           type: integer
@@ -96,6 +96,10 @@ components:
         reasoning:
           type: integer
           minimum: 0
+        total:
+          type: integer
+          minimum: 0
+          description: Every class summed, with reasoning not counted for a provider whose output counts it.
     AccountActual:
       type: object
       additionalProperties: false

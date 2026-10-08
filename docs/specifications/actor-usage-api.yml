@@ -8,6 +8,7 @@ relationships:
     - operator-console
     - accounts-declaration
     - tasks-api
+    - price-table
 terms:
   - actual
   - call
@@ -44,9 +45,14 @@ description: |-
 
   - `actorId`: the decoded id.
   - `tokens`: the token totals of every counted call, `{ input, output,
-    cacheRead, cacheWrite, reasoning }`, each the sum of that class over
-    the calls' postings as `usage-record` defines the classes. A posting's
-    tokens are its `tokens`, the tokens it adds to its base.
+    cacheRead, cacheWrite, reasoning, total }`. The first five are each
+    the sum of that class over the calls' postings, as `usage-record`
+    defines the classes; a posting's tokens are its `tokens`, the tokens
+    it adds to its base. `total` is the sum over the postings of `input
+    + output + cacheRead + cacheWrite + reasoning`, with `reasoning`
+    counted as 0 for a posting whose provider is `codex`, whose `output`
+    already counts its reasoning tokens, as `price-table` counts them.
+    `cacheWriteOneHour` is part of `cacheWrite` and is not listed.
   - `accounts`: one entry per account with a posted counted posting,
     in account name order, `{ account, actual, unit }`. `actual` is the
     sum of their amounts in the account's native unit, and equals the
@@ -80,7 +86,9 @@ validation-criteria: >-
   requests the endpoint through the service's HTTP host without
   authentication and checks that the body validates against the response
   schema, that each total and each visit's sums are the sums of the
-  postings stated, the pending call's tokens counted with no account, the
+  postings stated, `total` counting no reasoning for a `codex` call and
+  counting it for another provider, the pending call's tokens counted
+  with no account, the
   late calls counted in the visit their attribution names, that each
   account's `actual` equals `actorUsage`'s, and that the session's ledger
   actor no longer counts the late calls. It checks `200` with zeros for an
