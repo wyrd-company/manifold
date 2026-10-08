@@ -94,7 +94,7 @@ proposed-design:
     actor host's `invocationOf(args)` reads. `turn-start` derives its
     command id from the message id `turn-prepare` gave, which the actor
     holds in its context. Each command waits until the environment source
-    is ready on the actor's environment, renders its template from the
+    is ready on the command's environment, renders its template from the
     process repository at the commit of the actor's blueprint version, and
     is sent through a `T3Client` the module holds for the environment. The
     T3 Code server records a receipt for every command id in the
@@ -196,13 +196,13 @@ proposed-design:
     binding is archived, as `thread-create` does. The environment is the
     input's, or the actor's when the input names none, and is one service
     configuration declares. It renders the title and the workspace root,
-    each trimmed, checks that the root is absolute on the environment's
-    host as `agent-threads` defines, so that the server never resolves it
-    against a working directory or a home the blueprint does not see,
-    waits for the source, and sends `project.create` with the derived
-    command id and project id, the rendered title and root, and
-    `createWorkspaceRootIfMissing` set to the input's
-    `createWorkspaceRoot`, through the source's `write` with no thread.
+    each trimmed, waits for the source on that environment, and sends
+    `project.create` with the derived command id and project id, the
+    rendered title and root, and `createWorkspaceRootIfMissing` set to the
+    input's `createWorkspaceRoot`, through the source's `write` with no
+    thread. Before each send, inside the `write` admission, it checks the
+    root against the path rules of the host platform that the source's
+    current connection confirmed, as `workspace-roots` states.
     Once the server answers with a sequence, it records the project with
     the actor id and the actor's portfolio item, `manifold.portfolioItem`,
     through `recordProject`, then resolves with `{ projectId }`. An actor
@@ -210,6 +210,33 @@ proposed-design:
     unbound. The blueprint takes the output in the invoke's `onDone` and
     assigns it into its context; a later `thread-create` takes it as its
     `project`, unchanged.
+  workspace-roots: >-
+    A root's meaning depends on the host's path rules: T3 Code resolves it
+    with the path module of the platform it runs on, so `C:/a` and
+    `\\host\share` are relative on a POSIX host and land under the
+    server's working directory, and `/a` is drive-relative on Windows. The
+    module therefore checks a rendered root against the platform the
+    environment's server reports, `platform.os` of its environment
+    descriptor (`linux`, `darwin`, `windows`, or `unknown`), which the
+    environment source reads at every connection before it confirms the
+    `environmentId`, and answers through `platform(environment, signal)`
+    after readiness. On `linux` and `darwin` a root is absolute when it
+    begins with `/`; on `windows` when it begins with a drive letter, a
+    colon, and a separator, or with two separators and a host name; on
+    every platform `~`, `~/`, and `~\` are accepted, since the server
+    expands them to its home directory on either platform. A root with a
+    control character is refused on every platform. A root that fails the
+    rule fails the invoke with `template`; a host reporting `unknown`
+    fails it with `environment`. The check is a pure function of the root
+    and the platform, in `workspace-root.ts`, and runs at each attempt
+    inside the `write` admission, so an attempt after an identity change
+    checks against the replacement server's platform. Evidence status:
+    the descriptor's `platform` was measured on `t3` 0.0.45 on Linux,
+    `{ "os": "linux", "arch": "x64" }`; the `~/` and `~\` expansion and
+    the resolution against the working directory are read from the 0.0.45
+    source and measured on Linux; a Windows host was not measured, and its
+    rule follows Node's `path.win32` resolution, which the server uses
+    there.
   project-attribution: >-
     A created project's usage is attributed to the creating actor's
     portfolio item through Manifold's store. Usage of a thread the actor
@@ -294,10 +321,20 @@ proposed-design:
     takes a change it cannot attribute, and the same deadline or
     escalation covers it.
   readiness: >-
-    Every command waits until the environment source reports the actor's
+    Every command waits until the environment source reports the command's
     environment ready: its row is committed with an origin, and its
     current connection has confirmed the server's `environmentId` against
-    it. A command never waits on another environment. A restart before the
+    it. The command's environment is the actor's for `thread-create`,
+    `turn-start`, and `startTurn`, and the selected environment for
+    `t3code-project-create`: the input's, else the actor's. A command
+    never waits on, or is sent to, any other environment, so a project
+    create on an environment that is not ready waits while the actor's own
+    environment is ready, and a project create on a ready environment is
+    sent while the actor's own environment is not. An operator's pause,
+    which task 1204's environment control holds thread and turn commands
+    on, does not hold `t3code-project-create`, since it starts no thread
+    or turn; an operator's disconnect makes the environment not ready, so
+    it holds the create through this readiness. A restart before the
     source's first transaction for the environment commits leaves no row,
     so commands wait again until the next origin commits. While the source
     resets an environment whose `environmentId` changed, the environment is
@@ -307,7 +344,11 @@ proposed-design:
     the dispatcher retries the same command after the replacement origin
     commits. The source records each interrupted write's thread for a fresh
     observation, so a command accepted before cancellation is published
-    instead of becoming baseline.
+    instead of becoming baseline. A `project.create` write names no
+    thread, so its interruption records nothing; the replacement origin's
+    shell lists every project the server holds, and the retry's receipt
+    answers a create the old connection's server accepted when the
+    replacement is the same server.
     An environment the source stops fails the waiting command
     with `environment`. Commands enter after a committed origin; interrupted
     commands remain observations across its replacement. A thread the shell
@@ -430,14 +471,16 @@ proposed-design:
     | --- | --- | --- |
     | Input fails `#/$defs/project-create-input`, or the client refuses the command | `input` | Fails before anything is sent. |
     | Title or workspace root template is missing, reads an undefined value, does not parse, or renders empty after trimming | `template` | Fails before anything is sent. |
-    | Workspace root renders to a path that is not absolute, or holds a control character | `template` | Fails before anything is sent. |
+    | Workspace root renders to a path that is not absolute under the host platform's rules, or holds a control character | `template` | Fails before anything is sent. |
     | Actor has no environment, is a child, or names an environment service configuration does not declare | `environment` | Fails before anything is sent. |
+    | Host platform is `unknown` | `environment` | Fails before anything is sent. |
     | Actor's GitHub Project binding is archived | `archived` | Fails before anything is sent. |
     | Server rejects the command: a root that does not exist without `createWorkspaceRoot`, is not a directory, or cannot be made; a root an active project has; a project id or command id already used | `rejected` | Fails with the server's message as `serverMessage`. |
     | Server or client refuses the token, or it lacks `orchestration:operate` | `unauthorized` | Fails. |
     | Environment source stops the environment | `environment` | Fails. |
     | Environment is down, its connection is lost or cannot open, the send times out, or the server answers with a server error | none | Waits: retries the same command and ids on the environment's `reconnect` backoff with no limit, until the server answers or the invoke stops. |
-    | Environment source is not ready, or its identity changes during the send | none | Waits: sends after the next origin commits, with the same ids. |
+    | Selected environment's source is not ready, an operator disconnected it, or its identity changes during the send | none | Waits: sends after the next origin commits, with the same ids, to that environment only. |
+    | Operator paused the selected environment | none | Does not hold: a pause holds thread and turn commands only. |
     | Command sent and no answer received, so the outcome is unconfirmed | none | Waits: the retry sends the same ids, and the receipt answers the first outcome. |
 
     An invoke stopped while it waits or while its command is in flight,
@@ -474,6 +517,8 @@ proposed-design:
       readonly sourceReady: (environment: string, signal?: AbortSignal) => Promise<void>;
       /** The environment source's write admission boundary; `threadId` is `null` for `project.create`. */
       readonly sourceWrite: <T>(environment: string, threadId: string | null, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>) => Promise<T>;
+      /** The environment source's `platform`: the host platform the current connection confirmed. */
+      readonly sourcePlatform: (environment: string, signal?: AbortSignal) => Promise<"darwin" | "linux" | "windows" | "unknown">;
       /** The environment source's `recordCreatedProject`. */
       readonly recordProject: (record: CreatedProject) => void;
       readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
@@ -598,7 +643,8 @@ proposed-design:
     derivation. `inputs.ts` validates each input against its schema at the
     boundary. `templates.ts` renders a title, a workspace root, and a
     prompt from a revision. `workspace-root.ts` holds the pure check that a
-    rendered root is absolute on an environment's host. `commands.ts`
+    rendered root is absolute under a host platform's path rules.
+    `commands.ts`
     builds each command from the ids, the input, and the rendered text,
     and maps a client error to a kind. `clients.ts` holds
     the client per environment. `dispatch.ts` waits for the source, sends a
@@ -692,8 +738,13 @@ proposed-design:
     `portfolio.t3codeProject` resolves the project to the actor's item;
     one entry gives the same project id twice and a second entry another;
     a title template that reads an undefined value, a workspace root
-    template that renders a relative path, and a workspace root template
-    that renders empty each fail with `template`; a missing root without
+    template that renders a relative path, a workspace root template that
+    renders empty, and a root of `C:/parcels/one` and one of
+    `\\host\share` on a fake server whose descriptor reports `linux`
+    each fail with `template`, and the fake server receives no
+    `project.create`; `C:/parcels/one` on a fake server that reports
+    `windows` is sent; a fake server that reports `unknown` fails the
+    invoke with `environment`; a missing root without
     `createWorkspaceRoot` and a root an active project has each fail with
     `rejected` and the server's message; in each of these failures the
     store holds no `t3_created_project` row, the fake server received no
@@ -701,7 +752,13 @@ proposed-design:
     to the state it declares; a missing root with `createWorkspaceRoot` is
     made; an environment the input names that service configuration does
     not declare fails with `environment`, and an archived binding with
-    `archived`; a connection that drops after the server accepts and
+    `archived`; with two fake servers, the actor's environment `A` ready
+    and the input's environment `B` held back before its first connection,
+    nothing reaches either server, the invoke waits, and once `B`'s origin
+    commits one `project.create` reaches `B` and none reaches `A`, and the
+    record names `B`; with `B` ready and `A` held back, the create reaches
+    `B` without waiting on `A`; a create on an environment the operator
+    paused is sent; a connection that drops after the server accepts and
     before it answers is retried, the server holds one project, and the
     store one row. The fault tests run
     the service in a child Node process, which kills itself with `SIGKILL`

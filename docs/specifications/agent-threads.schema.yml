@@ -76,8 +76,9 @@ $defs:
         $ref: "#/$defs/template"
       workspaceRoot:
         description: >-
-          A Nunjucks template whose render, trimmed, is an absolute path on
-          the environment's host with no control character.
+          A Nunjucks template whose render, trimmed, is absolute under the
+          path rules of the environment's host platform, with no control
+          character.
         $ref: "#/$defs/template"
       values:
         $ref: "#/$defs/values"

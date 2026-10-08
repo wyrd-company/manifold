@@ -140,11 +140,19 @@ description: |-
     exist. Default `false`, under which a workspace root that does not
     exist fails the invoke with `rejected`.
 
-  The rendered workspace root, trimmed, is absolute on the environment's
-  host: it begins with `/`, with a drive letter and a separator such as
-  `C:\` or `C:/`, with `\\`, or with `~` alone or followed by a
-  separator, which the server expands to its own home directory. It holds
-  no control character. A workspace root that an active project on the
+  The rendered workspace root, trimmed, is absolute under the path rules
+  of the environment's host, the `platform.os` its T3 Code server reports
+  in its environment descriptor. On a `linux` or `darwin` host it begins
+  with `/`. On a `windows` host it begins with a drive letter, a colon,
+  and `\` or `/`, such as `C:\` or `C:/`, or with two separators and a
+  host name, such as `\\host\share`. On every host it may instead be
+  `~` alone or `~` followed by `/` or `\`, which the server expands to
+  its own home directory. It holds no control character. A root that is
+  not absolute under its host's rules, such as `C:/a` or `\\host\share`
+  on a `linux` host or `/a` on a `windows` host, fails with `template`,
+  so the server never resolves a root against its working directory. A
+  host that reports `unknown` fails the invoke with `environment`, since
+  no path rule holds for it. A workspace root that an active project on the
   environment already has fails with `rejected`. The output's `projectId`
   is the `project` a `thread-create` invoke takes to start a thread in the
   new project, as `context.workspace` is in the example above.
@@ -206,7 +214,13 @@ description: |-
   `createWorkspaceRootIfMissing` as the input's `createWorkspaceRoot`.
 
   Readiness. A command is sent only after the environment source is ready
-  on the actor's environment, and waits until then.
+  on the command's environment, and waits until then: the actor's
+  environment for `thread-create` and `turn-start`, and the selected
+  environment for `t3code-project-create`, the input's or else the
+  actor's. A command never waits on, or is sent to, any other
+  environment. An operator's pause of an environment does not hold
+  `t3code-project-create`, which starts no thread or turn; an operator's
+  disconnect holds it through the source's readiness.
 
   Errors. A failure rejects the promise with an agent thread error, a plain
   object: `name` `AgentThreadError`, `kind`, and `message`, and for
@@ -215,12 +229,13 @@ description: |-
   - `input`: the input fails its schema, or the client refuses the command
     before sending it.
   - `environment`: the actor has no environment, service configuration
-    declares none of that name, or the environment source stopped it.
+    declares none of that name, the environment source stopped it, or,
+    for `t3code-project-create`, its host reports the platform `unknown`.
   - `archived`: `thread-create` or `t3code-project-create` for an actor
     whose GitHub Project binding is archived.
   - `template`: a template is missing, does not parse, reads an undefined
     value, or renders empty, or a workspace root renders to a path that is
-    not absolute or holds a control character.
+    not absolute under its host's rules or holds a control character.
   - `rejected`: the server rejected the command, or rejected it before
     and was sent it again. For `t3code-project-create` this includes a
     workspace root that does not exist without `createWorkspaceRoot`, one
@@ -251,7 +266,10 @@ validation-criteria: >-
   example in this specification lints clean with `t3code-project-create`,
   `thread-create`, `turn-prepare`, `turn-start`, and `follow-thread` among
   the implementation names, given its context and output schemas. A test
-  shows that a rendered workspace root of `/`, `C:\`, `C:/`,
-  `\\host\share`, `~`, and `~/a` is accepted, and that `a/b`, `./a`,
-  `~a`, an empty render, and a root with a line break each fail with
-  `template`.
+  shows, for a `linux` host, that `/`, `/a`, `~`, `~/a`, and `~\a` are
+  accepted and that `a/b`, `./a`, `~a`, `C:/a`, `C:\a`, `\\host\share`,
+  an empty render, and a root with a line break each fail with
+  `template`; for a `windows` host, that `C:\`, `C:/a`, `\\host\share`,
+  `//host/share`, `~`, and `~\a` are accepted and that `/a`, `\a`, `C:a`,
+  and `a\b` each fail with `template`; and that a host reporting
+  `unknown` fails with `environment`.

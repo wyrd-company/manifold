@@ -355,6 +355,8 @@ proposed-design:
       thread(environment: string, threadId: string): ThreadView | undefined;
       /** Resolves after `ready` with the `environmentId` this run's connection confirmed. */
       environmentId(environment: string, signal?: AbortSignal): Promise<string>;
+      /** Resolves after `ready` with `platform.os` of the descriptor the current connection confirmed. */
+      platform(environment: string, signal?: AbortSignal): Promise<"darwin" | "linux" | "windows" | "unknown">;
       /** The environment's T3code projects as its shell last listed them; undefined before the first list. */
       projects(environment: string): readonly T3CodeProjectView[] | undefined;
       /** Starts again the loop of an environment whose state is `stopped`; does nothing for one that runs. */
@@ -442,6 +444,14 @@ proposed-design:
     and the thread id, each id percent-encoded, which is the route the T3
     Code web client serves a thread on. The operator console links a
     task's threads through it.
+  platform: >-
+    `platform(environment)` answers `platform.os` of the environment
+    descriptor that the environment's current connection read before it
+    confirmed the `environmentId`, after `ready`. The source keeps it in
+    memory with the confirmed connection, since every connection reads the
+    descriptor again; a connection that finds another `environmentId`
+    replaces it with the replacement server's. Agent threads checks a
+    workspace root against it.
   created-projects: >-
     The source keeps the record of the T3code projects that
     `t3code-project-create` invokes created, in `t3_created_project`, so
