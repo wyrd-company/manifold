@@ -92,7 +92,10 @@ async function setup(withScan = false) {
     rmSync(directory, { recursive: true, force: true });
   });
   await expect
-    .poll(() => source.trackedIssue("I_A")?.items.length, { timeout: childProcessLimit })
+    .poll(() => source.trackedIssue("I_A")?.items.length, {
+      timeout: childProcessLimit,
+      ...(withScan ? { interval: 1 } : {}),
+    })
     .toBe(1);
   const events = () =>
     store.connection.database
@@ -224,6 +227,12 @@ test("queued moves precede due scans and sweeps, and drain between scan requests
     });
   fake.deliveries[0]!.status_code = 500;
   fake.deliveries[1]!.status_code = 500;
+  // A tracked item is visible before the initial sweep's issue refresh ends.
+  // Wait for the scan and sweep timers, with no request deadline still armed,
+  // before advancing the clock and asserting the next wake's request order.
+  await expect
+    .poll(() => [...clock.timers].map((timer) => timer.at - clock.now()).sort((a, b) => a - b))
+    .toEqual([60000, 900000]);
   fake.log.length = 0;
   clock.advance(900000);
   const first = source.moveCard(move);

@@ -241,11 +241,25 @@ test("push succeeds, follow fails: retries and restart keep one accept commit an
 test("pull fails before the first accept save: no accept commit reaches the remote", async () => {
   const f = await serviceFixture();
   let service: Awaited<ReturnType<typeof startService>> | undefined;
+  let sweep: ReturnType<typeof f.remote.holdNext> | undefined;
+  const backgroundErrors: unknown[] = [];
   try {
     f.api.fields.splice(0);
     await git.setConfig({ fs, gitdir: f.remote.gitdir, path: "http.receivepack", value: "true" });
     const initial = await f.commit(60, { bindings, taskMetadata: declaration });
-    service = await startService({ configurationFile: f.file, log: () => {} });
+    service = await startService({
+      configurationFile: f.file,
+      log: (entry) => {
+        if (entry.event === "github-error") backgroundErrors.push(entry);
+      },
+      probes: {
+        step(step) {
+          if (step === "pulled") sweep = f.remote.holdNext();
+        },
+      },
+    });
+    // Keep the first sweep's pull pending while the Project becomes visible.
+    await sweep!.reached;
     await expect
       .poll(() => service!.github.projectByNumber("sample", 1), { timeout: childProcessLimit })
       .toBeDefined();
@@ -258,11 +272,16 @@ test("pull fails before the first accept save: no accept commit reaches the remo
       });
     expect((await apply()).status).toBe(200);
     f.api.fields.find((field) => field.name === "Mass")!.name = "Weight";
+    sweep!.release();
+    // Project visibility does not mean its sweep pull has finished. Queue a pull
+    // behind it so the one-shot refusal belongs to the accept save.
+    await service.processRepository.pull();
     f.remote.state.refuseNextFetch = true;
     const response = await apply();
     const body = await response.json();
+    expect(backgroundErrors).toHaveLength(0);
+    expect(response.status, JSON.stringify(body)).toBe(502);
     agrees("ApplyFailedResponse", body);
-    expect(response.status).toBe(502);
     expect(body).toMatchObject({ error: { kind: "declaration-unsaved" }, writes: 0 });
     const commits = await git.log({ fs, gitdir: f.remote.gitdir, ref: "main" });
     expect(commits[0]!.oid).toBe(initial);
@@ -270,6 +289,7 @@ test("pull fails before the first accept save: no accept commit reaches the remo
       commits.filter((commit) => commit.commit.message.startsWith("Accept GitHub changes")),
     ).toHaveLength(0);
   } finally {
+    sweep?.release();
     await service?.stop();
     await f.close();
   }

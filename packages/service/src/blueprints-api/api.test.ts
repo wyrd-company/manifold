@@ -452,6 +452,8 @@ test("maps follower failures to remote errors, stopped service, and logged inter
   }
 });
 
+// This agreement traverses every token fixture through all three boundaries.
+// Two concurrent one-CPU suites exceed 30 s while that work is still progressing.
 test("HTTP lint, the loader and host CLI agree on all token fixtures", async () => {
   const { url, service, fixture } = await setup();
   const { fixtures } = await import("../../../shared/src/token-lint/test-fixtures/blueprints.ts");
@@ -521,7 +523,7 @@ test("HTTP lint, the loader and host CLI agree on all token fixtures", async () 
       log.mockRestore();
     }
   }
-}, 30000);
+}, 60_000);
 
 test("an invalid repository blueprint replaces its bundled path and exposes the same source findings", async () => {
   const { service, fixture } = await setup();
