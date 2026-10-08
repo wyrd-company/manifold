@@ -162,8 +162,15 @@ proposed-design:
       readonly entries: Readonly<Record<string, string>>;
       /** The inbox event id whose delivery this save consumes; absent for a save outside a delivery. */
       readonly eventId?: string;
-      /** The type of the last event the root actor took before this save; absent until it takes one. */
-      readonly eventType?: string;
+      /** The event of the last change to the root's state value before this save; absent until one. */
+      readonly changedBy?: StateChange;
+    }
+
+    export interface StateChange {
+      /** The type of the event the root actor's machine took in the macrostep that changed its state value. */
+      readonly type: string;
+      /** The inbox event id of the row being delivered when the change happened. */
+      readonly eventId?: string;
     }
 
     export interface ActiveInvoke {
@@ -390,17 +397,25 @@ proposed-design:
     the inbox event id of the row the save consumes, which the store's
     delivery gives the router's `saving` call, so a hook acts on the
     taking of one event in the transaction that consumes it; a save that
-    `persist` makes outside a delivery has none. `eventType` is the type
-    of the last event the root actor's machine took before the save was
-    built: the host's inspector records the type of each `@xstate.event`
-    whose actor is the root, `xstate.init` excluded, on the actor's
-    record, and keeps it across saves until a later event replaces it, so
-    a save that rolls back and is made again gives the same type. A record
-    that `start` or `restore` creates holds none until the root takes an
-    event. A save that changes the root's state value therefore names the
-    event that changed it: a delivered event's `type`, a root delay's
-    `xstate.after.<after key>.<state node id>`, or an invoked actor's
-    `xstate.done.actor.<invoke id>` or `xstate.error.actor.<invoke id>`.
+    `persist` makes outside a delivery has none. `changedBy` is the event
+    of the last change to the root's state value before the save was
+    built. The host's inspector takes each `@xstate.snapshot` of the root
+    actor, compares the canonical JSON of its `value`, keys sorted, with
+    the root's previous inspected snapshot, and when they differ records
+    on the actor's record the type of the snapshot's `event`, the event
+    of the macrostep that made it, with the event id of the inbox row the
+    host is delivering at that moment, if any. A snapshot whose value is
+    unchanged, such as one after an event the actor takes with no
+    transition, records nothing, so an ignored event never replaces the
+    event that changed the state. The record keeps the change across saves
+    until a later change replaces it, so a save that rolls back and is
+    made again gives the same change. A record that `start` or `restore`
+    creates holds none until its root's value changes. A save that changes
+    the root's state value therefore names the event that changed it: a
+    delivered event's `type`, a root delay's `xstate.after.<after
+    key>.<state node id>`, or an invoked actor's `xstate.done.actor.<invoke
+    id>`, `xstate.error.actor.<invoke id>`, or an event a callback sent.
+    When several changes happen before one save, it names the last.
     `entered` is
     computed against the last committed save, never against the last
     attempted one: when the host builds a write in `persist`, before the
@@ -540,11 +555,13 @@ proposed-design:
     transient state, and whose hook effect commits once; a hook
     that throws
     leaves the previous snapshot stored; an `error` save runs no hook; a
-    `done` save lists no active invokes; `eventType` is a delivered
-    event's type, a root delay's `xstate.after` type, and an invoked
-    promise's `xstate.done.actor` type for the save of its result, the
-    same on a save made again after a rollback, and absent on a started
-    actor's first save. Fault tests, in a child Node
+    `done` save lists no active invokes; `changedBy` is a delivered
+    event's type with its event id, a root delay's `xstate.after` type, and
+    an invoked promise's `xstate.done.actor` type for the save of its
+    result; an invoked callback that sends an event that changes the state
+    and then an event the state ignores, both before the queued save,
+    gives the first; it is the same on a save made again after a
+    rollback, and absent on a started actor's first save. Fault tests, in a child Node
     process that sends itself `SIGKILL` and whose kill signal the parent
     asserts before it reopens the file: a kill at the store's `sent` probe
     during a delivery, and a kill after the invoked promise resolves and

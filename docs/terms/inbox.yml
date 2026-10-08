@@ -1,4 +1,12 @@
 $schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `related-to`
+  # is the best fit.
+  related-to:
+    - store
+    - store-database-schema
+    - durable-event-delivery
+    - actor-history
 title: Inbox
 description: >-
   The per-actor store of routed events, each pending until the actor

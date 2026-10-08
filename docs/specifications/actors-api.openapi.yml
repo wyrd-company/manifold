@@ -234,7 +234,7 @@ components:
     ActorCommand:
       type: object
       additionalProperties: false
-      required: [commandId, kind, environment, threadId, invokeId, entryId, acceptedAt]
+      required: [commandId, kind, environment, threadId, invokeId, entryId, sentAt]
       properties:
         commandId:
           type: string
@@ -261,7 +261,10 @@ components:
         entryId:
           type: string
           minLength: 1
+        sentAt:
+          $ref: "#/components/schemas/Time"
         acceptedAt:
+          description: Absent until the server's acceptance is recorded, and for a command whose answer never arrived.
           $ref: "#/components/schemas/Time"
     ActorEnd:
       type: object

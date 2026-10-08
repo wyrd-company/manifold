@@ -312,6 +312,8 @@ proposed-design:
       /** The environment source's write admission boundary. */
       readonly sourceWrite: <T>(environment: string, threadId: string, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>) => Promise<T>;
       readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
+      /** Called before the first attempt to send an invoked command. */
+      readonly sending?: (command: SendingCommand) => void;
       /** Called after the server answers an invoked command and before the promise resolves. */
       readonly probe?: (accepted: InvokedCommand) => void;
       readonly logger?: Logger;
@@ -323,13 +325,19 @@ proposed-design:
       readonly sequence: number;
     }
 
-    export interface InvokedCommand extends AcceptedCommand {
-      /** The invocation of the `thread-create` or `turn-start` that sent it. */
+    export interface SendingCommand {
+      readonly implementation: "thread-create" | "turn-start";
+      readonly commandId: string;
+      /** The invocation of the `thread-create` or `turn-start` that sends it. */
       readonly invocation: Invocation;
       readonly environment: string;
       readonly threadId: string;
       /** The user message id of a `turn-start`; absent for `thread-create`. */
       readonly messageId?: string;
+    }
+
+    export interface InvokedCommand extends SendingCommand, AcceptedCommand {
+      readonly implementation: "thread-create" | "turn-start";
     }
 
     export interface AgentThreads {
@@ -394,17 +402,23 @@ proposed-design:
     `rejected`, `unauthorized`, `environment`, or `input`, as `turn-start`
     does.
   accepted-commands: >-
-    `thread-create` and `turn-start` call `probe` once the server answers
-    their command and the promise's signal has not aborted, synchronously
-    and before the promise resolves, with the command id, the server's
-    sequence, the invocation that sent it, the actor's environment, the
-    thread id, and for `turn-start` the message id. The actor's save of
-    the promise's result therefore follows every write the probe commits.
-    A restarted promise that sends the command again calls it again with
-    the same values. `startTurn` calls no probe. The service's
-    `agent-threads` part passes a probe that calls the service's `command`
-    probe, when the service is started with one, and then the history
-    module's `commandAccepted`, as `actor-history` states.
+    `thread-create` and `turn-start` call `sending` once their command and
+    its ids are built and before the first attempt to send it, with the
+    command id, the invocation that sends it, the actor's environment, the
+    thread id, and for `turn-start` the message id. They call `probe` with
+    the same values and the server's sequence as soon as the server
+    answers the command, before they check their signal and before the
+    promise resolves, so an answer that arrives after the invoking state
+    exited is still reported. A request that the state's exit aborts
+    before its answer arrives calls no `probe`; the server may hold the
+    command. Both are called synchronously, so the actor's save of the
+    promise's result follows every write they commit. A restarted promise
+    that sends the command again calls both again with the same values.
+    `startTurn` calls neither. The service's `agent-threads` part passes
+    the history module's `commandSending` as `sending`, and a `probe` that
+    calls the service's `command` probe, when the service is started with
+    one, and then the history module's `commandAccepted`, as
+    `actor-history` states.
   module-layout: >-
     `index.ts` re-exports the public names. `ids.ts` holds the pure id
     derivation. `inputs.ts` validates each input against its schema at the

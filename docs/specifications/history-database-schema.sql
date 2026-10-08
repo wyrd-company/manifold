@@ -37,9 +37,12 @@ CREATE TABLE history_event (
   FOREIGN KEY (actor_id, visit) REFERENCES history_visit (actor_id, visit)
 ) STRICT, WITHOUT ROWID;
 
--- Each T3 Code command the server accepted for an actor's invoke, as the
--- agent threads module reported it. `kind` is the implementation that
--- sent it. `message_id` is the user message id of a `turn-start`.
+-- Each T3 Code command an actor's invoke sent, recorded before it was
+-- sent, as the agent threads module reported it. `kind` is the
+-- implementation that sent it. `message_id` is the user message id of a
+-- `turn-start`. `sequence` and `accepted_at` are null until the server's
+-- answer is recorded, and stay null for a command whose answer never
+-- arrived.
 CREATE TABLE history_command (
   command_id TEXT PRIMARY KEY CHECK (length(command_id) > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
@@ -49,8 +52,10 @@ CREATE TABLE history_command (
   environment TEXT NOT NULL CHECK (length(environment) > 0),
   thread_id TEXT NOT NULL CHECK (length(thread_id) > 0),
   message_id TEXT CHECK (length(message_id) > 0),
-  sequence INTEGER NOT NULL CHECK (sequence >= 0),
-  accepted_at INTEGER NOT NULL
+  sent_at INTEGER NOT NULL,
+  sequence INTEGER CHECK (sequence >= 0),
+  accepted_at INTEGER,
+  CHECK ((sequence IS NULL) = (accepted_at IS NULL))
 ) STRICT;
 
-CREATE INDEX history_command_by_actor ON history_command (actor_id, accepted_at, command_id);
+CREATE INDEX history_command_by_actor ON history_command (actor_id, sent_at, command_id);

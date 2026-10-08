@@ -42,14 +42,19 @@ description: >-
   for an event taken before the actor's first recorded visit. A row is
   never changed.
 
-  Commands. `history_command` holds one row per T3 Code command the server
-  accepted for an actor's invoke, keyed by command id. `kind` is the name
+  Commands. `history_command` holds one row per T3 Code command an
+  actor's invoke sent, keyed by command id, written before the command is
+  sent or, when that write fails, by the actor's next save. `kind` is the name
   of the implementation that sent it, such as `thread-create` or
   `turn-start`. `invoke_id` and `entry_id` are the invocation's, as
   `actor-host` defines them. `message_id` is the user message id a
-  `turn-start` carries, and null for other kinds. `sequence` is the
+  `turn-start` carries, and null for other kinds. `sent_at` is when the
+  module recorded the command before sending it. `sequence` is the
   server's answer to the command, and `accepted_at` the time the module
-  recorded it. A row is never changed.
+  recorded it; both are null until the answer is recorded, and stay null
+  for a command whose answer never arrived because its invoking state
+  exited first. Only `sequence` and `accepted_at` are ever set after the
+  insert, together and only from null.
 
   Retention. No row is deleted. Every row stays for the life of the store
   file.
@@ -63,4 +68,5 @@ validation-criteria: >-
   file produces on a second empty database, with each run of whitespace in
   `sql` read as one space; they are equal. A visit with an exit event and
   no `exited_at`, an exit event id with no exit event type, and an event
-  link to a visit that does not exist each fail a constraint.
+  link to a visit that does not exist, and a command with a sequence and
+  no `accepted_at`, each fail a constraint.
