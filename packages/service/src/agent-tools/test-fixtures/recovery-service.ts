@@ -2,6 +2,9 @@
 // relationships:
 //   verifies: [agent-tools, actor-host, durable-event-delivery]
 // ---
+import { startGitHubSource } from "../../github-source/index.ts";
+import { SecretValue } from "../../service-configuration/index.ts";
+import { agentToolSteps } from "../migrations.ts";
 import { stringify } from "yaml";
 import { memoryRevision } from "@wyrd-company/manifold-shared";
 import { openStore } from "../../store/index.ts";
@@ -22,6 +25,12 @@ export interface RecoveryConfiguration {
   token: string;
   environments: EnvironmentsConfiguration;
   issueTitle?: string;
+  senderTask?: { repository: string; number: number; title?: string };
+  senderIssue?: string | null;
+  recipientIssue?: string;
+  recipientThreads?: string[];
+  githubUrl?: string;
+  legacyMessage?: boolean;
   identifyTimeoutMs?: number;
   held?: "different" | "unavailable" | "available";
   soleHeld?: boolean;
@@ -31,6 +40,14 @@ export interface RecoveryConfiguration {
 }
 export async function recoveryService(config: RecoveryConfiguration) {
   const store = openStore({ path: config.path });
+  if (config.legacyMessage) {
+    store.connection.migrate("agenttool", agentToolSteps.slice(0, 2));
+    store.connection.database
+      .prepare(
+        "INSERT INTO agenttool_message(message_id,environment,thread_id,sender_actor_id,sender_issue,text,sent_at,delivered_at,delivered_to) VALUES (?, 'station', 'conversation', 'depot', 'shipment', 'The depot schedule changed.', 0, 1, 'parcel')",
+      )
+      .run("a".repeat(36));
+  }
   let host: ActorHost;
   let source: T3CodeSource;
   let router: Router;
@@ -49,7 +66,9 @@ export async function recoveryService(config: RecoveryConfiguration) {
                   "agent.message": {
                     actions: {
                       type: "expression.assign",
-                      params: { expression: '{"messages": context.messages + 1}' },
+                      params: {
+                        expression: '{"messages": context.messages + 1, "lastSender": event.from}',
+                      },
                     },
                   },
                 }),
@@ -127,11 +146,18 @@ export async function recoveryService(config: RecoveryConfiguration) {
     sourceWrite: (name, id, signal, send) => source.write(name, id, signal, send),
     revisionAt: async () => revision,
   });
+  const issueReads: string[] = [];
   const tools = openAgentTools({
-    trackedIssue: (nodeId) =>
-      nodeId === "shipment-recipient" && config.issueTitle !== undefined
-        ? { repository: "example-org/widgets", number: 7, title: config.issueTitle }
-        : undefined,
+    trackedIssue: (nodeId) => {
+      issueReads.push(nodeId);
+      return config.githubUrl
+        ? github!.trackedIssue(nodeId)?.issue
+        : nodeId === "shipment"
+          ? config.senderTask
+          : nodeId === "shipment-recipient" && config.issueTitle !== undefined
+            ? { repository: "example-org/widgets", number: 7, title: config.issueTitle }
+            : undefined;
+    },
     store,
     configuration: { identifyTimeoutMs: config.identifyTimeoutMs ?? 100 },
     environments: new Set(["station"]),
@@ -179,9 +205,9 @@ export async function recoveryService(config: RecoveryConfiguration) {
         value: "missing-state",
         context: {
           manifold: {
-            issue: "shipment-recipient",
+            issue: config.recipientIssue ?? "shipment-recipient",
             environment: "station",
-            threads: ["conversation"],
+            threads: config.recipientThreads ?? ["conversation"],
           },
         },
       },
@@ -194,6 +220,33 @@ export async function recoveryService(config: RecoveryConfiguration) {
     log: () => {},
   });
   router = startRouter({ store, host });
+  const github = config.githubUrl
+    ? startGitHubSource({
+        store,
+        router,
+        configuration: {
+          apiUrl: config.githubUrl,
+          owners: { sample: { credential: "example", hooks: [] } },
+          sweepIntervalMs: 900000,
+          redeliveryIntervalMs: 60000,
+          requestTimeoutMs: 30000,
+        },
+        credentials: {
+          names: ["example"],
+          resolve: () => ({
+            kind: "github-app",
+            name: "example",
+            installationToken: async () => new SecretValue("example", "synthetic-token"),
+          }),
+        },
+        boundProjects: () => [{ owner: "sample", number: 1 }],
+        processRepository: {
+          url: "https://example.test/sample/process.git",
+          branch: "main",
+          pull: async () => ({ kind: "unchanged", commit: revision.commit }),
+        },
+      })
+    : undefined;
   escalations = openEscalations({
     store,
     configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
@@ -218,9 +271,9 @@ export async function recoveryService(config: RecoveryConfiguration) {
       blueprint: loaded.blueprint,
       input: {
         manifold: {
-          issue: "shipment-recipient",
+          issue: config.recipientIssue ?? "shipment-recipient",
           environment: "station",
-          threads: ["conversation"],
+          threads: config.recipientThreads ?? ["conversation"],
         },
       },
     });
@@ -233,9 +286,18 @@ export async function recoveryService(config: RecoveryConfiguration) {
     host,
     escalations,
     source,
+    github,
+    issueReads,
     url: http.url,
-    async send(to: unknown, text: unknown, senderId = "depot", entry = "announce") {
-      const sender = senderDocument(to, text, entry);
+    async send(
+      to: unknown,
+      text: unknown,
+      senderId = "depot",
+      entry = "announce",
+      senderIssue = config.senderIssue,
+      waitRemoval = false,
+    ) {
+      const sender = senderDocument(to, text, entry, waitRemoval);
       const sendingRevision = memoryRevision(revision.commit, {
         "blueprints/sender.yml": stringify(sender),
       });
@@ -255,7 +317,9 @@ export async function recoveryService(config: RecoveryConfiguration) {
       host.start({
         actorId: senderId,
         blueprint: loaded.blueprint,
-        input: { manifold: { issue: "shipment" } },
+        input: {
+          manifold: senderIssue === null ? {} : { issue: senderIssue ?? "shipment" },
+        },
       });
       if (config.crash === "message") {
         // The invoke commits synchronously; its completion save is queued after this callback.
@@ -273,6 +337,7 @@ export async function recoveryService(config: RecoveryConfiguration) {
     async stop() {
       await http.close();
       await tools.stop();
+      await github?.stop();
       await threads.stop();
       await source.stop();
       await escalations.stop();
@@ -282,13 +347,14 @@ export async function recoveryService(config: RecoveryConfiguration) {
   };
 }
 
-function senderDocument(to: unknown, text: unknown, entry = "announce") {
+function senderDocument(to: unknown, text: unknown, entry = "announce", waitRemoval = false) {
   return {
     machine: {
       id: "sender",
-      initial: "sending",
+      initial: waitRemoval ? "waiting" : "sending",
       context: {},
       states: {
+        ...(waitRemoval ? { waiting: { on: { "github.project-item.removed": "sending" } } } : {}),
         sending: {
           invoke: {
             id: entry,
@@ -318,7 +384,7 @@ function senderDocument(to: unknown, text: unknown, entry = "announce") {
       input: true,
       output: true,
       context: true,
-      events: {},
+      events: waitRemoval ? { "github.project-item.removed": true } : {},
       actors: { "send-message": { input: true, output: true } },
     },
   };

@@ -81,7 +81,7 @@ const endpoint = httpServer(async (request, response) => {
         messages: [
           {
             messageId: "00000000-0000-4000-8000-000000000001",
-            from: { actorId: "depot", issue: null },
+            from: { actorId: "depot", issue: null, task: null },
             text: "The depot schedule changed.",
             sentAt: new Date().toISOString(),
             deliveredAt: new Date().toISOString(),

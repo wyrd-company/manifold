@@ -48,9 +48,15 @@ export const agentToolDefinitions = [
   },
 ] as const;
 
+export type AgentTaskContext = {
+  readonly repository: string;
+  readonly number: number;
+  readonly title?: string;
+};
+
 export interface ThreadMessage {
   messageId: string;
-  from: { actorId: string; issue: string | null };
+  from: { actorId: string; issue: string | null; task: AgentTaskContext | null };
   text: string;
   sentAt: string;
   deliveredAt: string;

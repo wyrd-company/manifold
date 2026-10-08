@@ -5,7 +5,7 @@
 import { derivedId } from "../agent-threads/ids.ts";
 import type { Escalation } from "../escalations/index.ts";
 import type { ThreadMessage } from "@wyrd-company/manifold-shared";
-import type { AgentQuestionContext, Identity } from "./types.ts";
+import type { AgentTaskContext, Identity } from "./types.ts";
 export const encoded = (id: string) => encodeURIComponent(id).replaceAll(".", "%2E");
 export const agentThreadTopic = (environment: string, threadId: string) =>
   `agent.environment.${environment}.thread.${encoded(threadId)}`;
@@ -50,6 +50,11 @@ export const messageId = (
     environment,
     threadId,
   );
+export function senderName(from: ThreadMessage["from"]) {
+  if (!from.task) return `\`${from.actorId}\``;
+  const name = `${from.task.repository}#${from.task.number}`;
+  return from.task.title ? `${name} (${from.task.title})` : name;
+}
 export function readText(batch: readonly ThreadMessage[]) {
   if (!batch.length) return "You have no messages.";
   return (
@@ -57,7 +62,7 @@ export function readText(batch: readonly ThreadMessage[]) {
     batch
       .map(
         (message, i) =>
-          `\n\nMessage ${i + 1} of ${batch.length}, from task \`${message.from.actorId}\`, sent ${message.sentAt}:\n\n${message.text}`,
+          `\n\nMessage ${i + 1} of ${batch.length}, from task ${senderName(message.from)}, sent ${message.sentAt}:\n\n${message.text}`,
       )
       .join("")
   );
@@ -68,7 +73,7 @@ export function noticeText(count: number | bigint) {
     : null;
 }
 
-export function questionTitle(context: AgentQuestionContext | undefined, title?: string) {
+export function questionTitle(context: AgentTaskContext | undefined, title?: string) {
   const task = context ? `${context.repository}#${context.number}` : undefined;
   const subject =
     title && context?.title ? `${title} — ${context.title}` : (title ?? context?.title);

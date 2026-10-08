@@ -2,7 +2,7 @@
 // relationships:
 //   verifies: [agent-tools, durable-event-delivery, agent-threads]
 // ---
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { childArtifacts } from "../../../../test-support/child-process.ts";
@@ -11,6 +11,8 @@ import { spawn } from "node:child_process";
 import { fork } from "node:child_process";
 import { once } from "node:events";
 import { afterEach, expect, test } from "vite-plus/test";
+import { DatabaseSync } from "node:sqlite";
+import { githubFake } from "../github-source/test-fixtures/api.ts";
 import { schemas } from "@wyrd-company/t3code-client";
 import { fakeServer, fixtureThread } from "../t3code-source/test-fixtures/server.ts";
 import { recoveryService } from "./test-fixtures/recovery-service.ts";
@@ -408,12 +410,16 @@ test("blueprint message reaches the follower once and is read once across turns"
 
 test("SIGKILL after a message commits resumes one delivery and one read", async () => {
   const f = await fixture(true);
-  const crash = worker({ ...f.config, crash: "message" });
+  const senderTask = { repository: "sample/records", number: 7, title: "Repaint the garden shed" };
+  const crash = worker({ ...f.config, senderTask, crash: "message" });
   await crash.ready();
   const exited = once(crash.child, "exit");
   crash.child.send({ kind: "send" });
   expect(await exited, crash.error()).toEqual([null, "SIGKILL"]);
-  const resumed = await recoveryService(f.config);
+  const resumed = await recoveryService({
+    ...f.config,
+    senderTask: { ...senderTask, title: "Changed title" },
+  });
   cleanup.push(() => resumed.stop());
   await expect.poll(() => resumed.snapshot()["context"]).toMatchObject({ messages: 1 });
   await expect
@@ -425,7 +431,7 @@ test("SIGKILL after a message commits resumes one delivery and one read", async 
     });
   expect(await resumed.call("get-messages", { thread: "conversation" })).toMatchObject({
     status: "read",
-    messages: [{ text: "The depot schedule changed." }],
+    messages: [{ from: { task: senderTask }, text: "The depot schedule changed." }],
   });
   expect(
     resumed.store.connection.database
@@ -436,13 +442,83 @@ test("SIGKILL after a message commits resumes one delivery and one read", async 
 
 test("two task actors deliver a message read through the compiled MCP plugin and service endpoint", async () => {
   const f = await fixture(true);
-  const service = await recoveryService(f.config);
+  const github = await githubFake();
+  cleanup.push(github.close);
+  github.issues.get("I_A")!.title = "Repaint the garden shed";
+  github.addItem("IT_A", "I_A");
+  github.addItem("IT_B", "I_B");
+  github.addItem("IT_C", "I_C");
+  const service = await recoveryService({
+    ...f.config,
+    githubUrl: github.url,
+    senderIssue: "I_A",
+    recipientIssue: "I_B",
+  });
   cleanup.push(() => service.stop());
-  await service.send(
-    { environment: "station", threadId: "conversation" },
-    "The depot schedule changed.",
+  await expect
+    .poll(() => service.github!.trackedIssue("I_A")?.issue.title)
+    .toBe("Repaint the garden shed");
+  await service.send({ issue: "I_B" }, "The depot schedule changed.");
+  await expect
+    .poll(() => service.snapshot()["context"])
+    .toMatchObject({
+      messages: 1,
+      lastSender: {
+        actorId: "depot",
+        issue: "I_A",
+        task: { repository: "sample/records", number: 1, title: "Repaint the garden shed" },
+      },
+    });
+  const t3Home = join(f.config.path, "..", "t3-home");
+  await mkdir(join(t3Home, "userdata"), { recursive: true });
+  const t3db = new DatabaseSync(join(t3Home, "userdata/state.sqlite"));
+  t3db.exec(
+    "CREATE TABLE provider_session_runtime(thread_id TEXT,provider_name TEXT,provider_instance_id TEXT,resume_cursor_json TEXT)",
   );
-  await expect.poll(() => service.snapshot()["context"]).toMatchObject({ messages: 1 });
+  t3db
+    .prepare("INSERT INTO provider_session_runtime VALUES (?, ?, ?, ?)")
+    .run(
+      "conversation",
+      "codex",
+      "example",
+      JSON.stringify({ sessionId: "parcel-session", threadId: "parcel-session" }),
+    );
+  t3db.close();
+  const hook = spawn(childArtifacts().host, [
+    "hook",
+    "post-tool-use",
+    "--service",
+    service.url,
+    "--environment",
+    "station",
+    "--provider",
+    "codex",
+    "--t3-home",
+    t3Home,
+  ]);
+  const hookExited = once(hook, "close");
+  let hookOutput = "";
+  hook.stdout.on("data", (data) => {
+    hookOutput += String(data);
+  });
+  hook.stdin.end(JSON.stringify({ session_id: "parcel-session" }));
+  expect(await hookExited).toEqual([0, null]);
+  expect(hookOutput).toContain("1 new message");
+  const endpoint = await service.call("get-messages", { thread: "conversation" });
+  expect(endpoint).toMatchObject({
+    messages: [
+      {
+        from: {
+          actorId: "depot",
+          issue: "I_A",
+          task: { repository: "sample/records", number: 1, title: "Repaint the garden shed" },
+        },
+      },
+    ],
+  });
+  expect(endpoint["message"]).toContain(
+    "from task sample/records#1 (Repaint the garden shed), sent ",
+  );
   const child = spawn(childArtifacts().host, [
     "mcp",
     "--service",
@@ -487,6 +563,50 @@ test("two task actors deliver a message read through the compiled MCP plugin and
       result: {
         isError: false,
         structuredContent: { status: "read", messages: [{ text: "The depot schedule changed." }] },
+      },
+    });
+  expect(replies.find((r) => r["id"] === 2)).toMatchObject({
+    result: { structuredContent: endpoint, content: [{ type: "text", text: endpoint["message"] }] },
+  });
+  await expect.poll(() => service.github!.trackedIssue("I_C")?.issue.nodeId).toBe("I_C");
+  await service.send(
+    { issue: "I_B" },
+    "The parcel route changed.",
+    "courier",
+    "announce",
+    "I_C",
+    true,
+  );
+  await expect.poll(() => service.store.loadSnapshot("courier")?.snapshot.value).toBe("waiting");
+  github.items.delete("IT_C");
+  service.github!.requestSweep();
+  await expect.poll(() => service.github!.trackedIssue("I_C")).toBeUndefined();
+  await expect
+    .poll(() => service.snapshot()["context"])
+    .toMatchObject({ messages: 2, lastSender: { actorId: "courier", issue: "I_C", task: null } });
+  const afterRemoval = await service.call("get-messages", { thread: "conversation" });
+  expect(afterRemoval).toMatchObject({
+    messages: [
+      { from: { task: { repository: "sample/records", number: 1 } } },
+      { from: { actorId: "courier", issue: "I_C", task: null } },
+    ],
+  });
+  expect(afterRemoval["message"]).toContain("from task `courier`, sent ");
+  child.stdin.write(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "get-messages", arguments: { thread: "conversation" } },
+    }) + "\n",
+  );
+  await expect
+    .poll(() => replies.find((r) => r["id"] === 3))
+    .toMatchObject({
+      result: {
+        isError: false,
+        structuredContent: afterRemoval,
+        content: [{ type: "text", text: afterRemoval["message"] }],
       },
     });
   child.stdin.end();
@@ -574,4 +694,132 @@ test("SIGKILL after question commit preserves its task title on replay after a r
   expect(questions).toHaveLength(1);
   expect(questions[0]!.title).toBe("example-org/widgets#7: Paint colour — Repaint the garden shed");
   expect(questions[0]!.id).toBe(result["escalationId"]);
+});
+
+test.each([
+  [
+    { repository: "example-org/widgets", number: 7, title: "Repaint the garden shed" },
+    "shipment",
+    "example-org/widgets#7 (Repaint the garden shed)",
+  ],
+  [{ repository: "example-org/widgets", number: 7 }, "shipment", "example-org/widgets#7"],
+  [undefined, "shipment", "`depot`"],
+  [undefined, null, "`depot`"],
+] as const)(
+  "message stores its sender and keeps it on repeated reads: %j",
+  async (senderTask, senderIssue, label) => {
+    const f = await fixture(true);
+    const config: RecoveryConfiguration = {
+      ...f.config,
+      ...(senderTask ? { senderTask } : {}),
+      senderIssue,
+    };
+    const service = await recoveryService(config);
+    cleanup.push(() => service.stop());
+    await service.send({ issue: "shipment-recipient" }, "The depot schedule changed.");
+    await expect.poll(() => service.snapshot()["context"]).toMatchObject({ messages: 1 });
+    const first = await service.call("get-messages", { thread: "conversation" });
+    expect(first).toMatchObject({
+      status: "read",
+      messages: [{ from: { actorId: "depot", issue: senderIssue, task: senderTask ?? null } }],
+    });
+    expect(first["message"]).toContain(`from task ${label}, sent `);
+    expect(service.issueReads).toEqual(senderIssue === null ? [] : [senderIssue]);
+    config.senderTask = { repository: "example-org/widgets", number: 7, title: "Changed title" };
+    expect(await service.call("get-messages", { thread: "conversation" })).toEqual(first);
+  },
+);
+
+test("SIGKILL after a read preserves the stored sender despite a mirror rename", async () => {
+  const f = await fixture(true);
+  const senderTask = {
+    repository: "example-org/widgets",
+    number: 7,
+    title: "Repaint the garden shed",
+  };
+  const crash = worker({ ...f.config, senderTask });
+  await crash.ready();
+  crash.child.send({ kind: "send" });
+  await expect
+    .poll(() => {
+      crash.child.send({ kind: "snapshot" });
+      return crash.messages.findLast((m) => m["kind"] === "snapshot")?.["snapshot"];
+    })
+    .toMatchObject({ context: { messages: 1 } });
+  crash.child.send({ kind: "call", tool: "get-messages", args: { thread: "conversation" } });
+  await expect
+    .poll(() => crash.messages.find((m) => m["kind"] === "call"))
+    .toHaveProperty("result");
+  const first = crash.messages.find((m) => m["kind"] === "call")!["result"];
+  expect(first).toMatchObject({ messages: [{ from: { task: senderTask } }] });
+  const exited = once(crash.child, "exit");
+  crash.child.kill("SIGKILL");
+  expect(await exited, crash.error()).toEqual([null, "SIGKILL"]);
+  const resumed = await recoveryService({
+    ...f.config,
+    senderTask: { ...senderTask, title: "Changed title" },
+  });
+  cleanup.push(() => resumed.stop());
+  const read = await resumed.call("get-messages", { thread: "conversation" });
+  expect(read).toEqual(first);
+  expect(read).toMatchObject({
+    status: "read",
+    messages: [{ from: { actorId: "depot", issue: "shipment", task: senderTask } }],
+  });
+  expect(read["message"]).toContain(
+    "from task example-org/widgets#7 (Repaint the garden shed), sent ",
+  );
+  expect(await resumed.call("get-messages", { thread: "conversation" })).toEqual(read);
+});
+
+test("a populated step-2 message migrates once and reads with its actor label", async () => {
+  const f = await fixture(true);
+  const service = await recoveryService({ ...f.config, legacyMessage: true });
+  const before = await service.call("get-messages", { thread: "conversation" });
+  expect(before).toMatchObject({
+    status: "read",
+    messages: [
+      {
+        from: { actorId: "depot", issue: "shipment", task: null },
+        text: "The depot schedule changed.",
+      },
+    ],
+  });
+  expect(before["message"]).toContain("from task `depot`, sent ");
+  expect(
+    service.store.connection.database
+      .prepare("SELECT version FROM schema_migration WHERE owner='agenttool'")
+      .get()!["version"],
+  ).toBe(3);
+  await service.stop();
+  const resumed = await recoveryService(f.config);
+  cleanup.push(() => resumed.stop());
+  expect(await resumed.call("get-messages", { thread: "conversation" })).toEqual(before);
+});
+
+test("one send reads the mirror once and stores the same sender for two threads", async () => {
+  const f = await fixture(true);
+  f.server.baseline(
+    schemas.orchestrationReadModel.OrchestrationThread.parse({
+      ...f.thread,
+      id: "other-conversation",
+      session: { ...f.thread.session, threadId: "other-conversation" },
+    }),
+  );
+  const senderTask = { repository: "sample/records", number: 7, title: "Repaint the garden shed" };
+  const service = await recoveryService({
+    ...f.config,
+    senderTask,
+    recipientThreads: ["conversation", "other-conversation"],
+  });
+  cleanup.push(() => service.stop());
+  await service.send({ issue: "shipment-recipient" }, "The depot schedule changed.");
+  await expect.poll(() => service.snapshot()["context"]).toMatchObject({ messages: 2 });
+  expect(service.issueReads).toEqual(["shipment"]);
+  for (const thread of ["conversation", "other-conversation"])
+    expect(await service.call("get-messages", { thread })).toMatchObject({
+      status: "read",
+      messages: [{ from: { actorId: "depot", issue: "shipment", task: senderTask } }],
+    });
+  expect(service.issueReads).toEqual(["shipment"]);
 });

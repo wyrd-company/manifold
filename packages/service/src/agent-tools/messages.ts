@@ -53,9 +53,11 @@ export function messages(options: AgentToolsOptions) {
     ].sort(
       (a, b) => a.environment.localeCompare(b.environment) || a.threadId.localeCompare(b.threadId),
     );
-    const from = {
+    const issue = actors.actorOf(invocation.actorId)?.manifold.issue ?? null;
+    const from: ThreadMessage["from"] = {
       actorId: invocation.actorId,
-      issue: actors.actorOf(invocation.actorId)?.manifold.issue ?? null,
+      issue,
+      task: issue === null ? null : (options.trackedIssue(issue) ?? null),
     };
     const sent = options.store.connection.transaction(() => {
       const sent: { messageId: string; environment: string; threadId: string }[] = [];
@@ -78,8 +80,19 @@ export function messages(options: AgentToolsOptions) {
         if (published.status === "rejected") throw failure("input", "Invalid message event.");
         if (!published.rows.length) continue;
         db.prepare(
-          "INSERT INTO agenttool_message(message_id,environment,thread_id,sender_actor_id,sender_issue,text,sent_at) VALUES (?,?,?,?,?,?,?)",
-        ).run(messageId, environment, threadId, from.actorId, from.issue, text, now());
+          "INSERT INTO agenttool_message(message_id,environment,thread_id,sender_actor_id,sender_issue,text,sent_at,sender_repository,sender_number,sender_title) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ).run(
+          messageId,
+          environment,
+          threadId,
+          from.actorId,
+          from.issue,
+          text,
+          now(),
+          from.task?.repository ?? null,
+          from.task?.number ?? null,
+          from.task?.title ?? null,
+        );
         sent.push(recipient);
       }
       if (!sent.length)
@@ -142,6 +155,16 @@ export function messages(options: AgentToolsOptions) {
             from: {
               actorId: String(row["sender_actor_id"]),
               issue: row["sender_issue"] === null ? null : String(row["sender_issue"]),
+              task:
+                row["sender_repository"] === null
+                  ? null
+                  : {
+                      repository: String(row["sender_repository"]),
+                      number: Number(row["sender_number"]),
+                      ...(row["sender_title"] === null
+                        ? {}
+                        : { title: String(row["sender_title"]) }),
+                    },
             },
             text: String(row["text"]),
             sentAt: new Date(Number(row["sent_at"])).toISOString(),

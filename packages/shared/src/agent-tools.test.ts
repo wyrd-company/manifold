@@ -98,3 +98,26 @@ test("only unknown agent event declarations fail event lint at their declaration
   );
   expect(clean.ok).toBe(true);
 });
+
+test("message sender schema accepts task context and rejects incomplete names", () => {
+  const [validate] = createSchemaCompiler()([
+    { $ref: `${agentToolsSchema.$id}#/$defs/message-sender` },
+  ]);
+  const from = { actorId: "depot", issue: "shipment" };
+  for (const task of [
+    null,
+    { repository: "sample/records", number: 7 },
+    { repository: "sample/records", number: 7, title: "Repaint the garden shed" },
+  ])
+    expect(validate!({ ...from, task })).toBe(true);
+  for (const task of [
+    { repository: "sample/records" },
+    { number: 7 },
+    { repository: "sample/records", number: 0 },
+    { repository: "", number: 7 },
+    { repository: "sample/records", number: 7, title: "" },
+    { repository: "sample/records", number: 7, extra: true },
+  ])
+    expect(validate!({ ...from, task })).toBe(false);
+  expect(validate!(from)).toBe(false);
+});

@@ -370,7 +370,7 @@ export const agentToolsSchema = {
       description: "The task that sent a message.",
       type: "object",
       additionalProperties: false,
-      required: ["actorId", "issue"],
+      required: ["actorId", "issue", "task"],
       properties: {
         actorId: {
           type: "string",
@@ -379,6 +379,40 @@ export const agentToolsSchema = {
         issue: {
           description: "The issue node id of the sender's identity, or null when it holds none.",
           type: ["string", "null"],
+        },
+        task: {
+          description:
+            "The sending task's name, read from the GitHub mirror when the message was sent; null when the identity holds no issue or the mirror did not track it.",
+          oneOf: [
+            {
+              $ref: "#/$defs/message-sender-task",
+            },
+            {
+              type: "null",
+            },
+          ],
+        },
+      },
+    },
+    "message-sender-task": {
+      description: "The tracked issue that names a sending task.",
+      type: "object",
+      additionalProperties: false,
+      required: ["repository", "number"],
+      properties: {
+        repository: {
+          description: "`owner/name`.",
+          type: "string",
+          minLength: 1,
+        },
+        number: {
+          type: "integer",
+          minimum: 1,
+        },
+        title: {
+          description: "The issue's title; absent until the GitHub mirror has read it.",
+          type: "string",
+          minLength: 1,
         },
       },
     },

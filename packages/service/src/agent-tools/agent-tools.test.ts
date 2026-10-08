@@ -2,6 +2,8 @@
 // relationships:
 //   verifies: agent-tools
 // ---
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import { afterEach, expect, test } from "vite-plus/test";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { openStore } from "../store/index.ts";
@@ -659,5 +661,54 @@ test.each(["held-actor", "stranded-token", "intake-failed", "comparator-failed"]
     await eventually(() => expect(f.notifications).toHaveLength(1));
     expect(f.notifications[0]!.title).toBe("Delivery needs attention");
     expect(f.issueReads).toEqual([]);
+  },
+);
+
+test("agent tools migration agrees with the declared DDL and runs once", async () => {
+  const f = await fixture();
+  const db = f.store.connection.database;
+  const declared = new DatabaseSync(":memory:");
+  try {
+    declared.exec(
+      readFileSync(
+        new URL("../../../../docs/specifications/agent-tools-database-schema.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    const query =
+      "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name GLOB 'agenttool_*' ORDER BY name";
+    const rows = (database: DatabaseSync) =>
+      database
+        .prepare(query)
+        .all()
+        .map((row) => ({ ...row, sql: String(row["sql"]).replace(/\s+/g, " ") }));
+    expect(rows(db)).toEqual(rows(declared));
+    expect(
+      db.prepare("SELECT version FROM schema_migration WHERE owner='agenttool'").get()!["version"],
+    ).toBe(3);
+  } finally {
+    declared.close();
+  }
+});
+
+test.each([
+  [null, "sample/records", 7, null],
+  ["shipment", "sample/records", null, null],
+  ["shipment", null, 7, null],
+  ["shipment", null, null, "Repaint the garden shed"],
+  ["shipment", "", 7, null],
+  ["shipment", "sample/records", 0, null],
+  ["shipment", "sample/records", 7, ""],
+])(
+  "message storage rejects a partial or empty sender: %j %j %j %j",
+  async (issue, repository, number, title) => {
+    const f = await fixture();
+    expect(() =>
+      f.store.connection.database
+        .prepare(
+          "INSERT INTO agenttool_message(message_id,environment,thread_id,sender_actor_id,sender_issue,text,sent_at,sender_repository,sender_number,sender_title) VALUES (?, 'station', 'thread.a', 'depot', ?, 'A parcel arrived', 0, ?, ?, ?)",
+        )
+        .run("a".repeat(36), issue, repository, number, title),
+    ).toThrow(/CHECK constraint failed/);
   },
 );
