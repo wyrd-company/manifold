@@ -34,7 +34,7 @@ are one day past their windows. Recent rows use the supplied current time.
 All values are synthetic and contain no credentials.
 
 Restart the service. Read both ended actors through Actors before the first
-prune run (five minutes after service start). After that pass, read the expired
+prune run (five minutes after service start). After that run, read the expired
 actor's pruning notice and retained visits and output. Its event and command
 payloads are gone. The recent actor's full history remains. The expired source
 event and gate evaluation are gone; their recent counterparts remain.
