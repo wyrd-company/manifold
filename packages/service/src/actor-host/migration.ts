@@ -61,13 +61,20 @@ export function prepareMigration(
     prefix: string,
   ): ReturnType<typeof fail> | undefined {
     const mapped = blueprint.migrateContext(record(saved["context"]));
-    if (mapped.status === "failed") return fail(mapped.kind, mapped.message, mapped.detail);
+    if (!mapped.ok)
+      return fail(mapped.kind, mapped.error?.message ?? "No migration path accepts the context", {
+        ...(mapped.path === undefined ? {} : { path: mapped.path }),
+        ...(mapped.error ? { error: JSON.parse(JSON.stringify(mapped.error)) } : {}),
+        ...(mapped.schemaErrors
+          ? { schemaErrors: JSON.parse(JSON.stringify(mapped.schemaErrors)) }
+          : {}),
+      });
     const identity = record(saved["context"])["manifold"];
     saved["context"] = {
       ...mapped.context,
       ...(identity === undefined ? {} : { manifold: identity }),
     };
-    if (!prefix && mapped.status === "mapped") rootPath = mapped.path;
+    if (!prefix) rootPath = mapped.path;
     for (const [id, value] of Object.entries(record(saved["children"] ?? {}))) {
       const key = `${prefix}${encodeURIComponent(id).replaceAll(".", "%2E").replaceAll("#", "%23")}#`;
       const child = children.get(key);

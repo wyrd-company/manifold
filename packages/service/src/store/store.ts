@@ -127,8 +127,10 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
             );
         }
         database
-          .prepare("DELETE FROM store_migration_failure WHERE actor_id=? AND to_machine=?")
-          .run(actorId, machine);
+          .prepare(
+            "DELETE FROM store_migration_failure WHERE actor_id=? AND (? != 'active' OR from_machine != ?)",
+          )
+          .run(actorId, snapshot.status, machine);
         return "saved";
       });
     },

@@ -323,8 +323,7 @@ export async function openActorHost({
     saved(actor) {
       identities.saved(actor);
       if (migrating === actor.actorId) probe?.("migrated", actor.actorId);
-      if (actor.snapshot.status === "active")
-        for (const listener of listeners) listener(actor.actorId);
+      for (const listener of listeners) listener(actor.actorId);
     },
     onSaved(listener) {
       listeners.add(listener);

@@ -21,17 +21,30 @@ const blueprint = (expression = '{"zone": context.depot}') => ({
   ],
 });
 test("maps the first matching context shape and preserves compatible context without a path", () => {
-  const expressions = createBlueprintExpressions(blueprint(), { onError: () => {} });
+  const document = blueprint();
+  document.migrations.push({
+    ...document.migrations[0]!,
+    context: { type: "expression.map", params: { expression: '{"zone": "second"}' } },
+  });
+  const errors: unknown[] = [];
+  const expressions = createBlueprintExpressions(document, {
+    onError: (error) => errors.push(error),
+  });
   expect(expressions.migrateContext({ depot: "north", manifold: { actorId: "sample" } })).toEqual({
-    status: "mapped",
+    ok: true,
     context: { zone: "north" },
     path: 0,
   });
   expect(expressions.migrateContext({ zone: "south", manifold: {} })).toEqual({
-    status: "unchanged",
-    context: { zone: "south", manifold: {} },
+    ok: true,
+    context: { zone: "south" },
   });
-  expect(expressions.migrateContext({})).toMatchObject({ status: "failed", kind: "no-path" });
+  expect(expressions.migrateContext({})).toMatchObject({
+    ok: false,
+    kind: "no-path",
+    schemaErrors: expect.any(Array),
+  });
+  expect(errors).toHaveLength(1);
 });
 test.each([
   ['$error("bad")', "mapping-failed"],
@@ -39,24 +52,37 @@ test.each([
   ['{"manifold": {}}', "mapping-failed"],
   ["42", "mapping-failed"],
 ])("refuses mapping %s with %s", (expression, kind) => {
+  const errors: unknown[] = [];
   expect(
-    createBlueprintExpressions(blueprint(expression), { onError: () => {} }).migrateContext({
+    createBlueprintExpressions(blueprint(expression), {
+      onError: (error) => errors.push(error),
+    }).migrateContext({
       depot: "north",
     }),
-  ).toMatchObject({ status: "failed", kind });
+  ).toMatchObject({
+    ok: false,
+    kind,
+    path: 0,
+    error: expect.objectContaining({ location: "/migrations/0/context" }),
+  });
+  expect(errors).toHaveLength(1);
 });
 test("a migration mapping uses the approved worker wait and the next mapping runs after restart", async () => {
+  const errors: unknown[] = [];
   const expressions = createBlueprintExpressions(
     blueprint("($spin := function(){ $spin() }; $spin())"),
-    { onError: () => {} },
+    { onError: (error) => errors.push(error) },
   );
   expect(expressions.migrateContext({ depot: "north" })).toMatchObject({
-    status: "failed",
+    ok: false,
     kind: "mapping-timeout",
+    path: 0,
+    error: expect.objectContaining({ kind: "evaluation" }),
   });
+  expect(errors).toHaveLength(1);
   expect(
     createBlueprintExpressions(blueprint(), { onError: () => {} }).migrateContext({
       depot: "south",
     }),
-  ).toMatchObject({ status: "mapped", context: { zone: "south" } });
+  ).toMatchObject({ ok: true, context: { zone: "south" } });
 });

@@ -26,6 +26,7 @@ export function metadataImplementations(
   current: () => TaskMetadataDeclaration | undefined,
 ): ImplementationRegistry {
   return {
+    actorKinds: { "github-card-move": "promise" },
     actions: {},
     guards: {},
     delays: {},

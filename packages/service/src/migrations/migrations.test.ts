@@ -116,6 +116,7 @@ async function fixture(
     isAncestor: async (from, to) => options.ancestor !== false && from === a && to !== a,
     bundles: { recordedAt: () => undefined },
     escalations: {
+      list: () => [],
       raise: (request) => {
         raised.push(request);
         return {} as never;
@@ -651,6 +652,7 @@ test.each([
       isAncestor: async () => false,
       bundles,
       escalations: {
+        list: () => [],
         raise: () => {
           throw new Error("invalid bundle must only log");
         },
@@ -692,4 +694,146 @@ test("answers current and ended without saving, and rejects a target at another 
     status: "current",
   });
   expect(f.store.loadSnapshot("parcel")).toEqual(before);
+});
+
+async function realEscalations(f: Awaited<ReturnType<typeof fixture>>) {
+  await f.migrations.stop();
+  const { openEscalations } = await import("../escalations/index.ts");
+  const escalations = openEscalations({
+    store: f.store,
+    configuration: { destinations: {}, requestTimeoutMs: 30000, retryIntervalMs: 60000 },
+    tokenFile: () => "",
+    handlers: {},
+  });
+  cleanup.push(() => escalations.stop());
+  let latest = f.latest;
+  const migrations = openMigrations({
+    store: f.store,
+    actorHost: f.host,
+    latest: () => latest,
+    isAncestor: async (from, to) => from === a && to !== a,
+    bundles: { recordedAt: () => undefined },
+    escalations,
+    log: () => {},
+  });
+  cleanup.push(() => migrations.stop());
+  return {
+    escalations,
+    migrations,
+    select: (value: typeof latest) => {
+      latest = value;
+    },
+  };
+}
+const refused = () => {
+  const document = next();
+  document.migrations[0]!.context.params.expression =
+    'context.depot = "north" ? $error("refused") : {"zone": context.depot}';
+  return document;
+};
+test.each(["completed", "later"])(
+  "retires a failure and its escalation when the actor is %s",
+  async (mode) => {
+    const f = await fixture(refused());
+    const r = await realEscalations(f);
+    await r.migrations.pass();
+    expect(r.escalations.list({ status: "open" })).toHaveLength(1);
+    if (mode === "completed") {
+      f.router.publish({
+        source: "github",
+        eventId: "scan-failed",
+        topics: ["github.issue.parcel-node"],
+        event: { type: "scanned" },
+      });
+      await settle();
+      expect(f.store.loadSnapshot("parcel")!.snapshot.status).toBe("done");
+    } else {
+      const c = "c".repeat(40);
+      f.revisions.set(c, memoryRevision(c, { [path]: stringify(next()) }));
+      r.select(await f.loader.loadRevision(f.revisions.get(c)!));
+      await r.migrations.pass();
+      expect(f.store.loadSnapshot("parcel")!.machine).toBe(`${c}:${path}`);
+    }
+    expect(f.store.migrationFailure("parcel")).toBeUndefined();
+    expect(r.escalations.list({ status: "open" })).toEqual([]);
+  },
+);
+test("replacing failures retires the old target question only after its last actor leaves", async () => {
+  const original = {
+    ...old,
+    schemas: { ...old.schemas, events: { ...old.schemas.events, checked: true } },
+    machine: {
+      ...old.machine,
+      states: {
+        ...old.machine.states,
+        waiting: {
+          ...old.machine.states.waiting,
+          on: { ...old.machine.states.waiting.on, checked: {} },
+        },
+      },
+    },
+  };
+  const f = await fixture(refused(), { original });
+  f.host.start({
+    actorId: "parcel-two",
+    blueprint: f.first.blueprint,
+    input: { manifold: { issue: "parcel-two-node" } },
+  });
+  const r = await realEscalations(f);
+  await r.migrations.pass();
+  expect(r.escalations.list({ status: "open" })).toHaveLength(1);
+  const question = r.escalations.list({ status: "open" })[0]!;
+  const c = "c".repeat(40);
+  f.revisions.set(c, memoryRevision(c, { [path]: stringify(refused()) }));
+  r.select(await f.loader.loadRevision(f.revisions.get(c)!));
+  f.router.publish({
+    source: "github",
+    eventId: "checked-two",
+    topics: ["github.issue.parcel-two-node"],
+    event: { type: "checked" },
+  });
+  await settle();
+  await settle();
+  expect(f.store.migrationFailure("parcel-two")!.to).toBe(`${c}:${path}`);
+  expect(r.escalations.get(question.id)!.status).toBe("open");
+  expect(r.escalations.list({ status: "open" })).toHaveLength(2);
+  f.router.publish({
+    source: "github",
+    eventId: "checked-one",
+    topics: ["github.issue.parcel-node"],
+    event: { type: "checked" },
+  });
+  await settle();
+  await settle();
+  expect(f.store.migrationFailure("parcel")!.to).toBe(`${c}:${path}`);
+  expect(r.escalations.get(question.id)!.status).toBe("withdrawn");
+  expect(r.escalations.list({ status: "open" })).toMatchObject([
+    { raiser: { subject: { version: `${c}:${path}` } } },
+  ]);
+});
+
+test("a new pass retires the durable question left after its failure row was cleared", async () => {
+  const f = await fixture(refused());
+  const r = await realEscalations(f);
+  await r.migrations.pass();
+  await r.migrations.stop();
+  const previous = f.store.loadSnapshot("parcel")!;
+  f.store.saveSnapshot({
+    actorId: "parcel",
+    machine: previous.machine,
+    snapshot: { ...previous.snapshot, status: "done", value: "delivered" },
+  });
+  expect(r.escalations.list({ status: "open" })).toHaveLength(1);
+  const reopened = openMigrations({
+    store: f.store,
+    actorHost: f.host,
+    latest: () => f.latest,
+    isAncestor: async () => true,
+    bundles: { recordedAt: () => undefined },
+    escalations: r.escalations,
+    log: () => {},
+  });
+  cleanup.push(() => reopened.stop());
+  await reopened.pass();
+  expect(r.escalations.list({ status: "open" })).toEqual([]);
 });

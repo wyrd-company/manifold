@@ -137,7 +137,7 @@ proposed-design:
       eventSchema(actorId: string, type: string): EventSchemaLookup;
       /** One attempt to move a waiting actor to `to`, a version at its path; changes nothing unless the save commits. */
       migrate(actorId: string, to: LoadedBlueprint): Promise<MigrationOutcome>;
-      /** Calls `listener` with the actor id after each committed save of an active actor; the result removes it. */
+      /** Calls `listener` with the actor id after each committed save, including terminal saves; the result removes it. */
       onSaved(listener: (actorId: string) => void): () => void;
     }
 
@@ -736,7 +736,7 @@ proposed-design:
     migration's save answers `failed` with kind `store`, and the old actor
     takes its next event with its callback never stopped; `migrate` twice
     answers `current` the second time; `onSaved` hears every committed
-    save of an active actor and none of an `error` snapshot. Fault tests, in a child Node
+    save, including terminal saves, and none of an `error` snapshot. Fault tests, in a child Node
     process that sends itself `SIGKILL` and whose kill signal the parent
     asserts before it reopens the file: a kill at the host's `migrated`
     probe, after which the actor restores on the new version once, its

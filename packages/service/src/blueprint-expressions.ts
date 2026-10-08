@@ -155,7 +155,7 @@ export function createBlueprintExpressions(
     }
   };
   return {
-    migrateContext: contextMigration(blueprint),
+    migrateContext: contextMigration(blueprint, options.onError),
     machine: machine as MachineConfig<Context, Event, never, never, never, never>,
     guards: { "expression.guard": guard(false), "expression.match": guard(true) },
     actions: {
@@ -182,30 +182,42 @@ export function createBlueprintExpressions(
 }
 
 export type ContextMigration =
-  | { status: "unchanged"; context: Readonly<Record<string, unknown>> }
-  | { status: "mapped"; context: Readonly<Record<string, unknown>>; path: number }
+  | { ok: true; context: Readonly<Record<string, unknown>>; path?: number }
   | {
-      status: "failed";
+      ok: false;
       kind: "no-path" | "mapping-failed" | "mapping-timeout" | "context-rejected";
-      message: string;
-      detail: Record<string, import("./store/index.ts").JsonValue>;
+      path?: number;
+      error?: ExpressionError["detail"];
+      schemaErrors?: ExpressionError["detail"]["schemaErrors"];
     };
-function contextMigration(blueprint: ExpressionBlueprint) {
+function contextMigration(
+  blueprint: ExpressionBlueprint,
+  onError: (error: ExpressionError) => void,
+) {
   const validators = createSchemaCompiler()([
     blueprint.schemas.context ?? true,
     ...(blueprint.migrations ?? []).map((path) => path.from),
   ]);
   return (context: Readonly<Record<string, unknown>>): ContextMigration => {
     const own = Object.fromEntries(Object.entries(context).filter(([key]) => key !== "manifold"));
-    if (validators[0]!(own)) return { status: "unchanged", context };
+    if (validators[0]!(own)) return { ok: true, context: own };
     const index = (blueprint.migrations ?? []).findIndex((_, index) => validators[index + 1]!(own));
-    if (index === -1)
-      return {
-        status: "failed",
-        kind: "no-path",
-        message: "No migration path accepts the context",
-        detail: { schemaErrors: JSON.parse(JSON.stringify(validators[0]!.errors ?? [])) },
-      };
+    if (index === -1) {
+      const schemaErrors = (validators[0]!.errors ?? []).map(({ instancePath, message }) => ({
+        instancePath,
+        message: message ?? "Context schema rejected the value",
+      }));
+      onError(
+        new ExpressionError({
+          kind: "schema",
+          location: "/migrations",
+          expression: "",
+          message: "No migration path accepts the context",
+          schemaErrors,
+        }),
+      );
+      return { ok: false, kind: "no-path", schemaErrors };
+    }
     const path = blueprint.migrations![index]!;
     const params = {
       expression: path.context.params.expression,
@@ -219,28 +231,42 @@ function contextMigration(blueprint: ExpressionBlueprint) {
         Array.isArray(result) ||
         Object.hasOwn(result, "manifold")
       )
-        return {
-          status: "failed",
-          kind: "mapping-failed",
+        throw new ExpressionError({
+          ...params,
+          kind: "result",
           message: "Migration must return an object without manifold",
-          detail: {},
-        };
+        });
       if (!validators[0]!(result))
-        return {
-          status: "failed",
-          kind: "context-rejected",
+        throw new ExpressionError({
+          ...params,
+          kind: "schema",
           message: "Migration context does not match the target schema",
-          detail: { schemaErrors: JSON.parse(JSON.stringify(validators[0]!.errors ?? [])) },
-        };
-      return { status: "mapped", context: result as Record<string, unknown>, path: index };
+          schemaErrors: (validators[0]!.errors ?? []).map(({ instancePath, message }) => ({
+            instancePath,
+            message: message ?? "Context schema rejected the value",
+          })),
+        });
+      return { ok: true, context: result as Record<string, unknown>, path: index };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const failure =
+        error instanceof ExpressionError
+          ? error
+          : new ExpressionError({
+              ...params,
+              kind: "evaluation",
+              message: error instanceof Error ? error.message : String(error),
+            });
+      onError(failure);
       return {
-        status: "failed",
+        ok: false,
         kind:
-          error instanceof WorkerWaitError && error.timedOut ? "mapping-timeout" : "mapping-failed",
-        message,
-        detail: error instanceof ExpressionError ? JSON.parse(JSON.stringify(error.detail)) : {},
+          error instanceof WorkerWaitError && error.timedOut
+            ? "mapping-timeout"
+            : failure.detail.kind === "schema"
+              ? "context-rejected"
+              : "mapping-failed",
+        path: index,
+        error: failure.detail,
       };
     }
   };

@@ -16,7 +16,7 @@ export interface MigrationsOptions {
   latest(): RevisionLoad | undefined;
   isAncestor(ancestor: string, commit: string): Promise<boolean>;
   readonly bundles: Pick<BundleSource, "recordedAt">;
-  readonly escalations: Pick<Escalations, "raise" | "withdraw">;
+  readonly escalations: Pick<Escalations, "raise" | "withdraw" | "list">;
   readonly log: (entry: ServiceLogEntry) => void;
 }
 export interface MigrationPass {
@@ -62,6 +62,15 @@ export function openMigrations(options: MigrationsOptions): Migrations {
     }
     return answer;
   }
+  function withdrawEmptyFailures() {
+    for (const escalation of escalations.list({ status: "open" })) {
+      if (escalation.raiser.type !== "service" || escalation.raiser.kind !== "migration-failed")
+        continue;
+      const version = escalation.raiser.subject["version"]!;
+      if (!store.migrationFailures(version).length)
+        escalations.withdraw({ kind: "migration-failed", subject: { version } });
+    }
+  }
   function failure(actorId: string, value: MigrationFailure): StoredMigrationFailure | undefined {
     try {
       const recorded = store.connection.transaction(() => {
@@ -90,6 +99,7 @@ export function openMigrations(options: MigrationsOptions): Migrations {
           message: value.message,
           detail: { actorId, ...value },
         });
+      withdrawEmptyFailures();
       return store.migrationFailure(actorId);
     } catch (error) {
       log({
@@ -184,9 +194,10 @@ export function openMigrations(options: MigrationsOptions): Migrations {
   }
   const unsubscribe = actorHost.onSaved((actorId) => {
     try {
+      withdrawEmptyFailures();
       const actor = store.loadSnapshot(actorId),
         revision = latest();
-      if (!actor || !revision) return;
+      if (!actor || actor.snapshot.status !== "active" || !revision) return;
       const from = parseBlueprintVersionKey(actor.machine);
       if (!from) return;
       const target =
@@ -219,6 +230,7 @@ export function openMigrations(options: MigrationsOptions): Migrations {
           .activeSnapshots()
           .sort((a, b) => a.actorId.localeCompare(b.actorId)))
           await attempt(actor.actorId, result);
+        withdrawEmptyFailures();
         return result;
       });
     },

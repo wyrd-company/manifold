@@ -62,6 +62,7 @@ test("last clean declaration survives rejection and reopening; repeated apply wr
       ).status,
     ).toBe("rejected");
     const reopened = openTaskMetadata(options);
+    expect(reopened.implementations.actorKinds).toMatchObject({ "github-card-move": "promise" });
     expect(reopened.current()).toEqual(metadata.current());
     expect(
       store.connection.database.prepare("SELECT count(*) AS n FROM metadata_rejections").get()?.[

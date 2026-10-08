@@ -17,6 +17,7 @@ relationships:
     - blueprint-expressions
     - escalation-contract
     - store-database-schema
+    - migrate-running-actors-automatically
 objective: >-
   Move a running actor to the latest version of its blueprint's path when
   a migration starts for it, so that a process that evolves can take its
@@ -83,9 +84,8 @@ proposed-design:
     the actors whose version is earlier than the latest version of their
     path, attempts each through `migrate`, records each failure in the
     store once, logs it, and raises a `migration-failed` escalation whose
-    `retry` attempts again. What starts a migration is the trigger, a
-    decision reserved to the user and pending, as `trigger` states; every
-    other part of this design holds under each of its options. The author
+    `retry` attempts again. Migration starts automatically, as `trigger`
+    states. The author
     writes migration paths in the blueprint's top-level `migrations`
     member, which `blueprint` specifies; the machine never reads it.
   public-interface: |-
@@ -108,7 +108,7 @@ proposed-design:
       /** The process repository's `isAncestor`. */
       isAncestor(ancestor: string, commit: string): Promise<boolean>;
       readonly bundles: Pick<BundleSource, "recordedAt">;
-      readonly escalations: Pick<Escalations, "raise" | "withdraw">;
+      readonly escalations: Pick<Escalations, "raise" | "withdraw" | "list">;
       readonly log: (entry: ServiceLogEntry) => void;
     }
 
@@ -141,41 +141,12 @@ proposed-design:
     beside the module and import only `index.ts`, the store's, the actor
     host's, and the loader's `index.ts`.
   trigger: >-
-    The trigger removes, under its first two options, the guarantee that
-    an actor runs to its end on the version it started on, so it is a
-    decision reserved to the user, and it is pending. Its decision record
-    is written with the answer. The options:
-    (1) Automatic, recommended. Passes run after each applied revision and
-    at start, and an actor that is behind is attempted after each of its
-    saves, as `pass` and `saves` state. An author who wants running actors
-    to finish on the old text saves the new text at another path. Nothing
-    in this design changes.
-    (2) Automatic with an opt-out. As option 1, and a blueprint may declare
-    the top-level boolean `pinActors: true`: the automatic trigger takes no
-    actor to a target version that declares it, so actors on earlier
-    versions of the path run to their end, and a `retry` attempts nothing
-    toward it. This adds the member to `blueprint` and its schema, and one
-    test: an actor behind a target that declares `pinActors` is not
-    attempted by a pass, by a save, or by a retry.
-    (3) Operator request only. No pass runs on a revision or at start, and
-    no save starts an attempt. The module adds `request(selector)`,
-    mounted by its wiring part as `POST /api/migrations` with a body of `{
-    actorId }` or `{ path }`: it queues an attempt to the current target
-    of each named actor, or of every active actor behind at the path, and
-    answers `202` with `{ queued }`, the actor ids, or `400` for a body of
-    neither shape. An actor the request deferred is attempted again after
-    its next save while the service runs, and the request ends when it
-    migrates or fails. `retry` on `migration-failed` keeps its meaning.
-    This drops the `applied` call from the revision follower and the first
-    pass from the wiring part, adds the endpoint to the operator's API,
-    and replaces the pass and save tests with request tests.
-    Options 2 and 3 are outlined here, not specified in full: if the user
-    chooses either, this design takes one amendment round that specifies
-    it fully before the implementation merges, and for option 3 that
-    round specifies durable request intent and its recovery after a
-    restart, so an accepted, deferred, or retried request survives one,
-    with failure fixtures. Until the answer, the implementation builds
-    option 1, and does not merge into `epic/foundation`.
+    Migration is automatic with no opt-out, as
+    `migrate-running-actors-automatically` records. Passes run after each
+    applied revision and at start, and an actor that is behind is
+    attempted after each of its saves, as `pass` and `saves` state. An
+    author who wants running actors to finish on the old text saves the
+    new text at another path.
   later-version: >-
     The target of a path is the `LoadedBlueprint` of that path in
     `latest().blueprints`. An actor is behind when its stored snapshot is
@@ -228,8 +199,8 @@ proposed-design:
     the module's wiring part starts, which awaits that pass.
   saves: >-
     `openMigrations` registers a listener with `actorHost.onSaved`, which
-    the host calls after each committed save of an active actor. Under the
-    automatic trigger, when the saved version is behind its path's target and no failure record names
+    the host calls after each committed save, including terminal saves. It
+    withdraws empty migration-failed escalations. When an active actor's saved version is behind its path's target and no failure record names
     that pair, the listener adds one job for that actor to the queue on
     the next macrotask, so the attempt runs outside the router's delivery
     and save. An actor deferred because an event was pending, a promise
@@ -265,6 +236,11 @@ proposed-design:
     the next revision's target is a new pair. After a `migrated` outcome
     whose actor had a record, the module withdraws the escalation of that
     record's `to` when `store.migrationFailures` of it is then empty.
+    A failure replaced by a new target retires the old target's escalation
+    when its last failure row is gone. After a committed save, including
+    a terminal save on the original version, and at the end of a pass,
+    the module withdraws every open migration-failed escalation whose
+    target has no failure rows.
   outcomes: |-
     Each failure kind, from the actor host or the module, with what the
     operator sees. In every case the actor's stored snapshot, version,
@@ -303,8 +279,8 @@ proposed-design:
     attempts again. A `retry` whose handling commits before its jobs run
     has cleared the records, so the pass at the next start attempts the
     actors. Withdrawing after a migration runs after the save; a crash
-    between leaves an open escalation whose `retry` finds no record and
-    attempts nothing.
+    between leaves an open escalation that the next pass withdraws when
+    its target has no failure rows.
   service-wiring: >-
     `migrations/wiring.ts` is the module's wiring part, entry
     `migrations` in the start list, after `agent-tools-delivery` and the

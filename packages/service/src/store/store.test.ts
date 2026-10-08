@@ -621,7 +621,7 @@ test("deadline retirement uses complete identities even when names contain delim
   saveWithDeadlines([first]);
   expect(store.dueDeadlines(100).filter((row) => row.actorId === "timer")).toMatchObject([first]);
 });
-test("migration failures persist, deduplicate a pair, roll back, and clear only on a matching save", () => {
+test("migration failures persist, deduplicate a pair, roll back, and clear after leaving the failed-from version", () => {
   const failure = {
     actorId: "counter-00",
     from: "old",
@@ -654,7 +654,7 @@ test("migration failures persist, deduplicate a pair, roll back, and clear only 
   expect(store.migrationFailures("new")).toHaveLength(1);
   store.saveSnapshot({
     actorId: failure.actorId,
-    machine: "new",
+    machine: "later",
     snapshot: { status: "active", value: "counting", context: { zone: "north" } },
   });
   expect(store.migrationFailure(failure.actorId)).toBeUndefined();
@@ -662,3 +662,36 @@ test("migration failures persist, deduplicate a pair, roll back, and clear only 
   expect(store.clearMigrationFailures("new")).toBe(1);
   expect(store.clearMigrationFailures("new")).toBe(0);
 });
+
+test.each(["done", "stopped"] as const)(
+  "a %s save clears the migration failure on the original version",
+  (status) => {
+    const failure = {
+      actorId: "counter-00",
+      from: "old",
+      to: "new",
+      kind: "no-path" as const,
+      message: "No path",
+      detail: {},
+    };
+    store.recordMigrationFailure(failure);
+    const before = store.migrationFailure(failure.actorId);
+    expect(() =>
+      store.connection.transaction(() => {
+        store.saveSnapshot({
+          actorId: failure.actorId,
+          machine: "old",
+          snapshot: { status, value: "counting", context: {} },
+        });
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+    expect(store.migrationFailure(failure.actorId)).toEqual(before);
+    store.saveSnapshot({
+      actorId: failure.actorId,
+      machine: "old",
+      snapshot: { status, value: "counting", context: {} },
+    });
+    expect(store.migrationFailure(failure.actorId)).toBeUndefined();
+  },
+);
