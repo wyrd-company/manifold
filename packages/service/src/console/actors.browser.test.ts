@@ -18,7 +18,7 @@ test("built Actors shows active and completed histories, usage, sequence and the
         mount: (prefix, listener) =>
           server.host.mount(prefix, prefix === "/api/actors" ? f.historyListener : listener),
       },
-      { store: f.store },
+      { store: f.store, history: f.history },
     );
     server.host.mount("/api/tasks", f.tasks.requestListener);
     server.host.mount("/api/usage", f.usage.listener);

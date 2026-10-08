@@ -141,7 +141,7 @@ export function TaskContent({ origin = "board" }: { origin?: "board" | "epics" }
                   <p className="mono">{actor.environment}</p>
                 ) : null}
                 <small>Saved {new Date(actor.savedAt).toLocaleString()}</small>
-                <TaskActorTimeline actorId={actorId} task={task} />
+                <TaskActorTimeline actorId={task.actorId} task={task} />
               </>
             ) : (
               <p className="muted">Waiting for intake</p>

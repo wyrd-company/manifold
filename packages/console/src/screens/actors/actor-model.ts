@@ -2,7 +2,7 @@
 // relationships:
 //   implements: operator-console
 // ---
-import type { ActorHistory, ReceivedEvent } from "../../api/actor-history.ts";
+import type { ActorHistory, ReceivedEvent } from "@wyrd-company/manifold-shared/actors-api";
 import type {
   ActorUsageResponse,
   ActorActual,

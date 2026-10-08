@@ -2,7 +2,7 @@
 // relationships:
 //   verifies: [operator-console, actor-usage-api]
 // ---
-import { memoryRevision } from "@wyrd-company/manifold-shared";
+import { lintPortfolioDeclaration, memoryRevision } from "@wyrd-company/manifold-shared";
 import { stringify } from "yaml";
 import { boardWorld } from "../../tasks/test-fixtures/world.ts";
 import { openTasks } from "../../tasks/index.ts";
@@ -10,18 +10,28 @@ import { openUsage, usageMigrationSteps } from "../../usage/index.ts";
 import { createBlueprintLoader } from "../../blueprint-loader/index.ts";
 import { openActorHost, recordStateEntry } from "../../actor-host/index.ts";
 import { startRouter } from "../../router/index.ts";
-import { actorSummaries } from "../actors-api.ts";
+import { threadTopic } from "../../t3code-source/index.ts";
+import { actorsListener } from "../actors-api.ts";
+import { openHistory } from "../../history/index.ts";
 import type { HttpListener } from "../../http-host/index.ts";
 const at = (n: number) => new Date(n * 1000).toISOString();
-/** Recorded approved seam until the history owner merges. */
 export async function actorWorld() {
   const f = boardWorld(true, false);
   let now = 0;
+  const history = openHistory({ store: f.store, log: () => {}, now: () => now });
   f.store.connection.migrate("usage", usageMigrationSteps);
+  const portfolio = lintPortfolioDeclaration({
+    portfolio: "items: { deliveries: {} }",
+    bindings: undefined,
+  });
+  if (!portfolio.ok) throw new Error("Invalid fixture portfolio");
   const usage = openUsage({
     connection: f.store.connection,
     ledger: f.ledger,
-    portfolio: { t3codeProject: () => ({ item: "other", via: "unbound" }) },
+    portfolio: {
+      current: () => ({ commit: revision.commit, declaration: portfolio.declaration }),
+      t3codeProject: () => ({ item: "other", via: "unbound" }),
+    },
     threadProject: () => undefined,
     environments: new Set(["sample-host"]),
     now: () => now,
@@ -39,8 +49,14 @@ export async function actorWorld() {
         id: "parcel",
         initial: "waiting",
         states: {
-          waiting: { on: { collected: "packing" } },
-          packing: { on: { delivered: "complete" } },
+          waiting: { on: { "github.project-item.field-changed": "packing" } },
+          packing: {
+            on: {
+              "t3.turn.started": {},
+              "github.project-item.field-changed": {},
+              "agent.handoff": "complete",
+            },
+          },
           complete: { type: "final" },
         },
       },
@@ -48,7 +64,11 @@ export async function actorWorld() {
         input: { type: "object" },
         context: { type: "object" },
         output: true,
-        events: { collected: true, delivered: true },
+        events: {
+          "github.project-item.field-changed": true,
+          "t3.turn.started": true,
+          "agent.handoff": true,
+        },
         actors: {},
       },
     }),
@@ -64,7 +84,7 @@ export async function actorWorld() {
   const actors = await openActorHost({
     store: f.store,
     blueprints: loader,
-    saveHooks: [usage.saveHook],
+    saveHooks: [history.saveHook, usage.saveHook],
     log: () => {},
     now: () => now,
   });
@@ -73,13 +93,23 @@ export async function actorWorld() {
     host: actors,
     clock: { now: () => now, setTimer: () => () => {} },
   });
-  const send = async (id: string, type: string, n: number) => {
+  const send = async (
+    id: string,
+    type: string,
+    n: number,
+    payload: Record<string, unknown> = {},
+  ) => {
     now = n * 1000;
+    const source = type.startsWith("agent.") ? "agent" : type.startsWith("t3.") ? "t3" : "github";
+    const topic =
+      source === "github"
+        ? `github.issue.${id}`
+        : threadTopic("sample-host", String(payload.threadId)).replace(/^t3\./, `${source}.`);
     router.publish({
-      source: "github",
-      eventId: `${id}-${type}`,
-      topics: [`github.issue.${id}`],
-      event: { type },
+      source,
+      eventId: `${id}-${type}-${n}`,
+      topics: [topic],
+      event: { type, ...payload },
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
   };
@@ -100,7 +130,35 @@ export async function actorWorld() {
         },
       },
     });
-    await send(id, "collected", 1);
+    const moved = (name: string) => ({
+      field: { nodeId: "status-field", name: "Status" },
+      to: { kind: "single-select", optionId: name.toLowerCase(), name },
+      movedBy: { actorId: `task:${id}`, confirmed: true },
+    });
+    now = 10;
+    history.commandSending({
+      commandId: `create-${id}`,
+      implementation: "thread-create",
+      invocation: { actorId: `task:${id}`, invokeId: "create", entryId: "one" },
+      environment: "sample-host",
+      threadId: thread,
+    });
+    now = 50;
+    history.commandSending({
+      commandId: `start-${id}`,
+      implementation: "turn-start",
+      invocation: { actorId: `task:${id}`, invokeId: "run", entryId: "one" },
+      environment: "sample-host",
+      threadId: thread,
+      messageId: `message-${id}`,
+    });
+    await send(id, "github.project-item.field-changed", 1, moved("Packing"));
+    await send(id, "t3.turn.started", 2, {
+      environment: "sample-host",
+      threadId: thread,
+      messageId: `message-${id}`,
+      turnId: "turn-one",
+    });
     usage.push({
       environment: "sample-host",
       threads: [{ provider: "codex", providerSessionId: id, threadId: thread }],
@@ -128,7 +186,14 @@ export async function actorWorld() {
         },
       ],
     });
-    if (id === "parcel") await send(id, "delivered", 7);
+    if (id === "parcel") {
+      await send(id, "github.project-item.field-changed", 6, moved("Delivered"));
+      await send(id, "agent.handoff", 7, {
+        environment: "sample-host",
+        threadId: thread,
+        turnId: "turn-one",
+      });
+    }
   }
   const projects = new Map(
     f.projects.map((p) => [
@@ -155,144 +220,20 @@ export async function actorWorld() {
     }),
     tokenHolder: () => undefined,
   });
-  const histories = () =>
-    ["parcel", "waiting"].map((id) => {
-      const active = id === "waiting",
-        threadId = active ? "thread-2" : "thread-1",
-        snapshot = f.store.loadSnapshot(`task:${id}`)!;
-      const actor = { ...actorSummaries([snapshot])[0]!, status: active ? "active" : "done" };
-      const events = [
-        {
-          eventId: "move-1",
-          type: "github.project-item.field-changed",
-          topic: "github.project.sample",
-          receivedAt: at(1),
-          consumedAt: at(1),
-          visit: 1,
-          payload: {
-            field: { nodeId: "status-field", name: "Status" },
-            to: { kind: "single-select", optionId: "packing", name: "Packing" },
-            movedBy: { actorId: actor.actorId, confirmed: true },
-          },
-        },
-        ...(active
-          ? []
-          : [
-              {
-                eventId: "handoff",
-                type: "agent.handoff",
-                topic: "agent.sample",
-                receivedAt: at(7),
-                consumedAt: at(7),
-                visit: 2,
-                payload: { environment: "sample-host", threadId, turnId: "turn-one" },
-              },
-              {
-                eventId: "move-2",
-                type: "github.project-item.field-changed",
-                topic: "github.project.sample",
-                receivedAt: at(8),
-                consumedAt: at(8),
-                visit: 3,
-                payload: {
-                  field: { nodeId: "status-field", name: "Status" },
-                  to: { kind: "single-select", optionId: "delivered", name: "Delivered" },
-                  movedBy: { actorId: actor.actorId, confirmed: true },
-                },
-              },
-            ]),
-      ];
-      return {
-        actor,
-        visits: [
-          {
-            visit: 1,
-            value: "waiting",
-            states: ["waiting"],
-            machine: snapshot.machine,
-            enteredAt: at(0),
-            exitedAt: at(1),
-            exitEvent: { type: "github.project-item.field-changed", eventId: "move-1" },
-          },
-          {
-            visit: 2,
-            value: "packing",
-            states: ["packing"],
-            machine: snapshot.machine,
-            enteredAt: at(1),
-            ...(active
-              ? {}
-              : { exitedAt: at(7), exitEvent: { type: "agent.handoff", eventId: "handoff" } }),
-          },
-          ...(active
-            ? []
-            : [
-                {
-                  visit: 3,
-                  value: "complete",
-                  states: ["complete"],
-                  machine: snapshot.machine,
-                  enteredAt: at(7),
-                },
-              ]),
-        ],
-        events,
-        commands: [
-          {
-            commandId: "create",
-            kind: "thread-create",
-            environment: "sample-host",
-            threadId,
-            invokeId: "create",
-            entryId: "one",
-            sentAt: at(0.01),
-          },
-          {
-            commandId: "start",
-            kind: "turn-start",
-            environment: "sample-host",
-            threadId,
-            turnId: "turn-one",
-            invokeId: "run",
-            entryId: "one",
-            sentAt: at(0.05),
-          },
-        ],
-        ...(active ? {} : { end: { status: "done", endedAt: at(9) } }),
-      };
-    });
   let historyFailure = false;
+  const listener = actorsListener({ store: f.store, history });
   const historyListener: HttpListener = (request, response) => {
     if (historyFailure && request.url?.includes("/history")) {
       response.writeHead(500).end();
       return;
     }
-    const path = (request.url ?? "").split("?")[0]!,
-      match = /^\/api\/actors\/([^/]+)\/history$/.exec(path),
-      all = histories();
-    const body = match
-      ? { history: all.find((h) => h.actor.actorId === decodeURIComponent(match[1]!)) }
-      : {
-          actors: all
-            .filter((h) =>
-              new URL(request.url ?? "", "http://example.test").searchParams.get("status") ===
-              "completed"
-                ? h.actor.status === "done"
-                : h.actor.status === "active",
-            )
-            .map((h) => h.actor),
-        };
-    response
-      .writeHead(match && !body.history ? 404 : 200, {
-        "content-type": "application/json",
-        "cache-control": "no-store",
-      })
-      .end(JSON.stringify(body));
+    listener(request, response);
   };
   return {
     ...f,
     tasks,
     usage,
+    history,
     historyListener,
     failHistory(value: boolean) {
       historyFailure = value;

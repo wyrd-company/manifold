@@ -2,7 +2,7 @@
 // relationships:
 //   verifies: operator-console
 // ---
-import type { ActorHistory } from "../../api/actor-history.ts";
+import type { ActorHistory } from "@wyrd-company/manifold-shared/actors-api";
 import type { ActorModelInput } from "./actor-model.ts";
 export const at = (n: number) => new Date(n * 1000).toISOString();
 export function sampleHistory(active = false): ActorHistory {
@@ -79,6 +79,7 @@ export function sampleHistory(active = false): ActorHistory {
         consumedAt: at(1),
         visit: 1,
         payload: {
+          type: "github.project-item.field-changed",
           field: { nodeId: "status-field", name: "Status" },
           to: { kind: "single-select", optionId: "packing", name: "Packing" },
           movedBy: { actorId: "task:parcel", confirmed: true },
@@ -94,7 +95,7 @@ export function sampleHistory(active = false): ActorHistory {
               receivedAt: at(7),
               consumedAt: at(7),
               visit: 2,
-              payload: { threadId: "thread-a", turnId: "turn-a" },
+              payload: { type: "agent.handoff", threadId: "thread-a", turnId: "turn-a" },
             },
             {
               eventId: "move-2",
@@ -104,6 +105,7 @@ export function sampleHistory(active = false): ActorHistory {
               consumedAt: at(8),
               visit: 3,
               payload: {
+                type: "github.project-item.field-changed",
                 field: { nodeId: "status-field", name: "Status" },
                 to: { kind: "single-select", optionId: "delivered", name: "Delivered" },
                 movedBy: { actorId: "task:parcel", confirmed: true },

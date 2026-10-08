@@ -26,7 +26,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                     exact:
                       item.path !== "/settings" &&
                       item.path !== "/board" &&
-                      item.path !== "/actors" && item.path !== "/epics",
+                      item.path !== "/actors" &&
+                      item.path !== "/epics",
                   }}
                   activeProps={{ className: "active", "aria-current": "page" }}
                 >

@@ -92,18 +92,16 @@ export function actorVisitUsage(
 ): ActorUsageResponse {
   const rows = options.connection.database
     .prepare(
-      `SELECT p.seq, p.provider, p.tokens,
-         CASE WHEN l.seq IS NULL THEN p.visit ELSE l.visit END AS visit,
+      `SELECT p.seq, p.provider, p.tokens, p.attributed_visit AS visit,
          p.account, p.amount, p.status, p.used_at, p.environment, s.thread_id
-       FROM usage_postings p
-       LEFT JOIN usage_late_attributions l USING(seq)
+       FROM usage_attributed_postings p
        JOIN usage_calls c ON c.environment=p.environment AND c.call_key=p.call_key
        LEFT JOIN usage_sessions s ON s.environment=p.environment AND s.provider=p.provider
          AND s.provider_session_id=json_extract(c.record,'$.providerSessionId')
-       WHERE (l.seq IS NULL AND p.actor=?) OR l.actor=?
+       WHERE p.attributed_actor=?
        ORDER BY p.used_at, p.seq`,
     )
-    .all(actor, actor) as unknown as Row[];
+    .all(actor) as unknown as Row[];
   const visits = options.connection.database
     .prepare("SELECT visit,entered_at FROM usage_visits WHERE actor_id=? ORDER BY visit")
     .all(actor) as { visit: number; entered_at: number }[];

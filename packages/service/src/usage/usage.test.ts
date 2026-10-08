@@ -1111,6 +1111,12 @@ it.each([false, true])(
     expect(
       await (await post({ from: "thread:env-one:thread-2", to: { actor: actorId } })).json(),
     ).toMatchObject({ moved: 0 });
+    expect(await (await fetch(host.url + "/api/usage/actors/task%3Aparcel")).json()).toMatchObject({
+      actorId,
+      tokens: { total: 4 },
+      accounts: [{ account: "acct", actual: 20 }],
+      calls: [expect.objectContaining({ total: 2 }), expect.objectContaining({ total: 2 })],
+    });
     expect(await (await fetch(host.url + "/api/tasks/task%3Aparcel")).json()).toMatchObject({
       task: {
         usage: {

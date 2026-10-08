@@ -65,10 +65,16 @@ export function openUsage(options: UsageOptions): Usage {
     accounts: () => structuredClone(declaration.accounts),
     push,
     retryPending,
-    listener: usageListener(options.environments, push, options.onError ?? (() => {}), {
-      move,
-      unowned,
-    }, readActor),
+    listener: usageListener(
+      options.environments,
+      push,
+      options.onError ?? (() => {}),
+      {
+        move,
+        unowned,
+      },
+      readActor,
+    ),
     saveHook: (save) => saveActor(options, now, save, declaration),
     apply: (revision) => {
       const result = queue.then(() => applyRevision(revision));

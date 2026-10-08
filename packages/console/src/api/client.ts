@@ -4,8 +4,8 @@
 // ---
 import { actorsApiPath, isActorsResponse } from "@wyrd-company/manifold-shared/actors-api";
 import type { ActorSummary } from "@wyrd-company/manifold-shared/actors-api";
-import { actorHistoryPath, isActorHistoryResponse, isSeamActorsResponse } from "./actor-history.ts";
-import type { ActorHistory } from "./actor-history.ts";
+import { actorHistoryPath, isActorHistoryResponse } from "@wyrd-company/manifold-shared/actors-api";
+import type { ActorHistory } from "@wyrd-company/manifold-shared/actors-api";
 import {
   actorUsageApiPath,
   isActorUsageResponse,
@@ -15,8 +15,7 @@ export type ActorsResult =
   | { kind: "ok"; actors: readonly ActorSummary[] }
   | { kind: "failed"; message: string };
 export function mapActorsResult(status: number, body: unknown): ActorsResult {
-  if (status === 200 && (isActorsResponse(body) || isSeamActorsResponse(body)))
-    return { kind: "ok", actors: body.actors };
+  if (status === 200 && isActorsResponse(body)) return { kind: "ok", actors: body.actors };
   return {
     kind: "failed",
     message:

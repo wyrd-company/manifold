@@ -4,7 +4,7 @@
 // ---
 import { expect, it } from "vite-plus/test";
 import { actorPasses, actorTimeline, actorSequence } from "./actor-model.ts";
-import type { ReceivedEvent } from "../../api/actor-history.ts";
+import type { ReceivedEvent } from "@wyrd-company/manifold-shared/actors-api";
 import { at, sampleInput } from "./test-fixtures.ts";
 it("draws a completed process with two confirmed card moves and a handoff", () => {
   const input = sampleInput(),
@@ -34,7 +34,12 @@ it("draws a completed process with two confirmed card moves and a handoff", () =
 });
 it("partitions escalation continuation and several passes in one visit without double counting", () => {
   const input = sampleInput(true);
-  const event = (id: string, type: string, time: number, payload: unknown): ReceivedEvent => ({
+  const event = (
+    id: string,
+    type: string,
+    time: number,
+    payload: ReceivedEvent["payload"],
+  ): ReceivedEvent => ({
     eventId: id,
     type,
     topic: "agent.sample",
