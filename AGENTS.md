@@ -91,7 +91,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **event match** a JSONata expression over an event that decides whether a transition takes it.
 - **event source** a shared origin of events that Manifold routes to actors.
 - **gate** an implementation on a blueprint state that decides which waiting tasks may leave it.
-- **grant round** one synchronous comparator loop for one gate, ending when the comparator returns `null` or an evaluation fails.
+- **grant round** one synchronous comparator loop for one gate, ending when the population is empty, the comparator returns `null`, a grant or evaluation fails, or the module stops.
 - **GitHub mirror** the last state the GitHub event source read of each entity it follows, against which it compares current GitHub state.
 - **harness plugin** the MCP server the host CLI serves to each provider T3 Code runs, giving the agent the tools to hand off and escalate.
 - **hold** an operator's pause or disconnect of one T3 Code environment, kept in Manifold's store under the environment's name until the matching resume or reconnect. A pause holds the thread and turn commands actors invoke; a disconnect closes Manifold's connection and holds every command to the environment.
