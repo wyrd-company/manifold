@@ -419,7 +419,7 @@ test("Portfolio screen keeps nested remainders, changed-parent status, project c
     await page.locator(".portfolio-projects").filter({ hasText: "sample · example/1" }).waitFor();
     await page.getByRole("button", { name: "Edit alpha", exact: true }).click();
     await page.getByRole("dialog").getByText("71.96% unallocated", { exact: true }).waitFor();
-    expect(await page.getByRole("button", { name: "Archive item" }).isDisabled()).toBe(true);
+    expect(await page.getByRole("button", { name: "Archive item" }).isEnabled()).toBe(true);
     await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByRole("button", { name: "Edit allocations", exact: true }).click();
     await page.getByLabel("gamma allocation", { exact: true }).fill("70");
