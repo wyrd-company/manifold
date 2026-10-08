@@ -49,9 +49,11 @@ design-challenges:
     restart, and an action whose effect was not stored must leave no event
     behind.
   admission: >-
-    No thread or turn command may be sent after a pause commits, and a
-    command already on the wire when the pause commits must not be lost or
-    sent twice.
+    No `thread-create` or `turn-start` command a blueprint invokes may be
+    sent after a pause commits, a command already on the wire when the
+    pause commits must not be lost or sent twice, and a command that waits
+    on a pause must not miss the resume that releases it. An escalation
+    answer is the operator's own action and is not held by a pause.
   isolation: >-
     A held environment must hold back no other environment's work,
     escalation answers included.
@@ -90,8 +92,13 @@ proposed-design:
     finds its hold already in the state it asks for changes nothing and
     publishes nothing.
   pause: >-
-    A paused environment starts no new thread and no new turn for a task
-    actor. A `thread-create` or `turn-start` invoke that reaches the send
+    A paused environment starts no new thread and no new turn that an
+    actor starts: the pause holds the `thread-create` and `turn-start`
+    commands a blueprint invokes, and nothing else. An escalation answer is
+    the operator's own action, so it passes a pause and may start a turn;
+    a disconnect holds it. A `t3code-project-create` invoke starts no
+    thread or turn, so a pause does not hold it, and a disconnect holds it
+    through the source's readiness. A `thread-create` or `turn-start` invoke that reaches the send
     while the environment is paused waits until the pause is lifted or the
     invoke stops, with no time limit, since the wait is on an operator
     action. Resume releases every waiting command, each sent with the ids
@@ -175,14 +182,27 @@ proposed-design:
     connected.
   ports: >-
     The T3 Code environment source declares the `EnvironmentHolds` port in
-    its public interface, with `held(environment)`, the two holds, and
-    `changed(environment, signal)`, which resolves at the next change of
-    the environment's holds; the agent threads module reads the same
-    port, and this module implements it, so neither reader imports this
-    module. `held` reads the module's in-memory copy of the rows, which
-    the module loads when it opens and changes only after the transaction
-    that stores a change commits, so a reader never sees a hold the store
-    does not hold.
+    its public interface, with `held(environment)`, the two holds and the
+    change sequence they were read at, and `changed(environment, after,
+    signal)`, which resolves at once when the environment's change
+    sequence is no longer `after`, and otherwise at the next change. The
+    agent threads module reads the same port, and this module implements
+    it, so neither reader imports this module. `held` reads the module's
+    in-memory copy of the rows, which the module loads when it opens and
+    changes only after the transaction that stores a change commits, so a
+    reader never sees a hold the store does not hold.
+  waiting-on-a-hold: >-
+    Every wait on a hold is level-triggered by the change sequence, so a
+    change that commits between the read of a hold and the start of the
+    wait is never missed. A waiter reads `held(environment)`, decides
+    from that one read, and when it must wait, passes the read's
+    `sequence` as `after` to `changed`. A change that committed in
+    between has already moved the sequence, so `changed` resolves at
+    once, and the waiter reads the hold again and decides again. A
+    waiter never waits on `changed` without a sequence it read. The wait
+    adds no delay of its own: a lost connection is still retried on the
+    environment's reconnect backoff, and only a hold is waited on through
+    `changed`.
   public-interface: |-
     `packages/service/src/environments/index.ts` exports exactly these
     names.
@@ -239,8 +259,9 @@ proposed-design:
     `startT3CodeSource` takes `holds` in its options. Each environment loop
     reads `held(environment)` before each connection. While disconnected
     is on, the loop sets its state to `disconnected`, resets its readiness
-    so that `ready` waits, opens no client, and waits on `changed`.
-    While it runs, it also waits on `changed`, and a change that turns
+    so that `ready` waits, opens no client, and waits on `changed` after
+    the sequence it read. While it runs, it also waits on `changed` after
+    the sequence it read before connecting, and a change that turns
     disconnected on aborts the connection's lifetime, closes the client,
     and lets every open subscription end, which keeps every cursor as it
     was. When disconnected turns off, the loop connects at once with its
@@ -253,13 +274,15 @@ proposed-design:
     state `disconnected` and the member `activeThreads`.
   agent-threads-changes: >-
     `openAgentThreads` takes `holds` in its options. `thread-create` and
-    `turn-start` check `held(environment).paused` inside the source's
-    write admission, synchronously and immediately before the command is
-    dispatched, and when it is on they leave the admission, wait on
-    `changed`, and enter the send again. Since the check and the dispatch
-    run without yielding, a command dispatched after a pause commits does
-    not exist, and one dispatched before it is the server's to answer.
-    `startTurn`, the escalation answer path, does not check paused. The
+    `turn-start` read `held(environment)` inside the source's write
+    admission, synchronously and immediately before the command is
+    dispatched, and when paused is on they leave the admission, wait on
+    `changed` after the sequence of that read, and enter the send again,
+    reading the hold again at the next admission. Since the read and the
+    dispatch run without yielding, no `thread-create` or `turn-start` is
+    dispatched after a pause commits, and one dispatched before it is the
+    server's to answer. `startTurn`, the escalation answer path, does not
+    read paused, so an answer is dispatched during a pause. The
     client pool refuses to open a client for an environment whose
     disconnected hold is on, failing the call as a lost connection, so the
     caller's retry waits on the source's readiness. A change that turns
@@ -319,15 +342,20 @@ proposed-design:
     with the event id `<name>/<sequence>`; a publish the router rejects
     leaves the row unchanged. A blueprint that declares
     `environment.paused` and is on the environment takes the event, and
-    one on another environment does not. With the environment paused, a
-    task actor's `thread-create` waits and the environment lists it as one
+    one on another environment does not. A `changed` given a sequence
+    that is no longer current resolves at once. A resume that commits
+    after a waiting `thread-create` has read the pause and before it
+    starts its wait, forced through a `holds` wrapper that commits the
+    resume when the command's read returns paused, lets the command send
+    exactly once with no further hold change. With the environment
+    paused, a task actor's `thread-create` waits and the environment lists it as one
     scheduled thread; the service stops and starts again on the same
     store; the environment is still paused and the command waits again;
     resume through the API sends it, and the fake server holds exactly one
     thread, which the actor follows. A turn running when the pause commits
     settles and the actor takes its `t3.turn.settled`. With the
     environment paused, `turn-start` waits and an escalation answer is
-    sent. With one environment disconnected, the fake server holds no
+    dispatched and starts its turn. With one environment disconnected, the fake server holds no
     socket from the service, an escalation answer to it waits, and an
     answer to the other environment is sent; a turn the fake server
     settles while disconnected is published after reconnect, once. A

@@ -212,17 +212,23 @@ proposed-design:
   operator-holds: >-
     The module reads the operator holds of `environment-control` through
     the `holds` port of `t3code-environment-source`. A paused environment
-    takes no `thread-create` or `turn-start` command: each checks
-    `held(environment).paused` inside the source's write admission,
-    synchronously and immediately before it dispatches, and when the hold
-    is on it leaves the admission, waits on `changed`, and enters the send
-    again. The check and the dispatch run without yielding, so no command
-    is dispatched after a pause commits, and a command dispatched before
-    it is the server's to answer. The wait has no time limit and ends when
+    takes no `thread-create` or `turn-start` command that a blueprint
+    invokes: each reads `held(environment)` inside the source's write
+    admission, synchronously and immediately before it dispatches, and
+    when paused is on it leaves the admission, waits on `changed` after
+    the sequence of that read, and enters the send again, reading the hold
+    again at the next admission. A resume that commits between the read
+    and the start of the wait has moved the sequence, so the wait ends at
+    once and the command is not stranded. The read and the dispatch run
+    without yielding, so no `thread-create` or `turn-start` is dispatched
+    after a pause commits, and one dispatched before it is the server's
+    to answer. A connection failure is still retried on the reconnect
+    backoff, never through `changed`. The wait has no time limit and ends when
     the pause is lifted or the invoke stops, since it waits on an operator
     action; the command keeps the ids it derived, so one that waited
     through a restart is sent once. `startTurn`, the path of an escalation
-    answer, does not check the pause, as
+    answer, does not read the pause, so an answer is dispatched during a
+    pause and may start a turn, as
     `let-escalation-answers-through-a-pause` records. A disconnected
     environment takes no read and no command: the source is not ready
     while the hold is on, so every call waits in `sourceReady`; the client
@@ -520,7 +526,9 @@ proposed-design:
     environment paused, `thread-create` and `turn-start` wait and send
     nothing, count in `scheduled`, and each sends once when the pause is
     lifted, while `startTurn` sends at once; a pause that commits while a
-    command is dispatched leaves that command sent once; with the
+    command is dispatched leaves that command sent once; a resume that
+    commits after a `thread-create` read the pause and before its wait
+    started lets it send once with no further hold change; with the
     environment disconnected, the fake server sees no socket from the
     module, a command waits, and it is sent once after reconnect,
     including one in flight when the disconnect committed. The fault tests run

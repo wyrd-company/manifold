@@ -273,8 +273,10 @@ proposed-design:
     `held(environment)` before each connection. While the disconnected
     hold is on, the environment's state is `disconnected`: the loop opens
     no client, its readiness is reset so that `ready` and `write` wait,
-    and it waits on `changed`. While the loop runs it also waits on
-    `changed`, and a change that turns the disconnected hold on ends the
+    and it waits on `changed` after the sequence it read, so a reconnect
+    that commits before the wait starts ends it at once. While the loop
+    runs it also waits on `changed` after the sequence it read before
+    connecting, and a change that turns the disconnected hold on ends the
     connection as a stop does: the client closes, every open subscription
     ends, and every cursor stays as it was stored. When the hold turns
     off, the loop connects at once with no backoff delay, and resumes as
@@ -387,13 +389,18 @@ proposed-design:
     export interface EnvironmentHold {
       readonly paused: boolean;
       readonly disconnected: boolean;
+      /** The change sequence the holds were read at; 0 before the first change. */
+      readonly sequence: number;
     }
 
     export interface EnvironmentHolds {
       /** The holds on an environment; both off for one the operator has not acted on. */
       held(environment: string): EnvironmentHold;
-      /** Resolves at the next change of the environment's holds; rejects when `signal` aborts. */
-      changed(environment: string, signal?: AbortSignal): Promise<void>;
+      /**
+       * Resolves at once when the environment's change sequence is no longer
+       * `after`, otherwise at its next change; rejects when `signal` aborts.
+       */
+      changed(environment: string, after: number, signal?: AbortSignal): Promise<void>;
     }
 
     /** `t3.environment.<environment>.thread.<encoded thread id>`. */
