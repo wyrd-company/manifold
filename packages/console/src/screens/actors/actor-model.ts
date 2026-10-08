@@ -298,7 +298,7 @@ export function actorTimeline(input: ActorModelInput): ActorTimeline {
             passes,
           )
         : "";
-    if (answer)
+    if (v.exitedAt && answer)
       exit = `answered: ${"text" in answer ? answer.text : (answered!.choices.find((c) => c.id === answer.choice)?.label ?? answer.choice)}`;
     const warning =
       events.some(
@@ -312,10 +312,10 @@ export function actorTimeline(input: ActorModelInput): ActorTimeline {
         : warning
           ? "warning"
           : !v.exitedAt && active
-            ? "primary"
-            : passes.some((p) => p.running && p.start <= end)
+            ? passes.some((p) => p.running && p.start <= end)
               ? "waiting"
-              : "edge";
+              : "primary"
+            : "edge";
     const previous = history.visits[index - 1];
     const migration =
       previous &&

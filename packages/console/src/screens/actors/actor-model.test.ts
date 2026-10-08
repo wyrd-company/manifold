@@ -151,7 +151,7 @@ it("marks held failures, pending events and running passes using the read time",
   };
   expect(actorTimeline(input).rows[1]).toMatchObject({
     exit: "running",
-    tone: "primary",
+    tone: "waiting",
     end: 10000,
   });
   expect(actorSequence(input).messages.map((m) => m.label)).toEqual([
@@ -168,6 +168,46 @@ it("marks held failures, pending events and running passes using the read time",
     end: { status: "stopped", endedAt: at(9) },
   };
   expect(actorSequence(input).messages.some((m) => m.label.includes("pending"))).toBe(false);
+});
+it("dims only the open visit with a running pass and keeps other visits solid", () => {
+  const input = sampleInput(true);
+  input.history = {
+    ...input.history,
+    visits: [
+      input.history.visits[0]!,
+      { ...input.history.visits[1]!, exitedAt: at(4) },
+      { visit: 3, value: "checking", states: ["checking"], machine: "sample", enteredAt: at(4) },
+    ],
+  };
+  expect(actorTimeline(input).rows.map((row) => row.tone)).toEqual(["edge", "edge", "waiting"]);
+  input.history = { ...input.history, commands: [] };
+  expect(actorTimeline(input).rows.map((row) => row.tone)).toEqual(["edge", "edge", "primary"]);
+});
+it("keeps an open visit running after an answer and labels the answer only after exit", () => {
+  const input = sampleInput(true);
+  input.escalations = [
+    {
+      id: "sample-question",
+      raiser: { type: "blueprint", actorId: "task:parcel", invokeId: "question", entryId: "one" },
+      title: "Delivery choice",
+      question: "Continue?",
+      choices: [{ id: "continue", label: "Continue" }],
+      freeText: true,
+      destinations: [],
+      status: "answered",
+      raisedAt: 3000,
+      closedAt: 5000,
+      answer: { value: { choice: "continue" }, channel: "api", at: 5000 },
+    },
+  ];
+  expect(actorTimeline(input).rows[1]?.exit).toBe("running");
+  input.history = {
+    ...input.history,
+    visits: input.history.visits.map((visit) =>
+      visit.visit === 2 ? { ...visit, exitedAt: at(6) } : visit,
+    ),
+  };
+  expect(actorTimeline(input).rows[1]?.exit).toBe("answered: Continue");
 });
 it("closes failed turns, labels external changes and XState invokes, and suppresses settles after handoff", () => {
   const input = sampleInput();
