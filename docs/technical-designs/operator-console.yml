@@ -383,7 +383,9 @@ proposed-design:
     `payload`, pending events included; `commands`, each an
     `ActorCommand` with `commandId`, `kind` (`thread-create` or
     `turn-start`), `environment`, `threadId`, `messageId` and `turnId`
-    when known, `invokeId`, `entryId`, and `acceptedAt`; and `end`,
+    when known, `invokeId`, `entryId`, `sentAt`, and `acceptedAt` once
+    the server's acceptance is recorded, ordered by `sentAt` then
+    `commandId`; and `end`,
     `{ status, endedAt, output? }`, once the actor has ended. Until the
     history owner merges, the console holds these types, its
     `isActorHistoryResponse` guard, and `actorHistoryPath` in
@@ -472,12 +474,17 @@ proposed-design:
     only, so their numbers differ after a migration. The usage answer's
     visits are matched to history visits by runs: consecutive history
     visits with one state value, its canonical JSON with keys sorted,
-    form a run, and the n-th run takes the usage of the n-th usage visit,
-    shown on the run's first visit. A usage visit with no run counts in
-    the total only.
+    form a run, and runs are numbered from 1 in order, as the usage
+    module numbers its visits from the same saves. Each usage entry is
+    joined by its `visit` number to the run of that number, and its usage
+    is shown on the run's first visit; a run whose number no usage entry
+    holds, since the usage answer lists no visit without a call, shows
+    no usage, and a usage entry whose number no run holds counts in the
+    total only. A machine change inside a run starts a new history visit
+    and no new run, so the usage stays on the run's first visit.
 
-    Passes. A pass starts at a `turn-start` command, at its
-    `acceptedAt`, or at an `agent.escalation.answered` event with a
+    Passes. A pass starts at a `turn-start` command, at its `sentAt`, or
+    at an `agent.escalation.answered` event with a
     non-null `turnId`, and belongs to that command's or event's thread
     and turn. It is a "Start thread" pass when a `thread-create` command
     for its thread comes before it with no other pass on that thread
@@ -488,9 +495,26 @@ proposed-design:
     with no `turnId` yet has a pass with no closing event. A pass with no
     closing event is running while the actor is `active`, and ends
     unclosed once it has ended. Passes are numbered from 1 in the order
-    they start. A pass's usage is the usage of the visits from the visit
-    it started in, the visit holding its `acceptedAt` or the answer's
-    consuming `visit`, to the `visit` that consumed its closing event.
+    they start.
+
+    Usage per pass. A pass's usage is read from the usage answer's
+    `calls`, never from visit sums, since several passes can share one
+    visit: a first turn's settle and the escalation answer that starts the
+    next turn can be taken in one visit, and a blueprint can run several
+    turns with no change of state value. The passes of one thread are
+    sequential, so they split its calls with no overlap: a call whose
+    `thread` is the pass's thread and whose `usedAt` is at or after the
+    pass's start and before the start of the next pass on that thread
+    counts in that pass, the last pass taking every later call. The start
+    is the command's `sentAt` or the answer event's `receivedAt`. A call
+    with a null `thread`, or on its thread before the thread's first
+    pass, counts in no pass, and the Sequence view shows the sum of such
+    calls as one "Not in a pass" line under the last message when it is
+    above zero. Each call is in at most one pass, so the passes and the
+    "Not in a pass" line sum to the actor's total. A call's `usedAt` is
+    the provider's clock and a pass's start the service's, so a call made
+    within the skew of the two clocks of a pass's start may count in the
+    pass before it.
 
     Timeline. `actorTimeline` answers the axis, from the first visit's
     entry to the last visit's end; the duration, the axis's length; one
@@ -518,8 +542,8 @@ proposed-design:
     Sequence. `actorSequence` answers the lifelines, Manifold, one
     "T3 Code thread" lifeline per thread in the order the actor first
     named it, labelled with the thread id's first eight characters, and
-    GitHub; and the messages in time order, a command at its
-    `acceptedAt` and an event at its `consumedAt`, each with its from and
+    GitHub; and the messages in time order, a command at its `sentAt`
+    and an event at its `consumedAt`, each with its from and
     to lifelines, its label, its style (`solid`, `dashed`, `self`, or
     `note`), its tone, and the pass it opens or closes. A pending event,
     one with no `consumedAt`, is drawn only while the actor is `active`,
@@ -545,7 +569,8 @@ proposed-design:
     An event of any other source is a self message on Manifold labelled
     with its type. A running pass is a note on its thread's lifeline,
     "running", after its last message. The message that closes a pass
-    carries the pass's usage for the right-hand column.
+    carries the pass's usage for the right-hand column, and a running
+    pass's note carries its usage so far.
   actor-views: >-
     The Timeline view is a table: the state paths in mono and "pass <n>"
     muted on the left, the bar on the shared axis, the exit label after
@@ -3683,8 +3708,12 @@ proposed-design:
     tones, passes, and usage, the total, the lifelines, every message's
     ends, label, style, and tone, the "Start thread" and "Continue
     thread" arrows, the confirmed card move and a person's field change
-    from GitHub, the migration's commit and the usage matched across it
-    by runs, a command with no `turnId` yet, a pending event drawn only
+    from GitHub, the migration's commit and the usage joined by visit
+    number across it, with a leading and an interior visit with no call
+    and a machine change inside a run; an escalation answer taken in the
+    visit that took the previous pass's settle, and two passes on one
+    thread within one unchanged visit, each call counted once and the
+    passes and "Not in a pass" summing to the total; a command with no `turnId` yet, a pending event drawn only
     while the actor runs, and, for a running variant of
     the default actor, the running visit, the waiting tone, the "running"
     note, and the axis ending at `now`. Unit tests cover the result

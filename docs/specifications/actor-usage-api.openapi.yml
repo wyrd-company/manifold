@@ -141,10 +141,46 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/VisitAccountActual"
+    CallUsage:
+      type: object
+      additionalProperties: false
+      required: [usedAt, thread, visit, total, account, actual]
+      properties:
+        usedAt:
+          type: string
+          format: date-time
+        thread:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [environment, threadId]
+              properties:
+                environment:
+                  type: string
+                  minLength: 1
+                threadId:
+                  type: string
+                  minLength: 1
+        visit:
+          oneOf:
+            - type: "null"
+            - type: integer
+              minimum: 1
+        total:
+          type: integer
+          minimum: 0
+        account:
+          type: [string, "null"]
+          minLength: 1
+        actual:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Amount"
     ActorUsageResponse:
       type: object
       additionalProperties: false
-      required: [actorId, tokens, accounts, visits]
+      required: [actorId, tokens, accounts, visits, calls]
       properties:
         actorId:
           type: string
@@ -159,3 +195,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/VisitUsage"
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallUsage"

@@ -68,6 +68,17 @@ description: |-
     counted in that visit, `accounts` with `{ account, actual }` only. A
     visit with no counted posting is not listed. A counted posting that
     names no visit counts in the totals and in no visit.
+  - `calls`: one entry per counted posting, ordered by `usedAt`, then by
+    the posting's sequence, `{ usedAt, thread, visit, total, account,
+    actual }`. `usedAt` is the call's time as the posting holds it, an
+    ISO 8601 UTC date and time with milliseconds. `thread` is
+    `{ environment, threadId }`, the T3 Code thread the session that made
+    the call runs on, from the session's mapping, or null when no mapping
+    names one. `visit` is the visit the posting counts in, or null.
+    `total` is the posting's token total, by the rule of `tokens.total`.
+    `account` and `actual` are the posting's account and amount, both
+    null for a pending posting. Each counted posting is listed once, so a
+    reader that sums a partition of `calls` counts every call once.
 
   Errors. A path under `/api/usage/actors/` with more than one segment
   answers `404`. A method other than `GET` on the path answers `405` with
@@ -89,7 +100,9 @@ validation-criteria: >-
   postings stated, `total` counting no reasoning for a `codex` call and
   counting it for another provider, the pending call's tokens counted
   with no account, the
-  late calls counted in the visit their attribution names, that each
+  late calls counted in the visit their attribution names, one `calls`
+  entry per counted posting with its thread from the session's mapping
+  and null for a session with none, that each
   account's `actual` equals `actorUsage`'s, and that the session's ledger
   actor no longer counts the late calls. It checks `200` with zeros for an
   id with no call, the percent-decoded id of `task:` with a node id, the
