@@ -54,7 +54,9 @@ export function openEnvironments(options: EnvironmentsOptions): Environments {
       connection,
       paused: hold.paused,
       disconnected: hold.disconnected,
-      ...(source?.error ? { error: source.error } : {}),
+      ...(source?.error && (connection === "connecting" || source.state === "stopped")
+        ? { error: source.error }
+        : {}),
       activeThreads: connection === "connected" ? source!.activeThreads : null,
       scheduledThreads: options.scheduled(name),
     };

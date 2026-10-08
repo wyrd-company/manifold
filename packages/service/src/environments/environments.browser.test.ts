@@ -141,6 +141,15 @@ test("built Environments shows the error and unknown active count when one serve
     const station = page.getByRole("row").filter({ hasText: "station" });
     await station.getByText("Error", { exact: true }).waitFor();
     expect(await station.locator("td").nth(2).textContent()).toBe("—");
+    await station.getByRole("button", { name: "Disconnect station", exact: true }).click();
+    const disconnected = await (await fetch(`http://${host}:${port}/api/environments`)).json();
+    expect(disconnected.environments[0]).toMatchObject({
+      status: "disconnected",
+      connection: "disconnected",
+    });
+    expect(disconnected.environments[0]).not.toHaveProperty("error");
+    await station.getByText("Disconnected", { exact: true }).waitFor();
+    expect(await station.getByText("Error", { exact: true }).count()).toBe(0);
     await page
       .getByRole("row")
       .filter({ hasText: "depot" })

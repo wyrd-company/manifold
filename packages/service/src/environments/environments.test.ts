@@ -204,8 +204,10 @@ test("summary precedence follows every source state and hold pair; failed action
             disconnected,
             activeThreads: connection === "connected" ? 2 : null,
             scheduledThreads: 2,
-            error: "sample error",
           });
+          if (connection === "connecting" || state === "stopped")
+            expect(summary.error).toBe("sample error");
+          else expect(summary).not.toHaveProperty("error");
         }
     f.module.act("station", "resume");
     const before = f.module.held("station");
