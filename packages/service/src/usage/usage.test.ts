@@ -12,6 +12,7 @@ import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../led
 import { openUsage, usageMigrationSteps } from "./index.ts";
 import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
 import type { UsageCall } from "@wyrd-company/manifold-shared";
+import type { PortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api";
 import { createServer } from "node:http";
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -1073,6 +1074,8 @@ it.each([false, true])(
     mountPortfolioApi(host.host, {
       portfolio: { current: currentPortfolio, ledger: s.ledger },
       accounts: s.usage.accounts,
+      lastUsedAt: s.usage.lastUsedAt,
+      pricing: s.usage.pricing,
       processRepository: {
         revisionAt: async (commit) => ({
           commit,
@@ -1101,9 +1104,7 @@ it.each([false, true])(
         headers: { "content-type": "application/json" },
         body: JSON.stringify(value),
       });
-    const before = (await (await fetch(host.url + "/api/portfolio")).json()) as {
-      accounts: { window: { used: number } }[];
-    };
+    const before = (await (await fetch(host.url + "/api/portfolio")).json()) as PortfolioResponse;
     expect(
       await (await post({ from: "thread:env-one:thread-2", to: { actor: actorId } })).json(),
     ).toMatchObject({ status: "moved", moved: 1, accounts: [{ amount: 10 }] });
@@ -1119,7 +1120,13 @@ it.each([false, true])(
       },
     });
     expect(await (await fetch(host.url + "/api/portfolio")).json()).toMatchObject({
-      accounts: [{ window: { used: before.accounts[0]!.window.used } }],
+      accounts: [
+        {
+          lastUsedAt: before.accounts[0]!.lastUsedAt,
+          window: { used: before.accounts[0]!.window!.used },
+        },
+      ],
+      pricing: before.pricing,
       items: expect.arrayContaining([
         expect.objectContaining({
           id: "alpha",
