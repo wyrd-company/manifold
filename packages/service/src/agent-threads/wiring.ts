@@ -14,7 +14,7 @@ export const agentThreads = wiringPart({
   name: "agent-threads",
   start: (
     members: Required<
-      Pick<Service, "configuration" | "portfolio" | "processRepository" | "log">
+      Pick<Service, "configuration" | "portfolio" | "processRepository" | "log" | "history">
     > & { githubMirror: ReturnType<typeof createMirror> },
     context,
   ): { agentThreads: AgentThreads } => {
@@ -30,6 +30,11 @@ export const agentThreads = wiringPart({
     const commandLog = (level: "info" | "warn" | "error") => (message: string) =>
       log({ level, event: "agent-threads-log", message });
     const agentThreads = openAgentThreads({
+      sending: members.history.commandSending,
+      probe: (command) => {
+        context.options.probes?.command?.(command);
+        members.history.commandAccepted(command);
+      },
       environments: configuration.environments,
       tokenFile,
       actorOf: (id) => actorHost.current()?.actorHost.actorOf(id),

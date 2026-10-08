@@ -20,12 +20,14 @@ export interface Store {
 
   saveSnapshot(write: SnapshotWrite): SaveOutcome;
   activeSnapshots(): StoredSnapshot[];
+  endedSnapshots(): StoredSnapshot[];
   loadSnapshot(actorId: string): StoredSnapshot | undefined;
   loadErroredSnapshot(actorId: string): StoredErroredSnapshot | undefined;
   findActorsInState(query: StateQuery): StoredSnapshot[];
 
   writeInbox(event: InboxEvent, actorIds: readonly string[]): InboxRow[];
   pendingInbox(actorId: string): InboxRow[];
+  actorInbox(actorId: string): InboxRow[];
   markConsumed(actorId: string, eventId: string): void;
   deliver(target: DeliveryTarget, row: InboxRow): DeliveryOutcome;
   drain(target: DeliveryTarget): DrainResult;

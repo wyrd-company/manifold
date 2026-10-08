@@ -25,8 +25,20 @@ export interface AgentThreadsOptions {
     send: (signal: AbortSignal) => Promise<T>,
   ) => Promise<T>;
   readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
-  readonly probe?: (accepted: AcceptedCommand) => void;
+  readonly sending?: (command: SendingCommand) => void;
+  readonly probe?: (accepted: InvokedCommand) => void;
   readonly logger?: Logger;
+}
+export interface SendingCommand {
+  readonly invocation: Invocation;
+  readonly implementation: "thread-create" | "turn-start";
+  readonly commandId: string;
+  readonly environment: string;
+  readonly threadId: string;
+  readonly messageId?: string;
+}
+export interface InvokedCommand extends SendingCommand {
+  readonly sequence: number;
 }
 export interface AcceptedCommand {
   readonly implementation: "thread-create" | "turn-start";

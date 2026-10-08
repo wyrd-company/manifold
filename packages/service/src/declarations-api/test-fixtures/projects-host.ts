@@ -185,7 +185,7 @@ export async function projectsHost(host = "127.0.0.1") {
     addRemoval(binding, "Obsolete");
   }
   const plan = (binding: string) => configuration.projects.plan(binding);
-  mountConsole(server.host, { store: service.store });
+  mountConsole(server.host, { store: service.store, history: service.history });
   server.host.mount("/api/tasks", board.tasks.requestListener);
   server.host.mount("/api/projects", async (request, response) => {
     await configuration.apply(service.processRepository.current()!);

@@ -518,3 +518,54 @@ test.each(["running", "starting"])("public running threads include %s sessions",
     thread.id,
   ]);
 });
+
+test("reports invocation identity before send and acceptance before the promise resolves", async () => {
+  const observed: unknown[] = [];
+  const f = await setup({
+    sending: (command) => observed.push({ phase: "sending", command }),
+    probe: (command) => observed.push({ phase: "accepted", command }),
+  });
+  const result = await f.run("thread-create", input);
+  expect(result).toHaveProperty("threadId");
+  expect(observed).toEqual([
+    {
+      phase: "sending",
+      command: expect.objectContaining({
+        implementation: "thread-create",
+        invocation,
+        environment: "station",
+        threadId: expect.any(String),
+        commandId: expect.any(String),
+      }),
+    },
+    {
+      phase: "accepted",
+      command: expect.objectContaining({
+        implementation: "thread-create",
+        invocation,
+        environment: "station",
+        threadId: expect.any(String),
+        sequence: 1,
+      }),
+    },
+  ]);
+});
+
+test("reports a returned acceptance even when the invoking state has exited", async () => {
+  const accepted: unknown[] = [];
+  let stop!: () => void;
+  const f = await setup({
+    probe: (command) => accepted.push(command),
+    sourceWrite: async (_environment, _thread, signal, send) => {
+      const result = await send(signal);
+      stop();
+      return result;
+    },
+  });
+  const actor = createActor(f.module.implementations.actors["thread-create"]!, { input });
+  stop = () => actor.stop();
+  actor.start();
+  await expect.poll(() => accepted.length).toBe(1);
+  expect(accepted[0]).toMatchObject({ invocation, implementation: "thread-create", sequence: 1 });
+  expect(actor.getSnapshot().status).toBe("stopped");
+});

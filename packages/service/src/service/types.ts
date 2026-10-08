@@ -4,6 +4,8 @@
 //     - service-assembly
 //     - gate-runtime
 // ---
+import type { History } from "../history/index.ts";
+import type { InvokedCommand } from "../agent-threads/index.ts";
 import type { AgentTools } from "../agent-tools/index.ts";
 import type { AgentThreads } from "../agent-threads/index.ts";
 import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
@@ -54,6 +56,7 @@ export interface StartServiceOptions {
 }
 
 export interface ServiceProbes {
+  readonly command?: (command: InvokedCommand) => void;
   readonly capacityCredited?: (credit: import("../capacity/index.ts").CapacityCredit) => void;
   /** Called after each start and stop step completes. */
   readonly step?: (step: ServiceStep) => void;
@@ -94,6 +97,7 @@ export type ServiceStep =
   | "store-closed";
 
 export interface ServiceParts {
+  readonly history: History;
   readonly gates?: Gates;
   readonly escalations: Escalations;
   readonly actorHost: ActorHost;

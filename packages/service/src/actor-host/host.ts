@@ -9,6 +9,7 @@ import type { LoadedBlueprint, VersionLoad } from "../blueprint-loader/index.ts"
 import { ActorNotLoadedError } from "../router/index.ts";
 import type { ActorRecord as RouterActorRecord, Router } from "../router/index.ts";
 import type { DeliveryTarget, PersistedSnapshot } from "../store/index.ts";
+import { isDeepStrictEqual } from "node:util";
 import { activeEntries, activeInvokes, deadlineArms, deliverDeadline } from "./entries.ts";
 import { identityIndex } from "./identities.ts";
 import { identityOf, identityTopics, validateInput } from "./identity.ts";
@@ -87,6 +88,15 @@ export async function openActorHost({
           }
         }
       }
+      if (event.type === "@xstate.snapshot" && ref === record.root && "value" in event.snapshot) {
+        const value = event.snapshot.value;
+        if (record.stateValue !== undefined && !isDeepStrictEqual(record.stateValue, value))
+          record.changedBy = {
+            type: event.event.type,
+            ...(record.deliveringEventId ? { eventId: record.deliveringEventId } : {}),
+          };
+        record.stateValue = value;
+      }
       if (
         event.type === "@xstate.snapshot" &&
         machineOf(ref) &&
@@ -151,11 +161,13 @@ export async function openActorHost({
       send(row) {
         record.sending = true;
         record.eventId = row.eventId;
+        record.deliveringEventId = row.eventId;
         try {
           if (row.topic.startsWith("deadline."))
             deliverDeadline(record, (row.payload as { type: string }).type);
           else record.root!.send(row.payload);
         } finally {
+          delete record.deliveringEventId;
           record.sending = false;
         }
       },
@@ -172,6 +184,7 @@ export async function openActorHost({
         const active = raw.status === "active";
         const save: ActorSave = {
           actorId: record.actorId,
+          ...(record.changedBy ? { changedBy: record.changedBy } : {}),
           ...(record.eventId ? { eventId: record.eventId } : {}),
           machine: record.blueprint.key,
           snapshot,

@@ -5,6 +5,7 @@
 import { chromium } from "playwright";
 import { expect, test } from "vite-plus/test";
 import { boardWorld } from "../tasks/test-fixtures/world.ts";
+import { openHistory } from "../history/index.ts";
 import { mountConsole } from "./index.ts";
 import { mountEscalations } from "../escalations/index.ts";
 import { consoleHost } from "./test-fixtures/host.ts";
@@ -13,7 +14,10 @@ test("built Board reads settled usage and records panel answers once, including 
     server = await consoleHost(),
     browser = await chromium.launch({ headless: true });
   try {
-    mountConsole(server.host, { store: f.store });
+    mountConsole(server.host, {
+      store: f.store,
+      history: openHistory({ store: f.store, log: () => {} }),
+    });
     server.host.mount("/api/tasks", f.tasks.requestListener);
     mountEscalations(server.host, f.module);
     const page = await browser.newPage();

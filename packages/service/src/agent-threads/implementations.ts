@@ -39,17 +39,21 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
     );
     const command = createCommand(input, invocation, title, new Date().toISOString());
     const id = command.threadId;
+    const sending = {
+      invocation,
+      implementation: "thread-create" as const,
+      commandId: command.commandId,
+      environment: owner.environment,
+      threadId: id,
+    };
+    options.sending?.(sending);
     const result = await dispatch(options, owner.environment, signal, () =>
       options.sourceWrite(owner.environment, id, signal, (writeSignal) =>
         pool.get(owner.environment).threads.dispatcher.dispatch(command, writeSignal),
       ),
     );
+    options.probe?.({ ...sending, sequence: result.sequence });
     signal.throwIfAborted();
-    options.probe?.({
-      implementation: "thread-create",
-      commandId: command.commandId,
-      sequence: result.sequence,
-    });
     return { threadId: id };
   });
   const prepare = fromPromise(async (args) => {
@@ -65,7 +69,8 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
   });
   const turn = fromPromise(async (args) => {
     const input = turnInput(args.input);
-    const owner = actor(options.invocationOf(args));
+    const invocation = options.invocationOf(args);
+    const owner = actor(invocation);
     const id = threadId(input.threadId.trim());
     const requested = messageId(input.messageId.trim());
     if (!owner.manifold.threads?.includes(id))
@@ -89,17 +94,29 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
         if (!current && (!input.runtimeMode || !input.interactionMode))
           throw failure("rejected", "Thread is absent from the server shell");
         command = turnCommand(input, text, current, new Date().toISOString());
+        options.sending?.({
+          invocation,
+          implementation: "turn-start",
+          commandId: command.commandId,
+          environment: owner.environment,
+          threadId: id,
+          messageId: requested,
+        });
       }
       return options.sourceWrite(owner.environment, id, signal, (writeSignal) =>
         client.threads.dispatcher.dispatch(command!, writeSignal),
       );
     });
-    signal.throwIfAborted();
     options.probe?.({
+      invocation,
+      environment: owner.environment,
+      threadId: id,
+      messageId: requested,
       implementation: "turn-start",
       commandId: derivedId("turn-start/command", requested),
       sequence: result.sequence,
     });
+    signal.throwIfAborted();
     return { threadId: id, messageId: requested };
   });
   const follow = assign(

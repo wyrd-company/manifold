@@ -305,7 +305,13 @@ proposed-design:
     The acceptance scenario test counts each kind of row and sums the byte
     lengths of the columns of the actor's history rows and inbox rows
     after the actor ends, and the counts are recorded here as the measured growth
-    per actor on the starter repository's default blueprint.
+    per actor on the starter repository's default blueprint. The measured
+    ended actor holds 7 visits (1,485 logical column bytes), 3 event links
+    (156 bytes), and 2 commands (318 bytes): 1,959 added bytes per actor.
+    Its existing inbox holds 3 rows (979 bytes), reused without copying.
+    Logical bytes are UTF-8 text lengths plus the lengths of decimal
+    integer representations, with null contributing zero; SQLite page,
+    index, and WAL overhead is not included.
   convergence: >-
     The save hook run twice for one save writes one visit, since the
     second run finds the visit it inserted with the same value and
@@ -392,8 +398,12 @@ proposed-design:
     the fake GitHub and fake T3 Code servers, reads `GET
     /api/actors?status=completed` and the actor's history after it ends,
     and finds each visit with the default blueprint's path and commit, the
-    `thread-create` and `turn-start` commands with the turn's id, and the
-    `github.project-item.field-changed` event of each card move with
-    `movedBy.confirmed` true and linked to the visit that took it. It
+    `thread-create` and `turn-start` commands with an acceptance, and the
+    first card move's `github.project-item.field-changed` event with
+    `movedBy.confirmed` true and linked to the visit that took it. The
+    later Done confirmation is absent because the default actor ends
+    before that event is published. The default blueprint does not
+    declare `t3.turn.started`, so its command has no `turnId`; a generic
+    blueprint that declares the event verifies turn attribution. It
     measures the growth the `growth` section records. Values are generic
     and never drawn from Manifold's own domain.

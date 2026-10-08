@@ -282,7 +282,7 @@ test("bundled blueprints list and publish as repository replacements", async () 
   await git.setConfig({ fs, gitdir: f.remote.gitdir, path: "http.receivepack", value: true });
   const service = await startService({ configurationFile: f.file, log: () => {} });
   const host = await consoleHost();
-  mountConsole(host.host, { store: service.store });
+  mountConsole(host.host, { store: service.store, history: service.history });
   const source = await service.processRepository.revisionAt(f.first);
   const text = (await source!.read("blueprints/counter.yml"))!;
   mountBlueprintsApi(host.host, {

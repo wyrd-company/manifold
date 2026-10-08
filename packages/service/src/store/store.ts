@@ -123,6 +123,14 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         .all()
         .map(readSnapshot);
     },
+    endedSnapshots() {
+      return database
+        .prepare(
+          "SELECT * FROM store_snapshot WHERE status IN ('done', 'stopped') ORDER BY actor_id",
+        )
+        .all()
+        .map(readSnapshot);
+    },
     loadSnapshot(actorId) {
       const row = database.prepare("SELECT * FROM store_snapshot WHERE actor_id = ?").get(actorId);
       return row ? readSnapshot(row) : undefined;
@@ -172,6 +180,12 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         }
         return rows;
       });
+    },
+    actorInbox(actorId) {
+      return database
+        .prepare("SELECT * FROM store_inbox WHERE actor_id = ? ORDER BY sequence")
+        .all(actorId)
+        .map(readInbox);
     },
     pendingInbox(actorId) {
       return database

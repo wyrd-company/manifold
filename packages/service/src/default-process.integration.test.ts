@@ -27,7 +27,7 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
 });
-async function fixture(refuseMove = false) {
+async function fixture(refuseMove = false, crash?: "event" | "command") {
   const f = await serviceFixture();
   cleanup.push(f.close);
   await git.setConfig({ fs, gitdir: f.remote.gitdir, path: "http.receivepack", value: true });
@@ -190,16 +190,21 @@ async function fixture(refuseMove = false) {
     force: true,
   });
   const logs: unknown[] = [];
+  const faults: { boundary: string; eventId?: string; commandId?: string }[] = [];
   async function start() {
+    const fault = crash;
+    crash = undefined;
     const worker = fork(
       join(childArtifacts().service, "test-fixtures/default-process-worker.js"),
-      [JSON.stringify({ file: f.file })],
+      [JSON.stringify({ file: f.file, crash: fault })],
       { silent: true, execArgv: [] },
     );
     let stderr = "";
     worker.on("message", (message) => {
       const value = message as { type: string; entry: unknown };
       if (value.type === "log") logs.push(value.entry);
+      if (value.type === "fault")
+        faults.push(message as { boundary: string; eventId?: string; commandId?: string });
     });
     worker.stderr!.on("data", (chunk) => {
       stderr += String(chunk);
@@ -322,12 +327,36 @@ async function fixture(refuseMove = false) {
     get exited() {
       return running.exited;
     },
+    async resumeKilled() {
+      expect(await running.exited).toBeNull();
+      expect(running.worker.signalCode).toBe("SIGKILL");
+      expect(faults).toHaveLength(1);
+      const fault = faults[0]!;
+      if (fault.boundary === "event") {
+        expect(store.pendingInbox("task:I_A").some((row) => row.eventId === fault.eventId)).toBe(
+          true,
+        );
+        expect(
+          store.connection.database
+            .prepare("SELECT * FROM history_event WHERE actor_id=? AND event_id=?")
+            .all("task:I_A", fault.eventId!),
+        ).toEqual([]);
+      } else {
+        expect(
+          store.connection.database
+            .prepare("SELECT accepted_at FROM history_command WHERE command_id=?")
+            .get(fault.commandId!)?.["accepted_at"],
+        ).toBeNull();
+      }
+      running = await start();
+    },
     async restart() {
       running.worker.kill("SIGKILL");
       expect(await running.exited).toBeNull();
       expect(running.worker.signalCode).toBe("SIGKILL");
       running = await start();
     },
+    faults,
     snapshot,
     state,
     add,
@@ -821,3 +850,128 @@ it("holds a refused card move and retries from the saved moving state", async ()
   expect(f.moves()).toEqual(["In Progress", "In Progress", "Done"]);
   expect(f.t3.threads.size).toBe(1);
 });
+
+it("keeps the ended starter actor history, confirmed card receipts and measured growth", async () => {
+  const f = await fixture();
+  await f.add();
+  await f.waiting();
+  await f.handoff();
+  await expect
+    .poll(() =>
+      f.store.connection.database
+        .prepare("SELECT * FROM github_card_move WHERE actor_id=?")
+        .all("task:I_A"),
+    )
+    .toEqual([]);
+  const response = await fetch(
+    f.url + "/api/actors/" + encodeURIComponent("task:I_A") + "/history",
+  );
+  expect(response.status).toBe(200);
+  const { isActorHistoryResponse, isActorsResponse } =
+    await import("@wyrd-company/manifold-shared/actors-api");
+  const body = await response.json();
+  expect(isActorHistoryResponse(body)).toBe(true);
+  if (!isActorHistoryResponse(body)) throw new Error("Invalid actor history");
+  const h = body.history;
+  expect(h.end).toMatchObject({
+    status: "done",
+    output: { outcome: "done", handoff: { summary: "Parcel packed" } },
+  });
+  expect(h.visits.length).toBeGreaterThan(3);
+  for (const visit of h.visits)
+    expect(visit.blueprint).toEqual({ path: "blueprints/task.yml", commit: f.commit });
+  expect(h.commands.map((c) => c.kind)).toEqual(["thread-create", "turn-start"]);
+  expect(h.commands[1]).not.toHaveProperty("turnId");
+  const thread = [...f.t3.threads.values()][0]!;
+  expect(h.commands.map((c) => c.invokeId)).toEqual(["open-thread", "start-turn"]);
+  expect(
+    h.commands.every(
+      (c) =>
+        c.environment === "workstation" &&
+        c.threadId === thread.id &&
+        /^[1-9][0-9]*$/.test(c.entryId),
+    ),
+  ).toBe(true);
+  expect(h.commands[1]!.messageId).toBe(thread.messages[0]!.id);
+  expect(h.commands.map((c) => c.commandId)).toEqual(f.t3.commands.map((c) => c.commandId));
+  expect(h.commands.every((c) => c.acceptedAt)).toBe(true);
+  const receipts = h.events.filter(
+    (e) =>
+      e.type === "github.project-item.field-changed" &&
+      (e.payload as { movedBy?: { confirmed?: boolean } }).movedBy?.confirmed,
+  );
+  expect(receipts).toHaveLength(1);
+  expect(f.moves()).toEqual(["In Progress", "Done"]);
+  expect(receipts[0]!.payload).toMatchObject({ to: { name: "In Progress" } });
+  expect(
+    h.events.some(
+      (e) =>
+        e.type === "github.project-item.field-changed" &&
+        (e.payload as { to?: { name?: string } }).to?.name === "Done",
+    ),
+  ).toBe(false);
+  expect(receipts.every((e) => e.visit !== undefined && e.consumedAt !== undefined)).toBe(true);
+  const completed = await (await fetch(f.url + "/api/actors?status=completed")).json();
+  expect(isActorsResponse(completed)).toBe(true);
+  expect(completed).toMatchObject({ actors: expect.arrayContaining([{ ...h.actor }]) });
+  const db = f.store.connection.database;
+  const growth = Object.fromEntries(
+    ["history_visit", "history_event", "history_command", "store_inbox"].map((table) => {
+      const rows = db.prepare(`SELECT * FROM ${table} WHERE actor_id=?`).all("task:I_A");
+      // Logical column bytes: UTF-8 text and decimal integers, null costs zero.
+      const bytes = rows.reduce(
+        (sum, row) =>
+          sum +
+          Object.values(row).reduce<number>(
+            (n, value) => n + (value === null ? 0 : Buffer.byteLength(String(value))),
+            0,
+          ),
+        0,
+      );
+      return [table, { rows: rows.length, bytes }];
+    }),
+  );
+  console.log("ACTOR_HISTORY_GROWTH " + JSON.stringify(growth));
+  await f.restart();
+  expect(
+    await (
+      await fetch(f.url + "/api/actors/" + encodeURIComponent("task:I_A") + "/history")
+    ).json(),
+  ).toEqual(body);
+});
+it.each(["event", "command"] as const)(
+  "SIGKILL at the %s boundary converges to one linked event and one server turn",
+  async (boundary) => {
+    const f = await fixture(false, boundary);
+    await f.add();
+    await f.resumeKilled();
+    await f.waiting();
+    expect(f.faults[0]!.boundary).toBe(boundary);
+    const thread = [...f.t3.threads.values()][0]!;
+    expect(thread.messages).toHaveLength(1);
+    expect(f.t3.threads.size).toBe(1);
+    await f.handoff();
+    const { isActorHistoryResponse } = await import("@wyrd-company/manifold-shared/actors-api");
+    const body = await (
+      await fetch(f.url + "/api/actors/" + encodeURIComponent("task:I_A") + "/history")
+    ).json();
+    expect(isActorHistoryResponse(body)).toBe(true);
+    if (!isActorHistoryResponse(body)) throw new Error("Invalid actor history");
+    const starts = body.history.events.filter(
+      (e) =>
+        e.type === "github.project-item.field-changed" &&
+        (e.payload as { movedBy?: { confirmed?: boolean } }).movedBy?.confirmed === true,
+    );
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({ visit: expect.any(Number), consumedAt: expect.any(String) });
+    expect(
+      f.store.connection.database
+        .prepare("SELECT * FROM history_event WHERE actor_id=? AND event_id=?")
+        .all("task:I_A", starts[0]!.eventId),
+    ).toHaveLength(1);
+    expect(body.history.commands.filter((c) => c.kind === "turn-start")).toHaveLength(1);
+    expect(body.history.commands[1]).toMatchObject({
+      acceptedAt: expect.any(String),
+    });
+  },
+);

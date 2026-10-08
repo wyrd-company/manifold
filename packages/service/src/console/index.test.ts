@@ -10,6 +10,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { parse } from "yaml";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { openStore } from "../store/index.ts";
+import { openHistory } from "../history/index.ts";
 import { mountConsole } from "./index.ts";
 import { consoleHost } from "./test-fixtures/host.ts";
 
@@ -24,7 +25,7 @@ beforeEach(async () => {
   writeFileSync(join(root, "assets/sample-abc123.js"), "sample");
   store = openStore({ path: join(root, "store.db"), now: () => clock });
   server = await consoleHost();
-  mountConsole(server.host, { root, store });
+  mountConsole(server.host, { root, store, history: openHistory({ store, log: () => {} }) });
 });
 afterEach(async () => {
   await server.close();
@@ -89,6 +90,7 @@ test("lists active snapshots, projects identity, leaves, versions and determinis
   expect(body).toEqual({
     actors: [
       {
+        status: "active",
         actorId: "a",
         machine: `${"a".repeat(40)}:blueprints/sample.yml`,
         blueprint: { commit: "a".repeat(40), path: "blueprints/sample.yml" },
@@ -100,6 +102,7 @@ test("lists active snapshots, projects identity, leaves, versions and determinis
         savedAt: new Date(2000).toISOString(),
       },
       {
+        status: "active",
         actorId: "b",
         machine: "sample",
         states: ["waiting"],
@@ -107,6 +110,7 @@ test("lists active snapshots, projects identity, leaves, versions and determinis
         savedAt: new Date(2000).toISOString(),
       },
       {
+        status: "active",
         actorId: "older",
         machine: "sample",
         states: ["ready"],
@@ -145,6 +149,7 @@ test("bundled actors keep the full machine identity and expose the declared blue
   expect(await response.json()).toEqual({
     actors: [
       {
+        status: "active",
         actorId: "parcel",
         machine,
         blueprint: { commit: "a".repeat(40), path: "blueprints/sample.yml" },
@@ -167,7 +172,9 @@ test("failed reads return no error detail and log the path", async () => {
   try {
     mountConsole(failing.host, {
       root,
+      history: { read: () => undefined },
       store: {
+        endedSnapshots: () => [],
         activeSnapshots() {
           throw new Error("private sample");
         },
@@ -230,9 +237,13 @@ test("rejects traversal before path normalization and malformed escapes", async 
   }
 });
 test("refuses an incomplete console build at mount", () => {
-  expect(() => mountConsole(server.host, { root: join(root, "absent"), store })).toThrow(
-    /index.html/,
-  );
+  expect(() =>
+    mountConsole(server.host, {
+      root: join(root, "absent"),
+      store,
+      history: openHistory({ store, log: () => {} }),
+    }),
+  ).toThrow(/index.html/);
 });
 
 test("blueprint editor routes ending in YAML extensions load the shell for GET and HEAD", async () => {
@@ -242,4 +253,98 @@ test("blueprint editor routes ending in YAML extensions load the shell for GET a
     expect(response.headers.get("content-type")).toContain("text/html");
   }
   expect((await read("/console/blueprints/missing.js")).status).toBe(404);
+});
+
+test("lists completed actors, rejects bad status and reads encoded history against OpenAPI", async () => {
+  const history = openHistory({ store, log: () => {} });
+  store.saveSnapshot({
+    actorId: "parcel/a",
+    machine: "sample",
+    snapshot: { status: "done", value: "delivered", output: { label: "large" } },
+  });
+  store.saveSnapshot({
+    actorId: "stopped",
+    machine: "sample",
+    snapshot: { status: "stopped", value: "packing" },
+  });
+  store.saveSnapshot({ actorId: "error", machine: "sample", snapshot: { status: "error" } });
+  store.writeInbox({ eventId: "scan", topic: "parcel.scan", payload: { type: "scanned" } }, [
+    "parcel/a",
+  ]);
+  history.commandSending({
+    implementation: "thread-create",
+    commandId: "create",
+    invocation: { actorId: "parcel/a", invokeId: "open", entryId: "1" },
+    environment: "station",
+    threadId: "thread",
+  });
+  const completed = await read("/api/actors?status=completed");
+  expect(await completed.json()).toMatchObject({
+    actors: [
+      { actorId: "parcel/a", status: "done" },
+      { actorId: "stopped", status: "stopped" },
+    ],
+  });
+  expect(await (await read("/api/actors?status=active")).json()).toEqual({ actors: [] });
+  for (const query of [
+    "status=other",
+    "status=active&status=active",
+    "status=",
+    "status=active?next=yes",
+  ])
+    expect((await read("/api/actors?" + query)).status).toBe(400);
+  const response = await read("/api/actors/parcel%2Fa/history");
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body).toMatchObject({
+    history: {
+      actor: { actorId: "parcel/a", status: "done" },
+      end: { status: "done", output: { label: "large" } },
+      visits: [],
+      events: [{ eventId: "scan" }],
+      commands: [{ commandId: "create" }],
+    },
+  });
+  const document = parse(
+    readFileSync(
+      new URL("../../../../docs/specifications/actors-api.openapi.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+  const validate = new Ajv2020({ strict: false, validateFormats: false }).compile({
+    ...document.components.schemas.ActorHistoryResponse,
+    components: document.components,
+  });
+  expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
+  for (const path of [
+    "/api/actors/missing/history",
+    "/api/actors/error/history",
+    "/api/actors/parcel%252Fa/history",
+    "/api/actors/%/history",
+  ])
+    expect((await read(path)).status, path).toBe(404);
+  const method = await read("/api/actors/parcel%2Fa/history", "POST");
+  expect(method.status).toBe(405);
+  expect(method.headers.get("allow")).toBe("GET");
+});
+
+test("matches encoded actor segments before URL dot-segment normalization", async () => {
+  store.saveSnapshot({
+    actorId: ".",
+    machine: "sample",
+    snapshot: { status: "done", value: "delivered" },
+  });
+  const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+    request(server.url, { path: "/api/actors/%2E/history" }, (response) => {
+      let body = "";
+      response.on("data", (chunk) => {
+        body += String(chunk);
+      });
+      response.on("end", () => resolve({ status: response.statusCode!, body }));
+    })
+      .on("error", reject)
+      .end();
+  });
+  expect(result.status).toBe(200);
+  expect(JSON.parse(result.body)).toMatchObject({ history: { actor: { actorId: "." } } });
 });

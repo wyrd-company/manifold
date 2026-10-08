@@ -68,9 +68,20 @@ test("source readiness precedes a fast turn and settlement before invoke onDone"
   release();
   await expect.poll(() => service.actor.getSnapshot().status).toBe("done");
   expect(responseHeld).toBe(true);
+  const commands = service.history.read("worker")!.commands;
+  expect(commands.map((command) => command.kind)).toEqual(["thread-create", "turn-start"]);
+  expect(commands[1]).toMatchObject({
+    turnId: [...server.threads.values()][0]!.latestTurn!.turnId,
+  });
+  expect(commands[1]).not.toHaveProperty("acceptedAt");
+  cleanup.pop();
+  await service.stop();
+  const restarted = await fixtureService(config);
+  cleanup.push(() => restarted.stop());
+  expect(restarted.history.read("worker")!.commands).toEqual(commands);
   expect(server.threads.size).toBe(1);
   expect([...server.threads.values()][0]!.messages).toHaveLength(1);
-  expect(service.actor.getSnapshot().context.started).toBe(1);
+  expect(restarted.actor.getSnapshot().context.started).toBe(1);
 });
 test("turn shell read cannot carry a send into a replacement origin", async () => {
   const { server, config } = await setup();

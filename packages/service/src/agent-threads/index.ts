@@ -7,6 +7,8 @@ export type {
   AgentThreadsOptions,
   AgentThreads,
   AcceptedCommand,
+  SendingCommand,
+  InvokedCommand,
   AgentThreadError,
   AgentThreadErrorKind,
 } from "./types.ts";

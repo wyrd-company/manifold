@@ -14,6 +14,7 @@ export const actorHost = wiringPart({
         Service,
         | "configuration"
         | "store"
+        | "history"
         | "portfolio"
         | "usage"
         | "processRepository"
@@ -31,6 +32,7 @@ export const actorHost = wiringPart({
     const {
       configuration,
       store,
+      history,
       portfolio,
       usage,
       processRepository,
@@ -46,6 +48,7 @@ export const actorHost = wiringPart({
     const actorHost = await (options.actorHost ?? createServiceActorHost)({
       configuration,
       store,
+      history,
       portfolio,
       usage,
       processRepository,

@@ -8,6 +8,7 @@ const actor = {
   actorId: "sample",
   machine: "sample",
   states: ["ready"],
+  status: "active",
   savedAt: "2026-01-01T00:00:00.000Z",
 };
 afterEach(() => vi.unstubAllGlobals());

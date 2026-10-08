@@ -6,6 +6,7 @@ import { stringify } from "yaml";
 import { memoryRevision } from "@wyrd-company/manifold-shared";
 import { openAgentThreads } from "../index.ts";
 import type { AcceptedCommand } from "../index.ts";
+import { openHistory } from "../../history/index.ts";
 import { openStore } from "../../store/index.ts";
 import type { PersistedSnapshot } from "../../store/index.ts";
 import { startRouter } from "../../router/index.ts";
@@ -25,6 +26,7 @@ export interface FixtureConfiguration {
 }
 export async function fixtureService(configuration: FixtureConfiguration) {
   const store = openStore({ path: configuration.path });
+  const history = openHistory({ store, log: () => {} });
   const commit = "a".repeat(40);
   const actorId = "worker";
   let host: ActorHost;
@@ -119,9 +121,11 @@ export async function fixtureService(configuration: FixtureConfiguration) {
       source.write(environment, thread, signal, send),
     sourceReady: (environment, signal) => source.ready(environment, signal),
     revisionAt: async () => revision,
+    sending: history.commandSending,
     probe(command) {
       configuration.probe?.(command);
       if (configuration.crash === command.implementation) process.kill(process.pid, "SIGKILL");
+      history.commandAccepted(command);
     },
   });
   const loader = createBlueprintLoader({
@@ -138,6 +142,7 @@ export async function fixtureService(configuration: FixtureConfiguration) {
     blueprints: loader,
     log: () => {},
     saveHooks: [
+      history.saveHook,
       (save) => {
         configuration.onSave?.(save.snapshot);
         for (const listener of listeners) listener(save.snapshot);
@@ -170,6 +175,7 @@ export async function fixtureService(configuration: FixtureConfiguration) {
   };
   return {
     actor,
+    history,
     source,
     router,
     store,

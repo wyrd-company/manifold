@@ -16,6 +16,9 @@ export interface EntryRecords {
 export interface ActorRecord {
   actorId: string;
   eventId?: string;
+  deliveringEventId?: string;
+  stateValue?: unknown;
+  changedBy?: { type: string; eventId?: string };
   blueprint: LoadedBlueprint;
   root?: AnyActorRef;
   entries: EntryRecords;

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { openStore } from "../store/index.ts";
+import { openHistory } from "../history/index.ts";
 import { mountConsole } from "./index.ts";
 import { consoleHost } from "./test-fixtures/host.ts";
 
@@ -33,7 +34,7 @@ test("built console serves the shell and live actors without authentication", as
       machine: "sample-machine",
       snapshot: { status: "active", value: "ready" },
     });
-    mountConsole(server.host, { store });
+    mountConsole(server.host, { store, history: openHistory({ store, log: () => {} }) });
     const page = await browser.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));

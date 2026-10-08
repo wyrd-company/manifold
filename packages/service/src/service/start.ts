@@ -4,6 +4,7 @@
 // ---
 import { configuration } from "../service-configuration/wiring.ts";
 import { httpHost, listen } from "../http-host/wiring.ts";
+import { history } from "../history/wiring.ts";
 import { store } from "../store/wiring.ts";
 import { bundles } from "../bundle/wiring.ts";
 import { githubMirror, githubSource } from "../github-source/wiring.ts";
@@ -34,6 +35,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     .step("configuration-loaded")
     .part(httpHost)
     .part(store)
+    .part(history)
     .part(bundles)
     .step("store-opened")
     .part(githubMirror)

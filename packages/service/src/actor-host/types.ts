@@ -52,7 +52,12 @@ export interface ActiveInvoke {
   readonly invokeId: string;
   readonly entryId: string;
 }
+export interface StateChange {
+  readonly type: string;
+  readonly eventId?: string;
+}
 export interface ActorSave {
+  readonly changedBy?: StateChange;
   readonly eventId?: string;
   readonly actorId: string;
   readonly machine: string;

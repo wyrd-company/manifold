@@ -13,5 +13,6 @@ export type {
   Invocation,
   SaveHook,
   ActorSave,
+  StateChange,
   ActiveInvoke,
 } from "./types.ts";

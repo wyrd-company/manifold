@@ -7,12 +7,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { HttpHost } from "../http-host/index.ts";
 import { actorsApiPath } from "@wyrd-company/manifold-shared/actors-api";
+import type { History } from "../history/index.ts";
 import type { Store } from "../store/index.ts";
 import { actorsListener } from "./actors-api.ts";
 import { staticListener } from "./static-files.ts";
 export type { HttpListener as RequestListener } from "../http-host/index.ts";
 export interface ConsoleOptions {
-  readonly store: Pick<Store, "activeSnapshots">;
+  readonly store: Pick<Store, "activeSnapshots" | "endedSnapshots">;
+  readonly history: Pick<History, "read">;
   readonly root?: string;
   readonly log?: (entry: { level: "error"; path: string; error: string }) => void;
 }

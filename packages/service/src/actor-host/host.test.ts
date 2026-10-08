@@ -953,3 +953,125 @@ test("event validators are shared per version and type and available before the 
   if (other.status !== "declared") throw Error("Missing validator");
   expect(other.validate).not.toBe(first.validate);
 });
+
+test("keeps the last state-changing event through an ignored callback and routed delivery", async () => {
+  let send!: (event: { type: string }) => void;
+  const saves: ActorSave[] = [];
+  const { fromCallback } = await import("xstate");
+  const document = parcel({
+    waiting: { invoke: { id: "scanner", src: "scanner" }, on: { packed: "ready" } },
+    ready: {},
+  });
+  document.schemas.events["packed"] = true;
+  const f = await fixture(document, {
+    implementations: {
+      actors: {
+        scanner: fromCallback(({ sendBack }) => {
+          send = sendBack;
+        }),
+      },
+    },
+    hooks: [(save) => saves.push(save)],
+  });
+  f.start();
+  send({ type: "packed" });
+  send({ type: "ignored" });
+  f.store.writeInbox(
+    { eventId: "unrelated", topic: "github.issue.parcel-node", payload: { type: "repeat" } },
+    ["parcel"],
+  );
+  f.router.schedule("parcel");
+  // The queued callback save runs first; its changedBy must survive the next save too.
+  await idle();
+  expect(saves.at(-1)).toMatchObject({ changedBy: { type: "packed" }, eventId: "unrelated" });
+  expect(saves.at(-1)!.changedBy).not.toHaveProperty("eventId");
+});
+test("names routed state changes and invoked results independently of the consumed row", async () => {
+  const saves: ActorSave[] = [];
+  const f = await fixture(
+    parcel({
+      waiting: { on: { scanned: "shipping" } },
+      shipping: { invoke: { id: "ship", src: "ship", onDone: "delivered" } },
+    }),
+    {
+      implementations: { actors: { ship: fromPromise(async () => ({ label: "large" })) } },
+      hooks: [(save) => saves.push(save)],
+    },
+  );
+  f.start();
+  await f.send("scanned");
+  await idle();
+  expect(saves.find((save) => save.snapshot.value === "shipping")!.changedBy).toEqual({
+    type: "scanned",
+    eventId: "github:scanned",
+  });
+  expect(saves.at(-1)!.changedBy).toEqual({ type: "xstate.done.actor.ship" });
+});
+
+test("saves a callback change with no exit event id when the same save consumes an ignored row", async () => {
+  const { openHistory } = await import("../history/index.ts");
+  const { fromCallback } = await import("xstate");
+  let send!: (event: { type: string }) => void;
+  let history!: ReturnType<typeof openHistory>;
+  const document = parcel({
+    waiting: { invoke: { id: "scanner", src: "scanner" }, on: { packed: "ready" } },
+    ready: {},
+  });
+  document.schemas.events["packed"] = true;
+  const f = await fixture(document, {
+    implementations: {
+      actors: {
+        scanner: fromCallback(({ sendBack }) => {
+          send = sendBack;
+        }),
+      },
+    },
+    hooks: [(save) => history.saveHook(save)],
+  });
+  history = openHistory({ store: f.store, log: () => {} });
+  f.start();
+  const restored = f.host.restore(f.store.loadSnapshot("parcel")!, f.router);
+  if (restored.status !== "restored") throw new Error("Fixture restore held");
+  f.router.attach(restored.target);
+  send({ type: "packed" });
+  send({ type: "ignored" });
+  const row = f.store.writeInbox(
+    { eventId: "unrelated", topic: "github.issue.parcel-node", payload: { type: "repeat" } },
+    ["parcel"],
+  )[0]!;
+  f.store.deliver({ ...restored.target, saved: (write) => f.host.saving!(write) }, row);
+  expect(history.read("parcel")!.visits[0]!.exitEvent).toEqual({ type: "packed" });
+  expect(history.read("parcel")!.events[0]).toMatchObject({
+    eventId: "unrelated",
+    visit: 1,
+    consumedAt: expect.any(String),
+  });
+  await idle();
+});
+
+test("names a root deadline as the state change that its inbox delivery made", async () => {
+  const saves: ActorSave[] = [];
+  const f = await fixture(parcel({ waiting: { after: { 5: "delivered" } } }), {
+    hooks: [(save) => saves.push(save)],
+  });
+  f.start();
+  f.advance(110);
+  await f.fire();
+  expect(saves.at(-1)!.changedBy).toEqual({
+    type: "xstate.after.5.parcel.waiting",
+    eventId: "deadline:1",
+  });
+});
+test("a routed re-entry keeps one history visit and links the event to that visit", async () => {
+  const { openHistory } = await import("../history/index.ts");
+  let history!: ReturnType<typeof openHistory>;
+  const f = await fixture(
+    parcel({ waiting: { on: { repeat: { target: "waiting", reenter: true } } } }),
+    { hooks: [(save) => history.saveHook(save)] },
+  );
+  history = openHistory({ store: f.store, log: () => {} });
+  f.start();
+  await f.send("repeat");
+  expect(history.read("parcel")!.visits).toHaveLength(1);
+  expect(history.read("parcel")!.events[0]).toMatchObject({ eventId: "github:repeat", visit: 1 });
+});
