@@ -181,13 +181,20 @@ proposed-design:
     the window covers.
   protections: >-
     A pass keeps what an open escalation depends on, and the deletes keep
-    the rest by their own conditions. At the start of the pass it reads
-    `escalations.list({ status: "open" })` once, and keeps every actor that
-    an open escalation names, as the raiser of a blueprint escalation or as
-    the `actorId` of a service escalation's subject, and every gate that a
-    `comparator-failed` or `stranded-token` subject names. A kept actor's
-    history is not pruned in this pass, and a kept gate's evaluations are
-    not deleted. Every dependency the store holds is kept as follows.
+    the rest by their own conditions. At the start of each batch, after
+    the yield before it, the pass reads `escalations.list({ status:
+    "open" })` and keeps every actor that an open escalation names, as the
+    raiser of a blueprint escalation or as the `actorId` of a service
+    escalation's subject, and every gate that a `comparator-failed` or
+    `stranded-token` subject names. The read and every transaction of
+    that batch run in one turn of the event loop, with no yield between
+    them, and an escalation is raised only by code on the same thread, so
+    no escalation opens between the read and the batch's last delete. An
+    escalation that opens during a yield is in the next batch's read. A
+    kept actor's events and commands are not pruned in that batch, and a
+    kept gate's evaluations are not deleted by it; a later batch or pass
+    that finds the escalation closed prunes them. Every dependency the
+    store holds is kept as follows.
 
     | Depends | On | Kept by |
     | --- | --- | --- |
@@ -238,11 +245,13 @@ proposed-design:
     acceptance. A gate evaluation past its window cannot be replayed, and
     the token it granted no longer names it.
   batches: >-
-    A pass works in batches: 100 candidate actors per read, each actor in
-    its own transaction, and at most 1000 rows per source event or gate
-    evaluation delete. After each read of candidates and each delete
-    statement the pass calls `clock.yield`, so a delivery, a request, or a
-    gate pass runs between batches. A pass that `stop` reaches stops at
+    A pass works in batches. An actor batch is one read of up to 100
+    candidate actors, the protections read, and each candidate's
+    transaction; a source event or gate evaluation batch is the
+    protections read and one delete of at most 1000 rows. Each batch runs
+    in one turn of the event loop. After each batch the pass calls
+    `clock.yield`, so a delivery, a request, a gate pass, or a new
+    escalation runs between batches. A pass that `stop` reaches stops at
     the next yield and resolves with what it deleted.
   cadence: >-
     `start` arms the first pass 5 minutes after it is called, so that the
@@ -308,7 +317,14 @@ proposed-design:
     that reaches no actor holding its inbox row; a gate evaluation inside
     its window replays to its recorded selection, and a deleted one throws
     the `TypeError` `replay` states; a returned token whose evaluation was
-    deleted keeps its row; a second pass deletes nothing; `stop` during a
+    deleted keeps its row; with more than 100 ended actors past the
+    window, so they take two actor batches, an escalation that the fake
+    clock's `yield` raises after the first batch, naming an ended actor past its window that a later actor
+    batch would prune and a gate whose evaluations a later evaluation batch
+    would delete, keeps that actor's events and commands and that gate's
+    evaluations for the rest of the pass, while the batches before it
+    stand, and a pass after the escalation closes prunes them; a second
+    pass deletes nothing; `stop` during a
     pass resolves between batches; the first pass runs 5 minutes after
     `start` and the next 60 minutes after it ends, and a failed pass logs
     `retention-failed` and arms the next. A fault test, in a child Node
