@@ -22,7 +22,10 @@ description: >-
   0.1.0, steps are append-only, as `store` (migrations) defines.
 
   Visits. `history_visit` holds one row per state visit of an actor,
-  numbered from 1 in the order the visits were entered. `machine` is the
+  numbered from 1 in the order the visits were entered. It is the one
+  record of an actor's visits: the usage module attributes each call to
+  the number of the visit it was spent in, read through the history
+  module. `machine` is the
   blueprint version key the visit's saves were made with, and
   `state_value` the canonical JSON of the snapshot's state value, keys
   sorted. `entered_at` and `exited_at` are milliseconds since the Unix
@@ -47,11 +50,16 @@ description: >-
 
   Commands. `history_command` holds one row per T3 Code command an
   actor's invoke sent, keyed by command id, written before the command is
-  sent or, when that write fails, by the actor's next save. `kind` is the name
-  of the implementation that sent it, such as `thread-create` or
-  `turn-start`. `invoke_id` and `entry_id` are the invocation's, as
-  `actor-host` defines them. `message_id` is the user message id a
-  `turn-start` carries, and null for other kinds. `sent_at` is when the
+  sent or, when that write fails, by the actor's next save. `kind` is
+  `project-create` for a command `t3code-project-create` sent, and
+  `thread-create` or `turn-start` for one the implementation of that
+  name sent. `invoke_id` and `entry_id` are the invocation's, as
+  `actor-host` defines them. `environment` is the T3 Code environment
+  the command was sent to. `thread_id` is the thread a `thread-create`
+  or `turn-start` names, and null for a `project-create`; `project_id`
+  is the project a `project-create` creates, and null for the other
+  kinds. `message_id` is the user message id a `turn-start` carries, and
+  null for other kinds. `sent_at` is when the
   module recorded the command before sending it. `sequence` is the
   server's answer to the command, and `accepted_at` the time the module
   recorded it; both are null until the answer is recorded, and stay null
@@ -71,5 +79,7 @@ validation-criteria: >-
   file produces on a second empty database, with each run of whitespace in
   `sql` read as one space; they are equal. A visit with an exit event and
   no `exited_at`, an exit event id with no exit event type, and an event
-  link to a visit that does not exist, and a command with a sequence and
-  no `accepted_at`, each fail a constraint.
+  link to a visit that does not exist, a command with a sequence and no
+  `accepted_at`, a command of another kind, a `project-create` with a
+  thread id or with no project id, and a `thread-create` or `turn-start`
+  with a project id or with no thread id, each fail a constraint.

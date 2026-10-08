@@ -232,6 +232,11 @@ components:
               type: string
               minLength: 1
     ActorCommand:
+      description: A T3 Code command the actor's invokes sent. A `project-create` names the project it creates; a `thread-create` or `turn-start` names its thread.
+      oneOf:
+        - $ref: "#/components/schemas/ThreadCommand"
+        - $ref: "#/components/schemas/ProjectCommand"
+    ThreadCommand:
       type: object
       additionalProperties: false
       required: [commandId, kind, environment, threadId, invokeId, entryId, sentAt]
@@ -241,8 +246,8 @@ components:
           minLength: 1
         kind:
           type: string
-          minLength: 1
-          description: The implementation that sent the command, such as `thread-create` or `turn-start`.
+          enum: [thread-create, turn-start]
+          description: The implementation that sent the command.
         environment:
           type: string
           minLength: 1
@@ -264,7 +269,37 @@ components:
         sentAt:
           $ref: "#/components/schemas/Time"
         acceptedAt:
-          description: Absent until the server's acceptance is recorded, and for a command whose answer never arrived.
+          description: Absent until the server's acceptance is recorded, for a command whose answer never arrived, and for a command the server rejected.
+          $ref: "#/components/schemas/Time"
+    ProjectCommand:
+      type: object
+      additionalProperties: false
+      required: [commandId, kind, environment, projectId, invokeId, entryId, sentAt]
+      properties:
+        commandId:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          const: project-create
+          description: A command `t3code-project-create` sent.
+        environment:
+          type: string
+          minLength: 1
+          description: The T3 Code environment the command was sent to.
+        projectId:
+          type: string
+          minLength: 1
+        invokeId:
+          type: string
+          minLength: 1
+        entryId:
+          type: string
+          minLength: 1
+        sentAt:
+          $ref: "#/components/schemas/Time"
+        acceptedAt:
+          description: Absent until the server's acceptance is recorded, for a command whose answer never arrived, and for a command the server rejected.
           $ref: "#/components/schemas/Time"
     ActorEnd:
       type: object

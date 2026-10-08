@@ -7,6 +7,7 @@ relationships:
     - store
     - durable-event-delivery
     - t3code-environment-source
+    - actor-history
   mitigates:
     - task-usage-unattributable
   # GAP-EDGE: the technical-design schema declares no edge to a spike or a
@@ -117,8 +118,9 @@ proposed-design:
     The service owns three facts the host does not have: which actor owns
     each thread, the actor's state visits, and the declarations in force,
     which are `accounts.yml` and `prices.yml` in the process repository.
-    An actor's save hook keeps the first two and settles the actor when it
-    ends. A call that lacks an account, a price, or a ledger window waits
+    An actor's save hook keeps the first and settles the actor when it
+    ends; the history module keeps the visits, and the usage module reads
+    them from it. A call that lacks an account, a price, or a ledger window waits
     as a pending posting and posts when the missing fact arrives. A call
     whose mapping, or whose thread's ownership, arrives after it is
     attributed then, by a late attribution that the module's actor usage
@@ -274,7 +276,8 @@ proposed-design:
     that owns that thread. A call whose thread has an actor posts to that
     actor, on the actor's portfolio item, else on the item of its
     thread's T3code project, else on `other`, in the state visit its
-    timestamp falls in. A call whose thread has no actor posts on the item
+    timestamp falls in, as `state-visits` states. A call whose thread has
+    no actor posts on the item
     `portfolio.t3codeProject` gives the thread's T3code project, or on
     `other` when the T3 Code environment source holds no project for the
     thread, under the ledger actor `thread:<environment>:<thread id>`. A
@@ -365,8 +368,8 @@ proposed-design:
     `visitUsage(rows, visits, units)`, sums the token classes and the
     posted amounts in total, per account, and per visit, lists each
     posting once as a call, and gives each
-    visit its entry time from the actor's `usage_visits` rows, so the
-    sums are tested without a database. The totals per account agree
+    visit its entry time from the actor's visits that `visits.visits`
+    answers, so the sums are tested without a database. The totals per account agree
     with `actorUsage` by construction: both count a posted posting once,
     for the actor its current attribution names. The endpoint calls the read for each request and holds no
     cache. The read writes nothing. `@wyrd-company/manifold-shared` adds
@@ -378,8 +381,8 @@ proposed-design:
     host's save hooks do. It reads `context.manifold` from the snapshot,
     narrowing each member to a string, or to a list of strings for
     `threads`, and ignoring a member of another type. It writes the
-    actor's row with its environment and portfolio item, then its state
-    visit as `state-visits` states. For each thread in `threads`, when
+    actor's row with its environment and portfolio item. For each thread
+    in `threads`, when
     the actor has an environment, it inserts the ownership of that
     environment and thread unless a row for them exists, so the first
     actor to list a thread owns it. A mapping recorded for a thread and
@@ -472,14 +475,26 @@ proposed-design:
     ordered by their latest call, newest first; groups by item, then
     account. The read writes nothing.
   state-visits: >-
-    A state visit is one run of an actor's saves with the same state
-    value. The save hook compares the canonical JSON of the snapshot's
-    `value`, keys sorted, with the value of the actor's latest visit, and
-    when they differ it inserts the next visit with that value and the
-    module's `now()`. A call falls in the visit with the greatest entry
-    time not after the call's timestamp, or in the first visit when every
-    visit was entered after it. A visit holds every active state of the
-    actor at once, parallel regions included.
+    A state visit is one run of an actor's saves with the same state value
+    and blueprint version, as the `state-visit` term defines. The history
+    module records them, as `actor-history` states, and the usage module
+    keeps none of its own. `openUsage` takes the history module as
+    `visits`, and every attribution reads a call's visit with
+    `visits.visitAt(actor, used_at)`: the visit with the greatest entry
+    time not after the call's timestamp, or the first visit when every
+    visit was entered after it, and no visit when the actor has none. The
+    attribution of a posting, a late attribution, an ownership's
+    attribution, and a move to an actor read it the same way, in their own
+    transaction, and fix the number they read on the row they write. The
+    service runs the history module's save hook before this module's, so
+    an ownership attributed in a save reads the visit that save started. A
+    migration of an actor in a waiting state starts a visit, so a call
+    spent before the migration's save counts in the visit it left and a
+    call spent after it in the visit it entered, whichever reaches the
+    service first, and the call keeps its account, window, and amount. A
+    call attributed before a later save starts a visit keeps the visit it
+    was given. A visit holds every active state of the actor at once,
+    parallel regions included.
   settlement: >-
     When a save's snapshot status is `done` or `stopped`, the save hook
     sets the actor's end time when it is unset and calls
@@ -598,13 +613,14 @@ proposed-design:
       readonly actorId: string;
       readonly snapshot: {
         readonly status: string;
-        readonly value: unknown;
         readonly context?: unknown;
       };
     }
 
     export function openUsage(options: {
       connection: LedgerConnection;
+      /** The history module, on the same connection. */
+      visits: Pick<History, "visits" | "visitAt">;
       ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage" | "reattribute">;
       portfolio: Pick<Portfolio, "t3codeProject" | "current">;
       threadProject(environment: string, threadId: string): string | undefined;
@@ -657,7 +673,10 @@ proposed-design:
     `UsagePushRequest` and `UsagePushResult` are the request and the 200
     response body of `usage-push`. `UsageActorSave` is the part of the
     actor host's save the hook reads; the actor host's save satisfies it,
-    and the service registers `usage.saveHook` with the actor host.
+    and the service registers `usage.saveHook` with the actor host, after
+    the history module's. `History` is the history module's, as
+    `actor-history` states; `visits` answers each visit's number and entry
+    time, and `visitAt` the visit a call's time falls in.
     Service assembly gives the tasks read model `usage.actorUsage` as its
     `actorUsage`, in place of the ledger's.
     `lastUsedAt` reads `MAX(used_at)` of `usage_postings` grouped by
@@ -717,7 +736,7 @@ proposed-design:
     host killed before it writes the push state decodes the same sources
     again and the service replays them. `apply` twice with one revision
     writes once. The save hook run twice for one save inserts no second
-    visit and no second ownership, and `ledger.settle` retires nothing the
+    ownership, and `ledger.settle` retires nothing the
     second time. `retryPending` twice posts each pending posting at most
     once, by its ledger key. Every reattribution takes only postings
     whose attribution still names the ledger actor it attributes from,
@@ -751,8 +770,10 @@ proposed-design:
 
     Service tests live in `packages/service/src/usage/usage.test.ts` and
     drive `openUsage`, its listener on an HTTP server the test opens, and
-    a `Ledger` on the same database file, which each test opens in a
-    temporary directory. Values are generic: environment `env-one`,
+    a `Ledger` and the history module on the same database file, which
+    each test opens in a temporary directory. A test saves an actor
+    through the history module's save hook and then `usage.saveHook`, in
+    one transaction, as the actor host runs them. Values are generic: environment `env-one`,
     account `acct`, items `alpha` and `beta`, and `gamma` archived,
     actors `actor-1` on `alpha` and `actor-2`, threads
     `thread-1` and `thread-2`, sessions `session-1` to `session-3`,
@@ -797,7 +818,9 @@ proposed-design:
 
     - Attribution: after a save of `actor-1` listing `thread-1`, a call on
       `session-1` mapped to `thread-1` posts to `actor-1` on its item, in
-      the visit its timestamp falls in when the actor has two; a call on
+      the visit its timestamp falls in when the actor has two, and in the
+      later of two visits of one state value whose saves carry two
+      machines; a call on
       `session-2` mapped to `thread-2`, which no actor owns, in
       `t3-project-1`, posts on `beta`; a call on unmapped `session-3`
       posts on `other`.
@@ -961,8 +984,8 @@ proposed-design:
       and `GET /api/usage/unowned` answers a body that validates against
       `usage-api.openapi.yml`.
 
-    - Hook convergence: the same save twice leaves one visit, one
-      ownership, and one settlement.
+    - Hook convergence: the same save twice leaves one ownership and one
+      settlement.
 
     - Schema: the steps applied to an empty database produce the schema of
       `docs/specifications/usage-tables.sql`.

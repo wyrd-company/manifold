@@ -130,9 +130,11 @@ components:
       required: [visit, enteredAt, tokens, accounts]
       properties:
         visit:
+          description: The number of the actor's state visit, as the actor's history numbers it.
           type: integer
           minimum: 1
         enteredAt:
+          description: The visit's entry time, as the actor's history gives it.
           type: string
           format: date-time
         tokens:

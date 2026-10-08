@@ -389,11 +389,12 @@ proposed-design:
     `ReceivedEvent` with `eventId`, `type`, `topic`, `receivedAt`, the
     `visit` that consumed it and `consumedAt` once consumed, and
     `payload`, pending events included; `commands`, each an
-    `ActorCommand` with `commandId`, `kind` (`thread-create` or
-    `turn-start`), `environment`, `threadId`, `messageId` and `turnId`
-    when known, `invokeId`, `entryId`, `sentAt`, and `acceptedAt` once
-    the server's acceptance is recorded, ordered by `sentAt` then
-    `commandId`; and `end`,
+    `ActorCommand` with `commandId`, `kind` (`project-create`,
+    `thread-create`, or `turn-start`), `environment`, `projectId` for a
+    `project-create` and `threadId` for the others, `messageId` and
+    `turnId` when known, `invokeId`, `entryId`, `sentAt`, and
+    `acceptedAt` once the server's acceptance is recorded, ordered by
+    `sentAt` then `commandId`; and `end`,
     `{ status, endedAt, output? }`, once the actor has ended. The
     console imports these types, the `isActorHistoryResponse` guard, and
     `actorHistoryPath` from `@wyrd-company/manifold-shared/actors-api`.
@@ -474,19 +475,12 @@ proposed-design:
     visit's while the previous visit has no `exitEvent` is a migration:
     its row and its segment carry the new commit.
 
-    Usage per visit. History visits split on a change of state value or
-    of machine, and the usage module's visits on a change of state value
-    only, so their numbers differ after a migration. The usage answer's
-    visits are matched to history visits by runs: consecutive history
-    visits with one state value, its canonical JSON with keys sorted,
-    form a run, and runs are numbered from 1 in order, as the usage
-    module numbers its visits from the same saves. Each usage entry is
-    joined by its `visit` number to the run of that number, and its usage
-    is shown on the run's first visit; a run whose number no usage entry
-    holds, since the usage answer lists no visit without a call, shows
-    no usage, and a usage entry whose number no run holds counts in the
-    total only. A machine change inside a run starts a new history visit
-    and no new run, so the usage stays on the run's first visit.
+    Usage per visit. The usage answer numbers its visits as the history
+    does, a migration included, so each usage entry is joined by its
+    `visit` number to the history visit of that number and shown on it. A
+    history visit whose number no usage entry holds, since the usage
+    answer lists no visit without a call, shows no usage, and a usage
+    entry whose number no history visit holds counts in the total only.
 
     Passes. A pass starts at a `turn-start` command, at its `sentAt`, or
     at an `agent.escalation.answered` event with a
@@ -545,6 +539,8 @@ proposed-design:
     as segments.
 
     Sequence. `actorSequence` answers the lifelines, Manifold, one
+    "T3 Code project" lifeline per `project-create` command in the order
+    sent, labelled with the project id's first eight characters, one
     "T3 Code thread" lifeline per thread in the order the actor first
     named it, labelled with the thread id's first eight characters, and
     GitHub; and the messages in time order, a command at its `sentAt`
@@ -556,7 +552,11 @@ proposed-design:
     solid arrow from Manifold to its thread, "Start thread" or "Continue
     thread", with the `thread-create` command folded into it; an
     escalation answer's arrow is "Continue thread · answer: <choice or
-    text>". An event whose topic's first segment is `t3` or `agent` is a
+    text>". A `project-create` command is one solid arrow from Manifold
+    to its project's lifeline, "Create project", with "not accepted" in
+    warning when it has no `acceptedAt` and the visit it was sent in, the
+    visit whose span holds its `sentAt`, has exited; it opens and closes
+    no pass. An event whose topic's first segment is `t3` or `agent` is a
     dashed reply from the thread its payload's `threadId` names: the
     closing label of a pass for the event that closed it, which is
     warning when it is not "handoff"; "escalated" in warning for
@@ -4001,15 +4001,18 @@ proposed-design:
     whose first pass settles without a handoff, whose escalation is
     answered with a choice, and whose next pass continues the same thread
     to a handoff; a failed one, held in a visit after a turn settled with
-    `error`; and one that migrated, whose visit's machine changes while
-    the visit before has no exit event, so its history visits and its
-    usage visits number differently. For each it checks the rows, their exit labels,
+    `error`; and one that created a project and then migrated, whose
+    visit's machine changes while the visit before has no exit event, with
+    a call in each of the two visits of its migrated state. For each it
+    checks the rows, their exit labels,
     tones, passes, and usage, the total, the lifelines, every message's
     ends, label, style, and tone, the "Start thread" and "Continue
     thread" arrows, the confirmed card move and a person's field change
     from GitHub, the migration's commit and the usage joined by visit
-    number across it, with a leading and an interior visit with no call
-    and a machine change inside a run; an escalation answer taken in the
+    number on each side of it, with a leading and an interior visit with
+    no call; the "Create project" arrow to its project's lifeline, and
+    "not accepted" for a `project-create` with no `acceptedAt` once its
+    visit has exited; an escalation answer taken in the
     visit that took the previous pass's settle, and two passes on one
     thread within one unchanged visit, each call counted once and the
     passes and "Not in a pass" summing to the total; a command with no `turnId` yet, a pending event drawn only
@@ -4026,15 +4029,16 @@ proposed-design:
     production HTTP host with the built console, the console mount with
     its actors, history, and completed routes, the usage listener, and the
     tasks mount, on one database file where the actor host ran two
-    actors of a fixture blueprint by routing events, one to its final
-    state and one left running in a pass, and the usage module holds
-    calls for both. It opens Actors and sees the running actor with its
+    actors of a fixture blueprint that creates a project before its
+    thread, by routing events, one to its final state and one left
+    running in a pass, and the usage module holds calls for both. It opens Actors and sees the running actor with its
     state, usage, time, and mini bar; switches to Completed, sees the
     ended actor and the count, reloads and still sees Completed; sets a
     Portfolio item filter that leaves no row and clears it; opens the
     ended actor and sees its status, tiles, one Timeline row per visit
     with its exit label and usage, and the total; switches to Sequence,
-    sees the three lifelines, a "Start thread" arrow, the handoff reply
+    sees the four lifelines, the "Create project" arrow, a "Start
+    thread" arrow, the handoff reply
     with the pass's usage, and the card move with "confirmed"; reloads
     and still sees Sequence; returns with "All actors"; opens the running
     actor and sees Running, the "running" note, and "Open thread" with

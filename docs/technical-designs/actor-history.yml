@@ -18,7 +18,9 @@ objective: >-
   included, and answer it through the actors API, so that an operator can
   see which event an actor took a transition on and with what payload, and
   so that the console can draw an actor's timeline and sequence diagram and
-  list completed actors. A visit or event row commits with the save that
+  list completed actors, and so that the usage module attributes each
+  call to the visit it was spent in, a migration between two saves of one
+  state value included. A visit or event row commits with the save that
   it records, so a crash never leaves a consumed event without its row and
   never keeps a row for a save that rolled back, and a command's row
   commits before the command is sent, or at the latest with the actor's
@@ -28,12 +30,12 @@ background:
     The store keeps every inbox row after its delivery consumes it, with
     the event id, topic, payload, and received and consumed times, and it
     keeps the last snapshot of an actor that ended, with status `done` or
-    `stopped`. The usage intake module records state visits in
-    `usage_visits` by state value alone, for attribution. The agent
-    threads module derives every T3 Code command id from the invocation
-    that sends it, and the environment source keeps each followed thread's
-    latest state, not the commands sent to it. `GET /api/actors` lists only
-    active snapshots.
+    `stopped`. The usage intake module attributes each call to the actor
+    and state visit that made it. The agent threads module derives every
+    T3 Code command id from the invocation that sends it, and the
+    environment source keeps each followed thread's latest state and each
+    project an actor created, not the commands sent for them. `GET
+    /api/actors` lists only active snapshots.
   problems:
     - >-
       Nothing ties a consumed inbox row to the state the actor was in when
@@ -45,6 +47,10 @@ background:
     - >-
       No record holds which T3 Code commands an actor sent; command ids can
       be derived again, but not whether the server accepted them or when.
+    - >-
+      Usage needs the visit each call was spent in, and an operator reads
+      an actor's usage beside its visits, so both need one numbering of
+      visits.
     - >-
       No endpoint answers an actor that ended.
 design-challenges:
@@ -74,12 +80,14 @@ proposed-design:
     `history`, as `history-database-schema` specifies. It gives the actor
     host one save hook, which records each state visit with its blueprint
     version and the event it exited on, and links each consumed inbox row
-    to the visit that took it. It gives the agent threads module one probe,
-    which records each command the server accepts. It reads an actor's
-    history from its tables, the store's inbox rows, and the store's
-    snapshot. The console's actors listener answers `GET
-    /api/actors/{actorId}/history` and `GET /api/actors?status=completed`
-    through it, as `actors-api` specifies.
+    to the visit that took it. It gives the agent threads module two
+    probes, which record each command before it is sent and when the
+    server accepts it. It answers an actor's visits, and the visit a moment
+    falls in, to the usage module, which attributes each call to that
+    visit's number. It reads an actor's history from its tables, the
+    store's inbox rows, and the store's snapshot. The console's actors
+    listener answers `GET /api/actors/{actorId}/history` and `GET
+    /api/actors?status=completed` through it, as `actors-api` specifies.
   public-interface: |-
     `packages/service/src/history/index.ts` exports exactly these names.
 
@@ -87,7 +95,7 @@ proposed-design:
     import type { Store } from "../store/index.ts";
     import type { SaveHook } from "../actor-host/index.ts";
     import type { InvokedCommand, SendingCommand } from "../agent-threads/index.ts";
-    import type { ActorHistory } from "@wyrd-company/manifold-shared/actors-api";
+    import type { ActorHistory, StateVisit } from "@wyrd-company/manifold-shared/actors-api";
 
     export function openHistory(options: HistoryOptions): History;
 
@@ -112,6 +120,13 @@ proposed-design:
       commandAccepted(command: InvokedCommand): void;
       /** The actor's history, or undefined when the store holds no snapshot for it. */
       read(actorId: string): ActorHistory | undefined;
+      /** The actor's state visits in the order entered; empty when it has none. */
+      visits(actorId: string): readonly StateVisit[];
+      /**
+       * The number of the visit a moment falls in, `at` in milliseconds
+       * since the Unix epoch; undefined when the actor has no visit.
+       */
+      visitAt(actorId: string, at: number): number | undefined;
     }
     ```
 
@@ -140,9 +155,9 @@ proposed-design:
     | `commands` | `history_command`, written by the probes before each command is sent and when the server accepts it; a turn's id from the actor's `t3.turn.started` inbox row | one per command sent |
 
     The payload of an event is read from its inbox row and never copied,
-    as `read-event-history-from-the-inbox` records. Visits are not read
-    from `usage_visits`, which holds no blueprint version and no exit
-    event, and which splits only on the state value for attribution.
+    as `read-event-history-from-the-inbox` records. `history_visit` is the
+    one record of an actor's visits: the usage module reads them through
+    `visits` and `visitAt` and keeps none of its own.
   state-visits: >-
     A state visit is one run of an actor's saves with the same state value
     and blueprint version, as the `state-visit` term defines. The save hook
@@ -162,6 +177,28 @@ proposed-design:
     commit changes and whose previous visit has no exit event. A
     self-transition that re-enters the same state value continues the
     visit; the event that caused it is linked to that visit.
+  usage-visits: >-
+    `visits(actorId)` answers the actor's `history_visit` rows ordered by
+    number, each as the `StateVisit` that `read` gives. `visitAt(actorId,
+    at)` answers the number of the visit with the greatest `entered_at`
+    not after `at`, the greater number on a tie, or the first visit when
+    every visit was entered after `at`, and undefined when the actor has
+    no visit. Each is one statement on the store's connection, so the
+    usage module calls them inside its own transactions and inside a
+    save's, and reads what that transaction has written. The service
+    registers this module's save hook before the usage module's, so a
+    save that starts a visit and lists a thread attributes the thread's
+    earlier calls with that visit recorded. The usage module fixes a
+    call's visit number when it attributes the call, as `usage-intake`
+    states. An actor migrated in a waiting state starts a visit at the
+    migration's save, so a call spent before that save falls in the visit
+    the save left and a call spent after it in the visit the save
+    entered, whichever reaches the service first. A visit's entry time is
+    on the service's clock and a call's time on the provider's, so a call
+    attributed before a later save starts a visit keeps the visit it was
+    given, even when its time is after that save's. An actor whose
+    blueprint version never changes has the same visits whether they
+    split on the state value alone or on the value and the version.
   exit-event: >-
     The actor host gives each save `changedBy`, the event of the last
     change to the root's state value before the save, as `actor-host`
@@ -190,15 +227,19 @@ proposed-design:
     any other and is linked the same way.
   commands: >-
     The agent threads module calls two probes for each command an invoked
-    `thread-create` or `turn-start` sends, as `agent-threads` states:
-    `sending`, synchronously before the first attempt to send it, and
-    `probe`, synchronously when the server answers it, before the promise
-    resolves and whether or not the invoking state has exited since. The
-    service passes `history.commandSending` and `history.commandAccepted`.
-    `commandSending` inserts the `history_command` row keyed by command id,
-    with the kind, the invocation's actor, invoke, and entry ids, the
-    environment, the thread and message ids, and `sent_at` `now()`, with
-    `INSERT ... ON CONFLICT DO NOTHING`. `commandAccepted` inserts the same
+    `t3code-project-create`, `thread-create`, or `turn-start` sends, as
+    `agent-threads` states: `sending`, synchronously before the first
+    attempt to send it, and `probe`, synchronously when the server answers
+    it, before the promise resolves and whether or not the invoking state
+    has exited since. The service passes `history.commandSending` and
+    `history.commandAccepted`. `commandSending` inserts the
+    `history_command` row keyed by command id, with the kind, the
+    invocation's actor, invoke, and entry ids, the environment the command
+    is sent to, the thread and message ids of a thread command or the
+    project id of a project command, and `sent_at` `now()`, with `INSERT
+    ... ON CONFLICT DO NOTHING`. The kind is `project-create` for
+    `t3code-project-create`, and the implementation's name for the
+    others. `commandAccepted` inserts the same
     row when it is absent, with the `sent_at` of the command's pending
     sending write when the module holds one, and its own `now()`
     otherwise, and sets its `sequence` and `accepted_at` where they are
@@ -207,7 +248,10 @@ proposed-design:
     command whose answer never arrived, because the invoking state exited
     and aborted the request, keeps its row with no acceptance; a
     `turn-start` among them shows its turn once the turn's
-    `t3.turn.started` reaches the actor.
+    `t3.turn.started` reaches the actor. A command the server rejects
+    keeps its row with no acceptance, and its invoke rejects with the
+    error the agent threads module gives, which the actor takes as
+    `xstate.error.actor.<invoke id>`.
   command-barrier: >-
     A probe write that throws does not fail the invoke: the module logs
     `history-write-failed` with the actor and command ids, and keeps the
@@ -231,7 +275,9 @@ proposed-design:
     with the process: a crash before any later save of the actor commits
     restores a snapshot in which the invoking state is active, and the
     restarted promise sends the same command id again, calls both probes
-    again, and the server answers with its first receipt; a crash after
+    again, and the server answers with its first receipt, or, when the
+    crash came between the sending write and the send, creates the project
+    or thread or starts the turn once; a crash after
     such a save commits leaves the rows that save wrote. Every command the
     actor's saved state has moved past therefore has its row.
   command-exclusions: >-
@@ -243,7 +289,7 @@ proposed-design:
     command, the `turnId` of the actor's first `t3.turn.started` inbox row,
     in sequence order, whose payload holds the command's `threadId` and
     `messageId`, as `t3code-thread-events` defines them; it is absent
-    until that event reaches the actor's inbox, and for `thread-create`.
+    until that event reaches the actor's inbox, and for the other kinds.
   read: >-
     `read(actorId)` loads the actor's snapshot with `store.loadSnapshot`
     and returns undefined when there is none. Otherwise it reads the
@@ -271,7 +317,10 @@ proposed-design:
     `packages/shared/src/actors-api.ts` holds the API's types and guards
     for the console and the service: `ActorSummary` gains `status`;
     `ActorHistory`, `StateVisit`, `ReceivedEvent`, `ActorCommand`,
-    and `ActorEnd` are the history's members; `isActorsResponse` checks
+    and `ActorEnd` are the history's members, `ActorCommand` a union on
+    `kind` whose `project-create` member holds `projectId` and no
+    `threadId`, and whose `thread-create` and `turn-start` members hold
+    `threadId` and no `projectId`; `isActorsResponse` checks
     `status` and `isActorHistoryResponse` checks a history body, each
     member as `actors-api` states; and `actorHistoryPath(actorId)` gives
     `/api/actors/<actorId percent-encoded>/history`. The console's
@@ -282,15 +331,21 @@ proposed-design:
     summary with `actorSummaries`.
   service-wiring: >-
     The `history` part in `history/wiring.ts` opens the module from the
-    store and the log, after the `store` part and before `agent-threads`,
-    and adds `history` to `ServiceParts` and to `Service`. It migrates its
-    tables with `store.connection.migrate("history", historySteps)` when
-    it opens. It registers no stop: the store's stop closes its tables.
-    `serviceSaveHooks` appends `parts.history.saveHook`. The
-    `agent-threads` part passes `sending: history.commandSending` and a
-    `probe` that calls the service probe `command`, which `ServiceProbes`
-    gains for fault tests, and then `history.commandAccepted`, since the
-    agent threads module takes its probes when it opens. The
+    store and the log, after the `store` part and before `usage` and
+    `agent-threads`, and adds `history` to `ServiceParts` and to
+    `Service`. It migrates its tables with
+    `store.connection.migrate("history", historySteps)` when it opens. It
+    registers no stop: the store's stop closes its tables.
+    `serviceSaveHooks` lists `parts.history.saveHook` first, before
+    `parts.usage.saveHook`. The `usage` part passes `history` to
+    `openUsage` as its `visits`. The `agent-threads` part passes a
+    `sending` that calls `history.commandSending` and then the service
+    probe `sending`, and a `probe` that calls the service probe `command`
+    and then `history.commandAccepted`, for every implementation, since
+    the agent threads module takes its probes when it opens.
+    `ServiceProbes` holds both for fault tests: `sending` runs after the
+    sending write and before the first attempt to send, and `command`
+    after the server answers and before the acceptance is written. The
     `console` part passes the store and `history` to `mountConsole`, whose
     actors listener answers the two new requests, as `actors-api`
     specifies; the console part mounts nothing new, since `mount` matches
@@ -326,7 +381,7 @@ proposed-design:
     first `sent_at`; `commandAccepted` twice keeps the first acceptance.
     A pending write applied by two saves, of which the first rolled back,
     leaves the row it describes once. The migration twice runs nothing
-    more.
+    more. `visits` and `visitAt` only read.
   errors: >-
     A save hook that throws rolls back the save, as `actor-host` states;
     the hook throws only what SQLite throws, including a pending command
@@ -362,10 +417,21 @@ proposed-design:
     with no inbox row, followed by a routed event the state ignores whose
     delivery makes the save, exits the visit on the callback's event with
     no event id, while the routed event is linked to the visit as
-    consumed; an accepted `thread-create` and
-    `turn-start` each give one command with its acceptance, and the turn's
-    id once its `t3.turn.started` reaches the inbox; `commandSending` and
-    `commandAccepted` twice keep one row; a sending write that fails at
+    consumed; `visits` answers the visits `read` gives, and `visitAt`
+    answers, for an actor with three visits, the first visit for a time
+    before every entry, each visit for its own entry time and a time
+    inside it, the greater number for two visits entered at one time, the
+    last visit for a time after every entry, and undefined for an actor
+    with no visit; an accepted `t3code-project-create`, `thread-create`,
+    and `turn-start` each give one command with its acceptance, the first
+    of kind `project-create` with its environment and project id and no
+    thread id, and the `turn-start` with the turn's id once its
+    `t3.turn.started` reaches the inbox; a `t3code-project-create` whose
+    workspace root fails validation writes no command; a
+    `t3code-project-create` the fake server rejects keeps its command row
+    with no `acceptedAt`, and the actor takes
+    `xstate.error.actor.<invoke id>` with the invoke's error;
+    `commandSending` and `commandAccepted` twice keep one row; a sending write that fails at
     one time, followed by an acceptance at a later time whose write
     succeeds, and the same followed by an acceptance whose write fails
     and is applied by the next save, each give the row the first sending
@@ -375,7 +441,8 @@ proposed-design:
     its command row with no acceptance, and with the turn's id once the
     turn starts, after a restart too; a probe write made to throw is
     logged, does not reject the invoke, and is written by the actor's next
-    save; with the pending write made to fail again, that save rolls back
+    save, for a `thread-create` and for a `t3code-project-create`; with
+    the pending write made to fail again, that save rolls back
     and the actor stays in the invoking state, and once writes succeed
     the next save writes the row and the actor advances, reading exactly
     one command; after a restart that loses a pending write before any
@@ -389,9 +456,28 @@ proposed-design:
     event's inbox row commits and before its delivery commits, after which
     `GET /api/actors/{actorId}/history` lists the event once, consumed and
     linked to one visit, and the store holds one `history_event` row for
-    it; and a kill from the service's `command` probe, after the fake T3 Code
+    it; a kill from the service's `command` probe, after the fake T3 Code
     server accepts a `turn-start` and before the history records it, after
-    which the history holds the command once and the server one turn.
+    which the history holds the command once and the server one turn; and
+    a kill from the service's `sending` probe, after the history records
+    a `t3code-project-create` and before it is sent, after which the
+    history holds one `project-create` command with its acceptance, the
+    server one project, and the store one created project.
+
+    A service test in `packages/service/src/usage-visits.integration.test.ts`,
+    on the migration service fixture, drives an actor that follows a
+    thread into a waiting state, pushes a call on the thread's session
+    with a time in that visit, migrates the actor to a later version of
+    its blueprint with the same state value, and pushes a call with a time
+    after the migration's save and then a call with a time before it. The
+    history answer holds two visits for the waiting state, the second with
+    the later commit, and the actor usage answer lists the same two visit
+    numbers with the entry times of the history's visits, the first and
+    third calls on the first visit and the second call on the second. An
+    actor of the same blueprint that is never migrated, driven through
+    three states with a call in each, reads visits 1, 2, and 3 in both
+    answers.
+
     The acceptance scenario test, beside `default-process.integration.test.ts`
     and with its fixtures, drives a task actor on the starter repository's
     default blueprint through intake, both card moves, and handoff against

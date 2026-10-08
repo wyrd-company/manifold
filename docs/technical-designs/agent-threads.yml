@@ -202,8 +202,11 @@ proposed-design:
     input's `createWorkspaceRoot`, through the source's `write` with no
     thread. Before each send, inside the `write` admission, it checks the
     root against the path rules of the host platform that the source's
-    current connection confirmed, as `workspace-roots` states.
-    Once the server answers with a sequence, it records the project with
+    current connection confirmed, as `workspace-roots` states, and once
+    the root passes it calls `sending` before the first attempt to send,
+    as `accepted-commands` states. A root that fails sends nothing and
+    calls no probe. Once the server answers with a sequence, it calls
+    `probe`, then records the project with
     the actor id and the actor's portfolio item, `manifold.portfolioItem`,
     through `recordProject`, then resolves with `{ projectId }`. An actor
     with no portfolio item records nothing, and the project resolves as
@@ -531,7 +534,7 @@ proposed-design:
       /** Called before the first attempt to send an invoked command. */
       readonly sending?: (command: SendingCommand) => void;
       /** Called after the server answers an invoked command and before the promise resolves. */
-      readonly probe?: (accepted: InvokedCommand | (AcceptedCommand & { readonly implementation: "t3code-project-create" })) => void;
+      readonly probe?: (accepted: InvokedCommand) => void;
       readonly logger?: Logger;
     }
 
@@ -541,20 +544,29 @@ proposed-design:
       readonly sequence: number;
     }
 
-    export interface SendingCommand {
-      readonly implementation: "thread-create" | "turn-start";
+    export type SendingCommand = ProjectCommand | ThreadCommand;
+
+    interface InvokedCommandBase {
       readonly commandId: string;
-      /** The invocation of the `thread-create` or `turn-start` that sends it. */
+      /** The invocation of the implementation that sends it. */
       readonly invocation: Invocation;
+      /** The environment the command is sent to. */
       readonly environment: string;
+    }
+
+    export interface ProjectCommand extends InvokedCommandBase {
+      readonly implementation: "t3code-project-create";
+      readonly projectId: string;
+    }
+
+    export interface ThreadCommand extends InvokedCommandBase {
+      readonly implementation: "thread-create" | "turn-start";
       readonly threadId: string;
       /** The user message id of a `turn-start`; absent for `thread-create`. */
       readonly messageId?: string;
     }
 
-    export interface InvokedCommand extends SendingCommand, AcceptedCommand {
-      readonly implementation: "thread-create" | "turn-start";
-    }
+    export type InvokedCommand = SendingCommand & { readonly sequence: number };
 
     export interface AgentThreads {
       /** `t3code-project-create`, `thread-create`, `turn-prepare`, `turn-start`, and `follow-thread`. */
@@ -625,23 +637,31 @@ proposed-design:
     `rejected`, `unauthorized`, `environment`, or `input`, as `turn-start`
     does.
   accepted-commands: >-
-    `thread-create` and `turn-start` call `sending` once their command and
-    its ids are built and before the first attempt to send it, with the
-    command id, the invocation that sends it, the actor's environment, the
-    thread id, and for `turn-start` the message id. They call `probe` with
+    `t3code-project-create`, `thread-create`, and `turn-start` call
+    `sending` once their command and its ids are built and before the
+    first attempt to send it, with the command id, the invocation that
+    sends it, and the environment the command is sent to, and with the
+    project id for `t3code-project-create`, the thread id for the others,
+    and for `turn-start` the message id. `t3code-project-create` calls it
+    inside the `write` admission once the root passes its check, so a
+    root that fails records no command. They call `probe` with
     the same values and the server's sequence as soon as the server
     answers the command, before they check their signal and before the
     promise resolves, so an answer that arrives after the invoking state
     exited is still reported. A request that the state's exit aborts
     before its answer arrives calls no `probe`; the server may hold the
-    command. Both are called synchronously, so the actor's save of the
-    promise's result follows every write they commit. A restarted promise
-    that sends the command again calls both again with the same values.
+    command. A command the server rejects calls no `probe`, and the
+    promise rejects with its error. Both are called synchronously, so the
+    actor's save of the promise's result follows every write they commit.
+    A restarted promise that sends the command again calls both again
+    with the same values, and a retry inside one promise may call
+    `sending` again with the same values.
     `startTurn` calls neither. The service's `agent-threads` part passes
-    the history module's `commandSending` as `sending`, and a `probe` that
-    calls the service's `command` probe, when the service is started with
-    one, and then the history module's `commandAccepted`, as
-    `actor-history` states.
+    a `sending` that calls the history module's `commandSending` and then
+    the service's `sending` probe, and a `probe` that calls the service's
+    `command` probe and then the history module's `commandAccepted`, each
+    service probe when the service is started with one, for every
+    implementation, as `actor-history` states.
   module-layout: >-
     `index.ts` re-exports the public names. `ids.ts` holds the pure id
     derivation. `inputs.ts` validates each input against its schema at the
@@ -740,6 +760,12 @@ proposed-design:
     `thread-create` with the output's project id, creates one project with
     the rendered title and workspace root and starts one thread in it, and
     `portfolio.t3codeProject` resolves the project to the actor's item;
+    `sending` is called once with the invocation, the environment, the
+    command id, and the project id before the fake server receives
+    `project.create`, and `probe` with the same values and the server's
+    sequence before the promise resolves, while a root that fails its
+    check and a command the server rejects call no `probe`, and the
+    failing root no `sending`;
     one entry gives the same project id twice and a second entry another;
     a title template that reads an undefined value, a workspace root
     template that renders a relative path, a workspace root template that

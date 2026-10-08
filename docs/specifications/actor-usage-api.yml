@@ -5,6 +5,7 @@ relationships:
   references:
     - usage-intake
     - usage-tables
+    - actors-api
     - operator-console
     - accounts-declaration
     - tasks-api
@@ -62,9 +63,11 @@ description: |-
     declare.
   - `visits`: one entry per state visit number that a counted posting
     names, in visit order, `{ visit, enteredAt, tokens, accounts }`.
-    `visit` is the number `usage_visits` holds; `enteredAt` is that
-    visit's entry time as an ISO 8601 UTC date and time with
-    milliseconds; `tokens` and `accounts` are as above over the postings
+    `visit` is the number of the actor's state visit, the `visit` of the
+    same visit in the actor's history that `actors-api` answers, so a
+    migration to a later blueprint version starts a visit here as it
+    does there; `enteredAt` is that visit's `enteredAt`, an ISO 8601 UTC
+    date and time with milliseconds; `tokens` and `accounts` are as above over the postings
     counted in that visit, `accounts` with `{ account, actual }` only. A
     visit with no counted posting is not listed. A counted posting that
     names no visit counts in the totals and in no visit.
@@ -88,16 +91,19 @@ description: |-
 format: openapi
 validation-criteria: >-
   `docs/specifications/actor-usage-api.openapi.yml` is a valid OpenAPI 3.1
-  document. A test in `packages/service/src/usage/` opens the usage module
-  and a ledger on one database file, pushes calls for one actor over two
-  state visits on two accounts, one declared with unit `usd` and one the
+  document. A test in `packages/service/src/usage/` opens the usage
+  module, a ledger, and the history module on one database file, pushes
+  calls for one actor over two state visits on two accounts, the second
+  visit started by a save with the same state value and a later
+  machine, one declared with unit `usd` and one the
   accounts declaration does not declare, a call that stays pending with
   reason `unaccounted`, and a session's calls whose mapping arrives after
   they posted, so that they reach the actor through late attribution; it
   requests the endpoint through the service's HTTP host without
   authentication and checks that the body validates against the response
-  schema, that each total and each visit's sums are the sums of the
-  postings stated, `total` counting no reasoning for a `codex` call and
+  schema, that each visit's number and `enteredAt` are those of the
+  history's visit, that each total and each visit's sums are the sums of
+  the postings stated, `total` counting no reasoning for a `codex` call and
   counting it for another provider, the pending call's tokens counted
   with no account, the
   late calls counted in the visit their attribution names, one `calls`

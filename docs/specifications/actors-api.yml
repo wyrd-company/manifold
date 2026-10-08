@@ -8,6 +8,7 @@ relationships:
     - store-database-schema
     - history-database-schema
     - t3code-thread-events
+    - actor-usage-api
 terms:
   - actor-history
   - state-visit
@@ -61,7 +62,8 @@ description: >-
   - `actor`: the actor's summary.
   - `visits`: the actor's state visits in the order they were entered,
     each `{ visit, value, states, machine, blueprint, enteredAt,
-    exitedAt, exitEvent }`. `visit` is its number from 1. `value` is the
+    exitedAt, exitEvent }`. `visit` is its number from 1, the number the actor usage endpoint of
+    `actor-usage-api` counts the actor's calls in. `value` is the
     state value and `states` its leaf state paths, as in a summary.
     `machine` and `blueprint` are as in a summary, for the blueprint
     version the visit ran on. `enteredAt` and `exitedAt` are ISO 8601 UTC
@@ -87,19 +89,24 @@ description: >-
     and is absent for a pending event and for an event taken before the
     actor's first recorded visit.
   - `commands`: every T3 Code command the actor's invokes sent, in the
-    order sent, then by command id, each `{ commandId, kind, environment,
-    threadId, messageId, turnId, invokeId, entryId, sentAt,
-    acceptedAt }`. `kind` is the implementation that sent it,
-    `thread-create` or `turn-start`. `messageId` is the user message id a
-    `turn-start` carries, and absent otherwise. `turnId` is the `turnId`
-    of the first `t3.turn.started` event in the actor's inbox whose
-    `threadId` and `messageId` are the command's, and absent until one is
-    there and for a `thread-create`. `invokeId` and `entryId` name the
-    invocation that sent it. `sentAt` is when Manifold recorded the
-    command before sending it. `acceptedAt` is when Manifold recorded the
-    server's acceptance, and is absent while it has none, and for a
-    command whose answer never arrived because its invoking state exited
-    first; such a `turn-start` still shows `turnId` once the turn starts.
+    order sent, then by command id. A thread command is `{ commandId,
+    kind, environment, threadId, messageId, turnId, invokeId, entryId,
+    sentAt, acceptedAt }`, `kind` `thread-create` or `turn-start`, the
+    implementation that sent it. A project command is `{ commandId, kind,
+    environment, projectId, invokeId, entryId, sentAt, acceptedAt }`,
+    `kind` `project-create`, sent by `t3code-project-create`, with the
+    id of the T3code project it creates and no `threadId`. `environment`
+    is the T3 Code environment the command was sent to. `messageId` is
+    the user message id a `turn-start` carries, and absent otherwise.
+    `turnId` is the `turnId` of the first `t3.turn.started` event in the
+    actor's inbox whose `threadId` and `messageId` are the command's, and
+    absent until one is there and for a `thread-create`. `invokeId` and
+    `entryId` name the invocation that sent it. `sentAt` is when Manifold
+    recorded the command before sending it. `acceptedAt` is when Manifold
+    recorded the server's acceptance, and is absent while it has none,
+    for a command whose answer never arrived because its invoking state
+    exited first, and for a command the server rejected; such a
+    `turn-start` still shows `turnId` once the turn starts.
   - `end`: absent for an active actor; for an ended one `{ status,
     endedAt, output }`: `status` `done` or `stopped`, `endedAt` the
     summary's `savedAt`, and `output` the snapshot's `output` when it has
@@ -131,6 +138,7 @@ validation-criteria: >-
   summary's fields, and the `400` for an unknown and a repeated `status`.
   The history test drives an actor through visits, a self-transition, an
   invoked promise's result, a migration-shaped save with a new machine, a
+  `t3code-project-create` accepted and one rejected, a
   `thread-create`, a `turn-start` and its `t3.turn.started`, a
   `turn-start` whose answer never arrived, a pending event, and its end, and checks each member stated above; it also reads
   an actor whose snapshot and inbox rows were written before the history

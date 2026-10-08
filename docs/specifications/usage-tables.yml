@@ -6,6 +6,7 @@ relationships:
     - usage-intake
   references:
     - store-database-schema
+    - history-database-schema
     - portfolio-ledger-tables
     - usage-record
 terms:
@@ -41,10 +42,6 @@ description: >-
   that owns each thread of an environment, the first whose save listed
   it. A row of `usage_threads` is never changed.
 
-  Visits. `usage_visits` holds an actor's state visits, numbered from 1 in
-  the order they were entered, each with its state value as canonical
-  JSON and the time of the save that entered it.
-
   Calls. `usage_calls` holds one call record per call key of an
   environment: the first record of granularity `call`, and the greatest
   copy of granularity `session-total`. `charged` is the usage-record
@@ -62,7 +59,10 @@ description: >-
   `price-table` states for growth.
   `used_at` is the record's timestamp in epoch milliseconds. `actor`,
   `item`, and `visit` are its attribution, fixed when the posting is made;
-  `visit` is null for the ledger actors of unowned usage. A posting is
+  `visit` is the number of the actor's state visit the call was spent
+  in, as `history-database-schema` numbers them in `history_visit`, and
+  null for the ledger actors of unowned usage. The module keeps no
+  visits of its own. A posting is
   `pending` with a `reason`, `unaccounted` with no `account`, `unpriced`,
   or `no-window`, or `posted` with its `account`, its `amount` in the
   account's unit, its `ledger_key`, and `posted_at`. A pending posting
