@@ -25,7 +25,7 @@ const move = {
   field: "Stage",
   option: "Packed",
 };
-async function setup(withScan = false) {
+async function setup(withScan = false, requestTimeoutMs = 100) {
   const clock = new FakeClock();
   const fake = await githubFake();
   cleanups.push(fake.close);
@@ -67,7 +67,7 @@ async function setup(withScan = false) {
       },
       sweepIntervalMs: 900000,
       redeliveryIntervalMs: 60000,
-      requestTimeoutMs: 100,
+      requestTimeoutMs,
     },
     credentials: {
       names: ["example"],
@@ -119,7 +119,9 @@ async function setup(withScan = false) {
   };
 }
 test("sets one value on replay, publishes its confirmed move, and distinguishes a person's move", async () => {
-  const { fake, source, events } = await setup();
+  // Under two default-worker gates the initial request hits the 100 ms fixture
+  // deadline before publishing the item. This replay check needs a healthy sweep.
+  const { fake, source, events } = await setup(false, 2000);
   await source.moveCard(move);
   await source.moveCard(move);
   await expect.poll(() => events().length).toBe(1);

@@ -11,6 +11,8 @@ import { migrationServiceFixture, changed, parcel } from "./test-fixtures/servic
 import type { Store } from "../store/index.ts";
 import { openStore } from "../store/index.ts";
 import { childArtifacts } from "../../../../test-support/child-process.ts";
+// Two default-worker gates spend 10 s starting the first worker and 10 s saving.
+// The 30 s limit expires while the restart binds its revision, before it is ready.
 test("SIGKILL after a migration commit restores the target once and takes the next event", async () => {
   const waiting = {
     type: "parallel",
@@ -141,6 +143,7 @@ test("SIGKILL after a migration commit restores the target once and takes the ne
             .get("task:I_A")!["count"],
       )
       .toBeGreaterThan(0);
+    resumed.child.send({ type: "advance", elapsed: 10000 });
     await expect
       .poll(() => store!.loadSnapshot("task:I_A")!.snapshot.status, { timeout: 20000 })
       .toBe("done");
@@ -162,4 +165,4 @@ test("SIGKILL after a migration commit restores the target once and takes the ne
     store?.close();
     await f.close();
   }
-});
+}, 60_000);

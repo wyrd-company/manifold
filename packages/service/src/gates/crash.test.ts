@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { expect, it } from "vite-plus/test";
 import { openStore } from "../store/index.ts";
 import { world } from "./test-fixtures/world.ts";
+// Four kill boundaries and their fresh/recovered worlds take 35.2 s under CPU load.
 it("SIGKILL at granting, granted, sent, and saved recovers exactly one held token and reservation", async () => {
   const dir = mkdtempSync(join(tmpdir(), "gate-crash-"));
   try {
@@ -100,4 +101,4 @@ it("SIGKILL at granting, granted, sent, and saved recovers exactly one held toke
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
+}, 60_000);

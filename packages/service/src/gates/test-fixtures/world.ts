@@ -143,7 +143,9 @@ export async function world(
     store,
     version: async () => ({ status: "loaded", blueprint }),
     revisionAt: async () => revision,
-    sandbox: await createComparatorSandbox(),
+    // A CPU-loaded recovery records timeout at 100 ms and cannot grant the next
+    // token. Gate behavior checks need the ordering comparator to complete.
+    sandbox: await createComparatorSandbox({ timeoutMs: 500 }),
     portfolio: {
       ledger,
       current: () => ({

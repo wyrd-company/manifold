@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { childArtifacts } from "../../../../test-support/child-process.ts";
+import { childProcessLimit } from "../../../../test-support/limits.ts";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
 import { fork } from "node:child_process";
@@ -552,7 +553,11 @@ test("two task actors deliver a message read through the compiled MCP plugin and
       },
     }) + "\n",
   );
-  await expect.poll(() => replies.find((r) => r["id"] === 1)).toHaveProperty("result");
+  // CPU-loaded compiled MCP startup replies after 2.47 s, beyond the default 1 s poll.
+  // Keep initialization within the enclosing child-process test's budget.
+  await expect
+    .poll(() => replies.find((r) => r["id"] === 1), { timeout: childProcessLimit })
+    .toHaveProperty("result");
   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
   child.stdin.write(
     JSON.stringify({

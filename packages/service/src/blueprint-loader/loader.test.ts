@@ -710,6 +710,7 @@ it("reserves the in guard and compiles it for runtime state reads", async () => 
   actor.stop();
 });
 
+// The paired default-worker trace takes 5.61 s to lint and load all 24 fixtures.
 it("shares every fixture verdict and finding with the pure lint", async () => {
   const { fixtures, names } =
     await import("../../../shared/src/token-lint/test-fixtures/blueprints.ts");
@@ -738,7 +739,7 @@ it("shares every fixture verdict and finding with the pure lint", async () => {
       expect(load.blueprint.warnings).toEqual(pure.warnings);
     } else expect(load).toEqual({ status: "invalid", findings: pure.findings });
   }
-});
+}, 15_000);
 
 it("checks card move literals against the same immutable revision and skips invalid declarations", async () => {
   const path = "blueprints/parcel.yml";

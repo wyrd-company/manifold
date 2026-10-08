@@ -85,7 +85,17 @@ test("stalled mint times out as remote, preserves prior revision and releases ne
   });
 });
 test("authentication token reaches git only and is absent from errors, logs, clone files and populated store rows", async () => {
-  const { directory, remote, api, privateKey, configuration, credentials } = await setup();
+  const {
+    directory,
+    remote,
+    api,
+    privateKey,
+    configuration: shortConfiguration,
+    credentials,
+  } = await setup();
+  // Two default-worker gates take 203 ms for this authenticated success-path pull.
+  // Keep the 200 ms budget in deadline tests; this check verifies credential isolation.
+  const configuration = { ...shortConfiguration, pullTimeoutMs: 2000 };
   const log: unknown[][] = [];
   for (const method of ["log", "error", "warn", "info", "debug"] as const)
     vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {

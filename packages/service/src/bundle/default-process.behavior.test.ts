@@ -97,6 +97,7 @@ async function fixture(failure?: "opening" | "prompting") {
   };
   return { actor, calls, working, own, settled };
 }
+// Loading this blueprint takes 6.82 s under paired default-worker gates.
 it("matches Project field changes and issue closure against the actor identity", async () => {
   const f = await fixture();
   try {
@@ -122,7 +123,8 @@ it("matches Project field changes and issue closure against the actor identity",
   } finally {
     f.actor.stop();
   }
-});
+}, 15_000);
+// The agent.handoff case spends 5.21 s loading before it can exercise the event.
 it.each([
   "agent.handoff",
   "agent.escalated",
@@ -130,28 +132,33 @@ it.each([
   "t3.session.failed",
   "t3.thread.archived",
   "t3.thread.deleted",
-])("matches %s against the followed thread", async (type) => {
-  const f = await fixture();
-  try {
-    await f.working();
-    const event = {
-      ...f.settled,
-      type,
-      threadId: "other",
-      handoff: { summary: "Packed" },
-      error: "Fixture failure",
-    };
-    f.actor.send(event);
-    expect(f.actor.getSnapshot().value).toEqual({ active: { working: "waiting" } });
-    f.actor.send({ ...event, threadId: f.own.threadId });
-    if (type === "agent.handoff") await expect.poll(() => f.actor.getSnapshot().value).toBe("done");
-    else if (type === "agent.escalated")
-      expect(f.actor.getSnapshot().value).toEqual({ active: { working: "escalated" } });
-    else expect(f.actor.getSnapshot().value).toEqual({ active: "stalled" });
-  } finally {
-    f.actor.stop();
-  }
-});
+])(
+  "matches %s against the followed thread",
+  async (type) => {
+    const f = await fixture();
+    try {
+      await f.working();
+      const event = {
+        ...f.settled,
+        type,
+        threadId: "other",
+        handoff: { summary: "Packed" },
+        error: "Fixture failure",
+      };
+      f.actor.send(event);
+      expect(f.actor.getSnapshot().value).toEqual({ active: { working: "waiting" } });
+      f.actor.send({ ...event, threadId: f.own.threadId });
+      if (type === "agent.handoff")
+        await expect.poll(() => f.actor.getSnapshot().value).toBe("done");
+      else if (type === "agent.escalated")
+        expect(f.actor.getSnapshot().value).toEqual({ active: { working: "escalated" } });
+      else expect(f.actor.getSnapshot().value).toEqual({ active: "stalled" });
+    } finally {
+      f.actor.stop();
+    }
+  },
+  15_000,
+);
 it.each(["t3.thread.archived", "t3.thread.deleted"])(
   "clears only the followed thread on %s during a stall",
   async (type) => {

@@ -15,6 +15,8 @@ import { signedDelivery } from "../github-source/test-fixtures/api.ts";
 import { serve, readRequest } from "../escalations/test-support.ts";
 import { startService } from "./index.ts";
 
+// Paired default-worker gates spend 19 s in the six CLI checks before service
+// startup; the 30 s limit then expires while binding the starter revision.
 test("the guide reaches an issue's actor through the private API against fake GitHub", async () => {
   const f = await serviceFixture();
   let stop: (() => Promise<void>) | undefined;
@@ -118,7 +120,7 @@ test("the guide reaches an issue's actor through the private API against fake Gi
     await stop?.();
     await f.close();
   }
-});
+}, 60_000);
 
 test("the guide token pipeline exchanges a pairing credential for the approved scopes without output", async () => {
   const guide = await fs.readFile(
