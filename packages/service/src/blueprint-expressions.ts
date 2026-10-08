@@ -11,6 +11,7 @@ import {
   compileExpressionResult,
   ExpressionError,
   expressionsConfigurationSchema,
+  createSchemaCompiler,
 } from "@wyrd-company/manifold-shared";
 import type { ExpressionBlueprint } from "@wyrd-company/manifold-shared";
 import type { WorkerResult } from "./expression-worker.ts";
@@ -35,6 +36,13 @@ export function configureBlueprintExpressions(
     throw new RangeError("timeoutMs must be an integer from 250 to 60000");
   timeoutMs = next;
 }
+class WorkerWaitError extends ExpressionError {
+  readonly timedOut: boolean;
+  constructor(detail: ConstructorParameters<typeof ExpressionError>[0], timedOut: boolean) {
+    super(detail);
+    this.timedOut = timedOut;
+  }
+}
 let channel: ReturnType<typeof createExpressionWorkerChannel> | undefined;
 function evaluateSync(params: Params, input: unknown) {
   channel ??= createExpressionWorkerChannel({
@@ -48,14 +56,17 @@ function evaluateSync(params: Params, input: unknown) {
     timeoutMs,
   );
   if (!outcome.ok)
-    throw new ExpressionError({
-      kind: "evaluation",
-      ...params,
-      message:
-        outcome.cause === "timeout"
-          ? `Expression did not finish within ${timeoutMs} ms; the expression worker was restarted`
-          : `The expression worker exited with code ${outcome.exitCode} during evaluation; the expression worker was restarted`,
-    });
+    throw new WorkerWaitError(
+      {
+        kind: "evaluation",
+        ...params,
+        message:
+          outcome.cause === "timeout"
+            ? `Expression did not finish within ${timeoutMs} ms; the expression worker was restarted`
+            : `The expression worker exited with code ${outcome.exitCode} during evaluation; the expression worker was restarted`,
+      },
+      outcome.cause === "timeout",
+    );
   const result = outcome.value as WorkerResult;
   if ("error" in result) throw new ExpressionError(result.error);
   return result.value;
@@ -88,6 +99,7 @@ export function createBlueprintExpressions(
     return failure;
   }
   for (const site of sites) {
+    if (site.migration) continue;
     if (site.problem)
       throw new ExpressionError({
         kind: site.problem === "schema-missing" ? "schema" : "result",
@@ -143,6 +155,7 @@ export function createBlueprintExpressions(
     }
   };
   return {
+    migrateContext: contextMigration(blueprint),
     machine: machine as MachineConfig<Context, Event, never, never, never, never>,
     guards: { "expression.guard": guard(false), "expression.match": guard(true) },
     actions: {
@@ -165,5 +178,70 @@ export function createBlueprintExpressions(
         }
       }),
     },
+  };
+}
+
+export type ContextMigration =
+  | { status: "unchanged"; context: Readonly<Record<string, unknown>> }
+  | { status: "mapped"; context: Readonly<Record<string, unknown>>; path: number }
+  | {
+      status: "failed";
+      kind: "no-path" | "mapping-failed" | "mapping-timeout" | "context-rejected";
+      message: string;
+      detail: Record<string, import("./store/index.ts").JsonValue>;
+    };
+function contextMigration(blueprint: ExpressionBlueprint) {
+  const validators = createSchemaCompiler()([
+    blueprint.schemas.context ?? true,
+    ...(blueprint.migrations ?? []).map((path) => path.from),
+  ]);
+  return (context: Readonly<Record<string, unknown>>): ContextMigration => {
+    const own = Object.fromEntries(Object.entries(context).filter(([key]) => key !== "manifold"));
+    if (validators[0]!(own)) return { status: "unchanged", context };
+    const index = (blueprint.migrations ?? []).findIndex((_, index) => validators[index + 1]!(own));
+    if (index === -1)
+      return {
+        status: "failed",
+        kind: "no-path",
+        message: "No migration path accepts the context",
+        detail: { schemaErrors: JSON.parse(JSON.stringify(validators[0]!.errors ?? [])) },
+      };
+    const path = blueprint.migrations![index]!;
+    const params = {
+      expression: path.context.params.expression,
+      location: `/migrations/${index}/context`,
+    };
+    try {
+      const result = evaluateSync(params, { context });
+      if (
+        result === null ||
+        typeof result !== "object" ||
+        Array.isArray(result) ||
+        Object.hasOwn(result, "manifold")
+      )
+        return {
+          status: "failed",
+          kind: "mapping-failed",
+          message: "Migration must return an object without manifold",
+          detail: {},
+        };
+      if (!validators[0]!(result))
+        return {
+          status: "failed",
+          kind: "context-rejected",
+          message: "Migration context does not match the target schema",
+          detail: { schemaErrors: JSON.parse(JSON.stringify(validators[0]!.errors ?? [])) },
+        };
+      return { status: "mapped", context: result as Record<string, unknown>, path: index };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        status: "failed",
+        kind:
+          error instanceof WorkerWaitError && error.timedOut ? "mapping-timeout" : "mapping-failed",
+        message,
+        detail: error instanceof ExpressionError ? JSON.parse(JSON.stringify(error.detail)) : {},
+      };
+    }
   };
 }

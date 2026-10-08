@@ -133,6 +133,8 @@ const service = await startService({
     }
     return {
       start: () => {},
+      migrate: async () => ({ status: "current" as const }),
+      onSaved: () => () => {},
       actorOf: () => undefined,
       followers: () => [],
       followedThreads: () => [],

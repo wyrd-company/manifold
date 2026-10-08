@@ -45,7 +45,7 @@ export const actorHost = wiringPart({
       log,
     } = members;
     const { options } = context;
-    const actorHost = await (options.actorHost ?? createServiceActorHost)({
+    const parts = {
       configuration,
       store,
       history,
@@ -59,7 +59,10 @@ export const actorHost = wiringPart({
       agentTools,
       gates,
       log,
-    });
+    };
+    const actorHost = await (options.actorHost
+      ? options.actorHost(parts)
+      : createServiceActorHost(parts, options.probes?.migrated));
     return { actorHost };
   },
 });

@@ -14,6 +14,7 @@ export interface ProcessRepositoryOptions {
   readonly saveProbe?: SaveProbe;
 }
 export interface ProcessRepository {
+  isAncestor(ancestor: string, commit: string): Promise<boolean>;
   current(): ProcessRepositoryRevision | undefined;
   revisionAt(commit: string): Promise<ProcessRepositoryRevision | undefined>;
   pull(request?: PullRequest): Promise<PullOutcome>;

@@ -2,6 +2,7 @@
 // relationships:
 //   implements: service-assembly
 // ---
+import { migrations as migrationsPart } from "../migrations/wiring.ts";
 import { intakeFailedHandler } from "../intake/index.ts";
 import {
   openEscalations,
@@ -26,6 +27,7 @@ export const escalations = wiringPart({
   ): { escalations: Escalations } => {
     const { store, configuration, agentTools, http, log } = members;
     const { options } = context;
+    const migrations = context.later(migrationsPart);
     const intake = context.later(intakePart);
     const gates = context.later(gatesPart);
     const actorHost = context.later(actorHostPart);
@@ -39,6 +41,7 @@ export const escalations = wiringPart({
         return credential.tokenFile;
       },
       handlers: {
+        "migration-failed": (escalation) => migrations.get().migrations.migrationFailed(escalation),
         "intake-failed": intakeFailedHandler(store, (id) =>
           intake.current()?.intake.discovered([id]),
         ),

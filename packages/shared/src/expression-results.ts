@@ -39,6 +39,14 @@ export function compileExpressionResult(
       });
     };
     assertExpressionData(result, site);
+    if (
+      site.migration &&
+      (result === null ||
+        typeof result !== "object" ||
+        Array.isArray(result) ||
+        Object.hasOwn(result, "manifold"))
+    )
+      fail("result", "Migration must return an object without manifold");
     if (site.kind === "expression.guard" || site.kind === "expression.match") {
       if (typeof result !== "boolean") fail("result", "Expression must return a boolean");
       return result;

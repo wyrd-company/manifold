@@ -29,6 +29,7 @@ export interface Escalation {
         readonly kind:
           | "held-actor"
           | "stranded-token"
+          | "migration-failed"
           | "intake-failed"
           | "comparator-failed"
           | "agent-question";
@@ -73,6 +74,7 @@ export function isEscalation(v: unknown): v is Escalation {
           kind: oneOf(
             "held-actor",
             "stranded-token",
+            "migration-failed",
             "intake-failed",
             "comparator-failed",
             "agent-question",

@@ -264,6 +264,8 @@ export function createGates(options: GatesOptions): Gates {
   const hooks = saveHook(options, tables, views, mark);
   return {
     ...hooks,
+    heldTokens: (actorId) =>
+      tables.actorTokens(actorId).map((token) => ({ gate: token.gate, tokenId: token.token_id })),
     tokenHolder: (tokenId) => tables.token(tokenId)?.actor_id,
     async revision(load, revision) {
       requireRunning();

@@ -11,6 +11,8 @@ const children = [
   "src/epics/service-wiring.test.ts",
   "src/environments/service.test.ts",
   "src/environments/environments.browser.test.ts",
+  "src/migration.integration.test.ts",
+  "src/migrations/crash.test.ts",
   "src/declarations-api/api.test.ts",
   "src/declarations-api/accounts.browser.test.ts",
   "src/declarations-api/projects.browser.test.ts",

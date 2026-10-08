@@ -38,6 +38,7 @@ type SetupImplementations = Parameters<
   >
 >[0];
 export interface ImplementationRegistry {
+  readonly actorKinds?: Readonly<Record<string, "promise" | "callback">>;
   readonly raises?: Readonly<Record<string, readonly string[]>>;
   readonly actors: Readonly<Record<string, AnyActorLogic>>;
   readonly actions: Readonly<Record<string, unknown>>;
@@ -55,6 +56,7 @@ export interface Bundle {
 export interface BundleSource {
   readonly current: Bundle;
   at(digest: string): Bundle | undefined;
+  recordedAt?(digest: string): number | undefined;
 }
 export interface BlueprintLoaderOptions {
   readonly bundles?: BundleSource;
@@ -69,8 +71,10 @@ export interface LoadedBlueprint {
   readonly key: string;
   readonly document: BlueprintDocument;
   readonly machine: AnyStateMachine;
+  readonly actorKinds: Readonly<Record<string, "promise" | "callback">>;
   readonly warnings: readonly BlueprintFinding[];
   readonly tokens: TokenLintResult;
+  migrateContext: ReturnType<typeof createBlueprintExpressions>["migrateContext"];
   checkRestore(snapshot: Snapshot<unknown>): RestoreCheck;
 }
 export type VersionLoad =
@@ -80,6 +84,7 @@ export type VersionLoad =
 export interface RevisionLoad {
   readonly commit: string;
   readonly blueprints: ReadonlyMap<string, LoadedBlueprint>;
+  readonly versions: ReadonlyMap<string, BlueprintVersion>;
   readonly failures: ReadonlyMap<string, readonly BlueprintFinding[]>;
 }
 export interface BlueprintLoader {
@@ -188,8 +193,10 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
           key: blueprintVersionKey(version),
           document: lint.blueprint,
           machine,
+          actorKinds: { ...implementations.actorKinds },
           warnings: lint.warnings,
           tokens: lint.tokens,
+          migrateContext: expressions.migrateContext,
           checkRestore: (snapshot) => checkRestore(machine, snapshot),
         },
       };
@@ -239,21 +246,21 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
       ]
         .filter((path) => /\.ya?ml$/.test(path))
         .sort(compareBlueprintPaths);
+      const versions = new Map<string, BlueprintVersion>();
       for (const path of paths) {
-        const result = await load(
-          {
-            commit: revision.commit,
-            path,
-            ...(!repositoryPaths.has(path) && options.bundles
-              ? { bundle: options.bundles.current.digest }
-              : {}),
-          },
-          revision,
-        );
+        const version: BlueprintVersion = {
+          commit: revision.commit,
+          path,
+          ...(!repositoryPaths.has(path) && options.bundles
+            ? { bundle: options.bundles.current.digest }
+            : {}),
+        };
+        versions.set(path, version);
+        const result = await load(version, revision);
         if (result.status === "loaded") blueprints.set(path, result.blueprint);
         else if (result.status === "invalid") failures.set(path, result.findings);
       }
-      return { commit: revision.commit, blueprints, failures };
+      return { commit: revision.commit, blueprints, failures, versions };
     },
   };
 }

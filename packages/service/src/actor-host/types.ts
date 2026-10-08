@@ -17,9 +17,13 @@ export interface ActorHostOptions {
     readonly message: string;
     readonly detail?: Readonly<Record<string, JsonValue>>;
   }) => void;
+  readonly heldTokens?: (actorId: string) => readonly HeldToken[];
+  readonly probe?: (step: "migrated", actorId: string) => void;
   readonly now?: () => number;
 }
 export interface ActorHost extends RouterActorHost {
+  migrate(actorId: string, to: LoadedBlueprint): Promise<MigrationOutcome>;
+  onSaved(listener: (actorId: string) => void): () => void;
   start(request: ActorStart): void;
   actorOf(
     actorId: string,
@@ -82,3 +86,25 @@ export class ActorStartError extends Error {
     this.name = "ActorStartError";
   }
 }
+
+export interface HeldToken {
+  readonly gate: string;
+  readonly tokenId: string;
+}
+export interface MigrationFailure extends Omit<
+  import("../store/index.ts").MigrationFailureWrite,
+  "actorId"
+> {}
+export type MigrationOutcome =
+  | {
+      readonly status: "migrated";
+      readonly from: string;
+      readonly to: string;
+      readonly path?: number;
+    }
+  | { readonly status: "current" | "ended" }
+  | {
+      readonly status: "deferred";
+      readonly reason: "held" | "pending-events" | "unsaved-change" | "promise-running";
+    }
+  | { readonly status: "failed"; readonly failure: MigrationFailure };

@@ -2,6 +2,7 @@
 // relationships:
 //   implements: service-assembly
 // ---
+import { migrations as migrationsPart } from "../migrations/wiring.ts";
 import { createRevisions } from "./revisions.ts";
 import { openTaskMetadata } from "../task-metadata/index.ts";
 import { wiringPart } from "./wiring.ts";
@@ -18,6 +19,7 @@ export const revisions = wiringPart({
     const { processRepository, blueprints, portfolio, usage, taskMetadata, gates, log } = members;
     const { options } = context;
     const intake = context.later(intakePart);
+    const migrations = context.later(migrationsPart);
     const revisions = createRevisions({
       repository: processRepository,
       blueprints,
@@ -27,6 +29,12 @@ export const revisions = wiringPart({
       log,
       applied: (revision) => {
         intake.current()?.intake.revisionLoaded();
+        void migrations
+          .current()
+          ?.migrations.pass()
+          .catch((error) =>
+            log({ level: "error", event: "migration-failed", message: String(error) }),
+          );
         options.probes?.applied?.(revision);
       },
       ...(gates ? { gates } : {}),

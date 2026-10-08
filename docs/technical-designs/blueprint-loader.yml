@@ -250,6 +250,10 @@ proposed-design:
     that uses the prefix, and likewise for an actor name beginning with
     `blueprints/`, which names a child blueprint, or a guard entry named `in`. `serviceImplementations`
     composes the parts that modules provide, as `actor-host` states.
+    `actorKinds` declares actor implementations as `promise` or `callback`,
+    with an undeclared kind treated as `promise`, as `blueprint-migration`
+    states. Registry composition carries the declarations, and the loader
+    copies them onto each loaded version.
     `raises` declares the event types each named action may raise, as
     `token-lint` requires; modules declare them beside their actions.
     `manifoldImplementationNames` in `packages/shared` lists the composed

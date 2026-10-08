@@ -110,7 +110,9 @@ export async function lintBlueprintExpressions(
                 compiled,
                 site.kind === "expression.match"
                   ? sample.value
-                  : { context: contextValue, event: sample.value },
+                  : site.migration
+                    ? { context: contextValue }
+                    : { context: contextValue, event: sample.value },
                 {
                   millis: () => 0,
                   now: (picture?: string, timezone?: string) =>

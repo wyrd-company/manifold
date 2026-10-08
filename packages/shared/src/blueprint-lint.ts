@@ -151,6 +151,8 @@ export async function lintBlueprint(
     `/schemas/${key}`,
     blueprint.schemas[key as "input" | "output" | "context"],
   ]);
+  for (const [index, migration] of (blueprint.migrations ?? []).entries())
+    schemaEntries.push([`/migrations/${index}/from`, migration.from]);
   for (const [type, schema] of Object.entries(blueprint.schemas.events))
     schemaEntries.push([`/schemas/events/${pointer(type)}`, schema]);
   for (const [src, boundary] of Object.entries(blueprint.schemas.actors ?? {}))
@@ -308,7 +310,13 @@ export async function lintBlueprint(
   findings.push(...gateFindings(blueprint, path));
   if (!schemaInvalid)
     for (const row of await lintBlueprintExpressions(blueprint, compileSchema))
-      findings.push({ ...row, path, location: `/machine${row.location}` });
+      findings.push({
+        ...row,
+        path,
+        location: row.location.startsWith("/migrations/")
+          ? row.location
+          : `/machine${row.location}`,
+      });
   const unknownEvents: BlueprintFinding[] = Object.keys(blueprint.schemas.events)
     .sort(compareExpressionText)
     .filter((type) => type.startsWith("agent.") && !names.events?.has(type))

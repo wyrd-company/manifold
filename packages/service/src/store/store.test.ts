@@ -95,7 +95,7 @@ test("schema matches the approved SQL and connection pragmas", () => {
       }));
   expect(schema(store.connection.database)).toEqual(schema(reference));
   expect(store.connection.database.prepare("SELECT * FROM schema_migration").all()).toEqual([
-    { owner: "store", version: 3 },
+    { owner: "store", version: 4 },
   ]);
   expect(store.connection.database.prepare("PRAGMA journal_mode").get()?.["journal_mode"]).toBe(
     "wal",
@@ -114,7 +114,7 @@ test("owner migrations are atomic, idempotent, isolated and reject invalid owner
     connection.database
       .prepare("SELECT version FROM schema_migration WHERE owner = 'store'")
       .get()?.["version"],
-  ).toBe(3);
+  ).toBe(4);
   expect(() => connection.migrate("Auxiliary", steps)).toThrow(TypeError);
   expect(() => connection.migrate("", steps)).toThrow(TypeError);
   expect(() => connection.migrate("auxiliary", [])).toThrow(/auxiliary.*1.*0/);
@@ -465,16 +465,16 @@ test("due deadlines are ordered by fire time then actor id, including the bounda
 
 test("opening a newer store schema refuses it without altering persisted data", () => {
   store.connection.database
-    .prepare("UPDATE schema_migration SET version = 4 WHERE owner = 'store'")
+    .prepare("UPDATE schema_migration SET version = 5 WHERE owner = 'store'")
     .run();
   const previous = store.loadSnapshot("counter-00");
   store.close();
-  expect(() => openStore({ path })).toThrow(/store.*4.*3/);
+  expect(() => openStore({ path })).toThrow(/store.*5.*4/);
   const database = new DatabaseSync(path);
   expect(
     database.prepare("SELECT version FROM schema_migration WHERE owner='store'").get()?.["version"],
-  ).toBe(4);
-  database.prepare("UPDATE schema_migration SET version = 3 WHERE owner = 'store'").run();
+  ).toBe(5);
+  database.prepare("UPDATE schema_migration SET version = 4 WHERE owner = 'store'").run();
   database.close();
   store = openStore({ path });
   expect(store.loadSnapshot("counter-00")).toEqual(previous);
@@ -588,10 +588,12 @@ test("the root-deadline migration preserves rows and never reuses deleted deadli
     "state_path TEXT NOT NULL CHECK (length(state_path) > 0),",
   );
   database.exec(
-    sql.replace(
-      "CREATE INDEX store_snapshot_state_by_state ON store_snapshot_state (state_path, actor_id);",
-      "",
-    ),
+    sql
+      .split("CREATE TABLE store_migration_failure")[0]!
+      .replace(
+        "CREATE INDEX store_snapshot_state_by_state ON store_snapshot_state (state_path, actor_id);",
+        "",
+      ),
   );
   database.exec(
     "INSERT INTO schema_migration VALUES ('store', 1); INSERT INTO store_deadline (deadline_id, actor_id, state_path, event_name, fire_at, entry_id) VALUES (500, 'timer', 'idle', 'tick', 100, '1'); DELETE FROM store_deadline;",
@@ -618,4 +620,45 @@ test("deadline retirement uses complete identities even when names contain delim
   saveWithDeadlines([first, second]);
   saveWithDeadlines([first]);
   expect(store.dueDeadlines(100).filter((row) => row.actorId === "timer")).toMatchObject([first]);
+});
+test("migration failures persist, deduplicate a pair, roll back, and clear only on a matching save", () => {
+  const failure = {
+    actorId: "counter-00",
+    from: "old",
+    to: "new",
+    kind: "no-path" as const,
+    message: "No compatible context",
+    detail: { field: "zone" },
+  };
+  expect(store.recordMigrationFailure(failure)).toBe("recorded");
+  const first = store.migrationFailure(failure.actorId)!;
+  expect(store.recordMigrationFailure({ ...failure, message: "Repeated attempt" })).toBe(
+    "unchanged",
+  );
+  expect(store.migrationFailure(failure.actorId)).toEqual(first);
+  store.close();
+  store = openStore({ path });
+  expect(store.migrationFailure(failure.actorId)).toEqual(first);
+  expect(() =>
+    store.connection.transaction(() => {
+      store.clearMigrationFailures("new");
+      throw new Error("rollback");
+    }),
+  ).toThrow("rollback");
+  expect(store.migrationFailures("new")).toEqual([first]);
+  store.saveSnapshot({
+    actorId: failure.actorId,
+    machine: "old",
+    snapshot: { status: "active", value: "counting", context: {} },
+  });
+  expect(store.migrationFailures("new")).toHaveLength(1);
+  store.saveSnapshot({
+    actorId: failure.actorId,
+    machine: "new",
+    snapshot: { status: "active", value: "counting", context: { zone: "north" } },
+  });
+  expect(store.migrationFailure(failure.actorId)).toBeUndefined();
+  expect(store.recordMigrationFailure(failure)).toBe("recorded");
+  expect(store.clearMigrationFailures("new")).toBe(1);
+  expect(store.clearMigrationFailures("new")).toBe(0);
 });

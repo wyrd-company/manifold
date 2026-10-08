@@ -13,6 +13,7 @@ import type {
   Store,
   StoreOptions,
   StoredSnapshot,
+  StoredMigrationFailure,
 } from "./types.ts";
 
 type Row = Record<string, SQLOutputValue>;
@@ -47,6 +48,17 @@ function readDeadline(row: Row): DeadlineRow {
   };
 }
 
+function readMigrationFailure(row: Row): StoredMigrationFailure {
+  return {
+    actorId: String(row["actor_id"]),
+    from: String(row["from_machine"]),
+    to: String(row["to_machine"]),
+    kind: row["kind"] as StoredMigrationFailure["kind"],
+    message: String(row["message"]),
+    detail: JSON.parse(String(row["detail"])),
+    failedAt: Number(row["failed_at"]),
+  };
+}
 export function openStore({ path, now = Date.now, probe }: StoreOptions): Store {
   const connection = openConnection(path);
   const { database } = connection;
@@ -114,8 +126,50 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
               deadline.entryId,
             );
         }
+        database
+          .prepare("DELETE FROM store_migration_failure WHERE actor_id=? AND to_machine=?")
+          .run(actorId, machine);
         return "saved";
       });
+    },
+    recordMigrationFailure(write) {
+      return connection.transaction(() =>
+        database
+          .prepare(
+            "INSERT INTO store_migration_failure VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (actor_id) DO UPDATE SET from_machine=excluded.from_machine, to_machine=excluded.to_machine, kind=excluded.kind, message=excluded.message, detail=excluded.detail, failed_at=excluded.failed_at WHERE from_machine != excluded.from_machine OR to_machine != excluded.to_machine",
+          )
+          .run(
+            write.actorId,
+            write.from,
+            write.to,
+            write.kind,
+            write.message,
+            JSON.stringify(write.detail),
+            now(),
+          ).changes
+          ? "recorded"
+          : "unchanged",
+      );
+    },
+    migrationFailure(actorId) {
+      const row = database
+        .prepare("SELECT * FROM store_migration_failure WHERE actor_id=?")
+        .get(actorId);
+      return row ? readMigrationFailure(row) : undefined;
+    },
+    migrationFailures(to) {
+      return database
+        .prepare("SELECT * FROM store_migration_failure WHERE to_machine=? ORDER BY actor_id")
+        .all(to)
+        .map(readMigrationFailure);
+    },
+    clearMigrationFailures(to) {
+      return connection.transaction(() =>
+        Number(
+          database.prepare("DELETE FROM store_migration_failure WHERE to_machine=?").run(to)
+            .changes,
+        ),
+      );
     },
     activeSnapshots() {
       return database

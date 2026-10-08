@@ -206,6 +206,11 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
       return { sequence: result.sequence };
     },
     implementations: {
+      actorKinds: {
+        "thread-create": "promise",
+        "turn-prepare": "promise",
+        "turn-start": "promise",
+      },
       actors: { "thread-create": create, "turn-prepare": prepare, "turn-start": turn },
       actions: { "follow-thread": follow },
       guards: {},

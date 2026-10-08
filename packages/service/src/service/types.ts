@@ -58,6 +58,7 @@ export interface StartServiceOptions {
 
 export interface ServiceProbes {
   readonly command?: (command: InvokedCommand) => void;
+  readonly migrated?: (step: "migrated", actorId: string) => void;
   readonly capacityCredited?: (credit: import("../capacity/index.ts").CapacityCredit) => void;
   /** Called after each start and stop step completes. */
   readonly step?: (step: ServiceStep) => void;
@@ -115,6 +116,7 @@ export interface ServiceParts {
 }
 
 export interface Service extends ServiceParts {
+  readonly migrations: import("../migrations/index.ts").Migrations;
   readonly intake: Intake;
   readonly router: Router;
   readonly github: GitHubSource;

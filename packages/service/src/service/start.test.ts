@@ -54,6 +54,8 @@ test("starts in order, awaits the actor host, follows revisions, and stops once"
   const steps: ServiceStep[] = [];
   const host = {
     start: () => {},
+    migrate: async () => ({ status: "current" as const }),
+    onSaved: () => () => {},
     actorOf: () => undefined,
     followers: () => [],
     followedThreads: () => [],
@@ -184,6 +186,8 @@ test("restores and drains a populated inbox before sources start", async () => {
     probes: { step: (step) => events.push(step) },
     actorHost: () => ({
       start: () => {},
+      migrate: async () => ({ status: "current" as const }),
+      onSaved: () => () => {},
       actorOf: () => undefined,
       followers: () => [],
       followedThreads: () => [],
@@ -814,6 +818,7 @@ test("wires gates into revision following, router resume, and shutdown", async (
       throw new Error("unused");
     },
     tokenHolder: () => undefined,
+    heldTokens: () => [],
     stop: () => {
       events.push("gate-stop");
     },
@@ -834,6 +839,8 @@ test("wires gates into revision following, router resume, and shutdown", async (
       events.push("host-created");
       return {
         start: () => {},
+        migrate: async () => ({ status: "current" as const }),
+        onSaved: () => () => {},
         actorOf: () => undefined,
         followers: () => [],
         followedThreads: () => [],

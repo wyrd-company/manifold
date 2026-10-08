@@ -321,6 +321,17 @@ proposed-design:
     Failures are outcomes and records, never throws. `pass` rejects only
     when `store.activeSnapshots` or `latest` throws. Misuse by service code
     throws a `TypeError`: `pass` after `stop`.
+  implementation-actor-kinds: >-
+    `ImplementationRegistry.actorKinds` declares each invoked implementation
+    as `promise` or `callback`. The loader keeps the declarations on each
+    `LoadedBlueprint`, and registry composition carries them by name.
+    An undeclared kind is treated as `promise`, so unknown actor logic
+    defers migration while active. Built-in implementations declare their
+    kinds. Child blueprints are state machines and migrate recursively.
+    The host checks the running version's declaration: active promises
+    defer the attempt; callbacks restart after the new snapshot commits.
+    XState actor logic has no kind discriminant, so the declaration is
+    the source of this distinction.
   dependencies: >-
     No new third-party library. `isAncestor` uses isomorphic-git, which
     the process repository already depends on.

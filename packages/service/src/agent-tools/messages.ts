@@ -115,6 +115,7 @@ export function messages(options: AgentToolsOptions) {
   }
   return {
     implementations: {
+      actorKinds: { "send-message": "promise" as const },
       actors: {
         "send-message": fromPromise(async (args) => {
           args.signal.throwIfAborted();

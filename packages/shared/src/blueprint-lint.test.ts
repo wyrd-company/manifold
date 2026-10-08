@@ -472,3 +472,28 @@ it("enforces root, return, dependency, and token gate contracts before explorati
     findings: [expect.objectContaining({ kind: "shape" })],
   });
 });
+it("validates migration schemas and mappings at document locations", async () => {
+  const value = {
+    ...document(),
+    migrations: [
+      { from: { type: 17 }, context: { type: "expression.map", params: { expression: "{}" } } },
+    ],
+  };
+  expect(await lintBlueprint("blueprints/sample.yml", stringify(value), names)).toMatchObject({
+    ok: false,
+    findings: [expect.objectContaining({ kind: "schema-invalid", location: "/migrations/0/from" })],
+  });
+  value.migrations[0]!.from = { type: "object" } as unknown as { type: number };
+  value.migrations[0]!.context.params.expression = "42";
+  const result = await lintBlueprint("blueprints/sample.yml", stringify(value), names);
+  expect(result).toMatchObject({
+    ok: false,
+    findings: expect.arrayContaining([
+      expect.objectContaining({
+        kind: "result",
+        location: "/migrations/0/context",
+        sample: expect.any(String),
+      }),
+    ]),
+  });
+});

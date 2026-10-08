@@ -34,6 +34,10 @@ export function openBundles(options: {
   const cache = new Map<string, Bundle>([[current.digest, current]]);
   return {
     current,
+    recordedAt(digest) {
+      const row = database.prepare("SELECT recorded_at FROM bundle WHERE digest=?").get(digest);
+      return row ? Number(row["recorded_at"]) : undefined;
+    },
     at(digest) {
       const cached = cache.get(digest);
       if (cached) return cached;

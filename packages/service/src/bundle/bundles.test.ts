@@ -58,6 +58,8 @@ it("keeps whole immutable bundles across opens and upgrades", () => {
     store.connection.migrate("bundle", bundleMigrationSteps);
     const bundles = openBundles({ store, current: second });
     expect(bundles.current).toEqual(second);
+    expect(bundles.recordedAt!(first.digest)).toBe(123);
+    expect(bundles.recordedAt!("absent")).toBeUndefined();
     expect(bundles.at(first.digest)).toEqual(first);
     expect(bundles.at(second.digest)).toEqual(second);
     expect(bundles.at("a".repeat(64))).toBeUndefined();

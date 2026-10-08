@@ -6,6 +6,11 @@ export const compareExpressionText = (a: string, b: string) => (a < b ? -1 : a >
 
 export type Schema = boolean | Record<string, unknown>;
 export type ExpressionBlueprint = {
+  migrations?: readonly {
+    from: Schema;
+    context: { type: string; params: { expression: string } };
+    description?: string;
+  }[];
   machine: Record<string, unknown>;
   schemas: {
     input?: Schema;
@@ -27,6 +32,7 @@ export type ExpressionSite = {
   events: readonly { type: string; schema: Schema | undefined }[];
   contextSchema: Schema | undefined;
   outputSchema: Schema | undefined;
+  migration?: boolean;
   problem?: "schema-missing" | "site-unsupported";
 };
 export function record(value: unknown): Record<string, unknown> {
@@ -387,5 +393,15 @@ export function collectExpressionSites(blueprint: ExpressionBlueprint): readonly
       problem: "site-unsupported",
     });
   }
+  for (const [index, path] of (blueprint.migrations ?? []).entries())
+    sites.push({
+      location: `/migrations/${index}/context`,
+      expression: path.context.params.expression,
+      kind: "expression.map",
+      events: [{ type: "migration", schema: true }],
+      contextSchema: path.from,
+      outputSchema: schemas.context,
+      migration: true,
+    });
   return sites.sort((a, b) => compareExpressionText(a.location, b.location));
 }

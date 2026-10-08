@@ -36,6 +36,10 @@ export interface Store {
   dueDeadlines(at: number): DeadlineRow[];
   fireDeadline(deadline: DeadlineRow, topic: string): InboxRow | undefined;
 
+  recordMigrationFailure(write: MigrationFailureWrite): "recorded" | "unchanged";
+  migrationFailure(actorId: string): StoredMigrationFailure | undefined;
+  migrationFailures(to: string): StoredMigrationFailure[];
+  clearMigrationFailures(to: string): number;
   close(): void;
 }
 
@@ -131,4 +135,26 @@ export interface DeadlineRow extends DeadlineArm {
   readonly deadlineId: number;
   readonly actorId: string;
   readonly firedAt: number | undefined;
+}
+
+export interface MigrationFailureWrite {
+  readonly actorId: string;
+  readonly from: string;
+  readonly to: string;
+  readonly kind:
+    | "version-invalid"
+    | "restore-mismatch"
+    | "gate-missing"
+    | "token-return"
+    | "token-trap"
+    | "no-path"
+    | "mapping-failed"
+    | "mapping-timeout"
+    | "context-rejected"
+    | "store";
+  readonly message: string;
+  readonly detail: Readonly<Record<string, JsonValue>>;
+}
+export interface StoredMigrationFailure extends MigrationFailureWrite {
+  readonly failedAt: number;
 }

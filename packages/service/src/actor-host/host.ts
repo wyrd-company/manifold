@@ -2,6 +2,7 @@
 // relationships:
 //   implements: actor-host
 // ---
+import { prepareMigration } from "./migration.ts";
 import { createActor, createMachine } from "xstate";
 import type { AnyActorRef, InspectionEvent, Snapshot } from "xstate";
 import { createSchemaCompiler, parseBlueprintVersionKey } from "@wyrd-company/manifold-shared";
@@ -10,7 +11,13 @@ import { ActorNotLoadedError } from "../router/index.ts";
 import type { ActorRecord as RouterActorRecord, Router } from "../router/index.ts";
 import type { DeliveryTarget, PersistedSnapshot } from "../store/index.ts";
 import { isDeepStrictEqual } from "node:util";
-import { activeEntries, activeInvokes, deadlineArms, deliverDeadline } from "./entries.ts";
+import {
+  activeEntries,
+  activeInvokes,
+  deadlineArms,
+  deliverDeadline,
+  machines,
+} from "./entries.ts";
 import { identityIndex } from "./identities.ts";
 import { identityOf, identityTopics, validateInput } from "./identity.ts";
 import { machineOf, nodesOf, prefixOf, records } from "./records.ts";
@@ -23,6 +30,8 @@ export async function openActorHost({
   saveHooks,
   log,
   now = Date.now,
+  heldTokens = () => [],
+  probe,
 }: ActorHostOptions): Promise<ActorHost> {
   const versions = new Map<string, VersionLoad>();
   const actors = new Map<string, ActorRecord>();
@@ -32,6 +41,9 @@ export async function openActorHost({
   const eventSchemas = new Map<string, Map<string, ReturnType<ActorHost["eventSchema"]>>>();
   const saves = new WeakMap<PersistedSnapshot, ActorSave>();
   let router: Router | undefined;
+  let saving = false;
+  let migrating: string | undefined;
+  const listeners = new Set<(actorId: string) => void>();
   async function load(key: string) {
     const version = parseBlueprintVersionKey(key);
     versions.set(
@@ -52,6 +64,7 @@ export async function openActorHost({
     entries: EntryRecords = { count: 0, states: {} },
     input?: Record<string, unknown>,
     manifold?: ReturnType<typeof identityOf>,
+    start = true,
   ) {
     const record: ActorRecord = {
       actorId,
@@ -147,7 +160,7 @@ export async function openActorHost({
     record.root = root;
     // Errors are represented by an errored snapshot, rather than an uncaught XState report.
     root.subscribe({ error: () => {} });
-    root.start();
+    if (start) root.start();
     record.sending = false;
     return target(record);
   }
@@ -292,7 +305,12 @@ export async function openActorHost({
       if (actor.snapshot.status === "error") return;
       const save = saves.get(actor.snapshot);
       if (!save) throw new TypeError(`Actor ${actor.actorId} save was not prepared by the host`);
-      for (const hook of saveHooks) hook(save);
+      saving = true;
+      try {
+        for (const hook of saveHooks) hook(save);
+      } finally {
+        saving = false;
+      }
     },
     actorOf(actorId) {
       const record = actors.get(actorId);
@@ -302,7 +320,113 @@ export async function openActorHost({
         commit: record.blueprint.version.commit,
       };
     },
-    saved: identities.saved,
+    saved(actor) {
+      identities.saved(actor);
+      if (migrating === actor.actorId) probe?.("migrated", actor.actorId);
+      if (actor.snapshot.status === "active")
+        for (const listener of listeners) listener(actor.actorId);
+    },
+    onSaved(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    async migrate(actorId, to) {
+      const router = connected();
+      if (saving || actors.get(actorId)?.sending)
+        throw new TypeError("Migration inside a delivery or save");
+      let stored = store.loadSnapshot(actorId);
+      if (!stored || stored.snapshot.status !== "active") return { status: "ended" };
+      const fromVersion = parseBlueprintVersionKey(stored.machine);
+      if (fromVersion?.path !== to.version.path)
+        throw new TypeError("Migration target must have the same path");
+      if (stored.machine === to.key) return { status: "current" };
+      const children = new Map<string, LoadedBlueprint>();
+      let invalid: string | undefined;
+      async function loadChildren(snapshot: Record<string, unknown>, prefix: string) {
+        for (const [id, child] of Object.entries(
+          (snapshot["children"] ?? {}) as Record<
+            string,
+            { src: string; snapshot: Record<string, unknown> }
+          >,
+        )) {
+          if (!child.src.startsWith("blueprints/")) continue;
+          const version = await blueprints.version({ ...to.version, path: child.src });
+          if (version.status !== "loaded") {
+            invalid = JSON.stringify(version);
+            continue;
+          }
+          const key = `${prefix}${encodeURIComponent(id).replaceAll(".", "%2E").replaceAll("#", "%23")}#`;
+          children.set(key, version.blueprint);
+          await loadChildren(child.snapshot, key);
+        }
+      }
+      const basis = JSON.stringify(stored);
+      await loadChildren(stored.snapshot, "");
+      // Re-read after the asynchronous version loads; all following work is synchronous.
+      stored = store.loadSnapshot(actorId);
+      if (!stored || stored.snapshot.status !== "active") return { status: "ended" };
+      if (stored.machine === to.key) return { status: "current" };
+      if (JSON.stringify(stored) !== basis) return { status: "deferred", reason: "unsaved-change" };
+      const from = stored.machine;
+      const failed = (
+        kind: import("./types.ts").MigrationFailure["kind"],
+        message: string,
+        detail: import("./types.ts").MigrationFailure["detail"] = {},
+      ) => ({ status: "failed" as const, failure: { kind, from, to: to.key, message, detail } });
+      if (invalid)
+        return failed("version-invalid", "Child blueprint cannot load", { cause: invalid });
+      const previous = actors.get(actorId);
+      if (!previous || router.held(actorId)) return { status: "deferred", reason: "held" };
+      if (store.pendingInbox(actorId).length)
+        return { status: "deferred", reason: "pending-events" };
+      if (previous.queued) return { status: "deferred", reason: "unsaved-change" };
+      for (const machine of machines(previous.root!)) {
+        const blueprint = prefixOf(machine) ? children.get(prefixOf(machine))! : previous.blueprint;
+        for (const child of Object.values(machine.getSnapshot().children) as AnyActorRef[]) {
+          if (machineOf(child) || child.getSnapshot().status !== "active") continue;
+          const node = nodesOf(machineOf(machine)!).find((node) =>
+            node.invoke.some((invoke) => invoke.id === child.id),
+          )!;
+          const source = node.invoke.find((invoke) => invoke.id === child.id)!.src;
+          if (typeof source !== "string" || blueprint.actorKinds[source] !== "callback")
+            return { status: "deferred", reason: "promise-running" };
+        }
+      }
+      const prepared = prepareMigration(stored.snapshot, to, children, heldTokens(actorId), now());
+      if (!prepared.ok) return failed(prepared.kind, prepared.message, prepared.detail);
+      const { entries, ...snapshot } = prepared.snapshot;
+      const delivery = create(
+        actorId,
+        to,
+        snapshot as Snapshot<unknown>,
+        entries as EntryRecords,
+        undefined,
+        undefined,
+        false,
+      );
+      try {
+        migrating = actorId;
+        versions.set(to.key, { status: "loaded", blueprint: to });
+        router.attach(delivery);
+      } catch (error) {
+        delivery.stop?.();
+        actors.set(actorId, previous);
+        return failed("store", error instanceof Error ? error.message : String(error));
+      } finally {
+        migrating = undefined;
+      }
+      previous.stopped = true;
+      previous.root!.stop();
+      actors.get(actorId)!.root!.start();
+      return {
+        status: "migrated",
+        from,
+        to: to.key,
+        ...(prepared.path === undefined ? {} : { path: prepared.path }),
+      };
+    },
     followers: identities.followers,
     followedThreads: identities.followedThreads,
     issueThreads: identities.issueThreads,

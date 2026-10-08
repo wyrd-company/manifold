@@ -172,6 +172,8 @@ export async function world(
     }
   await gates.prepare();
   const loaded: LoadedBlueprint = {
+    actorKinds: {},
+    migrateContext: (context) => ({ status: "unchanged", context }),
     ...blueprint,
     version: { commit, path: blueprintPath },
     machine,

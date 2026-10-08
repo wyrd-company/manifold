@@ -542,6 +542,7 @@ it("captures the previous whole publication while the follower awaits load and a
   const published: IntakeRevision[] = [];
   follower = createRevisions({
     repository: {
+      isAncestor: async () => false,
       current: () => revision,
       revisionAt: async (commit) => s.revisions.get(commit),
       pull: async () => ({ kind: "unchanged", commit: revision.commit }),

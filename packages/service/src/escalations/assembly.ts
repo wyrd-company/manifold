@@ -11,5 +11,11 @@ export function mountEscalations(http: ServiceHttp, escalations: Escalations): v
   http.mount("/api/escalations", escalations.apiListener);
 }
 export function escalationImplementations(escalations: Escalations): ImplementationRegistry {
-  return { actors: { escalate: escalations.escalate }, actions: {}, guards: {}, delays: {} };
+  return {
+    actorKinds: { escalate: "callback" },
+    actors: { escalate: escalations.escalate },
+    actions: {},
+    guards: {},
+    delays: {},
+  };
 }

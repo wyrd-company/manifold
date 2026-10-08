@@ -10,6 +10,7 @@ import { invocationOf } from "../actor-host/index.ts";
 export type { Invocation } from "../actor-host/index.ts";
 import type { EscalationsConfiguration } from "../service-configuration/index.ts";
 export type ServiceEscalationKind =
+  | "migration-failed"
   | "held-actor"
   | "stranded-token"
   | "intake-failed"

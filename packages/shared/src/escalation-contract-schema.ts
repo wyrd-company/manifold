@@ -199,6 +199,7 @@ export const escalationContractSchema = {
                     "intake-failed",
                     "comparator-failed",
                     "agent-question",
+                    "migration-failed",
                   ],
                 },
                 subject: {
@@ -449,4 +450,4 @@ export const escalationContractSchema = {
       },
     },
   },
-} as const;
+};

@@ -3,7 +3,7 @@
 //   realizes: blueprint
 // ---
 // Generated; do not edit.
-// Schema digest: acb1ad3b52ac57830604ba300f7a57c78a4b43577b97a305c9c465d2d25d9a8e
+// Schema digest: 587169c78f8d7600bfa0bdeb977bee7557659698e12b94069a45056f5b40ddcf
 "use strict";
 export const validate = validate20;
 export default validate20;
@@ -20,6 +20,12 @@ const schema33 = {
       $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-schemas",
     },
     layout: { $ref: "#/$defs/layout" },
+    migrations: {
+      description:
+        "The migration paths from an earlier version's context to this version's. The machine never reads them.",
+      type: "array",
+      items: { $ref: "#/$defs/migration-path" },
+    },
   },
 };
 const schema34 = {
@@ -302,7 +308,7 @@ const schema45 = {
 };
 const schema48 = {
   description:
-    "A JSONata expression carried as the parameter of a generic implementation. Guards and matches stand where XState accepts a guard, assignments where it accepts an action, and mappings as the value of `input` on an invoke or `output` on a top-level final state.",
+    "A JSONata expression carried as the parameter of a generic implementation. Guards and matches stand where XState accepts a guard, assignments where it accepts an action, and mappings as the value of `input` on an invoke, `output` on a top-level final state, or `context` on a blueprint's migration path.",
   type: "object",
   required: ["type", "params"],
   additionalProperties: false,
@@ -4826,6 +4832,344 @@ function validate63(
   return errors === 0;
 }
 validate63.evaluated = { props: true, dynamicProps: false, dynamicItems: false };
+const schema70 = {
+  description:
+    "Maps the context of an actor on an earlier version whose context, without `manifold`, `from` accepts to this version's context.",
+  type: "object",
+  required: ["from", "context"],
+  additionalProperties: false,
+  properties: {
+    description: { type: "string" },
+    from: {
+      description: "A JSON Schema of draft 2020-12 over the earlier context.",
+      type: ["object", "boolean"],
+    },
+    context: {
+      description: "A mapping whose result is the whole new context.",
+      allOf: [
+        {
+          $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference",
+        },
+        { properties: { type: { const: "expression.map" } } },
+      ],
+    },
+  },
+};
+function validate65(
+  data,
+  { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {},
+) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate65.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = undefined;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = undefined;
+  }
+  if (errors === 0) {
+    if (data && typeof data == "object" && !Array.isArray(data)) {
+      let missing0;
+      if (
+        (data.from === undefined && (missing0 = "from")) ||
+        (data.context === undefined && (missing0 = "context"))
+      ) {
+        validate65.errors = [
+          {
+            instancePath,
+            schemaPath: "#/required",
+            keyword: "required",
+            params: { missingProperty: missing0 },
+            message: "must have required property '" + missing0 + "'",
+          },
+        ];
+        return false;
+      } else {
+        const _errs1 = errors;
+        for (const key0 in data) {
+          if (!(key0 === "description" || key0 === "from" || key0 === "context")) {
+            validate65.errors = [
+              {
+                instancePath,
+                schemaPath: "#/additionalProperties",
+                keyword: "additionalProperties",
+                params: { additionalProperty: key0 },
+                message: "must NOT have additional properties",
+              },
+            ];
+            return false;
+            break;
+          }
+        }
+        if (_errs1 === errors) {
+          if (data.description !== undefined) {
+            const _errs2 = errors;
+            if (typeof data.description !== "string") {
+              validate65.errors = [
+                {
+                  instancePath: instancePath + "/description",
+                  schemaPath: "#/properties/description/type",
+                  keyword: "type",
+                  params: { type: "string" },
+                  message: "must be string",
+                },
+              ];
+              return false;
+            }
+            var valid0 = _errs2 === errors;
+          } else {
+            var valid0 = true;
+          }
+          if (valid0) {
+            if (data.from !== undefined) {
+              let data1 = data.from;
+              const _errs4 = errors;
+              if (
+                !(data1 && typeof data1 == "object" && !Array.isArray(data1)) &&
+                typeof data1 !== "boolean"
+              ) {
+                validate65.errors = [
+                  {
+                    instancePath: instancePath + "/from",
+                    schemaPath: "#/properties/from/type",
+                    keyword: "type",
+                    params: { type: schema70.properties.from.type },
+                    message: "must be object,boolean",
+                  },
+                ];
+                return false;
+              }
+              var valid0 = _errs4 === errors;
+            } else {
+              var valid0 = true;
+            }
+            if (valid0) {
+              if (data.context !== undefined) {
+                let data2 = data.context;
+                const _errs6 = errors;
+                const _errs7 = errors;
+                const _errs8 = errors;
+                if (errors === _errs8) {
+                  if (data2 && typeof data2 == "object" && !Array.isArray(data2)) {
+                    let missing1;
+                    if (
+                      (data2.type === undefined && (missing1 = "type")) ||
+                      (data2.params === undefined && (missing1 = "params"))
+                    ) {
+                      validate65.errors = [
+                        {
+                          instancePath: instancePath + "/context",
+                          schemaPath:
+                            "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference/required",
+                          keyword: "required",
+                          params: { missingProperty: missing1 },
+                          message: "must have required property '" + missing1 + "'",
+                        },
+                      ];
+                      return false;
+                    } else {
+                      const _errs10 = errors;
+                      for (const key1 in data2) {
+                        if (!(key1 === "type" || key1 === "params")) {
+                          validate65.errors = [
+                            {
+                              instancePath: instancePath + "/context",
+                              schemaPath:
+                                "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference/additionalProperties",
+                              keyword: "additionalProperties",
+                              params: { additionalProperty: key1 },
+                              message: "must NOT have additional properties",
+                            },
+                          ];
+                          return false;
+                          break;
+                        }
+                      }
+                      if (_errs10 === errors) {
+                        if (data2.type !== undefined) {
+                          let data3 = data2.type;
+                          const _errs11 = errors;
+                          if (
+                            !(
+                              data3 === "expression.guard" ||
+                              data3 === "expression.match" ||
+                              data3 === "expression.assign" ||
+                              data3 === "expression.map"
+                            )
+                          ) {
+                            validate65.errors = [
+                              {
+                                instancePath: instancePath + "/context/type",
+                                schemaPath:
+                                  "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference/properties/type/enum",
+                                keyword: "enum",
+                                params: { allowedValues: schema48.properties.type.enum },
+                                message: "must be equal to one of the allowed values",
+                              },
+                            ];
+                            return false;
+                          }
+                          var valid3 = _errs11 === errors;
+                        } else {
+                          var valid3 = true;
+                        }
+                        if (valid3) {
+                          if (data2.params !== undefined) {
+                            let data4 = data2.params;
+                            const _errs12 = errors;
+                            if (errors === _errs12) {
+                              if (data4 && typeof data4 == "object" && !Array.isArray(data4)) {
+                                let missing2;
+                                if (data4.expression === undefined && (missing2 = "expression")) {
+                                  validate65.errors = [
+                                    {
+                                      instancePath: instancePath + "/context/params",
+                                      schemaPath:
+                                        "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference/properties/params/required",
+                                      keyword: "required",
+                                      params: { missingProperty: missing2 },
+                                      message: "must have required property '" + missing2 + "'",
+                                    },
+                                  ];
+                                  return false;
+                                } else {
+                                  const _errs14 = errors;
+                                  for (const key2 in data4) {
+                                    if (!(key2 === "expression")) {
+                                      validate65.errors = [
+                                        {
+                                          instancePath: instancePath + "/context/params",
+                                          schemaPath:
+                                            "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference/properties/params/additionalProperties",
+                                          keyword: "additionalProperties",
+                                          params: { additionalProperty: key2 },
+                                          message: "must NOT have additional properties",
+                                        },
+                                      ];
+                                      return false;
+                                      break;
+                                    }
+                                  }
+                                  if (_errs14 === errors) {
+                                    if (data4.expression !== undefined) {
+                                      let data5 = data4.expression;
+                                      const _errs15 = errors;
+                                      if (errors === _errs15) {
+                                        if (typeof data5 === "string") {
+                                          if (func1(data5) < 1) {
+                                            validate65.errors = [
+                                              {
+                                                instancePath:
+                                                  instancePath + "/context/params/expression",
+                                                schemaPath:
+                                                  "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference/properties/params/properties/expression/minLength",
+                                                keyword: "minLength",
+                                                params: { limit: 1 },
+                                                message: "must NOT have fewer than 1 characters",
+                                              },
+                                            ];
+                                            return false;
+                                          }
+                                        } else {
+                                          validate65.errors = [
+                                            {
+                                              instancePath:
+                                                instancePath + "/context/params/expression",
+                                              schemaPath:
+                                                "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference/properties/params/properties/expression/type",
+                                              keyword: "type",
+                                              params: { type: "string" },
+                                              message: "must be string",
+                                            },
+                                          ];
+                                          return false;
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              } else {
+                                validate65.errors = [
+                                  {
+                                    instancePath: instancePath + "/context/params",
+                                    schemaPath:
+                                      "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference/properties/params/type",
+                                    keyword: "type",
+                                    params: { type: "object" },
+                                    message: "must be object",
+                                  },
+                                ];
+                                return false;
+                              }
+                            }
+                            var valid3 = _errs12 === errors;
+                          } else {
+                            var valid3 = true;
+                          }
+                        }
+                      }
+                    }
+                  } else {
+                    validate65.errors = [
+                      {
+                        instancePath: instancePath + "/context",
+                        schemaPath:
+                          "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference/type",
+                        keyword: "type",
+                        params: { type: "object" },
+                        message: "must be object",
+                      },
+                    ];
+                    return false;
+                  }
+                }
+                var valid1 = _errs7 === errors;
+                if (valid1) {
+                  const _errs17 = errors;
+                  if (data2 && typeof data2 == "object" && !Array.isArray(data2)) {
+                    if (data2.type !== undefined) {
+                      if ("expression.map" !== data2.type) {
+                        validate65.errors = [
+                          {
+                            instancePath: instancePath + "/context/type",
+                            schemaPath: "#/properties/context/allOf/1/properties/type/const",
+                            keyword: "const",
+                            params: { allowedValue: "expression.map" },
+                            message: "must be equal to constant",
+                          },
+                        ];
+                        return false;
+                      }
+                    }
+                  }
+                  var valid1 = _errs17 === errors;
+                }
+                var valid0 = _errs6 === errors;
+              } else {
+                var valid0 = true;
+              }
+            }
+          }
+        }
+      }
+    } else {
+      validate65.errors = [
+        {
+          instancePath,
+          schemaPath: "#/type",
+          keyword: "type",
+          params: { type: "object" },
+          message: "must be object",
+        },
+      ];
+      return false;
+    }
+  }
+  validate65.errors = vErrors;
+  return errors === 0;
+}
+validate65.evaluated = { props: true, dynamicProps: false, dynamicItems: false };
 function validate22(
   data,
   { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {},
@@ -4864,7 +5208,8 @@ function validate22(
               key0 === "description" ||
               key0 === "machine" ||
               key0 === "schemas" ||
-              key0 === "layout"
+              key0 === "layout" ||
+              key0 === "migrations"
             )
           ) {
             validate22.errors = [
@@ -4957,6 +5302,54 @@ function validate22(
                   var valid0 = _errs6 === errors;
                 } else {
                   var valid0 = true;
+                }
+                if (valid0) {
+                  if (data.migrations !== undefined) {
+                    let data4 = data.migrations;
+                    const _errs7 = errors;
+                    if (errors === _errs7) {
+                      if (Array.isArray(data4)) {
+                        var valid1 = true;
+                        const len0 = data4.length;
+                        for (let i0 = 0; i0 < len0; i0++) {
+                          const _errs9 = errors;
+                          if (
+                            !validate65(data4[i0], {
+                              instancePath: instancePath + "/migrations/" + i0,
+                              parentData: data4,
+                              parentDataProperty: i0,
+                              rootData,
+                              dynamicAnchors,
+                            })
+                          ) {
+                            vErrors =
+                              vErrors === null
+                                ? validate65.errors
+                                : vErrors.concat(validate65.errors);
+                            errors = vErrors.length;
+                          }
+                          var valid1 = _errs9 === errors;
+                          if (!valid1) {
+                            break;
+                          }
+                        }
+                      } else {
+                        validate22.errors = [
+                          {
+                            instancePath: instancePath + "/migrations",
+                            schemaPath: "#/properties/migrations/type",
+                            keyword: "type",
+                            params: { type: "array" },
+                            message: "must be array",
+                          },
+                        ];
+                        return false;
+                      }
+                    }
+                    var valid0 = _errs7 === errors;
+                  } else {
+                    var valid0 = true;
+                  }
                 }
               }
             }

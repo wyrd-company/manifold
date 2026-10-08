@@ -25,3 +25,5 @@ export type {
   DeadlineArm,
   DeadlineRow,
 } from "./types.ts";
+
+export type { MigrationFailureWrite, StoredMigrationFailure } from "./types.ts";

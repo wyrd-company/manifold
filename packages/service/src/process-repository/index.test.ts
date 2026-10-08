@@ -298,3 +298,15 @@ test.each(["different", "absent", "initially-absent", "matching"] as const)(
     }
   },
 );
+test("isAncestor accepts only a proper ancestor available in the process repository", async () => {
+  const { remote, configuration, a } = await setup();
+  const repository = await openProcessRepository({ configuration, credentials });
+  await repository.pull();
+  const b = await remote.commit("second");
+  await repository.pull();
+  expect(await repository.isAncestor(a, b)).toBe(true);
+  expect(await repository.isAncestor(a, a)).toBe(false);
+  expect(await repository.isAncestor(b, a)).toBe(false);
+  expect(await repository.isAncestor("f".repeat(40), b)).toBe(false);
+  expect(await repository.isAncestor("bad", b)).toBe(false);
+});

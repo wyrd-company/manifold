@@ -59,6 +59,15 @@ export async function openProcessRepository(
   }
   return {
     current: () => current,
+    async isAncestor(ancestor, commit) {
+      if (ancestor === commit || !/^[a-f0-9]{40}$/.test(ancestor) || !/^[a-f0-9]{40}$/.test(commit))
+        return false;
+      try {
+        return await git.isDescendent({ ...objects, oid: commit, ancestor });
+      } catch {
+        return false;
+      }
+    },
     async revisionAt(commit: string) {
       if (!/^[a-f0-9]{40}$/.test(commit)) return undefined;
       try {

@@ -639,7 +639,7 @@ it("rejects child path registry names and duplicate module names", () => {
     "courier",
   );
   const part = registry();
-  expect(serviceImplementations({ module: part })).toEqual(part);
+  expect(serviceImplementations({ module: part })).toEqual({ ...part, actorKinds: {} });
 });
 
 it("matches raised-event declarations in the shipped registry", () => {

@@ -16,3 +16,5 @@ export type {
   StateChange,
   ActiveInvoke,
 } from "./types.ts";
+
+export type { HeldToken, MigrationFailure, MigrationOutcome } from "./types.ts";

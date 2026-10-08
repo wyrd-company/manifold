@@ -29,6 +29,45 @@ export const blueprintSchema = {
         layout: {
           $ref: "#/$defs/layout",
         },
+        migrations: {
+          description:
+            "The migration paths from an earlier version's context to this version's. The machine never reads them.",
+          type: "array",
+          items: {
+            $ref: "#/$defs/migration-path",
+          },
+        },
+      },
+    },
+    "migration-path": {
+      description:
+        "Maps the context of an actor on an earlier version whose context, without `manifold`, `from` accepts to this version's context.",
+      type: "object",
+      required: ["from", "context"],
+      additionalProperties: false,
+      properties: {
+        description: {
+          type: "string",
+        },
+        from: {
+          description: "A JSON Schema of draft 2020-12 over the earlier context.",
+          type: ["object", "boolean"],
+        },
+        context: {
+          description: "A mapping whose result is the whole new context.",
+          allOf: [
+            {
+              $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference",
+            },
+            {
+              properties: {
+                type: {
+                  const: "expression.map",
+                },
+              },
+            },
+          ],
+        },
       },
     },
     layout: {
@@ -824,7 +863,7 @@ export const blueprintExpressionsSchema = {
   $defs: {
     "expression-reference": {
       description:
-        "A JSONata expression carried as the parameter of a generic implementation. Guards and matches stand where XState accepts a guard, assignments where it accepts an action, and mappings as the value of `input` on an invoke or `output` on a top-level final state.",
+        "A JSONata expression carried as the parameter of a generic implementation. Guards and matches stand where XState accepts a guard, assignments where it accepts an action, and mappings as the value of `input` on an invoke, `output` on a top-level final state, or `context` on a blueprint's migration path.",
       type: "object",
       required: ["type", "params"],
       additionalProperties: false,
