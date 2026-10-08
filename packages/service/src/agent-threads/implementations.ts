@@ -8,11 +8,12 @@ import type { ClientOrchestrationCommand } from "@wyrd-company/t3code-client";
 import type { AgentThreadsOptions, AgentThreads, Invocation, ManifoldIdentity } from "./types.ts";
 import { failure } from "./types.ts";
 import { derivedId } from "./ids.ts";
-import { createInput, turnInput } from "./inputs.ts";
+import { createInput, turnInput, projectInput } from "./inputs.ts";
 import { render } from "./templates.ts";
-import { createCommand, turnCommand } from "./commands.ts";
+import { createCommand, turnCommand, projectCommand } from "./commands.ts";
 import { clients } from "./clients.ts";
 import { dispatch, PausedAdmission } from "./dispatch.ts";
+import { validateWorkspaceRoot } from "./workspace-root.ts";
 export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
   const lifetime = new AbortController();
   const pool = clients(options, lifetime.signal);
@@ -36,6 +37,43 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
       throw failure("environment", "Actor has no configured environment");
     return { ...actor, environment };
   }
+  const project = fromPromise(async (args) => {
+    const input = projectInput(args.input);
+    const invocation = options.invocationOf(args);
+    const owner = actor(invocation);
+    if (owner.manifold.project && options.bindingArchived(owner.manifold.project))
+      throw failure("archived", "Actor binding is archived");
+    const environment = input.environment?.trim() ?? owner.environment;
+    if (!Object.hasOwn(options.environments, environment))
+      throw failure("environment", "Environment is not configured");
+    const signal = AbortSignal.any([args.signal, lifetime.signal]);
+    signal.throwIfAborted();
+    const revision = options.revisionAt(owner.commit);
+    const title = await render(revision, input.title, input.values ?? {}, true);
+    const root = await render(revision, input.workspaceRoot, input.values ?? {}, true);
+    const command = projectCommand(input, invocation, title, root, new Date().toISOString());
+    const result = await dispatch(options, environment, signal, () =>
+      options.sourceWrite(environment, null, signal, async (writeSignal) => {
+        validateWorkspaceRoot(root, await options.sourcePlatform(environment, writeSignal));
+        writeSignal.throwIfAborted();
+        return pool.get(environment).threads.dispatcher.dispatch(command, writeSignal);
+      }),
+    );
+    signal.throwIfAborted();
+    options.probe?.({
+      implementation: "t3code-project-create",
+      commandId: command.commandId,
+      sequence: result.sequence,
+    });
+    if (owner.manifold.portfolioItem)
+      options.recordProject({
+        environment,
+        projectId: command.projectId,
+        actorId: invocation.actorId,
+        item: owner.manifold.portfolioItem,
+      });
+    return { projectId: command.projectId };
+  });
   const create = fromPromise(async (args) => {
     const input = createInput(args.input);
     const invocation = options.invocationOf(args);
@@ -207,11 +245,17 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
     },
     implementations: {
       actorKinds: {
+        "t3code-project-create": "promise",
         "thread-create": "promise",
         "turn-prepare": "promise",
         "turn-start": "promise",
       },
-      actors: { "thread-create": create, "turn-prepare": prepare, "turn-start": turn },
+      actors: {
+        "t3code-project-create": project,
+        "thread-create": create,
+        "turn-prepare": prepare,
+        "turn-start": turn,
+      },
       actions: { "follow-thread": follow },
       guards: {},
       delays: {},

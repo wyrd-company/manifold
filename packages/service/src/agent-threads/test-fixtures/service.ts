@@ -4,6 +4,8 @@
 // ---
 import { stringify } from "yaml";
 import { memoryRevision } from "@wyrd-company/manifold-shared";
+import { openPortfolio, portfolioMigrationSteps } from "../../portfolio/index.ts";
+import { ledgerMigrationSteps } from "../../ledger/index.ts";
 import { openAgentThreads } from "../index.ts";
 import type { AcceptedCommand } from "../index.ts";
 import { openHistory } from "../../history/index.ts";
@@ -20,13 +22,27 @@ export interface FixtureConfiguration {
   path: string;
   token: string;
   environments: EnvironmentsConfiguration;
-  crash?: "thread-create" | "turn-start";
+  crash?: "t3code-project-create" | "thread-create" | "turn-start";
+  projectCreate?: boolean;
+  projectInput?: Record<string, unknown>;
   onSave?: (snapshot: PersistedSnapshot) => void;
   probe?: (command: AcceptedCommand) => void;
 }
 export async function fixtureService(configuration: FixtureConfiguration) {
   const store = openStore({ path: configuration.path });
   const history = openHistory({ store, log: () => {} });
+  store.connection.migrate("ledger", ledgerMigrationSteps);
+  store.connection.migrate("portfolio", portfolioMigrationSteps);
+  const portfolio = openPortfolio({
+    connection: store.connection,
+    createdProject: (project) => source?.createdProject(project.environment, project.id),
+  });
+  await portfolio.apply(
+    memoryRevision("b".repeat(40), {
+      "portfolio.yml": stringify({ items: { beta: {} } }),
+      "bindings.yml": "{}",
+    }),
+  );
   const commit = "a".repeat(40);
   const actorId = "worker";
   let host: ActorHost;
@@ -43,11 +59,11 @@ export async function fixtureService(configuration: FixtureConfiguration) {
   const document = {
     machine: {
       id: "parcel",
-      context: { thread: "", message: "", started: 0 },
+      context: { thread: "", message: "", started: 0, workspace: "project" },
       initial: "working",
       states: {
         working: {
-          initial: "opening",
+          initial: configuration.projectCreate ? "creating" : "opening",
           on: {
             "t3.turn.started": {
               guard: own,
@@ -56,12 +72,35 @@ export async function fixtureService(configuration: FixtureConfiguration) {
             "t3.turn.settled": { guard: own, target: "done" },
           },
           states: {
+            creating: {
+              invoke: {
+                id: "creating",
+                src: "t3code-project-create",
+                input: mapping(
+                  JSON.stringify({
+                    title: "Parcel {{ parcel }}",
+                    workspaceRoot: "/work/{{ parcel }}",
+                    values: { parcel: "sample" },
+                    createWorkspaceRoot: true,
+                    ...configuration.projectInput,
+                  }),
+                ),
+                onDone: {
+                  target: "opening",
+                  actions: assignment('{ "workspace": event.output.projectId }'),
+                },
+                onError: {
+                  target: "#parcel.failed",
+                  actions: assignment('{ "error": event.error }'),
+                },
+              },
+            },
             opening: {
               invoke: {
                 id: "opening",
                 src: "thread-create",
                 input: mapping(
-                  '{ "project": "project", "title": "Parcel {{ parcel }}", "values": { "parcel": "sample" }, "model": { "instanceId": "provider", "model": "model" }, "runtimeMode": "approval-required" }',
+                  '{ "project": context.workspace, "title": "Parcel {{ parcel }}", "values": { "parcel": "sample" }, "model": { "instanceId": "provider", "model": "model" }, "runtimeMode": "approval-required" }',
                 ),
                 onDone: {
                   target: "preparing",
@@ -93,6 +132,7 @@ export async function fixtureService(configuration: FixtureConfiguration) {
           },
         },
         done: { type: "final" },
+        failed: { type: "final" },
       },
     },
     schemas: {
@@ -101,6 +141,7 @@ export async function fixtureService(configuration: FixtureConfiguration) {
       context: true,
       events: { "t3.turn.started": true, "t3.turn.settled": true },
       actors: {
+        "t3code-project-create": { input: true, output: true },
         "thread-create": { input: true, output: true },
         "turn-prepare": { input: true, output: true },
         "turn-start": { input: true, output: true },
@@ -117,6 +158,8 @@ export async function fixtureService(configuration: FixtureConfiguration) {
     invocationOf,
     actorOf: (id) => host.actorOf(id),
     bindingArchived: () => false,
+    sourcePlatform: (environment, signal) => source.platform(environment, signal),
+    recordProject: (record) => source.recordCreatedProject(record),
     sourceWrite: (environment, thread, signal, send) =>
       source.write(environment, thread, signal, send),
     sourceReady: (environment, signal) => source.ready(environment, signal),
@@ -125,7 +168,7 @@ export async function fixtureService(configuration: FixtureConfiguration) {
     probe(command) {
       configuration.probe?.(command);
       if (configuration.crash === command.implementation) process.kill(process.pid, "SIGKILL");
-      history.commandAccepted(command);
+      if (command.implementation !== "t3code-project-create") history.commandAccepted(command);
     },
   });
   const loader = createBlueprintLoader({
@@ -160,13 +203,26 @@ export async function fixtureService(configuration: FixtureConfiguration) {
     host.start({
       actorId,
       blueprint: loaded.blueprint,
-      input: { manifold: { environment: "station", project: "binding", threads: [] } },
+      input: {
+        manifold: {
+          environment: "station",
+          project: "binding",
+          threads: [],
+          portfolioItem: "beta",
+        },
+      },
     });
   // Observe only durable snapshots, including saves made by the real host on restore.
   const actor = {
     getSnapshot: () =>
       store.loadSnapshot(actorId)!.snapshot as PersistedSnapshot & {
-        context: { thread: string; message: string; started: number };
+        context: {
+          thread: string;
+          message: string;
+          started: number;
+          workspace: string;
+          error?: unknown;
+        };
       },
     subscribe(listener: (snapshot: PersistedSnapshot) => void) {
       listeners.add(listener);
@@ -176,6 +232,7 @@ export async function fixtureService(configuration: FixtureConfiguration) {
   return {
     actor,
     history,
+    portfolio,
     source,
     router,
     store,

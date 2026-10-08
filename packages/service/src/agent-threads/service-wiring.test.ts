@@ -17,16 +17,40 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
 });
-async function parcelBlueprint(fixture: Awaited<ReturnType<typeof serviceFixture>>) {
+async function parcelBlueprint(
+  fixture: Awaited<ReturnType<typeof serviceFixture>>,
+  projectCreate = false,
+) {
   const gitdir = fixture.remote.gitdir;
   const parent = await git.readCommit({ fs, gitdir, oid: fixture.first });
   const root = await git.readTree({ fs, gitdir, oid: parent.commit.tree });
   const document = {
     machine: {
       id: "parcel",
-      initial: "opening",
-      context: {},
+      initial: projectCreate ? "creating" : "opening",
+      context: { workspace: "project" },
       states: {
+        creating: {
+          invoke: {
+            id: "creating",
+            src: "t3code-project-create",
+            input: {
+              type: "expression.map",
+              params: {
+                expression:
+                  '{ "title": "Parcel sample", "workspaceRoot": "/work/sample", "createWorkspaceRoot": true }',
+              },
+            },
+            onDone: {
+              target: "opening",
+              actions: {
+                type: "expression.assign",
+                params: { expression: '{ "workspace": event.output.projectId }' },
+              },
+            },
+            onError: "failed",
+          },
+        },
         opening: {
           invoke: {
             id: "opening",
@@ -35,7 +59,7 @@ async function parcelBlueprint(fixture: Awaited<ReturnType<typeof serviceFixture
               type: "expression.map",
               params: {
                 expression:
-                  '{ "project": "project", "title": "Parcel sample", "model": { "instanceId": "provider", "model": "model" } }',
+                  '{ "project": context.workspace, "title": "Parcel sample", "model": { "instanceId": "provider", "model": "model" } }',
               },
             },
             onDone: { target: "waiting", actions: "follow-thread" },
@@ -51,7 +75,10 @@ async function parcelBlueprint(fixture: Awaited<ReturnType<typeof serviceFixture
       context: true,
       output: true,
       events: {},
-      actors: { "thread-create": { input: true, output: true } },
+      actors: {
+        "t3code-project-create": { input: true, output: true },
+        "thread-create": { input: true, output: true },
+      },
     },
   };
   const blob = await git.writeBlob({ fs, gitdir, blob: Buffer.from(stringify(document)) });
@@ -83,7 +110,7 @@ async function parcelBlueprint(fixture: Awaited<ReturnType<typeof serviceFixture
 test("ServiceParts wires commands to the real host, source readiness, revision and log", async () => {
   const fixture = await serviceFixture();
   cleanup.push(fixture.close);
-  const commit = await parcelBlueprint(fixture);
+  const commit = await parcelBlueprint(fixture, true);
   const server = await commandServer();
   cleanup.push(() => server.close());
   await writeFile(join(fixture.directory, "t3.token"), "fixture-token");
@@ -128,7 +155,7 @@ test("ServiceParts wires commands to the real host, source readiness, revision a
   service.actorHost.start({
     actorId: "worker",
     blueprint: loaded.blueprint,
-    input: { manifold: { environment: "station", project: "binding" } },
+    input: { manifold: { environment: "station", project: "binding", portfolioItem: "beta" } },
   });
   await expect.poll(() => typeof release).toBe("function");
   expect(server.commands).toHaveLength(0);
@@ -139,10 +166,21 @@ test("ServiceParts wires commands to the real host, source readiness, revision a
   expect(thread.title).toBe("Parcel sample");
   expect(thread.runtimeMode).toBe("full-access");
   expect(service.actorHost.actorOf("worker")).toEqual({
-    manifold: { environment: "station", project: "binding", threads: [thread.id] },
+    manifold: {
+      environment: "station",
+      project: "binding",
+      portfolioItem: "beta",
+      threads: [thread.id],
+    },
     commit,
   });
-  expect(server.commands).toHaveLength(2);
+  expect(server.commands).toHaveLength(3);
+  expect(server.projects.size).toBe(1);
+  const project = [...server.projects.values()][0]!;
+  expect(thread.projectId).toBe(project["id"]);
+  expect(
+    service.portfolio.t3codeProject({ environment: "station", id: String(project["id"]) }),
+  ).toEqual({ item: "beta", via: "created", actorId: "worker" });
   expect(
     logs.some(
       (entry) =>

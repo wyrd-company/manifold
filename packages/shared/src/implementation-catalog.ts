@@ -30,6 +30,13 @@ export const manifoldImplementationCatalog: readonly ImplementationEntry[] = [
     ...implementationContracts["escalate"],
   },
   {
+    name: "t3code-project-create",
+    ...implementationContracts["t3code-project-create"],
+    kind: "actor",
+    group: "Thread",
+    description: "Create or recover a project on the selected environment.",
+  },
+  {
     name: "thread-create",
     ...implementationContracts["thread-create"],
     kind: "actor",

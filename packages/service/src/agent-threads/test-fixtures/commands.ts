@@ -6,6 +6,8 @@ import { schemas, turnId } from "@wyrd-company/t3code-client";
 import { fakeServer, fixtureThread } from "../../t3code-source/test-fixtures/server.ts";
 export async function commandServer() {
   const server = await fakeServer();
+  const roots = new Set<string>();
+  const files = new Set<string>();
   const receipts = new Map<string, { aggregate: string; sequence: number }>();
   const commands: ReturnType<
     typeof schemas.orchestrationCommands.ClientOrchestrationCommand.parse
@@ -14,16 +16,42 @@ export async function commandServer() {
   server.hooks.dispatch = (raw) => {
     const command = schemas.orchestrationCommands.ClientOrchestrationCommand.parse(raw);
     commands.push(command);
-    if (command.type !== "thread.create" && command.type !== "thread.turn.start")
+    if (
+      command.type !== "project.create" &&
+      command.type !== "thread.create" &&
+      command.type !== "thread.turn.start"
+    )
       throw new Error("Unsupported fixture command");
+    const aggregate = command.type === "project.create" ? command.projectId : command.threadId;
     const receipt = receipts.get(command.commandId);
     if (receipt) {
-      if (receipt.aggregate !== command.threadId)
-        throw new Error("Command belongs to another thread");
+      if (receipt.aggregate !== aggregate) throw new Error("Command belongs to another thread");
       return { sequence: receipt.sequence };
     }
-    if (command.type === "thread.create") {
+    if (command.type === "project.create") {
+      if (files.has(command.workspaceRoot)) throw new Error("Workspace root is not a directory");
+      if (!roots.has(command.workspaceRoot) && !command.createWorkspaceRootIfMissing)
+        throw new Error("Workspace root does not exist");
+      if (
+        [...server.projects.values()].some(
+          (project) => project["workspaceRoot"] === command.workspaceRoot,
+        )
+      )
+        throw new Error("Workspace root already has a project");
+      roots.add(command.workspaceRoot);
+      server.project({
+        id: command.projectId,
+        title: command.title,
+        workspaceRoot: command.workspaceRoot,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: command.createdAt,
+        updatedAt: command.createdAt,
+        deletedAt: null,
+      });
+    } else if (command.type === "thread.create") {
       const thread = fixtureThread(command.threadId);
+      thread.projectId = command.projectId;
       thread.title = command.title;
       thread.runtimeMode = command.runtimeMode;
       thread.interactionMode = command.interactionMode;
@@ -71,7 +99,7 @@ export async function commandServer() {
       };
       server.change(thread);
     }
-    const result = { aggregate: command.threadId, sequence: server.log.length };
+    const result = { aggregate, sequence: server.log.length };
     receipts.set(command.commandId, result);
     hooks.accepted?.(command);
     return { sequence: result.sequence };
@@ -86,5 +114,5 @@ export async function commandServer() {
     thread.session = { ...thread.session!, status: "ready", activeTurnId: null };
     server.change(thread);
   }
-  return { ...server, receipts, commands, commandHooks: hooks, settle };
+  return { ...server, roots, files, receipts, commands, commandHooks: hooks, settle };
 }

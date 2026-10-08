@@ -35,7 +35,8 @@ export const agentThreads = wiringPart({
       sending: members.history.commandSending,
       probe: (command) => {
         context.options.probes?.command?.(command);
-        members.history.commandAccepted(command);
+        if (command.implementation !== "t3code-project-create")
+          members.history.commandAccepted(command);
       },
       environments: configuration.environments,
       tokenFile,
@@ -69,6 +70,8 @@ export const agentThreads = wiringPart({
         signal.throwIfAborted();
         return source.get().t3code.write(environment, thread, signal, send);
       },
+      sourcePlatform: (environment, signal) => source.get().t3code.platform(environment, signal),
+      recordProject: (record) => source.get().t3code.recordCreatedProject(record),
       logger: {
         debug: commandLog("info"),
         info: commandLog("info"),

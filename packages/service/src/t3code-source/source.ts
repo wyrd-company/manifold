@@ -3,6 +3,7 @@
 //   implements: t3code-environment-source
 // ---
 import { T3ConnectionError } from "@wyrd-company/t3code-client";
+import { createdProjects } from "./created-projects.ts";
 import { persistence } from "./persistence.ts";
 import { threadState } from "./state.ts";
 import { migrations } from "./migrations.ts";
@@ -28,7 +29,7 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
       return { promise, resolve, reject, ready: false };
     }
     let readiness = pendingReadiness();
-    const writes = new Map<AbortController, string>();
+    const writes = new Map<AbortController, string | null>();
     const stored = persistence(options.store, name);
     const loop = environmentLoop(
       options,
@@ -45,6 +46,7 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
         if (identityChanged)
           stored.atomic(() => {
             for (const id of writes.values()) {
+              if (id === null) continue;
               const row = stored.row(id);
               stored.save(
                 id,
@@ -73,6 +75,7 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
       loop,
       status: loop.status,
       projects: loop.projects,
+      platform: loop.platform,
       get done() {
         return loop.done;
       },
@@ -89,7 +92,14 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
       },
     };
   });
+  const records = createdProjects(options.store);
   const source: T3CodeSource = {
+    recordCreatedProject: records.record,
+    createdProject: records.read,
+    async platform(name, signal) {
+      await source.ready(name, signal);
+      return environments.find((entry) => entry.status.environment === name)!.platform();
+    },
     projects(name) {
       const environment = environments.find((entry) => entry.status.environment === name);
       const projects = environment?.projects();

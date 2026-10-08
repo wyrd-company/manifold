@@ -107,6 +107,52 @@ export const implementationContracts = {
       },
     },
   },
+  "t3code-project-create": {
+    input: {
+      type: "object",
+      required: ["title", "workspaceRoot"],
+      properties: {
+        environment: {
+          description: "A string that is not empty after trimming.",
+          type: "string",
+          pattern: "\\S",
+        },
+        title: {
+          description: "A string that is not empty after trimming.",
+          type: "string",
+          pattern: "\\S",
+        },
+        workspaceRoot: {
+          description: "A string that is not empty after trimming.",
+          type: "string",
+          pattern: "\\S",
+        },
+        values: {
+          description: "The object the templates render against.",
+          type: "object",
+          default: {},
+        },
+        createWorkspaceRoot: {
+          description: "Whether the server makes a workspace root that does not exist.",
+          type: "boolean",
+          default: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    output: {
+      type: "object",
+      required: ["projectId"],
+      properties: {
+        projectId: {
+          description: "A string that is not empty after trimming.",
+          type: "string",
+          pattern: "\\S",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
   "thread-create": {
     input: {
       type: "object",

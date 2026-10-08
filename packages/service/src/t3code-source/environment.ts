@@ -39,6 +39,7 @@ export function environmentLoop(
 ) {
   let projects: Omit<T3CodeProjectView, "activeThreads">[] | undefined;
   let projectSequence = -1;
+  let platform: "darwin" | "linux" | "windows" | "unknown" = "unknown";
   const configuration = options.environments[environment]!;
   const stored = persistence(options.store, environment);
   const status: {
@@ -335,7 +336,9 @@ export function environmentLoop(
       try {
         status.state = "connecting";
         await client.connect(lifetime.signal);
-        server = (await client.server.environment(lifetime.signal)).environmentId;
+        const descriptor = await client.server.environment(lifetime.signal);
+        platform = descriptor.platform.os;
+        server = descriptor.environmentId;
         const previous = stored.environment();
         const baseline = !previous || previous.environment_id !== server;
         if (baseline) await onNotReady(true);
@@ -514,5 +517,6 @@ export function environmentLoop(
       });
     },
     projects: () => projects,
+    platform: () => platform,
   };
 }

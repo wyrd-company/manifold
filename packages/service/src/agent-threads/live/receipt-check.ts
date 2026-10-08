@@ -6,13 +6,13 @@
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { T3Client, schemas, threadId } from "@wyrd-company/t3code-client";
+import { T3Client, schemas, threadId, projectId } from "@wyrd-company/t3code-client";
 
 // Resolve the executable itself so SIGKILL targets the server, not its npm launcher.
 const require = createRequire(import.meta.url);
@@ -106,7 +106,85 @@ try {
   assert(accessToken.length > 0);
   client = T3Client.create({ baseUrl, accessToken });
   await client.connect();
-  const project = await client.projects.create({ title: "Recipes", workspaceRoot: workspace });
+  const descriptor = await client.server.environment();
+  assert.equal(descriptor.platform.os, process.platform === "win32" ? "windows" : process.platform);
+  const missingRoot = join(directory, "missing", "parents", "recipes");
+  const projectCreate = schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+    type: "project.create",
+    commandId: "create-project",
+    projectId: "recipe-project",
+    title: "Recipes",
+    workspaceRoot: missingRoot,
+    createWorkspaceRootIfMissing: true,
+    createdAt: new Date().toISOString(),
+  });
+  await assert.rejects(
+    client.threads.dispatch(
+      schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+        ...projectCreate,
+        projectId: "missing-project",
+        commandId: "missing-root",
+        createWorkspaceRootIfMissing: false,
+      }),
+    ),
+    /Workspace root does not exist/,
+  );
+  await assert.rejects(stat(missingRoot), { code: "ENOENT" });
+  const projectEvents: string[] = [];
+  const observation = new AbortController();
+  const shell = (async () => {
+    for await (const item of client!.shell.watch({
+      afterSequence: 0,
+      signal: observation.signal,
+    })) {
+      if (item.kind === "project-upserted") projectEvents.push(item.project.id);
+    }
+  })();
+  void shell.catch(() => {});
+  const projectCreated = await client.threads.dispatch(projectCreate);
+  assert.deepEqual(
+    await client.threads.dispatch(
+      schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+        ...projectCreate,
+        title: "Different title",
+      }),
+    ),
+    projectCreated,
+  );
+  assert((await stat(missingRoot)).isDirectory());
+  const fileRoot = join(directory, "a-file");
+  await writeFile(fileRoot, "fixture");
+  await assert.rejects(
+    client.threads.dispatch(
+      schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+        ...projectCreate,
+        commandId: "file-root",
+        projectId: "file-project",
+        workspaceRoot: fileRoot,
+      }),
+    ),
+    /Workspace root is not a directory/,
+  );
+  await assert.rejects(
+    client.threads.dispatch(
+      schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+        ...projectCreate,
+        commandId: "duplicate-root",
+        projectId: "duplicate-project",
+      }),
+    ),
+    /already|associated/i,
+  );
+  await assert.rejects(
+    client.threads.dispatch(
+      schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
+        ...projectCreate,
+        projectId: "different-project",
+      }),
+    ),
+    /replay|aggregate|project/i,
+  );
+  const project = { id: projectId("recipe-project") };
   const createdAt = new Date().toISOString();
   const create = schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
     type: "thread.create",
@@ -178,12 +256,23 @@ try {
     assert.equal(thread.latestTurn, null, "An unconfigured provider must not run an agent turn");
   }
   await verify();
+  const eventDeadline = Date.now() + 5000;
+  while (!projectEvents.includes(project.id) && Date.now() < eventDeadline) await delay(20);
+  assert(projectEvents.includes(project.id), "The shell publishes project-upserted");
+  observation.abort();
+  await shell.catch(() => {});
   await client.close();
   client = undefined;
   await kill();
   await launch();
   client = T3Client.create({ baseUrl, accessToken });
   await client.connect();
+  assert.deepEqual(await client.threads.dispatch(projectCreate), projectCreated);
+  const projects = (await client.shell.readModel()).projects;
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0]!.title, "Recipes");
+  assert.equal(projects[0]!.workspaceRoot, missingRoot);
+  assert.equal(projectEvents.filter((id) => id === project.id).length, 1);
   assert.deepEqual(
     await client.threads.dispatch(
       schemas.orchestrationCommands.ClientOrchestrationCommand.parse({
@@ -212,6 +301,12 @@ try {
   await verify();
   console.log(
     JSON.stringify({
+      serverVersion: descriptor.serverVersion,
+      projectCreateSequence: projectCreated.sequence,
+      projects: 1,
+      projectUpserted: true,
+      missingRootRejected: true,
+      optedInRootCreated: true,
       threadCreateSequence: created.sequence,
       turnStartSequence: started.sequence,
       repeatedBeforeAndAfterSigkill: true,

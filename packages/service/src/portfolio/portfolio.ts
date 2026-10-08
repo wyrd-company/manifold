@@ -36,6 +36,10 @@ const emptyDeclaration: PortfolioDeclaration = {
 export function openPortfolio(options: {
   connection: LedgerConnection;
   now?: () => number;
+  createdProject?: (project: {
+    environment: string;
+    id: string;
+  }) => { actorId: string; item: string } | undefined;
 }): Portfolio {
   const { connection } = options;
   const now = options.now ?? Date.now;
@@ -89,6 +93,13 @@ export function openPortfolio(options: {
     },
     current: () => current,
     githubProject: (project) => resolution.githubProject(project),
-    t3codeProject: (project) => resolution.t3codeProject(project),
+    t3codeProject(project) {
+      const declared = resolution.t3codeProject(project);
+      if (declared.via !== "unbound") return declared;
+      const created = options.createdProject?.(project);
+      if (created && current.declaration.items.some((item) => item.id === created.item))
+        return { item: created.item, via: "created", actorId: created.actorId };
+      return declared;
+    },
   };
 }

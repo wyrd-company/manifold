@@ -7,7 +7,7 @@ export const agentThreadsSchema = {
   $id: "https://manifold.wyrd.company/schemas/agent-threads",
   title: "Agent threads",
   description:
-    "The inputs, outputs, and errors of the `thread-create`, `turn-prepare`, and `turn-start` implementations. Each string field holds to the command schema of the T3 Code client release once trimmed.",
+    "The inputs, outputs, and errors of the `t3code-project-create`, `thread-create`, `turn-prepare`, and `turn-start` implementations. Each string field holds to the command schema of the T3 Code client release once trimmed.",
   $defs: {
     "non-blank": {
       description: "A string that is not empty after trimming.",
@@ -84,6 +84,44 @@ export const agentThreadsSchema = {
         },
       ],
       default: null,
+    },
+    "project-create-input": {
+      type: "object",
+      required: ["title", "workspaceRoot"],
+      properties: {
+        environment: {
+          description:
+            "The name of an environment service configuration declares. Default: the invoking actor's environment.",
+          $ref: "#/$defs/non-blank",
+        },
+        title: {
+          $ref: "#/$defs/template",
+        },
+        workspaceRoot: {
+          description:
+            "A Nunjucks template whose render, trimmed, is absolute under the path rules of the environment's host platform, with no control character.",
+          $ref: "#/$defs/template",
+        },
+        values: {
+          $ref: "#/$defs/values",
+        },
+        createWorkspaceRoot: {
+          description: "Whether the server makes a workspace root that does not exist.",
+          type: "boolean",
+          default: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    "project-create-output": {
+      type: "object",
+      required: ["projectId"],
+      properties: {
+        projectId: {
+          $ref: "#/$defs/id",
+        },
+      },
+      additionalProperties: false,
     },
     "thread-create-input": {
       type: "object",

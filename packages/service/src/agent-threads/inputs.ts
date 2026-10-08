@@ -13,6 +13,13 @@ interface Model {
   model: string;
   options?: Readonly<Record<string, string | boolean>>;
 }
+export interface ProjectInput {
+  environment?: string;
+  title: string;
+  workspaceRoot: string;
+  values?: Record<string, unknown>;
+  createWorkspaceRoot?: boolean;
+}
 export interface CreateInput {
   project: string;
   title: string;
@@ -33,10 +40,17 @@ export interface TurnInput {
   interactionMode?: ProviderInteractionMode;
 }
 const ajv = new Ajv2020({ strict: false }).addSchema(agentThreadsSchema);
+const project = ajv.compile<ProjectInput>({
+  $ref: `${agentThreadsSchema.$id}#/$defs/project-create-input`,
+});
 const create = ajv.compile<CreateInput>({
   $ref: `${agentThreadsSchema.$id}#/$defs/thread-create-input`,
 });
 const turn = ajv.compile<TurnInput>({ $ref: `${agentThreadsSchema.$id}#/$defs/turn-start-input` });
+export function projectInput(input: unknown) {
+  if (!project(input)) throw failure("input", ajv.errorsText(project.errors));
+  return input;
+}
 export function createInput(input: unknown) {
   if (!create(input)) throw failure("input", ajv.errorsText(create.errors));
   return input;

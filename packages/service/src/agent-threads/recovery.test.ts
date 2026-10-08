@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { afterEach, expect, test } from "vite-plus/test";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, expect, test, inject } from "vite-plus/test";
 import { commandServer } from "./test-fixtures/commands.ts";
 import { fixtureService } from "./test-fixtures/service.ts";
 import type { FixtureConfiguration } from "./test-fixtures/service.ts";
@@ -220,14 +221,20 @@ test("dropped response retries the exact command and gives one turn", async () =
   server.settle(service.actor.getSnapshot().context.thread);
   await expect.poll(() => service.actor.getSnapshot().status).toBe("done");
 });
-test.each(["thread-create", "turn-start"] as const)(
+test.each(["t3code-project-create", "thread-create", "turn-start"] as const)(
   "SIGKILL after %s receipt restores one thread and one turn",
   async (crash) => {
     const { server, config } = await setup();
     function start(crash?: FixtureConfiguration["crash"]) {
       const child = fork(
-        new URL("./test-fixtures/crash-worker.ts", import.meta.url),
-        [JSON.stringify({ ...config, crash })],
+        join(inject("childArtifacts").service!, "agent-threads/test-fixtures/crash-worker.js"),
+        [
+          JSON.stringify({
+            ...config,
+            projectCreate: crash === "t3code-project-create" || config.projectCreate,
+            crash,
+          }),
+        ],
         { execArgv: [], stdio: ["ignore", "pipe", "pipe", "ipc"] },
       );
       let error = "";
@@ -272,14 +279,41 @@ test.each(["thread-create", "turn-start"] as const)(
       }
       return { child, waitFor, error: () => error };
     }
+    if (crash === "t3code-project-create") config.projectCreate = true;
     const first = start(crash);
     const [, signal] = await once(first.child, "exit");
     expect(signal, first.error()).toBe("SIGKILL");
+    if (crash === "t3code-project-create") {
+      expect(server.projects.size).toBe(1);
+      const db = new DatabaseSync(config.path);
+      try {
+        expect(db.prepare("SELECT * FROM t3_created_project").all()).toEqual([]);
+      } finally {
+        db.close();
+      }
+    }
     const resumed = start();
     await resumed.waitFor((message) => JSON.stringify(message).includes("waiting"));
     expect(server.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(
       crash === "turn-start" ? 2 : 1,
     );
+    if (crash === "t3code-project-create") {
+      expect(server.projects.size).toBe(1);
+      expect(server.commands.filter((c) => c.type === "project.create")).toHaveLength(2);
+      const db = new DatabaseSync(config.path);
+      try {
+        expect(db.prepare("SELECT * FROM t3_created_project").all()).toEqual([
+          {
+            environment: "station",
+            project_id: [...server.projects.keys()][0],
+            actor_id: "worker",
+            item: "beta",
+          },
+        ]);
+      } finally {
+        db.close();
+      }
+    }
     expect(server.threads.size).toBe(1);
     const thread = [...server.threads.values()][0]!;
     expect(thread.messages).toHaveLength(1);
@@ -288,5 +322,98 @@ test.each(["thread-create", "turn-start"] as const)(
     const exiting = once(resumed.child, "exit");
     resumed.child.send("stop");
     await exiting;
+  },
+);
+
+test("task creates a templated project, attributes it, and starts its thread there", async () => {
+  const { server, config } = await setup();
+  const service = await fixtureService({ ...config, projectCreate: true });
+  cleanup.push(() => service.stop());
+  await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
+  expect(server.projects.size).toBe(1);
+  const project = [...server.projects.values()][0]!;
+  expect(project).toMatchObject({ title: "Parcel sample", workspaceRoot: "/work/sample" });
+  expect([...server.threads.values()][0]!.projectId).toBe(project["id"]);
+  expect(service.source.createdProject("station", String(project["id"]))).toMatchObject({
+    actorId: "worker",
+    item: "beta",
+  });
+  expect(
+    service.portfolio.t3codeProject({ environment: "station", id: String(project["id"]) }),
+  ).toEqual({ item: "beta", via: "created", actorId: "worker" });
+});
+test.each([
+  { title: "{{ absent }}", kind: "template" },
+  { workspaceRoot: "relative", kind: "template" },
+  { workspaceRoot: "{{ empty }}", values: { empty: " ", parcel: "sample" }, kind: "template" },
+  { createWorkspaceRoot: false, kind: "rejected" },
+])(
+  "failed project create takes the error transition with no attribution or thread: %j",
+  async ({ kind, ...projectInput }) => {
+    const { server, config } = await setup();
+    const service = await fixtureService({ ...config, projectCreate: true, projectInput });
+    cleanup.push(() => service.stop());
+    await expect.poll(() => service.actor.getSnapshot().value).toBe("failed");
+    expect(service.actor.getSnapshot().context.error).toMatchObject({ kind });
+    expect(server.projects.size).toBe(0);
+    expect(server.threads.size).toBe(0);
+    expect(
+      service.store.connection.database.prepare("SELECT * FROM t3_created_project").all(),
+    ).toEqual([]);
+  },
+);
+test("dropped project acceptance retries the same command and saves one association", async () => {
+  const { server, config } = await setup();
+  let dropped = false;
+  server.commandHooks.accepted = (command) => {
+    if (command.type === "project.create" && !dropped) {
+      dropped = true;
+      server.drop();
+    }
+  };
+  const service = await fixtureService({ ...config, projectCreate: true });
+  cleanup.push(() => service.stop());
+  await expect.poll(() => service.actor.getSnapshot().value).toEqual({ working: "waiting" });
+  const commands = server.commands.filter((command) => command.type === "project.create");
+  expect(commands).toHaveLength(2);
+  expect(commands[0]).toEqual(commands[1]);
+  expect(server.projects.size).toBe(1);
+  expect(
+    service.store.connection.database.prepare("SELECT * FROM t3_created_project").all(),
+  ).toHaveLength(1);
+});
+
+test.each(["file", "occupied"])(
+  "project root %s is rejected without attribution or a thread",
+  async (kind) => {
+    const { server, config } = await setup();
+    const root = "/work/sample";
+    if (kind === "file") server.files.add(root);
+    else {
+      server.roots.add(root);
+      server.project({
+        id: "existing",
+        title: "Another parcel",
+        workspaceRoot: root,
+        defaultModelSelection: null,
+        scripts: [],
+        deletedAt: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+    }
+    const service = await fixtureService({ ...config, projectCreate: true });
+    cleanup.push(() => service.stop());
+    await expect.poll(() => service.actor.getSnapshot().value).toBe("failed");
+    expect(service.actor.getSnapshot().context.error).toMatchObject({
+      kind: "rejected",
+      serverMessage: expect.stringContaining(
+        kind === "file" ? "not a directory" : "already has a project",
+      ),
+    });
+    expect(server.threads.size).toBe(0);
+    expect(
+      service.store.connection.database.prepare("SELECT * FROM t3_created_project").all(),
+    ).toEqual([]);
   },
 );

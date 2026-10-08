@@ -24,6 +24,7 @@ export type GitHubProjectResolution = {
 };
 export type T3codeProjectResolution =
   | { item: string; via: "binding" | "association"; binding: string; archived: boolean }
+  | { item: string; via: "created"; actorId: string }
   | { item: "other"; via: "unbound" };
 export interface Portfolio {
   readonly ledger: Ledger;

@@ -7,7 +7,7 @@ import type {
   ClientOrchestrationCommand,
   OrchestrationThreadShell,
 } from "@wyrd-company/t3code-client";
-import type { CreateInput, TurnInput } from "./inputs.ts";
+import type { CreateInput, TurnInput, ProjectInput } from "./inputs.ts";
 import type { Invocation } from "./types.ts";
 import { modelSelection } from "./inputs.ts";
 import { derivedId } from "./ids.ts";
@@ -49,6 +49,25 @@ export function turnCommand(
     runtimeMode: (input.runtimeMode ?? current!.runtimeMode) as TurnCommand["runtimeMode"],
     interactionMode: (input.interactionMode ??
       current!.interactionMode) as TurnCommand["interactionMode"],
+    createdAt,
+  };
+}
+
+export function projectCommand(
+  input: ProjectInput,
+  invocation: Invocation,
+  title: string,
+  workspaceRoot: string,
+  createdAt: string,
+): Extract<ClientOrchestrationCommand, { type: "project.create" }> {
+  const parts = [invocation.actorId, invocation.invokeId, invocation.entryId];
+  return {
+    type: "project.create",
+    commandId: commandId(derivedId("t3code-project-create/command", ...parts)),
+    projectId: projectId(derivedId("t3code-project-create/project", ...parts)),
+    title,
+    workspaceRoot,
+    createWorkspaceRootIfMissing: input.createWorkspaceRoot ?? false,
     createdAt,
   };
 }

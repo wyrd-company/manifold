@@ -5,6 +5,7 @@
 export { startT3CodeSource } from "./source.ts";
 export { threadTopic } from "./events.ts";
 export type {
+  CreatedProject,
   T3CodeSourceOptions,
   T3CodeSource,
   T3CodeProjectView,

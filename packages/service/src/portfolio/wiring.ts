@@ -9,6 +9,7 @@ import type { Service } from "../service/types.ts";
 import type { Capacity } from "../capacity/index.ts";
 import type { Portfolio } from "./index.ts";
 import { usage as usagePart } from "../usage/wiring.ts";
+import { t3codeSource } from "../t3code-source/wiring.ts";
 import { gates as gatesPart } from "../gates/wiring.ts";
 export const portfolio = wiringPart({
   name: "portfolio",
@@ -20,7 +21,12 @@ export const portfolio = wiringPart({
     const { options } = context;
     const usage = context.later(usagePart);
     const gates = context.later(gatesPart);
-    const basePortfolio = openPortfolio({ connection: store.connection });
+    const source = context.later(t3codeSource);
+    const basePortfolio = openPortfolio({
+      connection: store.connection,
+      createdProject: (project) =>
+        source.current()?.t3code.createdProject(project.environment, project.id),
+    });
     const capacity = openCapacity({
       connection: store.connection,
       ledger: basePortfolio.ledger,

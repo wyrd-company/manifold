@@ -44,6 +44,10 @@ const contracts = {
     input: contract(tools, "send-message-input"),
     output: contract(tools, "send-message-output"),
   },
+  "t3code-project-create": {
+    input: contract(threads, "project-create-input"),
+    output: contract(threads, "project-create-output"),
+  },
   "thread-create": {
     input: contract(threads, "thread-create-input"),
     output: contract(threads, "thread-create-output"),

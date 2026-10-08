@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { createActor, toPromise, createMachine } from "xstate";
 import { afterEach, expect, test } from "vite-plus/test";
 import { memoryRevision } from "@wyrd-company/manifold-shared";
-import { schemas } from "@wyrd-company/t3code-client";
+import { schemas, T3ConnectionError } from "@wyrd-company/t3code-client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parse } from "yaml";
 import { openAgentThreads } from "./index.ts";
@@ -58,6 +58,7 @@ async function setup(overrides: Partial<AgentThreadsOptions> = {}) {
     receipts.set(id, sequence);
     return { sequence };
   };
+  const projects: unknown[] = [];
   const options: AgentThreadsOptions = {
     environments: {
       station: {
@@ -70,12 +71,19 @@ async function setup(overrides: Partial<AgentThreadsOptions> = {}) {
     },
     tokenFile: () => token,
     actorOf: () => ({
-      manifold: { environment: "station", project: "binding", threads: ["conversation"] },
+      manifold: {
+        environment: "station",
+        project: "binding",
+        threads: ["conversation"],
+        portfolioItem: "beta",
+      },
       commit,
     }),
     invocationOf: () => invocation,
     bindingArchived: () => false,
     sourceReady: async () => {},
+    sourcePlatform: async () => "linux",
+    recordProject: (record) => projects.push(record),
     sourceWrite: (_environment, _threadId, signal, send) => send(signal),
     revisionAt: async () =>
       memoryRevision(commit, {
@@ -102,10 +110,12 @@ async function setup(overrides: Partial<AgentThreadsOptions> = {}) {
         expect(check("error")(error)).toBe(true);
       throw error;
     }
-    expect(check(`${name}-output`)(result)).toBe(true);
+    expect(
+      check(`${name === "t3code-project-create" ? "project-create" : name}-output`)(result),
+    ).toBe(true);
     return result as Record<string, string>;
   }
-  return { module, server, commands, receipts, run, options };
+  return { module, server, commands, receipts, run, options, projects };
 }
 test("same invocation gives fixed ids and new entries give new ids", async () => {
   let entryId = invocation.entryId;
@@ -736,4 +746,235 @@ test("disconnect closes an in-flight command client and retry uses the same rece
   expect(f.commands).toHaveLength(2);
   expect(f.receipts.size).toBe(1);
   expect(f.module.scheduled("station")).toBe(0);
+});
+
+const projectInput = {
+  title: "Parcel {{ parcel }}",
+  workspaceRoot: "/work/{{ parcel }}",
+  values: { parcel: "sample" },
+};
+test("project create renders templates, keeps invocation ids, and records before resolving", async () => {
+  let entryId = invocation.entryId;
+  const f = await setup({ invocationOf: () => ({ ...invocation, entryId }) });
+  const first = await f.run("t3code-project-create", projectInput);
+  expect(first["projectId"]).toBe("ba54cc5e-4164-8d75-bd73-47bf49b71005");
+  expect(f.commands[0]!["commandId"]).toBe("a57f3db8-c759-87ca-91bd-460edec4cdbe");
+  expect(f.commands[0]).toMatchObject({
+    type: "project.create",
+    projectId: first["projectId"],
+    title: "Parcel sample",
+    workspaceRoot: "/work/sample",
+    createWorkspaceRootIfMissing: false,
+  });
+  expect(f.projects).toEqual([
+    { environment: "station", projectId: first["projectId"], actorId: "worker", item: "beta" },
+  ]);
+  expect(
+    await f.run("t3code-project-create", { ...projectInput, createWorkspaceRoot: true }),
+  ).toEqual(first);
+  expect(f.commands[1]).toMatchObject({ createWorkspaceRootIfMissing: true });
+  expect(f.receipts.size).toBe(1);
+  entryId = "entry-two";
+  expect(await f.run("t3code-project-create", projectInput)).not.toEqual(first);
+});
+test.each([
+  { title: "{{ absent }}" },
+  { title: "Parcel {{ absent }}" },
+  { workspaceRoot: "/work/{{ absent }}" },
+  { title: "{% invalid %}" },
+  { title: "{{ empty }}", values: { empty: " ", parcel: "sample" } },
+  { workspaceRoot: "{{ absent }}" },
+  { workspaceRoot: "{{ empty }}", values: { empty: " ", parcel: "sample" } },
+  { workspaceRoot: "relative/path" },
+  { workspaceRoot: "C:/work/sample" },
+  { workspaceRoot: "\\\\host\\share" },
+  { workspaceRoot: "/work/\u0000sample" },
+])("project template fails without a record or thread: %j", async (patch) => {
+  const f = await setup();
+  await expect(f.run("t3code-project-create", { ...projectInput, ...patch })).rejects.toMatchObject(
+    { kind: "template" },
+  );
+  expect(f.projects).toEqual([]);
+  expect(f.commands).toEqual([]);
+});
+test.each(["//host", "\\\\host\\", "/work/sample", "C:work"])(
+  "incomplete or drive-relative Windows root fails: %s",
+  async (workspaceRoot) => {
+    const f = await setup({ sourcePlatform: async () => "windows" });
+    await expect(
+      f.run("t3code-project-create", { ...projectInput, workspaceRoot }),
+    ).rejects.toMatchObject({ kind: "template" });
+    expect(f.commands).toEqual([]);
+  },
+);
+test.each(["C:/work/sample", "\\\\host\\share", "//host/share", "~", "~/work", "~\\work"])(
+  "Windows host accepts absolute or home root: %s",
+  async (workspaceRoot) => {
+    const f = await setup({ sourcePlatform: async () => "windows" });
+    await f.run("t3code-project-create", { ...projectInput, workspaceRoot });
+    expect(f.commands[0]).toMatchObject({ workspaceRoot });
+  },
+);
+test("unknown host platform fails as environment", async () => {
+  const f = await setup({ sourcePlatform: async () => "unknown" });
+  await expect(f.run("t3code-project-create", projectInput)).rejects.toMatchObject({
+    kind: "environment",
+  });
+  expect(f.commands).toEqual([]);
+});
+test("project rejected by server records nothing", async () => {
+  const f = await setup();
+  f.server.hooks.dispatch = () => {
+    throw new Error("Workspace root does not exist");
+  };
+  await expect(f.run("t3code-project-create", projectInput)).rejects.toMatchObject({
+    kind: "rejected",
+    serverMessage: expect.stringContaining("Workspace root does not exist"),
+  });
+  expect(f.projects).toEqual([]);
+});
+test("an actor without a portfolio item creates an unbound project", async () => {
+  const f = await setup({ actorOf: () => ({ manifold: { environment: "station" }, commit }) });
+  await f.run("t3code-project-create", projectInput);
+  expect(f.projects).toEqual([]);
+});
+test.each([
+  { createWorkspaceRoot: "true" },
+  { environment: " " },
+  { title: " " },
+  { workspaceRoot: " " },
+  { extra: true },
+])("invalid project input: %j", async (patch) => {
+  const f = await setup();
+  await expect(f.run("t3code-project-create", { ...projectInput, ...patch })).rejects.toMatchObject(
+    { kind: "input" },
+  );
+  expect(f.commands).toEqual([]);
+});
+
+test.each(["actor-held", "target-held"])(
+  "project admission uses selected environment: %s",
+  async (held) => {
+    let release!: () => void;
+    let waiting = false;
+    const f = await setup({
+      sourceReady: async (name, signal) => {
+        if (name === (held === "target-held" ? "target" : "station")) {
+          waiting = true;
+          await new Promise<void>((resolve, reject) => {
+            release = resolve;
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        }
+      },
+    });
+    const target = await fakeServer();
+    cleanup.push(() => target.close());
+    const commands: unknown[] = [];
+    target.hooks.dispatch = (command) => {
+      commands.push(command);
+      return { sequence: 1 };
+    };
+    Object.assign(f.options.environments, {
+      target: { ...f.options.environments["station"], url: target.url },
+    });
+    const actor = createActor(f.module.implementations.actors["t3code-project-create"]!, {
+      input: { ...projectInput, environment: " target " },
+    });
+    actor.start();
+    if (held === "target-held") {
+      await expect.poll(() => waiting).toBe(true);
+      expect(commands).toEqual([]);
+      expect(f.commands).toEqual([]);
+      release();
+    }
+    await toPromise(actor);
+    expect(commands).toHaveLength(1);
+    expect(f.commands).toEqual([]);
+    expect(f.projects).toMatchObject([{ environment: "target" }]);
+  },
+);
+test.each(["unknown-target", "archived", "missing-actor"])("project refuses %s", async (reason) => {
+  const f = await setup({
+    ...(reason === "archived" ? { bindingArchived: () => true } : {}),
+    ...(reason === "missing-actor" ? { actorOf: () => undefined } : {}),
+  });
+  await expect(
+    f.run("t3code-project-create", {
+      ...projectInput,
+      ...(reason === "unknown-target" ? { environment: "absent" } : {}),
+    }),
+  ).rejects.toMatchObject({ kind: reason === "archived" ? "archived" : "environment" });
+  expect(f.commands).toEqual([]);
+  expect(f.projects).toEqual([]);
+});
+
+test("project validates the replacement platform inside every write admission", async () => {
+  let platform: "linux" | "windows" = "linux";
+  let attempts = 0;
+  const f = await setup({
+    sourcePlatform: async () => platform,
+    sourceWrite: async (_environment, thread, signal, send) => {
+      expect(thread).toBeNull();
+      attempts++;
+      if (attempts === 1) {
+        await send(signal);
+        platform = "windows";
+        throw new T3ConnectionError("closed", "Replacement environment");
+      }
+      return send(signal);
+    },
+  });
+  await expect(f.run("t3code-project-create", projectInput)).rejects.toMatchObject({
+    kind: "template",
+  });
+  expect(attempts).toBe(2);
+  expect(f.commands).toHaveLength(1);
+  expect(f.projects).toEqual([]);
+});
+test("project state exit after send records no unconfirmed association", async () => {
+  const f = await setup();
+  let release!: () => void;
+  f.server.hooks.beforeDispatchResponse = () =>
+    new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  const actor = createActor(f.module.implementations.actors["t3code-project-create"]!, {
+    input: projectInput,
+  });
+  actor.start();
+  await expect.poll(() => typeof release).toBe("function");
+  actor.stop();
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(f.commands).toHaveLength(1);
+  expect(f.projects).toEqual([]);
+});
+test("two project invokes in one entry cannot share ids", async () => {
+  let invokeId = "first";
+  const f = await setup({ invocationOf: () => ({ ...invocation, invokeId }) });
+  const first = await f.run("t3code-project-create", projectInput);
+  invokeId = "second";
+  const second = await f.run("t3code-project-create", projectInput);
+  expect(second).not.toEqual(first);
+  expect(f.commands[0]!["commandId"]).not.toBe(f.commands[1]!["commandId"]);
+});
+
+test("project templates and includes use the actor's pinned revision", async () => {
+  const revisions: string[] = [];
+  const f = await setup({
+    revisionAt: async (requested) => {
+      revisions.push(requested);
+      return memoryRevision(requested, {
+        "templates/title.njk":
+          requested === commit ? "Original {{ parcel }}" : "Changed {{ parcel }}",
+      });
+    },
+  });
+  await f.run("t3code-project-create", {
+    ...projectInput,
+    title: '{% include "templates/title.njk" %}',
+  });
+  expect(revisions).toEqual([commit]);
+  expect(f.commands[0]).toMatchObject({ title: "Original sample" });
 });

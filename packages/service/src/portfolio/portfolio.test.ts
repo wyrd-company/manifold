@@ -374,3 +374,31 @@ describe("portfolio module", () => {
     expect(s.rows()).toHaveLength(1);
   });
 });
+
+it("created projects resolve live after bindings, survive reopen, and require a declared item", async () => {
+  const f = setup();
+  let recorded: { actorId: string; item: string } | undefined;
+  const portfolio = openPortfolio({
+    connection: f.store.connection,
+    createdProject: () => recorded,
+  });
+  await portfolio.apply(revision(split()));
+  const project = { environment: "env-one", id: "project-1" };
+  expect(portfolio.t3codeProject(project)).toEqual({ item: "other", via: "unbound" });
+  recorded = { actorId: "worker", item: "beta" };
+  expect(portfolio.t3codeProject(project)).toEqual({
+    item: "beta",
+    actorId: "worker",
+    via: "created",
+  });
+  await portfolio.apply(revision(split(), binding()));
+  expect(portfolio.t3codeProject(project)).toMatchObject({ item: "alpha", via: "association" });
+  await portfolio.apply(revision({ items: { beta: { archived: true } } }));
+  expect(portfolio.t3codeProject(project)).toEqual({
+    item: "beta",
+    actorId: "worker",
+    via: "created",
+  });
+  await portfolio.apply(revision({ items: { alpha: {} } }));
+  expect(portfolio.t3codeProject(project)).toEqual({ item: "other", via: "unbound" });
+});

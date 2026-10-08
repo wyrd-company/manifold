@@ -718,7 +718,7 @@ test("the public source migrates tables that agree with the specification", asyn
       store.connection.database
         .prepare("SELECT version FROM schema_migration WHERE owner = 'tthree'")
         .get(),
-    ).toEqual({ version: 3 });
+    ).toEqual({ version: 4 });
   } finally {
     reference.close();
   }
@@ -1633,4 +1633,48 @@ test("a server unavailable during initial connection exposes and forwards its di
   delete server.hooks.ticketStatus;
   await source.ready("station");
   expect(source.status()[0]?.error).toBeUndefined();
+});
+
+test("created project record keeps the first owner through restart and resets with server identity", async () => {
+  const f = await setup();
+  let source = f.start();
+  await source.ready("station");
+  expect(await source.platform("station")).toBe("linux");
+  const record = { environment: "station", projectId: "created", actorId: "worker", item: "beta" };
+  source.recordCreatedProject(record);
+  source.recordCreatedProject({ ...record, item: "alpha", actorId: "another" });
+  expect(source.createdProject("station", "created")).toEqual(record);
+  expect(source.createdProject("station", "absent")).toBeUndefined();
+  expect(() => source.recordCreatedProject({ ...record, environment: "absent" })).toThrow();
+  await source.stop();
+  source = f.start();
+  await source.ready("station");
+  expect(source.createdProject("station", "created")).toEqual(record);
+  await source.stop();
+  f.server.reset("replacement-server");
+  source = f.start();
+  await source.ready("station");
+  expect(source.createdProject("station", "created")).toBeUndefined();
+});
+test("identity replacement interrupts a project write without creating a thread row", async () => {
+  const f = await setup();
+  const source = f.start();
+  await source.ready("station");
+  await expect
+    .poll(() => f.server.requests.some((r) => r.tag === "orchestration.subscribeShell"))
+    .toBe(true);
+  let sending = false;
+  const write = source.write("station", null, new AbortController().signal, async (signal) => {
+    sending = true;
+    return new Promise((_, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+    );
+  });
+  const rejected = expect(write).rejects.toMatchObject({ name: "T3ConnectionError" });
+  await expect.poll(() => sending).toBe(true);
+  f.server.reset("replacement-server");
+  f.server.failShell();
+  await rejected;
+  await source.ready("station");
+  expect(f.store.connection.database.prepare("SELECT * FROM t3_thread").all()).toEqual([]);
 });

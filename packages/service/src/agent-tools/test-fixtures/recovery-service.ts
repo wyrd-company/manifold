@@ -143,6 +143,8 @@ export async function recoveryService(config: RecoveryConfiguration) {
     invocationOf,
     bindingArchived: () => false,
     sourceReady: (name, signal) => source.ready(name, signal),
+    sourcePlatform: (environment, signal) => source.platform(environment, signal),
+    recordProject: (record) => source.recordCreatedProject(record),
     sourceWrite: (name, id, signal, send) => source.write(name, id, signal, send),
     revisionAt: async () => revision,
   });

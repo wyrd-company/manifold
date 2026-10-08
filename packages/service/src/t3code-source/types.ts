@@ -58,7 +58,19 @@ export interface T3CodeProjectView {
   readonly workspaceRoot: string;
   readonly activeThreads: number;
 }
+export interface CreatedProject {
+  readonly environment: string;
+  readonly projectId: string;
+  readonly actorId: string;
+  readonly item: string;
+}
 export interface T3CodeSource {
+  platform(
+    environment: string,
+    signal?: AbortSignal,
+  ): Promise<"darwin" | "linux" | "windows" | "unknown">;
+  recordCreatedProject(record: CreatedProject): void;
+  createdProject(environment: string, projectId: string): CreatedProject | undefined;
   projects(environment: string): readonly T3CodeProjectView[] | undefined;
   thread(environment: string, threadId: string): ThreadView | undefined;
   environmentId(environment: string, signal?: AbortSignal): Promise<string>;
@@ -66,7 +78,7 @@ export interface T3CodeSource {
   ready(environment: string, signal?: AbortSignal): Promise<void>;
   write<T>(
     environment: string,
-    threadId: string,
+    threadId: string | null,
     signal: AbortSignal,
     send: (signal: AbortSignal) => Promise<T>,
   ): Promise<T>;
