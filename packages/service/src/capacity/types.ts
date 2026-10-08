@@ -4,7 +4,7 @@
 // ---
 import type { UsageAccount } from "@wyrd-company/manifold-shared";
 import type { Ledger, LedgerConnection } from "../ledger/index.ts";
-export type CapacityAccount = Pick<UsageAccount, "kind" | "capacity">;
+export type CapacityAccount = Pick<UsageAccount, "kind" | "capacity" | "archived">;
 export type CapacityCredit = {
   account: string;
   window: string;

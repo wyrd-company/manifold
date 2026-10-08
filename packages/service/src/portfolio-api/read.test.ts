@@ -27,6 +27,8 @@ test("preserves declared account order, counts descendant tasks, and retains int
   };
   const read = portfolioRead({
     portfolio: { commit: null, declaration: lint.declaration },
+    lastUsedAt: {},
+    pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
     accounts: { "acct-z": account, "acct-a": account },
     balances: new Map(lint.declaration.items.map((i) => [i.id, new Map([["acct-z", balance]])])),
     totals: new Map([
@@ -58,4 +60,36 @@ test("preserves declared account order, counts descendant tasks, and retains int
   expect(read.items.find((i) => i.id === "alpha")?.activeTasks).toBe(1);
   expect(read.items.find((i) => i.id === "alpha")?.allocations[0]?.lifetime).toBe(10);
   expect(read.unallocated[0]).toEqual({ account: "acct-z", percent: 0, amount: 1 });
+});
+test("active accounts precede sorted allocated archived or undeclared names, with last reports and pricing", () => {
+  const lint = lintPortfolioDeclaration({
+    portfolio: "items: { alpha: { allocations: { acct-z: {}, constructor: {} } } }",
+    bindings: undefined,
+  });
+  if (!lint.ok) throw Error("fixture");
+  const account = {
+    unit: "usd" as const,
+    kind: "api" as const,
+    capacity: { amount: 1, reset: "2026-01-01T00:00:00Z", every: { days: 1 } },
+  };
+  const pricing = { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 2, unpriced: [] };
+  const read = portfolioRead({
+    portfolio: { commit: null, declaration: lint.declaration },
+    accounts: { "acct-z": { ...account, archived: true }, "acct-a": account },
+    balances: new Map(),
+    totals: new Map(),
+    warnings: [],
+    lastUsedAt: { "acct-z": 200 },
+    pricing,
+    snapshots: [],
+    at: 1000,
+  });
+  expect(read.accounts.map((account) => account.name)).toEqual(["acct-a", "acct-z", "constructor"]);
+  expect(read.accounts[1]).toMatchObject({
+    declared: true,
+    archived: true,
+    lastUsedAt: new Date(200).toISOString(),
+  });
+  expect(read.accounts[2]).toEqual({ name: "constructor", declared: false });
+  expect(read.pricing).toEqual(pricing);
 });

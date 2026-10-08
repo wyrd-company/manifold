@@ -1382,3 +1382,49 @@ it("unowned reads break latest-call ties by actor id and order account and item 
     usage: [{ account: "acct", item: "beta", calls: 1, amount: 10 }],
   });
 });
+
+it("reads the last charged call and unpriced groups across restart, and skips archived usage", async () => {
+  const f = await setup();
+  f.push([call("priced")]);
+  f.push([
+    { ...call("pending"), timestamp: new Date(200).toISOString(), model: "model-b" },
+    { ...call("no-model"), model: null },
+  ]);
+  expect(f.usage.lastUsedAt()).toEqual({ acct: 200 });
+  expect(f.usage.pricing()).toEqual({
+    overrides: 2,
+    unpriced: [
+      { provider: "codex", model: null, postings: 1 },
+      { provider: "codex", model: "model-b", postings: 1 },
+    ],
+  });
+  f.restart();
+  expect(f.usage.lastUsedAt()).toEqual({ acct: 200 });
+  expect(f.usage.pricing().unpriced).toHaveLength(2);
+  await f.apply(accounts.replace("kind: api", "kind: api\n    archived: true"));
+  f.push([{ ...call("after-archive"), timestamp: new Date(300).toISOString() }]);
+  expect(f.usage.lastUsedAt()).toEqual({ acct: 100 });
+  expect(
+    (() => {
+      const db = new DatabaseSync(f.path);
+      try {
+        return db
+          .prepare("SELECT account, reason FROM usage_postings WHERE call_key = 'after-archive'")
+          .get();
+      } finally {
+        db.close();
+      }
+    })(),
+  ).toMatchObject({ account: null, reason: "unaccounted" });
+});
+
+it("pricing excludes pending calls waiting for a window or an account", async () => {
+  const f = await setup(false);
+  f.push([call("no-window")]);
+  expect(f.usage.pricing().unpriced).toEqual([]);
+  expect(f.usage.lastUsedAt()).toEqual({ acct: 100 });
+  await f.apply("accounts: {}", prices);
+  f.push([call("no-account")]);
+  expect(f.usage.pricing().unpriced).toEqual([]);
+  expect(f.usage.lastUsedAt()).toEqual({});
+});

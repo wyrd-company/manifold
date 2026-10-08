@@ -19,6 +19,8 @@ export type { PortfolioWarning } from "./allocated-accounts.ts";
 export interface PortfolioAccount {
   readonly name: string;
   readonly declared: boolean;
+  readonly archived?: boolean;
+  readonly lastUsedAt?: string;
   readonly unit?: "usd";
   readonly kind?: "api" | "subscription";
   readonly capacity?: {
@@ -72,7 +74,18 @@ export interface PortfolioItem {
   readonly allocations: readonly PortfolioAllocation[];
   readonly unallocated?: readonly PortfolioUnallocated[];
 }
+export interface PortfolioPricing {
+  readonly bundledCommit: string;
+  readonly bundledModels: number;
+  readonly overrides: number;
+  readonly unpriced: readonly {
+    readonly provider: "claude" | "codex" | "cursor" | "grok" | "opencode";
+    readonly model: string | null;
+    readonly postings: number;
+  }[];
+}
 export interface PortfolioResponse {
+  readonly pricing: PortfolioPricing;
   readonly commit: string | null;
   readonly at: string;
   readonly accounts: readonly PortfolioAccount[];
@@ -117,6 +130,8 @@ export function isPortfolioResponse(v: unknown): v is PortfolioResponse {
         v,
         { name, declared: boolean },
         {
+          archived: boolean,
+          lastUsedAt: dateTime,
           unit: oneOf("usd"),
           kind: oneOf("api", "subscription"),
           capacity: (v) =>
@@ -162,6 +177,19 @@ export function isPortfolioResponse(v: unknown): v is PortfolioResponse {
         ),
       )(v) && (v as unknown[]).length > 0,
     unallocated: array(unallocated),
+    pricing: (v) =>
+      shape(v, {
+        bundledCommit: (v) => string(v) && /^[0-9a-f]{40}$/.test(v),
+        bundledModels: natural,
+        overrides: natural,
+        unpriced: array((v) =>
+          shape(v, {
+            provider: oneOf("claude", "codex", "cursor", "grok", "opencode"),
+            model: (v) => v === null || nonempty(v),
+            postings: positive,
+          }),
+        ),
+      }),
     warnings: array((v) =>
       shape(
         v,

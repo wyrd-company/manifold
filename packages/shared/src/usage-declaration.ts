@@ -129,7 +129,7 @@ export function lintUsageDeclaration(files: {
     capacityFindings(name, account, findings);
   const seenUsage = new Set<string>();
   for (const [name, account] of Object.entries(accounts?.accounts ?? {}))
-    for (const [index, usage] of (account.usage ?? []).entries()) {
+    for (const [index, usage] of (account.archived ? [] : (account.usage ?? [])).entries()) {
       const key = JSON.stringify([usage.environment, usage.provider, usage.instance ?? null]);
       if (seenUsage.has(key))
         findings.push({

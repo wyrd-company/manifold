@@ -224,3 +224,14 @@ it.each(["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])(
     });
   },
 );
+
+it("archived usage does not collide with an active account", () => {
+  const account =
+    "{ unit: usd, kind: api, capacity: { amount: 1, reset: '2026-01-01T00:00:00Z', every: { days: 1 } }, usage: [{ environment: env-one, provider: codex }] }";
+  expect(
+    lintUsageDeclaration({
+      accounts: `accounts: { acct: ${account.replace("{ unit", "{ archived: true, unit")}, acct-alt: ${account} }`,
+      prices: undefined,
+    }),
+  ).toMatchObject({ ok: true });
+});

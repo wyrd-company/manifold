@@ -12,6 +12,7 @@ import { actorUsage } from "./actor-usage.ts";
 import { saveActor } from "./hooks.ts";
 import { pushUsage, retryPostings } from "./push.ts";
 import { usageListener } from "./listener.ts";
+import { lastUsedAt, pricing } from "./reads.ts";
 export function openUsage(options: UsageOptions): Usage {
   const now = options.now ?? Date.now;
   const row = options.connection.database
@@ -48,6 +49,8 @@ export function openUsage(options: UsageOptions): Usage {
   return {
     move,
     unowned,
+    lastUsedAt: () => lastUsedAt(options.connection),
+    pricing: () => pricing(options.connection, declaration.prices),
     actorUsage: (actor) => actorUsage(options, actor),
     accounts: () => structuredClone(declaration.accounts),
     push,

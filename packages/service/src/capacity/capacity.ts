@@ -28,7 +28,7 @@ export function openCapacity(options: CapacityOptions): Capacity {
   function ensure(request: { account: string; at: number }): CapacityEnsureResult {
     const result = connection.transaction((): CapacityEnsureResult => {
       const account = options.accounts()[request.account];
-      if (!account) return { status: "undeclared" };
+      if (!account || account.archived) return { status: "undeclared" };
       if (!capacityTimeSupported(request.at)) return { status: "out-of-range" };
       const neighbours = ledger.windowAt(request);
       if (neighbours.current && neighbours.current.closesAt > request.at)
@@ -54,13 +54,20 @@ export function openCapacity(options: CapacityOptions): Capacity {
       ...ledger,
       reserve: (request) =>
         connection.transaction(() => {
+          if (options.accounts()[request.account]?.archived)
+            throw new LedgerError("account-archived", `Account "${request.account}" is archived.`, {
+              account: request.account,
+            });
           ensure({ account: request.account, at: now() });
           return ledger.reserve(request);
         }),
       balance: (request) =>
         connection.transaction(() => {
           ensure({ account: request.account, at: now() });
-          return ledger.balance(request);
+          const balance = ledger.balance(request);
+          return options.accounts()[request.account]?.archived
+            ? { ...balance, reservable: 0, available: Math.min(balance.available, 0) }
+            : balance;
         }),
       postActual: (request) =>
         connection.transaction(() => {

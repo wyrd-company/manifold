@@ -14,6 +14,7 @@ export type LedgerPortfolioInput = {
   }[];
 };
 export type LedgerErrorCode =
+  | "account-archived"
   | "invalid-portfolio"
   | "guarantee-limit"
   | "invalid-input"

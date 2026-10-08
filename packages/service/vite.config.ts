@@ -12,6 +12,7 @@ const children = [
   "src/environments/service.test.ts",
   "src/environments/environments.browser.test.ts",
   "src/declarations-api/api.test.ts",
+  "src/declarations-api/accounts.browser.test.ts",
   "src/declarations-api/projects.browser.test.ts",
   "src/portfolio-api/portfolio.browser.test.ts",
   "src/portfolio-api/portfolio-service.test.ts",

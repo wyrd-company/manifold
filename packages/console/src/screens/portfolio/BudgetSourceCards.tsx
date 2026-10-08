@@ -19,11 +19,12 @@ export function Amount({
     <span title={formatAmountExact(value, unit)}>{formatAmount(value, unit, { signed })}</span>
   );
 }
-export function Meter({ share }: { share: number }) {
+export function Meter({ share, description }: { share: number; description?: string }) {
   return (
     <div
       className={`portfolio-meter ${share >= 85 ? "warning" : ""}`}
       role="meter"
+      aria-label={description}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.min(100, Math.max(0, share))}
@@ -40,11 +41,19 @@ export function BudgetSourceCards({ accounts }: { accounts: readonly PortfolioAc
         <section className="portfolio-budget-card" key={a.name}>
           <header>
             <strong>{a.name}</strong>
-            <span className={`task-badge ${!a.declared ? "warning-text" : ""}`}>
-              {!a.declared ? "Not declared" : a.kind === "api" ? "API" : "Subscription"}
+            <span className={`task-badge ${!a.declared || a.archived ? "warning-text" : ""}`}>
+              {a.archived
+                ? "Archived"
+                : !a.declared
+                  ? "Not declared"
+                  : a.kind === "api"
+                    ? "API"
+                    : "Subscription"}
             </span>
           </header>
-          {!a.declared ? (
+          {a.archived ? (
+            <p className="muted">Restore it in Settings, Accounts</p>
+          ) : !a.declared ? (
             <p className="muted">Declare it in accounts.yml</p>
           ) : a.window ? (
             <>

@@ -73,6 +73,7 @@ export type UsagePriceEntry = {
 };
 export type PriceTable = { unit: "usd"; models: Record<string, UsagePriceEntry> };
 export type UsageAccount = {
+  archived?: boolean;
   unit: "usd";
   kind: "api" | "subscription";
   capacity: {

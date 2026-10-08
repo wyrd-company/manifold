@@ -10,8 +10,16 @@ import type { ProcessRepository } from "../process-repository/index.ts";
 import type { UsageAccount } from "@wyrd-company/manifold-shared";
 import type { PortfolioWarning } from "@wyrd-company/manifold-shared/portfolio-api";
 import { portfolioRead } from "./read.ts";
-import { lintAllocatedAccounts } from "@wyrd-company/manifold-shared";
+import {
+  lintAllocatedAccounts,
+  classifyAllocatedAccounts,
+  bundledPriceTable,
+  bundledPriceTableCommit,
+} from "@wyrd-company/manifold-shared";
+import type { UsagePricing } from "../usage/index.ts";
 export interface PortfolioApiOptions {
+  lastUsedAt(): Readonly<Record<string, number>>;
+  pricing(): UsagePricing;
   readonly portfolio: {
     current(): PortfolioInForce;
     readonly ledger: Pick<Ledger, "balance" | "windowAt" | "totals">;
@@ -58,9 +66,7 @@ export function mountPortfolioApi(host: HttpHost, options: PortfolioApiOptions):
             }),
           };
         }
-        warnings = cache.warnings.filter(
-          (w) => !Object.hasOwn(accounts, String(w.details?.["account"])),
-        );
+        warnings = classifyAllocatedAccounts(cache.warnings, accounts);
       }
       const names = [
         ...new Set([
@@ -88,6 +94,12 @@ export function mountPortfolioApi(host: HttpHost, options: PortfolioApiOptions):
         portfolioRead({
           portfolio,
           accounts,
+          lastUsedAt: options.lastUsedAt(),
+          pricing: {
+            ...options.pricing(),
+            bundledCommit: bundledPriceTableCommit,
+            bundledModels: Object.keys(bundledPriceTable.models).length,
+          },
           balances,
           totals,
           warnings,

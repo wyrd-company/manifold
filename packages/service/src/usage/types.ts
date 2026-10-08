@@ -37,7 +37,13 @@ export type UsageRetryResult = {
   posted: number;
   pending: { unaccounted: number; unpriced: number; noWindow: number };
 };
+export type UsagePricing = {
+  overrides: number;
+  unpriced: readonly { provider: UsageProvider; model: string | null; postings: number }[];
+};
 export interface Usage {
+  lastUsedAt(): Readonly<Record<string, number>>;
+  pricing(): UsagePricing;
   readonly listener: (request: IncomingMessage, response: ServerResponse) => void;
   unowned(): UnownedEntry[];
   move(request: UsageMoveRequest): UsageMoveResponse;

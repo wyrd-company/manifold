@@ -30,5 +30,5 @@ for (const [model, row] of Object.entries(source)) {
 }
 writeFileSync(
   new URL("../src/prices.generated.ts", import.meta.url),
-  `// ---\n// relationships:\n//   implements: price-table\n// ---\n// Generated from LiteLLM at ${commit}; Apache-2.0.\nimport type {PriceTable} from './usage-types.ts';\nexport const bundledPriceTable:PriceTable = ${JSON.stringify({ unit: "usd", models }, null, 2)};\n`,
+  `// ---\n// relationships:\n//   implements: price-table\n// ---\n// Generated from LiteLLM at ${commit}; Apache-2.0.\nimport type {PriceTable} from './usage-types.ts';\nexport const bundledPriceTableCommit = ${JSON.stringify(commit)};\nexport const bundledPriceTable:PriceTable = ${JSON.stringify({ unit: "usd", models }, null, 2)};\n`,
 );

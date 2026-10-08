@@ -366,6 +366,11 @@ export const accountsDeclarationSchema = {
           type: "string",
           enum: ["api", "subscription"],
         },
+        archived: {
+          description:
+            "True archives the account: it stays declared, charges no call, and is credited no window.",
+          type: "boolean",
+        },
         capacity: {
           $ref: "#/$defs/capacity",
         },

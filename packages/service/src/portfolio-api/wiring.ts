@@ -18,6 +18,8 @@ export const portfolioApiPart = wiringPart({
     mountPortfolioApi(members.http, {
       portfolio: members.portfolio,
       accounts: () => members.usage.accounts(),
+      lastUsedAt: () => members.usage.lastUsedAt(),
+      pricing: () => members.usage.pricing(),
       processRepository: members.processRepository,
       store: members.store,
       log: (entry) =>

@@ -41,7 +41,9 @@ export function resolvePosting(
     | { provider_instance: string | null }
     | undefined;
   let account: string | undefined, fallback: string | undefined;
-  for (const [name, entry] of Object.entries(declaration.accounts))
+  for (const [name, entry] of Object.entries(declaration.accounts).filter(
+    ([, entry]) => !entry.archived,
+  ))
     for (const usage of entry.usage ?? [])
       if (usage.environment === posting.environment && usage.provider === posting.provider) {
         if (usage.instance === undefined) fallback = name;

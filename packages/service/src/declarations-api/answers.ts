@@ -33,6 +33,7 @@ import {
   lintTaskMetadataDeclaration as lintTaskMetadata,
   taskFieldStorageKinds,
   lintAllocatedAccounts,
+  lintUsageDeclaration,
 } from "@wyrd-company/manifold-shared";
 export async function lintAnswer(
   options: DeclarationsApiOptions,
@@ -41,6 +42,21 @@ export async function lintAnswer(
   text: string,
 ): Promise<DeclarationFindings> {
   const bindings = await revision.read("bindings.yml");
+  if (path === "accounts.yml") {
+    const lint = lintUsageDeclaration({
+      accounts: text,
+      prices: await revision.read("prices.yml"),
+    });
+    return {
+      findings: (lint.ok ? [] : lint.findings).map((finding) =>
+        finding.file === "accounts" ? findingRanges(text, [finding])[0]! : finding,
+      ),
+      warnings: lintAllocatedAccounts({
+        portfolio: await revision.read("portfolio.yml"),
+        accounts: text,
+      }),
+    };
+  }
   if (path === "task-metadata.yml") {
     const lint = lintTaskMetadata({ taskMetadata: text, bindings });
     const fields = taskFieldRows(text);

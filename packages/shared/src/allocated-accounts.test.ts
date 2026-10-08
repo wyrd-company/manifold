@@ -76,3 +76,11 @@ test("accepts declared accounts and warns for an undeclared inherited Object pro
     })[0]?.details.account,
   ).toBe("constructor");
 });
+test("archived allocations warn and classify again when accounts change", () => {
+  expect(
+    lintAllocatedAccounts({
+      portfolio,
+      accounts: accounts.replace("kind: api", "kind: api\n    archived: true"),
+    })[0],
+  ).toMatchObject({ kind: "account-archived", details: { account: "acct", item: "alpha" } });
+});

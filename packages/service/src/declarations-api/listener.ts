@@ -133,6 +133,7 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
         path: declarationPath,
         commit: revision.commit,
         exists: text !== undefined,
+        ...(declarationPath === "accounts.yml" ? { environments: options.environments } : {}),
         text: text ?? "",
         ...(await lintAnswer(options, revision, declarationPath!, text ?? "")),
       });

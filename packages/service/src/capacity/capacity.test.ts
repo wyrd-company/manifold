@@ -334,3 +334,65 @@ test("credits at least one millionth in a clipped gap", () => {
     credit: { opensAt: reset + hour - 1, closesAt: reset + hour, amount: 1 },
   });
 });
+
+test("archive blocks new reservations and credit, preserves history, and restore lifts the boundary", () => {
+  const f = fixture();
+  f.balance();
+  f.capacity.ledger.reserve({
+    key: "hold-before",
+    actor: "actor",
+    item: "alpha",
+    account: "acct",
+    amount: 100,
+  });
+  f.account({
+    kind: "api",
+    archived: true,
+    capacity: { amount: 1, reset: new Date(reset).toISOString(), every: { hours: 1 } },
+  });
+  expect(f.balance()).toMatchObject({ reservable: 0, available: 0, outstanding: 100 });
+  expect(() =>
+    f.capacity.ledger.reserve({
+      key: "hold-after",
+      actor: "actor-two",
+      item: "alpha",
+      account: "acct",
+      amount: 1,
+    }),
+  ).toThrow(expect.objectContaining({ code: "account-archived" }));
+  expect(f.capacity.ensure({ account: "acct", at: reset + hour + 1 })).toEqual({
+    status: "undeclared",
+  });
+  expect(f.credits()).toHaveLength(1);
+  expect(
+    f.store.connection.database
+      .prepare("SELECT * FROM ledger_operations WHERE key = 'hold-after'")
+      .get(),
+  ).toBeUndefined();
+  f.capacity.ledger.settle({ actor: "actor" });
+  expect(f.balance().outstanding).toBe(0);
+  f.account({
+    kind: "api",
+    capacity: { amount: 1, reset: new Date(reset).toISOString(), every: { hours: 1 } },
+  });
+  expect(f.balance().reservable).toBeGreaterThan(0);
+});
+
+test("archive keeps negative available and accepts outstanding actuals in a credited window", () => {
+  const f = fixture();
+  f.balance();
+  f.account({
+    kind: "api",
+    archived: true,
+    capacity: { amount: 1, reset: new Date(reset).toISOString(), every: { hours: 1 } },
+  });
+  f.capacity.ledger.postActual({
+    key: "actual-after",
+    actor: "actor",
+    item: "alpha",
+    account: "acct",
+    amount: 600000,
+    usedAt: reset + hour / 6,
+  });
+  expect(f.balance()).toMatchObject({ actual: 600000, available: -100000, reservable: 0 });
+});

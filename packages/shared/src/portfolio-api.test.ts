@@ -61,6 +61,7 @@ const item = {
 };
 const body = {
   commit: "a".repeat(40),
+  pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
   at: "2026-01-01T00:00:00.000Z",
   accounts: [account],
   items: [item],
@@ -82,11 +83,17 @@ test("portfolio guard agrees with the OpenAPI shape across nested valid and inva
     {
       ...body,
       commit: null,
+      pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
       accounts: [],
       items: [{ ...item, projects: { github: [], t3code: [] }, allocations: [] }],
       warnings: [],
     },
     { ...body, accounts: [{ name: "acct-c", declared: false }] },
+    {
+      ...body,
+      accounts: [{ ...account, archived: true, lastUsedAt: body.at }],
+      pricing: { ...body.pricing, unpriced: [{ provider: "codex", model: null, postings: 1 }] },
+    },
   ]) {
     expect(validate(value)).toBe(true);
     expect(isPortfolioResponse(value)).toBe(true);
@@ -96,6 +103,20 @@ test("portfolio guard agrees with the OpenAPI shape across nested valid and inva
     {},
     { ...body, items: [] },
     { ...body, extra: true },
+    { ...body, pricing: undefined },
+    { ...body, pricing: { ...body.pricing, bundledCommit: "bad" } },
+    {
+      ...body,
+      pricing: {
+        ...body.pricing,
+        unpriced: [{ provider: "unknown", model: "sample", postings: 1 }],
+      },
+    },
+    {
+      ...body,
+      pricing: { ...body.pricing, unpriced: [{ provider: "codex", model: null, postings: 0 }] },
+    },
+    { ...body, accounts: [{ ...account, archived: "true" }] },
     { ...body, accounts: [{ ...account, unit: "tokens" }] },
     { ...body, items: [{ ...item, allocations: [{ ...allocation, guarantee: 101 }] }] },
     {
@@ -113,4 +134,10 @@ test("portfolio guard agrees with the OpenAPI shape across nested valid and inva
     expect(validate(value)).toBe(false);
     expect(isPortfolioResponse(value)).toBe(false);
   }
+});
+
+test("last-used timestamps are checked at the response boundary", () => {
+  expect(isPortfolioResponse({ ...body, accounts: [{ ...account, lastUsedAt: "bad" }] })).toBe(
+    false,
+  );
 });

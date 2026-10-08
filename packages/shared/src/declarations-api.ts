@@ -15,9 +15,13 @@ import {
 } from "./api-guards.ts";
 import type { ApiFinding, FindingRange } from "./blueprints-api.ts";
 export const declarationsApiPath = "/api/declarations";
-export type DeclarationPath = "bindings.yml" | "task-metadata.yml" | "portfolio.yml";
+export type DeclarationPath =
+  | "bindings.yml"
+  | "task-metadata.yml"
+  | "portfolio.yml"
+  | "accounts.yml";
 export interface DeclarationFinding extends ApiFinding {
-  readonly file?: "portfolio" | "bindings";
+  readonly file?: "portfolio" | "bindings" | "accounts" | "prices";
 }
 export type TaskFieldType = "text" | "number" | "date" | "single-select";
 export type StorageKindName = "project-field";
@@ -56,6 +60,7 @@ export interface DeclarationFindings {
   readonly impact?: readonly ProjectImpact[];
 }
 export interface DeclarationSourceResponse extends DeclarationFindings {
+  readonly environments?: readonly string[];
   readonly path: DeclarationPath;
   readonly commit: string;
   readonly exists: boolean;
@@ -188,7 +193,7 @@ const finding = (v: unknown) =>
   string(v["location"]) &&
   string(v["message"]) &&
   (!Object.hasOwn(v, "range") || range(v["range"])) &&
-  (!Object.hasOwn(v, "file") || oneOf("portfolio", "bindings")(v["file"]));
+  (!Object.hasOwn(v, "file") || oneOf("portfolio", "bindings", "accounts", "prices")(v["file"]));
 const findings = { findings: array(finding), warnings: array(finding) };
 const field = (v: unknown) =>
   shape(
@@ -226,12 +231,12 @@ export function isDeclarationSourceResponse(v: unknown): v is DeclarationSourceR
     v,
     {
       ...findings,
-      path: oneOf("bindings.yml", "task-metadata.yml", "portfolio.yml"),
+      path: oneOf("bindings.yml", "task-metadata.yml", "portfolio.yml", "accounts.yml"),
       commit,
       exists: boolean,
       text: string,
     },
-    metadata,
+    { ...metadata, environments: array(name) },
   );
 }
 export function isLintDeclarationResponse(v: unknown): v is LintDeclarationResponse {

@@ -209,3 +209,21 @@ test("task field rows accept raw draft strings but reject a non-string optional 
   expect(validate(invalid)).toBe(false);
   expect(isLintDeclarationResponse(invalid)).toBe(false);
 });
+
+test("accounts sources carry environment names and accounts or prices findings", () => {
+  const validate = ajv.compile({ $ref: "declarations#/components/schemas/DeclarationSource" });
+  const value = {
+    ...source,
+    path: "accounts.yml",
+    environments: ["env-one"],
+    findings: [
+      { file: "accounts", kind: "schema", location: "/accounts/acct", message: "Invalid" },
+      { file: "prices", kind: "schema", location: "", message: "Invalid" },
+    ],
+  };
+  expect(validate(value)).toBe(true);
+  expect(isDeclarationSourceResponse(value)).toBe(true);
+  const invalid = { ...value, environments: ["bad name"] };
+  expect(validate(invalid)).toBe(false);
+  expect(isDeclarationSourceResponse(invalid)).toBe(false);
+});

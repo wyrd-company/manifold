@@ -15,7 +15,7 @@ import { pointerSegment } from "./portfolio-normalization.ts";
 export type PortfolioWarning = {
   file: "portfolio";
   location: string;
-  kind: "account-undeclared";
+  kind: "account-undeclared" | "account-archived";
   severity: "warning";
   message: string;
   details: { item: string; account: string };
@@ -48,14 +48,12 @@ export function lintAllocatedAccounts(files: {
   const portfolio = document(files.portfolio, portfolioValidator);
   const accounts = document(files.accounts, accountsValidator);
   if (portfolio === undefined || accounts === undefined) return [];
-  const declared = new Set(Object.keys(accounts.accounts ?? {}));
   const warnings: PortfolioWarning[] = [];
   function visit(items: Record<string, ItemDocument>, parent: string | null, location: string) {
     for (const [name, entry] of Object.entries(items)) {
       const item = name === "other" && parent !== null ? `${parent}/other` : name;
       const path = `${location}/${pointerSegment(name)}`;
       for (const account of Object.keys(entry.allocations ?? {})) {
-        if (declared.has(account)) continue;
         warnings.push({
           file: "portfolio",
           location: `${path}/allocations/${pointerSegment(account)}`,
@@ -69,5 +67,25 @@ export function lintAllocatedAccounts(files: {
     }
   }
   visit(portfolio.items ?? {}, null, "/items");
-  return warnings;
+  return classifyAllocatedAccounts(warnings, accounts.accounts ?? {});
+}
+
+export function classifyAllocatedAccounts(
+  warnings: readonly PortfolioWarning[],
+  accounts: Readonly<Record<string, UsageAccount>>,
+): readonly PortfolioWarning[] {
+  return warnings.flatMap((warning) => {
+    const account = Object.hasOwn(accounts, warning.details.account)
+      ? accounts[warning.details.account]
+      : undefined;
+    if (!account) return [warning];
+    if (!account.archived) return [];
+    return [
+      {
+        ...warning,
+        kind: "account-archived" as const,
+        message: `Account "${warning.details.account}" is archived in accounts.yml.`,
+      },
+    ];
+  });
 }

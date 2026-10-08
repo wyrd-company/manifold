@@ -4,6 +4,7 @@
 // ---
 // Generated from LiteLLM at e1d16f51d14849c1b3decf17cd81a3bcb4863dca; Apache-2.0.
 import type { PriceTable } from "./usage-types.ts";
+export const bundledPriceTableCommit = "e1d16f51d14849c1b3decf17cd81a3bcb4863dca";
 export const bundledPriceTable: PriceTable = {
   unit: "usd",
   models: {

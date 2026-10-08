@@ -88,7 +88,7 @@ export {
   accountsDeclarationSchema,
   priceTableSchema,
 } from "./usage-schemas.generated.ts";
-export { bundledPriceTable } from "./prices.generated.ts";
+export { bundledPriceTable, bundledPriceTableCommit } from "./prices.generated.ts";
 export type * from "./usage-types.ts";
 export { isUsagePushResult } from "./usage-push-response.ts";
 
@@ -142,5 +142,5 @@ export { bundledFiles } from "./bundle.generated.ts";
 export { blueprintGraph } from "./blueprint-graph.ts";
 export { findingRanges } from "./finding-ranges.ts";
 export type * from "./blueprints-api.ts";
-export { lintAllocatedAccounts } from "./allocated-accounts.ts";
+export { lintAllocatedAccounts, classifyAllocatedAccounts } from "./allocated-accounts.ts";
 export type { PortfolioWarning } from "./allocated-accounts.ts";

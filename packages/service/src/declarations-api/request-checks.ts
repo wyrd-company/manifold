@@ -11,8 +11,11 @@ export const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 export const validPath = (
   value: unknown,
-): value is "bindings.yml" | "task-metadata.yml" | "portfolio.yml" =>
-  value === "bindings.yml" || value === "task-metadata.yml" || value === "portfolio.yml";
+): value is "bindings.yml" | "task-metadata.yml" | "portfolio.yml" | "accounts.yml" =>
+  value === "bindings.yml" ||
+  value === "task-metadata.yml" ||
+  value === "portfolio.yml" ||
+  value === "accounts.yml";
 const keys = (value: Record<string, unknown>, names: readonly string[]) =>
   Object.keys(value).every((key) => names.includes(key));
 const strings = (value: unknown): value is string[] =>

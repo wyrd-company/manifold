@@ -292,3 +292,20 @@ test("an empty portfolio item gives a binding finding instead of a malformed req
     findings: [expect.objectContaining({ location: "/githubProjects/sample/item" })],
   });
 });
+
+test("reads and lints accounts with configured environments and portfolio warnings", async () => {
+  const { url } = await setup();
+  const source = await fetch(url + "/source?path=accounts.yml");
+  expect(source.status).toBe(200);
+  expect(await source.json()).toMatchObject({
+    path: "accounts.yml",
+    environments: expect.any(Array),
+    findings: [],
+  });
+  const lint = await fetch(url + "/lint", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: "accounts.yml", text: "accounts: [" }),
+  });
+  expect(await lint.json()).toMatchObject({ findings: [{ file: "accounts", kind: "syntax" }] });
+});

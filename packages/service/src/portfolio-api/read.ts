@@ -6,6 +6,7 @@ import type {
   PortfolioResponse,
   PortfolioAccount,
   PortfolioWarning,
+  PortfolioPricing,
 } from "@wyrd-company/manifold-shared/portfolio-api";
 import type { PortfolioInForce } from "../portfolio/index.ts";
 import type { UsageAccount } from "@wyrd-company/manifold-shared";
@@ -17,26 +18,31 @@ export function portfolioRead(input: {
   balances: ReadonlyMap<string, ReadonlyMap<string, LedgerBalance>>;
   totals: ReadonlyMap<string, LedgerTotals>;
   warnings: readonly PortfolioWarning[];
+  lastUsedAt: Readonly<Record<string, number>>;
+  pricing: PortfolioPricing;
   snapshots: readonly StoredSnapshot[];
   at: number;
 }): PortfolioResponse {
   const declaration = input.portfolio.declaration;
   const names = [
-    ...Object.keys(input.accounts),
+    ...Object.keys(input.accounts).filter((name) => !input.accounts[name]!.archived),
     ...[
       ...new Set(
         declaration.ledger.allocations
           .map((a) => a.account)
-          .filter((name) => !Object.hasOwn(input.accounts, name)),
+          .filter((name) => !Object.hasOwn(input.accounts, name) || input.accounts[name]!.archived),
       ),
     ].sort(),
   ];
   const accounts: PortfolioAccount[] = names.map((name) => {
-    const a = input.accounts[name],
-      total = input.totals.get(name);
+    const a = Object.hasOwn(input.accounts, name) ? input.accounts[name] : undefined,
+      total = input.totals.get(name),
+      lastUsedAt = Object.hasOwn(input.lastUsedAt, name) ? input.lastUsedAt[name] : undefined;
     return {
       name,
       declared: !!a,
+      ...(a?.archived ? { archived: true } : {}),
+      ...(lastUsedAt !== undefined ? { lastUsedAt: new Date(lastUsedAt).toISOString() } : {}),
       ...(a
         ? {
             unit: a.unit,
@@ -164,6 +170,7 @@ export function portfolioRead(input: {
     commit: input.portfolio.commit,
     at: new Date(input.at).toISOString(),
     accounts,
+    pricing: input.pricing,
     items,
     unallocated: unallocated(null),
     warnings: input.warnings,
