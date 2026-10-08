@@ -67,6 +67,10 @@ try {
   await rm(partial, { force: true });
   await run("tar", ["-czf", partial, "-C", staging, "manifold-service"]);
   await rename(partial, archive);
+  await cp(
+    resolve(import.meta.dirname, "manifold-upgrade.sh"),
+    resolve(output, "manifold-upgrade.sh"),
+  );
   process.stdout.write(`${archive}\n`);
 } finally {
   await rm(workspace, { recursive: true, force: true });
