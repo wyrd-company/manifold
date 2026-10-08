@@ -47,7 +47,9 @@ export function saveAnswer(result: SavedRevision, blueprint?: BlueprintItem) {
         message: "The process repository branch changed.",
         reason: result.reason,
         head: result.head,
-        ...(result.text === undefined ? {} : { text: result.text }),
+        ...(result.files.length === 1 && result.files[0]!.text !== undefined
+          ? { text: result.files[0]!.text }
+          : {}),
       },
     };
   return {

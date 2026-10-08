@@ -43,9 +43,7 @@ export function StatusBar({
               );
             })}
       {editing ? (
-        <p className="muted">
-          Sharing preview: halfway through an empty window, with no usage or reservations.
-        </p>
+        <p className="muted">Sharing preview: halfway through an idle window, nothing spent.</p>
       ) : null}
     </div>
   );

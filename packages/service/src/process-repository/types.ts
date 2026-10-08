@@ -52,6 +52,10 @@ export interface SaveFile {
   readonly path: string;
   readonly text: string;
 }
+export interface SaveConflictFile {
+  readonly path: string;
+  readonly text: string | undefined;
+}
 export interface SaveRequest {
   readonly files: readonly SaveFile[];
   readonly base: string;
@@ -62,7 +66,11 @@ export type SaveOutcome =
   | { readonly kind: "pushed"; readonly commit: string; readonly parent: string }
   | { readonly kind: "already-saved"; readonly commit: string }
   | { readonly kind: "unchanged"; readonly commit: string }
-  | { readonly kind: "conflict"; readonly head: string; readonly text: string | undefined };
+  | {
+      readonly kind: "conflict";
+      readonly head: string;
+      readonly files: readonly SaveConflictFile[];
+    };
 export type SaveStep = "committed" | "pushed";
 export type SaveProbe = (step: SaveStep, commit: string) => void;
 export class ProcessRepositorySaveError extends Error {

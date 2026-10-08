@@ -17,6 +17,7 @@ import { Button } from "../../ui/button.tsx";
 import { AllocationInput } from "./PortfolioTable.tsx";
 import { Amount } from "./BudgetSourceCards.tsx";
 import { itemId } from "./edits.ts";
+import { sharingFor } from "./sharing.ts";
 import { ProblemsList } from "./ProblemsList.tsx";
 export function EditItemDialog({
   item,
@@ -25,6 +26,7 @@ export function EditItemDialog({
   lint,
   pending,
   busy,
+  dirty,
   onEdit,
   onSave,
   onReplaceNew,
@@ -39,6 +41,7 @@ export function EditItemDialog({
   lint: DeclarationLint | undefined;
   pending: boolean;
   busy: boolean;
+  dirty: boolean;
   onEdit: (edit: PortfolioEdit) => void;
   onSave: (message: string) => void;
   onReplaceNew: (edit: PortfolioEdit) => void;
@@ -63,6 +66,7 @@ export function EditItemDialog({
   const allocation = current?.allocations.find((a) => a.account === account),
     children = read.items.filter((i) => i.parent === id && !i.other && !i.archived),
     unit = read.accounts.find((a) => a.name === account)?.unit;
+  const sharing = sharingFor(lint, account, id);
   const descendants = (parent: string): PortfolioItem[] =>
     read.items.flatMap((i) => (i.parent === parent ? [i, ...descendants(i.id)] : []));
   const attached = current
@@ -117,6 +121,11 @@ export function EditItemDialog({
                 findings={lint?.findings ?? []}
                 onChange={(v) => change("guarantee", v)}
               />
+              <p className="muted portfolio-dialog-sharing">
+                {sharing
+                  ? `Can reserve, halfway through an idle window: ${formatPercent(sharing.alone)} alone, ${formatPercent(sharing.allWaiting)} with every item waiting.`
+                  : "—"}
+              </p>
               <AllocationInput
                 item={current}
                 account={account}
@@ -204,7 +213,14 @@ export function EditItemDialog({
                     />
                     <Button
                       variant="ghost"
-                      disabled={busy}
+                      disabled={
+                        busy ||
+                        (dirty &&
+                          !newChildren.includes(child.id) &&
+                          [child, ...descendants(child.id)].some(
+                            (i) => i.projects.github.length + i.projects.t3code.length > 0,
+                          ))
+                      }
                       onClick={() =>
                         newChildren.includes(child.id)
                           ? onRemoveNew(child.id)
@@ -239,7 +255,7 @@ export function EditItemDialog({
             <Button
               variant="outline"
               className="error-text"
-              disabled={busy}
+              disabled={busy || dirty}
               onClick={() => (attached && current ? setArchive(current) : setConfirm(id))}
             >
               Archive item
@@ -258,7 +274,11 @@ export function EditItemDialog({
           </Button>
         </div>
         {item ? (
-          <p className="muted">{`Its allocation returns to ${item.parent ?? "the top level"}.`}</p>
+          <p className="muted">
+            {dirty
+              ? "Save or discard your changes first."
+              : `Its allocation returns to ${read.items.find((i) => i.id === item.parent)?.title ?? "the top level"}.`}
+          </p>
         ) : null}
         {archive ? (
           <ArchiveItemDialog

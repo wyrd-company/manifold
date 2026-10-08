@@ -5,6 +5,7 @@
 import { chromium } from "playwright";
 import { expect, test } from "vite-plus/test";
 import { parse } from "yaml";
+import { formatPercent } from "@wyrd-company/manifold-shared/amounts";
 import { archiveFixture } from "./test-fixtures/archive.ts";
 import type { PortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api";
 import git from "isomorphic-git";
@@ -109,7 +110,13 @@ test("refused archive applies the concurrent binding commit without any archive 
     const page = await browser.newPage(),
       dialog = await openArchive(page, f.url);
     const concurrent = await f.concurrentBinding();
+    const refusing = page.waitForResponse((r) => r.url().endsWith("/archive-item"));
     await dialog.getByRole("button", { name: "Archive beta", exact: true }).click();
+    const refusal = await refusing;
+    expect(refusal.status()).toBe(409);
+    const conflict = await refusal.json();
+    expect(conflict).not.toHaveProperty("text");
+    expect(conflict).not.toHaveProperty("files");
     await dialog
       .getByRole("alert")
       .filter({ hasText: "portfolio.yml or bindings.yml changed" })
@@ -141,6 +148,7 @@ test("sharing preview changes with the draft while the service balance stays unc
     browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
+    page.setDefaultTimeout(3000);
     await page.goto(f.url + "/console/portfolio");
     const before = (await fetch(f.url + "/api/portfolio").then((r) =>
       r.json(),
@@ -190,6 +198,7 @@ test("ended task counts appear on its item and parent", async () => {
       input: { manifold: { portfolioItem: "gamma", issue: "sample" } },
     });
     const page = await browser.newPage();
+    page.setDefaultTimeout(3000);
     await page.goto(f.url + "/console/portfolio");
     await page.getByRole("button", { name: "Expand alpha", exact: true }).click();
     const gamma = page.getByRole("row").filter({ has: page.getByText("gamma", { exact: true }) });
@@ -207,6 +216,78 @@ test("ended task counts appear on its item and parent", async () => {
     expect(await gamma.getByRole("cell").nth(4).innerText()).toBe("—");
     const alpha = page.getByRole("row").filter({ has: page.getByText("alpha", { exact: true }) });
     expect(await alpha.getByRole("cell").nth(5).innerText()).toBe("1");
+  } finally {
+    await browser.close();
+    await f.close();
+  }
+});
+
+test("item dialog previews candidate allocations and guards unsaved archive actions", async () => {
+  const f = await archiveFixture(),
+    browser = await chromium.launch({ headless: true });
+  try {
+    const portfolio = await f.service.processRepository.current()!.read("portfolio.yml");
+    await f.service.revisions.save({
+      base: f.base,
+      saveId: "3".repeat(32),
+      message: "Name sample parent",
+      files: [
+        {
+          path: "portfolio.yml",
+          text: portfolio!.replace("  alpha:\n", "  alpha:\n    title: Sample parent\n"),
+        },
+      ],
+    });
+    const page = await browser.newPage();
+    page.setDefaultTimeout(3000);
+    await page.goto(f.url + "/console/portfolio");
+    await page.getByRole("button", { name: "Expand Sample parent", exact: true }).click();
+    await page.getByRole("button", { name: "Edit beta", exact: true }).click();
+    let dialog = page
+      .getByRole("dialog")
+      .filter({ has: page.getByRole("heading", { name: "Edit item", exact: true }) });
+    await dialog.getByText("Its allocation returns to Sample parent.", { exact: true }).waitFor();
+    await dialog.getByText(/Can reserve, halfway through an idle window:/).waitFor();
+    const linting = page.waitForResponse((r) => r.url().endsWith("/lint"));
+    await dialog.getByLabel("beta allocation", { exact: true }).fill("50");
+    const lint = await (await linting).json();
+    const preview = lint.preview
+      .find((a: { account: string }) => a.account === "acct-a")
+      .items.find((i: { item: string }) => i.item === "beta");
+    await dialog
+      .getByText(
+        `Can reserve, halfway through an idle window: ${formatPercent(preview.alone)} alone, ${formatPercent(preview.allWaiting)} with every item waiting.`,
+        { exact: true },
+      )
+      .waitFor();
+    expect(
+      await dialog.getByRole("button", { name: "Archive item", exact: true }).isDisabled(),
+    ).toBe(true);
+    await dialog.getByText("Save or discard your changes first.", { exact: true }).waitFor();
+    await dialog.getByLabel("beta allocation", { exact: true }).fill("101");
+    await expect.poll(() => dialog.locator(".portfolio-dialog-sharing").innerText()).toBe("—");
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.getByRole("button", { name: "Edit Sample parent", exact: true }).click();
+    dialog = page
+      .getByRole("dialog")
+      .filter({ has: page.getByRole("heading", { name: "Edit item", exact: true }) });
+    await dialog.getByText("Its allocation returns to the top level.", { exact: true }).waitFor();
+    const child = dialog
+      .locator(".portfolio-sub-item")
+      .filter({ has: page.getByLabel("beta allocation", { exact: true }) });
+    expect(await child.getByRole("button", { name: "Remove", exact: true }).isEnabled()).toBe(true);
+    await dialog.getByLabel("Name", { exact: true }).first().fill("Changed parent");
+    expect(await child.getByRole("button", { name: "Remove", exact: true }).isDisabled()).toBe(
+      true,
+    );
+    expect(
+      await dialog.getByRole("button", { name: "Archive item", exact: true }).isDisabled(),
+    ).toBe(true);
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.getByRole("button", { name: "Edit beta", exact: true }).click();
+    expect(await page.getByRole("button", { name: "Archive item", exact: true }).isEnabled()).toBe(
+      true,
+    );
   } finally {
     await browser.close();
     await f.close();

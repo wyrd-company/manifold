@@ -17,6 +17,7 @@ export type {
   PullProbe,
   SaveRequest,
   SaveFile,
+  SaveConflictFile,
   SaveOutcome,
   SaveStep,
   SaveProbe,

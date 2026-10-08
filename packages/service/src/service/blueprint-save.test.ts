@@ -136,6 +136,26 @@ async function writableService() {
   };
   return { fixture, service, request };
 }
+test("branch-moved conflicts return every requested head text in order", async () => {
+  const { fixture, service, request } = await writableService();
+  const paths = ["bindings.yml", request.path, "missing.yml"];
+  const expected = await Promise.all(
+    paths.map(async (path) => ({
+      path,
+      text: await service.processRepository.current()!.read(path),
+    })),
+  );
+  fixture.remote.state.beforeReceive = () => appendOtherFile(fixture).then(() => {});
+  const result = await service.revisions.save({
+    ...request,
+    files: paths.map((path) => ({
+      path,
+      text: path === request.path ? request.text : "# sample\n",
+    })),
+  });
+  expect(result).toMatchObject({ outcome: "conflict", reason: "branch-moved", files: expected });
+});
+
 test("retries once on a branch moved in other files and answers branch-moved after two races", async () => {
   const { fixture, service, request } = await writableService();
   let moved = 0;

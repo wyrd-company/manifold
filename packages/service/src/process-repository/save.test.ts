@@ -104,7 +104,7 @@ test("save accepts unrelated branch changes and conflicts when the edited file c
   ).toEqual({
     kind: "conflict",
     head: repository.current()!.commit,
-    text: request.files[0]!.text,
+    files: request.files,
   });
   expect(
     await repository.save({
@@ -336,7 +336,7 @@ test("save commits two files together, retries once, and refuses either changed 
         saveId: "b".repeat(32),
         files: [{ ...file, text: "changed" }, files.find((f) => f.path !== file.path)!],
       }),
-    ).toEqual({ kind: "conflict", head, text: undefined });
+    ).toEqual({ kind: "conflict", head, files: [file, files.find((f) => f.path !== file.path)!] });
   }
   expect(await repository.save({ ...saving, base: head, saveId: "c".repeat(32) })).toEqual({
     kind: "unchanged",
@@ -373,7 +373,14 @@ test.each(["portfolio.yml", "bindings.yml"])(
         message: "Archive sample",
         saveId: "c".repeat(32),
       }),
-    ).toEqual({ kind: "conflict", head, text: undefined });
+    ).toEqual({
+      kind: "conflict",
+      head,
+      files: files.map((file) => ({
+        ...file,
+        text: file.path === path ? "# concurrent\n" + file.text : file.text,
+      })),
+    });
   },
 );
 

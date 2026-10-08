@@ -135,7 +135,12 @@ export function createRevisions(options: {
   }
   async function savedResult(result: SaveOutcome): Promise<SavedRevision> {
     if (result.kind === "conflict")
-      return { outcome: "conflict", reason: "file-changed", head: result.head, text: result.text };
+      return {
+        outcome: "conflict",
+        reason: "file-changed",
+        head: result.head,
+        files: result.files,
+      };
     if (result.kind !== "pushed")
       return { outcome: result.kind, commit: result.commit, blueprints: latest };
     try {
@@ -166,8 +171,12 @@ export function createRevisions(options: {
           outcome: "conflict",
           reason: "branch-moved",
           head: revision.commit,
-          text:
-            request.files.length === 1 ? await revision.read(request.files[0]!.path) : undefined,
+          files: await Promise.all(
+            request.files.map(async (file) => ({
+              path: file.path,
+              text: await revision.read(file.path),
+            })),
+          ),
         };
       }
     }

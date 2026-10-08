@@ -28,6 +28,7 @@ import type {
   PullProbe,
   PullRequest,
   SaveRequest,
+  SaveConflictFile,
   SaveProbe,
 } from "../process-repository/index.ts";
 import type { GitHubSource } from "../github-source/index.ts";
@@ -150,7 +151,7 @@ export type SavedRevision =
       readonly outcome: "conflict";
       readonly reason: "file-changed" | "branch-moved";
       readonly head: string;
-      readonly text: string | undefined;
+      readonly files: readonly SaveConflictFile[];
     };
 
 export interface AppliedRevision {

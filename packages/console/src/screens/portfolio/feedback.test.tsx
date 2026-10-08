@@ -27,7 +27,7 @@ const empty = { findings: [], warnings: [] };
 test("editing status explains the preview even when allocations are unchanged", () => {
   const props = { read, account: "acct-a", lint: empty, editing: true, parents: [] };
   expect(renderToStaticMarkup(<StatusBar {...props} pending={false} />)).toContain(
-    "Sharing preview: halfway through an empty window",
+    "Sharing preview: halfway through an idle window, nothing spent.",
   );
   expect(renderToStaticMarkup(<StatusBar {...props} pending={true} />)).toContain("Checking…");
   expect(renderToStaticMarkup(<StatusBar {...props} parents={[null]} pending={false} />)).toContain(

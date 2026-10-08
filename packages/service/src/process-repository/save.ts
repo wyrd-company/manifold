@@ -95,7 +95,11 @@ export async function saveRevision(
       (text, index) => text !== texts[index],
     )
   )
-    return { kind: "conflict", head, text: request.files.length === 1 ? texts[0] : undefined };
+    return {
+      kind: "conflict",
+      head,
+      files: request.files.map((file, index) => ({ path: file.path, text: texts[index] })),
+    };
   if (request.files.every((file, index) => file.text === texts[index]))
     return { kind: "unchanged", commit: head };
   const { commit: parent } = await git.readCommit({ ...objects, oid: head });

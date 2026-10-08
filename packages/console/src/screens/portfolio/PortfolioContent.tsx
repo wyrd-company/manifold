@@ -482,6 +482,7 @@ export function PortfolioContent() {
               lint={findings}
               pending={pending || (!!draft && lint?.text !== draft.text)}
               busy={busy}
+              dirty={!!draft && draft.text !== (dialog.before?.text ?? source?.text)}
               onEdit={edit}
               onReplaceNew={(edit) => {
                 const base =
