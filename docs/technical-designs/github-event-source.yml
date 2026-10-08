@@ -172,6 +172,8 @@ proposed-design:
       trackedIssue(nodeId: string): TrackedIssue | undefined;
       /** The node id of every issue trackedIssue answers for, sorted by code point. */
       trackedIssueIds(): readonly string[];
+      /** trackedIssue's answer for each of trackedIssueIds, in that order, from one read of the mirror. */
+      trackedIssues(): readonly TrackedIssue[];
       /** The mirror's Project of a node id, or undefined when the mirror holds none. */
       project(nodeId: string): GitHubProject | undefined;
       /** The mirror's Project of an owner and number, the owner compared without regard to case. */
@@ -899,7 +901,19 @@ proposed-design:
     `github_issue` row without a change, as a field's latest name is
     written, so a title edit publishes no event and the next reconcile or
     sweep of the issue brings the mirror up to date. `trackedIssueIds()` reads the node id of every issue for which
-    `trackedIssue` answers. `project(nodeId)` reads the mirror's Project
+    `trackedIssue` answers. `trackedIssues()` answers every tracked issue
+    of the bound Projects at once: element `i` is `trackedIssue`'s answer
+    for element `i` of `trackedIssueIds()`, so a reader that wants every
+    tracked issue makes one call. Each of `trackedIssue`,
+    `trackedIssueIds`, and `trackedIssues` reads the mirror once per call:
+    one `SELECT` of each mirror table. A pure function,
+    `trackedIssueIndex(state, bound)` in `mirror.ts`, groups that read's
+    present items, field values, dependencies, and sub-issues by the node
+    id they name in one pass over each table, and builds every answer from
+    the groups, so a call's work grows with the mirror's rows and not with
+    their square. The three members answer from that function and keep no
+    result between calls, so each call sees the mirror as it is.
+    `project(nodeId)` reads the mirror's Project
     row of a node id, so the service maps an actor's Project to its
     binding, and `projectByNumber(owner, number)` reads the row of a
     binding's Project. They read the mirror synchronously, so a caller
@@ -1013,7 +1027,14 @@ proposed-design:
     after its commit, with those issues' node ids; a field change, a
     removal, and a sweep that finds nothing new do not call it.
     `trackedIssue` lists an item's field values by name, and
-    `trackedIssueIds` lists exactly the issues `trackedIssue` answers for. A matching push calls
+    `trackedIssueIds` lists exactly the issues `trackedIssue` answers for.
+    On a mirror with tracked issues blocked by and blocking each other, an
+    issue outside every bound Project, a sub-issue tree, an archived item,
+    an item on a Project that is not bound, an issue observed absent, and
+    an issue not yet baselined, `trackedIssues()` equals
+    `trackedIssueIds().map(trackedIssue)`. With the store's `prepare`
+    counted, `trackedIssues()` prepares one `SELECT` of `github_issue` on
+    a mirror of 10 tracked issues and on one of 1,000. A matching push calls
     `pull` with its head once, a push to another branch or repository does
     not, and each sweep calls `pull()`. Every published event validates
     against `github-events.schema.yml`. `onMirrorChanged` is called once

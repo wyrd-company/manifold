@@ -719,7 +719,10 @@ proposed-design:
     takes its reads as functions and structural parts, holds no state,
     and computes each answer per request from what they return, so each
     request reads the mirror, the store, the ledger, and the escalations
-    as they are. Pure functions in `tasks.ts` build the answers:
+    as they are. Each request reads the tracked issues with one call of
+    the GitHub source's `trackedIssues()`, which is one read of the
+    mirror, so `GET /api/tasks` and `GET /api/tasks/{actorId}` each read
+    the mirror once, however many issues are tracked. Pure functions in `tasks.ts` build the answers:
     `boardProjects(projects, trackedIssues, snapshots, openEscalations)`
     and `taskDetail(...)`. `escalationsOfTask(escalations, task,
     tokenHolder)` picks a task's escalations by the rule in `tasks-api`;
@@ -744,7 +747,7 @@ proposed-design:
       held(actorId: string): boolean;
       /** The GitHub Project bindings in force that are not archived, in declaration order. */
       boundProjects(): readonly TasksBoundProject[];
-      /** The GitHub source's `trackedIssueIds` and `trackedIssue`. */
+      /** The GitHub source's `trackedIssues`. */
       readonly github: TasksGitHub;
       /** The usage intake module's `actorUsage`. */
       actorUsage(actorId: string): TasksActorUsage;
@@ -822,7 +825,9 @@ proposed-design:
     state: one actor whose restore the host refuses, which is `held` with
     no errored snapshot, and one actor whose delivery errored and whose
     `release` then restored it, which is `active` while the store keeps
-    its errored snapshot. In `packages/console`, unit tests
+    its errored snapshot. With a GitHub source that counts its calls over
+    fixture mirrors of 10 and of 1,000 tracked issues, `list()` and
+    `get(actorId)` each call `trackedIssues()` once. In `packages/console`, unit tests
     cover the three result mappings, the lane grouping of a Project's
     tasks, including the "No status" lane, and the reading and writing of
     collapsed lanes. The browser test,
@@ -1051,8 +1056,11 @@ proposed-design:
     takes its reads as functions and structural parts, holds no state, and
     computes each answer per request from what they return, so each
     request reads the mirror and the tasks list as they are. It reads
-    every tracked issue once per request, `trackedIssueIds` then
-    `trackedIssue` for each, and the tasks list once. Pure functions in
+    every tracked issue once per request with one call of the GitHub
+    source's `trackedIssues()`, and the tasks list once. `GET /api/epics`
+    reads the mirror once, and `GET /api/epics/{issueNodeId}` twice: its
+    own read and the tasks list's. Neither count grows with the number of
+    tracked issues. Pure functions in
     `epics.ts` build the answers: `epicRoots(tracked)` and `epicOf(nodeId,
     tracked, tasks)`, which walks the tree, collects the outside issues
     and dependencies, and joins each issue to its task entries by node id,
@@ -1070,7 +1078,7 @@ proposed-design:
     export function openEpics(options: EpicsOptions): Epics;
 
     export interface EpicsOptions {
-      /** The GitHub source's `trackedIssueIds` and `trackedIssue`. */
+      /** The GitHub source's `trackedIssues`. */
       readonly github: EpicsGitHub;
       /** The tasks read model's `list`. */
       readonly tasks: { list(): TasksResponse };
@@ -1086,9 +1094,8 @@ proposed-design:
     ```
 
     `EpicsGitHub` is declared structurally in the module as the members
-    it reads of the GitHub source: `trackedIssueIds()` and
-    `trackedIssue(nodeId)` with the `issue`, `blockedBy`, `blocking`,
-    `subIssues`, and `parent` of `TrackedIssue`, so the source satisfies
+    it reads of the GitHub source: `trackedIssues()` with the `issue`,
+    `blockedBy`, `blocking`, `subIssues`, and `parent` of `TrackedIssue`, so the source satisfies
     it and a test passes fixtures of the same shape.
 
     `@wyrd-company/manifold-shared` adds the subpath export `./epics-api`,
@@ -1115,7 +1122,9 @@ proposed-design:
     Each behavior is red before green, and tests go through public
     interfaces. In `packages/service/src/epics/`, the endpoint test in
     `epics-api`'s validation criteria, with the real tasks read model over
-    the same fixtures. In `packages/console`, unit tests cover the two
+    the same fixtures. With a GitHub source that counts its calls over
+    fixture mirrors of 10 and of 1,000 tracked issues, `roots()` calls
+    `trackedIssues()` once and `get(issueNodeId)` twice. In `packages/console`, unit tests cover the two
     result mappings, `epicsSearch`, and `epic-graph.ts`: `criticalPath`
     over a fixture with two chains of equal open count and different
     lengths, two of equal open count and length, a three-dependency cycle

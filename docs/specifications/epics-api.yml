@@ -23,8 +23,8 @@ description: |-
   The endpoints are mounted with the HTTP host's `mount` at the prefix
   `/api/epics` and are always served without authentication. Access
   control belongs to the deployment. They read the GitHub mirror through
-  the GitHub event source's `trackedIssueIds` and `trackedIssue`, and the
-  tasks list of `tasks-api`, and change nothing. They make no GitHub call.
+  the GitHub event source's `trackedIssues`, and the tasks list of
+  `tasks-api`, and change nothing. They make no GitHub call.
   Manifold keeps no dependency or sub-issue data of its own: every
   relationship in an answer is a present `github_dependency` or
   `github_sub_issue` row of the mirror.
