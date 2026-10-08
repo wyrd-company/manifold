@@ -877,9 +877,9 @@ it("reattributes actuals without consuming holds, changing usage or rewriting pa
   });
 });
 
-it("step 2 preserves every ledger row, index and append-only trigger", () => {
+it("replaying ledger writes preserves rows, indexes and append-only triggers", () => {
   const s = setup();
-  // Recreate the exact predecessor, then populate every entry kind.
+  // Recreate the schema, then populate every entry kind.
   for (const row of s.database
     .prepare("SELECT name FROM sqlite_master WHERE type='trigger'")
     .all() as { name: string }[])
@@ -910,8 +910,9 @@ it("step 2 preserves every ledger row, index and append-only trigger", () => {
     s.ledger.totals({ account: "acct" }),
     s.ledger.actorUsage("actor-1"),
   ];
-  expect(ledgerMigrationSteps).toHaveLength(2);
-  s.database.exec(ledgerMigrationSteps[1]!);
+  expect(ledgerMigrationSteps).toHaveLength(1);
+  s.credit();
+  s.ledger.settle({ actor: "actor-1" });
   expect(tables.map((t) => s.database.prepare(`SELECT * FROM ${t} ORDER BY 1`).all())).toEqual(
     rows,
   );

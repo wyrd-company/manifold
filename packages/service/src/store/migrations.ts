@@ -2,8 +2,16 @@
 // relationships:
 //   implements: store-database-schema
 // ---
-export const storeSteps = [
-  `CREATE TABLE store_snapshot (
+export const storeSteps: readonly string[] = [
+  `-- ---
+-- relationships:
+--   realizes: store-database-schema
+-- ---
+-- SQLite schema of the tables the store owns in Manifold's database file.
+-- Tables owned by another module in the same file carry that module's prefix
+-- and are defined by that module's specification.
+
+CREATE TABLE store_snapshot (
   actor_id TEXT PRIMARY KEY CHECK (length(actor_id) > 0),
   machine TEXT NOT NULL CHECK (length(machine) > 0),
   status TEXT NOT NULL CHECK (status IN ('active', 'done', 'stopped')),
@@ -19,6 +27,8 @@ CREATE TABLE store_snapshot_state (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX store_snapshot_state_by_path ON store_snapshot_state (machine, state_path, actor_id);
+
+CREATE INDEX store_snapshot_state_by_state ON store_snapshot_state (state_path, actor_id);
 
 CREATE TABLE store_errored_snapshot (
   actor_id TEXT PRIMARY KEY CHECK (length(actor_id) > 0),
@@ -44,7 +54,7 @@ CREATE INDEX store_inbox_pending ON store_inbox (actor_id, sequence) WHERE consu
 CREATE TABLE store_deadline (
   deadline_id INTEGER PRIMARY KEY AUTOINCREMENT,
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
-  state_path TEXT NOT NULL CHECK (length(state_path) > 0),
+  state_path TEXT NOT NULL,
   event_name TEXT NOT NULL CHECK (length(event_name) > 0),
   fire_at INTEGER NOT NULL,
   entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
@@ -53,26 +63,8 @@ CREATE TABLE store_deadline (
 ) STRICT;
 
 CREATE INDEX store_deadline_due ON store_deadline (fire_at, actor_id) WHERE fired_at IS NULL;
-`,
-  `ALTER TABLE store_deadline RENAME TO store_deadline_old;
-DROP INDEX store_deadline_due;
-CREATE TABLE store_deadline (
-  deadline_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
-  state_path TEXT NOT NULL,
-  event_name TEXT NOT NULL CHECK (length(event_name) > 0),
-  fire_at INTEGER NOT NULL,
-  entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
-  fired_at INTEGER,
-  UNIQUE (actor_id, state_path, event_name)
-) STRICT;
-INSERT INTO store_deadline SELECT * FROM store_deadline_old;
-UPDATE sqlite_sequence SET seq = max(seq, coalesce((SELECT seq FROM sqlite_sequence WHERE name = 'store_deadline_old'), 0)) WHERE name = 'store_deadline';
-INSERT INTO sqlite_sequence(name, seq) SELECT 'store_deadline', seq FROM sqlite_sequence WHERE name = 'store_deadline_old' AND NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'store_deadline');
-DROP TABLE store_deadline_old;
-CREATE INDEX store_deadline_due ON store_deadline (fire_at, actor_id) WHERE fired_at IS NULL;`,
-  `CREATE INDEX store_snapshot_state_by_state ON store_snapshot_state (state_path, actor_id);`,
-  `CREATE TABLE store_migration_failure (
+
+CREATE TABLE store_migration_failure (
   actor_id TEXT PRIMARY KEY CHECK (length(actor_id) > 0),
   from_machine TEXT NOT NULL CHECK (length(from_machine) > 0),
   to_machine TEXT NOT NULL CHECK (length(to_machine) > 0),

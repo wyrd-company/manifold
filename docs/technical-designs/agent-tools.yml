@@ -716,8 +716,8 @@ proposed-design:
     sender runs, and the part registers the module's `stop()` with
     `context.onStop` at the stage `commands`, after the HTTP host stops
     taking requests. Its migration steps run where `service-assembly`
-    runs the `agenttool` steps: the message table's step is step 2, and
-    the step that adds the message's sender columns is step 3.
+    runs the `agenttool` step, which creates every table and index in
+    `agent-tools-database-schema`.
   module-layout: >-
     `index.ts` re-exports the public names. `calls.ts` holds the pure
     rules: the call id read from `meta`, the call key, the event ids, the
@@ -766,9 +766,8 @@ proposed-design:
     event, so a crash before the commit leaves no sender behind, and a
     read after a restart answers the sender and the text the message was
     sent with, even when the issue's title changed or the issue left its
-    Project since. The migration step that adds the sender columns runs
-    in the store's migration transaction and is recorded with it, so it
-    runs once, and a crash inside it leaves the file at step 2.
+    Project since. The one schema step runs in the store's migration transaction and
+    is recorded with it, so it runs once and a crash rolls it back.
     A crash after a message commits and before its event is delivered
     leaves the inbox row pending; after the restart the router delivers it,
     the save that takes it delivers the message once, and `get-messages`
@@ -920,8 +919,8 @@ proposed-design:
     with a title, reads the message in a turn, kills the service with
     `SIGKILL`, restarts it on the same file with the issue renamed in the
     mirror, and shows `get-messages` in the same turn answering the same
-    `from` and the same text as before the kill. A migration test opens
-    the module on a store file at `agenttool` step 2 that holds a message,
+    `from` and the same text as before the kill. A reopen test opens
+    the module on a store file that holds a message without a sender name,
     and reads it with `from.task` `null` and the actor id in the text. Host CLI tests run the compiled `mcp` command over
     stdio against a test HTTP server: it lists the three tools with their
     schemas, `escalate`'s `title` optional and with no default, forwards a

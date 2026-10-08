@@ -581,15 +581,9 @@ proposed-design:
     `visitUsage`, `attribution.ts` and `pricing.ts` pure functions, `reads.ts`
     `lastUsedAt` and `pricing`, `hooks.ts` the save
     hook and its ownership attribution, and `migrations.ts` the steps.
-    Step 1 creates the declarations, sessions, actors, threads, visits,
-    calls, postings, and source errors tables with their indexes and
-    triggers. Step 2 creates the late attributions table, one row per
-    posting, with its index and triggers. Step 3 creates
-    `usage_reattributions`, its indexes, its triggers, and the view
-    `usage_attributed_postings`, copies each late attribution row into it
-    as a reattribution of cause `mapping` in `seq` order, and drops the
-    late attributions table. The steps together produce the schema of
-    `docs/specifications/usage-tables.sql`.
+    Its one step creates the complete schema of
+    `docs/specifications/usage-tables.sql`, including
+    `usage_reattributions` and the view `usage_attributed_postings`.
 
     ```ts
     /** Migration steps for owner `usage`, applied by the store's migrate. */

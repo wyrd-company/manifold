@@ -718,7 +718,7 @@ test("the public source migrates tables that agree with the specification", asyn
       store.connection.database
         .prepare("SELECT version FROM schema_migration WHERE owner = 'tthree'")
         .get(),
-    ).toEqual({ version: 4 });
+    ).toEqual({ version: 1 });
   } finally {
     reference.close();
   }
@@ -857,20 +857,22 @@ test("unknown turn states and session statuses count as none", async () => {
     .toEqual(["t3.turn.started", "t3.turn.settled", "t3.session.failed"]);
 });
 
-test("upgrades populated source tables and preserves project identity", async () => {
+test("reopens populated source tables and preserves project identity", async () => {
   const { server, store, start } = await setup();
   const ddl = await readFile(
     new URL("../../../../docs/specifications/t3code-source-database-schema.sql", import.meta.url),
     "utf8",
   );
-  store.connection.migrate("tthree", [ddl.split("ALTER TABLE")[0]!]);
+  store.connection.migrate("tthree", [ddl]);
   const thread = fixtureThread("existing");
   store.connection.database
     .prepare("INSERT INTO t3_environment VALUES (?, ?, ?, ?)")
     .run("station", "server-one", 0, 0);
   store.connection.database
-    .prepare("INSERT INTO t3_thread VALUES (?, ?, ?, ?, ?)")
-    .run("station", thread.id, "followed", 0, JSON.stringify(thread));
+    .prepare(
+      "INSERT INTO t3_thread(environment,thread_id,status,cursor,thread,project_id) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .run("station", thread.id, "followed", 0, JSON.stringify(thread), thread.projectId);
   thread.deletedAt = thread.createdAt;
   server.baseline(thread);
   const source = start();

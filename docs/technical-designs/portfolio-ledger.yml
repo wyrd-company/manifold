@@ -489,14 +489,7 @@ proposed-design:
   module-layout: >-
     `index.ts` exports the public surface. `ledger.ts` holds `createLedger`
     and its SQL statements. `migrations.ts` holds `ledgerMigrationSteps`, an
-    array of SQL strings whose step 1 is the script of
-    `docs/specifications/portfolio-ledger-tables.sql` as first written, and
-    whose step 2 rebuilds `ledger_operations` and `ledger_entries` with the
-    `reattribute` kind: for each table it renames the table aside, creates
-    it under its own name with the new constraints, copies every row with
-    its `seq` or key, drops the renamed table, whose indexes and triggers
-    go with it, and creates the table's indexes and triggers again. The
-    steps together produce the schema of
+    array with one SQL string that creates the complete schema of
     `docs/specifications/portfolio-ledger-tables.sql`. `sharing-rule.ts` and
     `balance.ts` hold the pure computations. `parseLedgerPortfolio`,
     `LedgerError`, `LedgerErrorCode`, `LedgerPortfolio`, and

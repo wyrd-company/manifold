@@ -802,17 +802,19 @@ test("issue absence is durable across restart and becomes available only after a
   await s.idle();
   expect(resumed.trackedIssue("I_A")?.issue.state).toBe("open");
 });
-test("the issue-presence migration preserves populated mirrors from version one", async () => {
+test("the fresh schema preserves a populated mirror when the source opens", async () => {
   const s = await setup();
   await s.idle();
   const prior = openStore({ path: `${s.path}.prior` });
   const schema = readFileSync(
     new URL("../../../../docs/specifications/github-source-database-schema.sql", import.meta.url),
     "utf8",
-  ).split("ALTER TABLE github_issue")[0]!;
+  );
   prior.connection.migrate("github", [schema]);
   prior.connection.database
-    .prepare("INSERT INTO github_issue VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .prepare(
+      "INSERT INTO github_issue(issue_node_id,repository,number,state,state_reason,baselined,revision) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
     .run("I_A", "sample/records", 1, "closed", "completed", 1, 4);
   const source = startGitHubSource({ ...s.options, store: prior, boundProjects: () => [] });
   cleanup.push(async () => {
@@ -828,7 +830,7 @@ test("the issue-presence migration preserves populated mirrors from version one"
     prior.connection.database
       .prepare("SELECT version FROM schema_migration WHERE owner='github'")
       .get()?.["version"],
-  ).toBe(5);
+  ).toBe(1);
 });
 
 test("uses the loaded GitHub section and named installation credential for fetched state", async () => {

@@ -38,14 +38,9 @@ description: |-
   a service escalation's handling was recorded; only a service row has it.
   Rows are never deleted.
 
-  Migrations. Step 1 creates both tables. Step 2 rebuilds `escalation`
-  so that its `kind` check takes any non-empty name: inside the
-  migration's transaction it sets `PRAGMA defer_foreign_keys = ON`, copies
-  every row into a table without constraints, drops `escalation`,
-  creates it as this file states, copies every row back, drops the copy,
-  and creates the table's indexes again. Every notification row keeps its
-  parent, so no foreign key fails at the commit, and the table's
-  `sqlite_schema` text equals this file's.
+  Migrations. At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 
   Notifications. `escalation_notification` holds one row per escalation,
   destination name, and purpose: `ask`, the question, or `close`, the
@@ -68,12 +63,7 @@ validation-criteria: >-
   `escalation` with the rows the same file's statements produce on a
   second empty database, with each run of whitespace in `sql` read as one
   space; they are equal. After the module opens, `schema_migration` holds
-  the row `('escalation', n)`, where n is the number of the module's
-  migration steps. An insert that sets both raiser forms, an answered row
+  the row `('escalation', 1)`. An insert that sets both raiser forms, an answered row
   without a channel, or a pending notification without a message fails.
-  Step 2 applied to a file at step 1 that holds blueprint and service
-  escalations, each with `ask` and `close` notification rows, keeps every
-  row of both tables unchanged, leaves `PRAGMA foreign_key_check` empty,
-  and gives the same `sqlite_schema` rows as a new file; an insert of a
-  service row with kind `intake-failed` then succeeds, and one with an
+  A service row with kind `intake-failed` succeeds, and one with an
   empty kind fails.

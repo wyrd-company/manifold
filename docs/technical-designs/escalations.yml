@@ -385,7 +385,7 @@ proposed-design:
     settled, its status, attempts, next attempt time, last error, and
     settled time. A service row's `kind` is any non-empty name, checked
     against `ServiceEscalationKind` in code, so a new kind changes no
-    table; step 2 rebuilds `escalation` to that check, as
+    table. The one schema step creates the tables as
     `escalations-database-schema` states. Rows are kept after an escalation ends, so the console
     can show what was asked and how it was answered.
   public-interface: |-
@@ -599,6 +599,6 @@ proposed-design:
     the cause is fixed, across a restart, releases the actor. A `raise`
     inside a caller's transaction that the caller then rolls back leaves
     no escalation and no notification row; one with a `title` publishes
-    that title. Step 2 of the migration, over a file at step 1 that holds
-    escalations and notifications, keeps every row. Values are
+    that title. Reopening a populated store keeps every escalation and
+    notification row, with the notification sequence intact. Values are
     generic and never drawn from Manifold's own domain.

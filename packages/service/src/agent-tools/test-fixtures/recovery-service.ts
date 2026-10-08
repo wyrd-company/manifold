@@ -30,7 +30,7 @@ export interface RecoveryConfiguration {
   recipientIssue?: string;
   recipientThreads?: string[];
   githubUrl?: string;
-  legacyMessage?: boolean;
+  seedMessage?: boolean;
   identifyTimeoutMs?: number;
   held?: "different" | "unavailable" | "available";
   soleHeld?: boolean;
@@ -40,8 +40,8 @@ export interface RecoveryConfiguration {
 }
 export async function recoveryService(config: RecoveryConfiguration) {
   const store = openStore({ path: config.path });
-  if (config.legacyMessage) {
-    store.connection.migrate("agenttool", agentToolSteps.slice(0, 2));
+  if (config.seedMessage) {
+    store.connection.migrate("agenttool", agentToolSteps);
     store.connection.database
       .prepare(
         "INSERT INTO agenttool_message(message_id,environment,thread_id,sender_actor_id,sender_issue,text,sent_at,delivered_at,delivered_to) VALUES (?, 'station', 'conversation', 'depot', 'shipment', 'The depot schedule changed.', 0, 1, 'parcel')",

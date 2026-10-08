@@ -2,14 +2,14 @@
 // relationships:
 //   implements: github-source-database-schema
 // ---
-export const githubSteps = [
-  String.raw`-- ---
+export const githubSteps: readonly string[] = [
+  `-- ---
 -- relationships:
 --   realizes: github-source-database-schema
 -- ---
 -- SQLite schema of the tables the GitHub event source owns in Manifold's
 -- database file, beside the store's and the router's tables and migrated
--- under the owner github.
+-- under the owner \`github\`.
 
 CREATE TABLE github_delivery (
   delivery_id TEXT PRIMARY KEY CHECK (length(delivery_id) > 0),
@@ -39,18 +39,14 @@ CREATE TABLE github_pending (
   PRIMARY KEY (kind, node_id)
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX github_pending_requested ON github_pending (requested_at);
-
 CREATE TABLE github_project (
   project_node_id TEXT PRIMARY KEY CHECK (length(project_node_id) > 0),
   owner TEXT NOT NULL CHECK (length(owner) > 0),
   number INTEGER NOT NULL CHECK (number > 0),
   closed INTEGER NOT NULL CHECK (closed IN (0, 1)),
-  revision INTEGER NOT NULL CHECK (revision >= 0)
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  fields_read_at INTEGER
 ) STRICT, WITHOUT ROWID;
-
-CREATE UNIQUE INDEX github_project_owner_number
-  ON github_project (owner COLLATE NOCASE, number);
 
 CREATE TABLE github_item (
   item_node_id TEXT PRIMARY KEY CHECK (length(item_node_id) > 0),
@@ -62,9 +58,6 @@ CREATE TABLE github_item (
   archived INTEGER NOT NULL CHECK (archived IN (0, 1)),
   revision INTEGER NOT NULL CHECK (revision >= 0)
 ) STRICT, WITHOUT ROWID;
-
-CREATE INDEX github_item_project ON github_item (project_node_id);
-CREATE INDEX github_item_content ON github_item (content_node_id);
 
 CREATE TABLE github_field_value (
   item_node_id TEXT NOT NULL,
@@ -83,7 +76,10 @@ CREATE TABLE github_issue (
   state_reason TEXT
     CHECK (state_reason IN ('completed', 'not_planned', 'duplicate', 'reopened')),
   baselined INTEGER NOT NULL CHECK (baselined IN (0, 1)),
-  revision INTEGER NOT NULL CHECK (revision >= 0)
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  present INTEGER NOT NULL DEFAULT 1 CHECK (present IN (0, 1)),
+  title TEXT,
+  url TEXT
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE github_dependency (
@@ -94,8 +90,6 @@ CREATE TABLE github_dependency (
   PRIMARY KEY (blocked_node_id, blocking_node_id)
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX github_dependency_blocking ON github_dependency (blocking_node_id);
-
 CREATE TABLE github_sub_issue (
   parent_node_id TEXT NOT NULL,
   sub_issue_node_id TEXT NOT NULL,
@@ -104,26 +98,7 @@ CREATE TABLE github_sub_issue (
   PRIMARY KEY (parent_node_id, sub_issue_node_id)
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX github_sub_issue_sub ON github_sub_issue (sub_issue_node_id);
-`,
-  `ALTER TABLE github_issue ADD COLUMN present INTEGER NOT NULL DEFAULT 1 CHECK (present IN (0, 1));`,
-  String.raw`CREATE TABLE github_card_move (
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
-  invoke_id TEXT NOT NULL CHECK (length(invoke_id) > 0),
-  entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
-  item_node_id TEXT NOT NULL CHECK (length(item_node_id) > 0),
-  field_node_id TEXT NOT NULL CHECK (length(field_node_id) > 0),
-  option_id TEXT NOT NULL CHECK (length(option_id) > 0),
-  state TEXT NOT NULL CHECK (state IN ('sent', 'confirmed', 'doubtful')),
-  sequence INTEGER NOT NULL CHECK (sequence > 0),
-  PRIMARY KEY (actor_id, invoke_id, entry_id)
-) STRICT, WITHOUT ROWID;
-
-CREATE INDEX github_card_move_field ON github_card_move (item_node_id, field_node_id, sequence);
-`,
-  `ALTER TABLE github_issue ADD COLUMN title TEXT;
-ALTER TABLE github_issue ADD COLUMN url TEXT;`,
-  String.raw`CREATE TABLE github_project_field (
+CREATE TABLE github_project_field (
   project_node_id TEXT NOT NULL CHECK (length(project_node_id) > 0),
   field_node_id TEXT NOT NULL CHECK (length(field_node_id) > 0),
   position INTEGER NOT NULL CHECK (position >= 0),
@@ -134,9 +109,7 @@ ALTER TABLE github_issue ADD COLUMN url TEXT;`,
   PRIMARY KEY (project_node_id, field_node_id)
 ) STRICT, WITHOUT ROWID;
 
-ALTER TABLE github_project ADD COLUMN fields_read_at INTEGER;
-
-CREATE TABLE github_card_move_next (
+CREATE TABLE github_card_move (
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
   invoke_id TEXT NOT NULL CHECK (length(invoke_id) > 0),
   entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
@@ -148,13 +121,18 @@ CREATE TABLE github_card_move_next (
   PRIMARY KEY (actor_id, invoke_id, entry_id, field_node_id, option_id)
 ) STRICT, WITHOUT ROWID;
 
-INSERT INTO github_card_move_next
-  SELECT actor_id, invoke_id, entry_id, item_node_id, field_node_id, option_id, state, sequence
-  FROM github_card_move;
+CREATE INDEX github_pending_requested ON github_pending (requested_at);
 
-DROP TABLE github_card_move;
+CREATE UNIQUE INDEX github_project_owner_number
+  ON github_project (owner COLLATE NOCASE, number);
 
-ALTER TABLE github_card_move_next RENAME TO github_card_move;
+CREATE INDEX github_item_project ON github_item (project_node_id);
+
+CREATE INDEX github_item_content ON github_item (content_node_id);
+
+CREATE INDEX github_dependency_blocking ON github_dependency (blocking_node_id);
+
+CREATE INDEX github_sub_issue_sub ON github_sub_issue (sub_issue_node_id);
 
 CREATE INDEX github_card_move_field ON github_card_move (item_node_id, field_node_id, sequence);
 `,

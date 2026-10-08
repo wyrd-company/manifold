@@ -13,9 +13,9 @@ description: >-
   definition: the schema that the module's migration steps produce. The
   module's owner name is `intake`, and every table it creates is named
   `intake_<name>`. Its steps are applied by the store's
-  `migrate("intake", steps)`; the module never runs DDL itself. Step 1 is
-  this file's script. Steps are append-only: a change to the table is a new
-  step, and this file is rewritten to the schema all steps produce.
+  `migrate("intake", steps)`; the module never runs DDL itself. At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 
   `intake_record` holds one row per issue that intake has decided or failed
   to decide, keyed by the issue's node id. Its columns hold the fields of
@@ -33,12 +33,6 @@ description: >-
   `recorded`. A trigger aborts every update of a `started` row, every
   update of a `recorded` row that changes its status to `failed` or any of
   its decision columns, its issue digest included, and every `DELETE`.
-
-  Step 2 adds `issue_digest` with `ALTER TABLE ... ADD COLUMN`, which
-  places it after `updated_at`, so every existing row reads null and a
-  `failed` row from before the step is decided again once, then drops
-  `intake_record_decided` and creates it again with the digest among the
-  columns it keeps.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/intake-records-table.sql` runs without error on an
@@ -53,5 +47,3 @@ validation-criteria: >-
   records a start failure on a `recorded` row, and one from `recorded` to
   `started` that clears it, succeed. An update of a `recorded` row's
   `issue_digest` fails, and one of a `failed` row's to null succeeds.
-  Steps 1 and 2 applied to a file at step 1 that holds a row of each
-  status keep every row, with a null digest.

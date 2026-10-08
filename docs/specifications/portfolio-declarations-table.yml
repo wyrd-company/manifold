@@ -15,9 +15,9 @@ description: >-
   produce. The module's owner name is `portfolio`, and every table and
   trigger it creates is named `portfolio_<name>`. Its steps are applied by
   the store's `migrate("portfolio", steps)`; the module never runs DDL
-  itself. Step 1 is this file's script. Steps are append-only: a change to
-  the table is a new step, and this file is rewritten to the schema all
-  steps produce.
+  itself. At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 
   `portfolio_declarations` holds one row per accepted declaration whose
   content differs from the declaration in force. `commit_id` is the full

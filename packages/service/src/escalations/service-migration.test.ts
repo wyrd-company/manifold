@@ -10,7 +10,7 @@ import { expect, it } from "vite-plus/test";
 import { openStore } from "../store/index.ts";
 import { openEscalations } from "./index.ts";
 import { escalationSteps } from "./migrations.ts";
-it("widens kind while preserving existing questions, answers, notification rows and foreign keys", async () => {
+it("accepts service kinds and preserves questions and notifications when reopened", async () => {
   const dir = mkdtempSync(join(tmpdir(), "question-upgrade-"));
   const store = openStore({ path: join(dir, "store.sqlite") });
   let questions: ReturnType<typeof openEscalations> | undefined;

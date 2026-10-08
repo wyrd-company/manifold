@@ -4,6 +4,14 @@
 // ---
 import { DatabaseSync } from "node:sqlite";
 import type { StoreConnection } from "./types.ts";
+import { storeSteps } from "./migrations.ts";
+
+function assertSupportedVersion(owner: string, version: number, supported: number) {
+  if (version > supported)
+    throw new Error(
+      `Schema owner ${owner} has version ${version}; this build supports ${supported}. Create a new store.`,
+    );
+}
 
 export function openConnection(path: string): StoreConnection {
   const database = new DatabaseSync(path);
@@ -42,10 +50,7 @@ export function openConnection(path: string): StoreConnection {
             "version"
           ] ?? 0,
         );
-        if (version > steps.length)
-          throw new Error(
-            `Schema owner ${owner} has version ${version}; this build supports ${steps.length}`,
-          );
+        assertSupportedVersion(owner, version, steps.length);
         for (const step of steps.slice(version)) database.exec(step);
         database
           .prepare(
@@ -56,6 +61,21 @@ export function openConnection(path: string): StoreConnection {
     },
   };
   try {
+    if (database.prepare("SELECT name FROM sqlite_schema WHERE name = 'schema_migration'").get()) {
+      const version = Number(
+        database.prepare("SELECT version FROM schema_migration WHERE owner = 'store'").get()?.[
+          "version"
+        ] ?? 0,
+      );
+      assertSupportedVersion("store", version, storeSteps.length);
+      if (
+        version === 1 &&
+        !database
+          .prepare("SELECT name FROM sqlite_schema WHERE name = 'store_migration_failure'")
+          .get()
+      )
+        throw new Error("Schema owner store has a pre-0.1.0 schema. Create a new store.");
+    }
     database.exec(
       "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;",
     );

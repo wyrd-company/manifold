@@ -3,18 +3,18 @@
 //   implements: task-metadata-tables
 // ---
 export const taskMetadataMigrationSteps: readonly string[] = [
-  String.raw`-- ---
+  `-- ---
 -- relationships:
 --   asset-of: task-metadata-tables
 -- ---
 -- The task metadata module's tables: the schema that its migration steps
--- produce. The store applies the steps with migrate("metadata", steps)
--- and records the version in schema_migration; the module runs no DDL.
+-- produce. The store applies the steps with \`migrate("metadata", steps)\`
+-- and records the version in \`schema_migration\`; the module runs no DDL.
 
 -- One row per accepted declaration whose content differs from the row
--- before it. The row with the greatest seq is the declaration in force.
--- declaration is the canonical JSON (keys sorted) of the declaration
--- lintTaskMetadataDeclaration returns.
+-- before it. The row with the greatest \`seq\` is the declaration in force.
+-- \`declaration\` is the canonical JSON (keys sorted) of the declaration
+-- \`lintTaskMetadataDeclaration\` returns.
 CREATE TABLE metadata_declarations (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   commit_id TEXT NOT NULL CHECK (length(commit_id) > 0),
@@ -35,8 +35,8 @@ CREATE TABLE metadata_rejections (
   findings TEXT NOT NULL CHECK (json_valid(findings)),
   rejected_at INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
-`,
-  String.raw`-- The applied configuration of each binding on each Project: the Project's
+
+-- The applied configuration of each binding on each Project: the Project's
 -- custom fields as the observation that ended its last Apply read them.
 -- Each completed Apply replaces its row.
 CREATE TABLE metadata_project_applies (

@@ -63,6 +63,9 @@ description: |-
   the thread's read messages, unique in the thread, which orders every
   answer. A message is noticed and read only once delivered,
   and each column is set once.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/agent-tools-database-schema.sql` runs without error
@@ -80,9 +83,4 @@ validation-criteria: >-
   messages of one thread at one read position, and a message noticed or
   read before it is delivered each fail. A sender repository without an
   issue or a number, a sender number without a repository, and a sender
-  title without a repository each fail. The step that adds
-  `agenttool_message` is step 2 of the owner `agenttool`, and a store
-  file at step 1 that holds question and answer rows migrates with every
-  row kept. Step 3 adds the sender columns to `agenttool_message`, and a
-  store file at step 2 that holds messages migrates with every row kept
-  and no sender name on any of them.
+  title without a repository each fail.

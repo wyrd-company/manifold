@@ -19,20 +19,9 @@ description: >-
   definition: the schema that the module's migration steps produce. The
   module's owner name is `usage`, and every table, index, and trigger it
   creates is named `usage_<name>`. Its steps are applied by the store's
-  `migrate("usage", steps)`; the module never runs DDL itself. This file
-  is the schema all steps produce together. Step 1 creates every table,
-  index, and trigger here but those of `usage_reattributions` and the
-  view. Step 2 creates the late attributions table, which holds one row
-  per posting with the actor, item, visit, and time its session's
-  mapping gave, with its index and triggers. Step 3 creates
-  `usage_reattributions`, its indexes, its triggers, and the view
-  `usage_attributed_postings`, copies each late attribution row into
-  `usage_reattributions` in `seq` order as a row of cause `mapping`
-  with its posting, actor, item, visit, and time, and drops the late
-  attributions table.
-  Steps are append-only: an applied step never changes, a change to the
-  tables is a new step, and this file is rewritten to the schema all
-  steps produce.
+  `migrate("usage", steps)`; the module never runs DDL itself. At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 
   Declarations. `usage_declarations` holds one row per accepted
   declaration of `accounts.yml` and `prices.yml` whose content differs
@@ -119,9 +108,6 @@ validation-criteria: >-
   `mapping` or `ownership` reattribution with a ledger key fails a CHECK
   constraint, and a `move` one without a ledger key is accepted. The view answers, for a posting with
   a `move` row followed by a `mapping` row, the `mapping` row's
-  attribution and the `move` row's actor and item as held. A database
-  at step 2 holding late attributions, migrated by step 3, holds each as
-  a `mapping` reattribution of its posting with the same actor, item,
-  visit, and time, in the same order. A posted
+  attribution and the `move` row's actor and item as held. A posted
   posting without a ledger key, a pending posting without a reason, and an unaccounted posting with an account each fail
   a CHECK constraint.

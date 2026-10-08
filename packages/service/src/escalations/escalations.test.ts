@@ -193,13 +193,16 @@ test("agent questions accept title and free text and roll back with their caller
   expect(module.answer(raised.id, { text: "Front desk" }, "api").status).toBe("answered");
 });
 
-test("upgrades populated escalations without losing answers, notifications or sequence", () => {
+test("reopens populated escalations without losing answers, notifications or sequence", () => {
   const directory = mkdtempSync(join(tmpdir(), "questions-"));
   cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, "store.sqlite");
   const old = openStore({ path });
   old.connection.migrate("escalation", [
-    readFileSync(new URL("./test-fixtures/legacy-schema.sql", import.meta.url), "utf8"),
+    readFileSync(
+      new URL("../../../../docs/specifications/escalations-database-schema.sql", import.meta.url),
+      "utf8",
+    ),
   ]);
   const id = "a".repeat(22);
   old.connection.database
@@ -278,5 +281,5 @@ test("upgrades populated escalations without losing answers, notifications or se
     store.connection.database
       .prepare("SELECT version FROM schema_migration WHERE owner='escalation'")
       .get()?.["version"],
-  ).toBe(2);
+  ).toBe(1);
 });

@@ -13,11 +13,9 @@ description: >-
   creates is named `ledger_<name>`. The ledger owns these four tables and no
   other. Its steps are applied by the store's `migrate("ledger", steps)`,
   which records the ledger's version in the shared `schema_migration` table;
-  the ledger never runs DDL itself. Step 1 creates the four tables with
-  every kind but `reattribute`, and step 2 rebuilds `ledger_operations`
-  and `ledger_entries` with it, keeping every row. Steps are append-only:
-  a change to these tables is a new step, and this file is rewritten to
-  the schema all steps produce.
+  the ledger never runs DDL itself. At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 
   Append-only. No row of a ledger table is updated or deleted. A trigger on
   each table aborts every `UPDATE` and `DELETE`. Settlement, move, and

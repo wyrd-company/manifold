@@ -18,17 +18,12 @@ CREATE TABLE t3_thread (
   status TEXT NOT NULL CHECK (status IN ('followed', 'archived', 'deleted')),
   cursor INTEGER NOT NULL CHECK (cursor >= 0),
   thread TEXT NOT NULL CHECK (json_valid(thread)),
+  project_id TEXT,
+  attribution TEXT NOT NULL
+  DEFAULT '{"turnId":null,"messageId":null,"pendingMessageId":null}'
+  CHECK (json_valid(attribution)),
   PRIMARY KEY (environment, thread_id)
 ) STRICT, WITHOUT ROWID;
-
-CREATE INDEX t3_thread_followed ON t3_thread (environment, status);
-
-ALTER TABLE t3_thread ADD COLUMN project_id TEXT;
-UPDATE t3_thread SET project_id = json_extract(thread, '$.projectId');
-
-ALTER TABLE t3_thread ADD COLUMN attribution TEXT NOT NULL
-  DEFAULT '{"turnId":null,"messageId":null,"pendingMessageId":null}'
-  CHECK (json_valid(attribution));
 
 CREATE TABLE t3_created_project (
   environment TEXT NOT NULL REFERENCES t3_environment (environment) ON DELETE CASCADE,
@@ -37,3 +32,5 @@ CREATE TABLE t3_created_project (
   item TEXT NOT NULL CHECK (length(item) > 0),
   PRIMARY KEY (environment, project_id)
 ) STRICT, WITHOUT ROWID;
+
+CREATE INDEX t3_thread_followed ON t3_thread (environment, status);

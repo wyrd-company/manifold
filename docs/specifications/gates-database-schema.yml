@@ -68,6 +68,9 @@ description: |-
   the holder's last saved configuration is one of its gate's trap
   configurations. At most one token of a gate is held by one actor at a
   time, and one entry is granted at most one token.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/gates-database-schema.sql` runs without error on an
@@ -76,7 +79,6 @@ validation-criteria: >-
   `tbl_name`, and `sql` of every `sqlite_schema` row whose name starts with
   `gates_` with the rows this file produces on a second empty database, with
   each run of whitespace in `sql` read as one space; they are equal. After
-  migration, `schema_migration` holds the row `('gates', n)`, where n is the
-  number of the module's migration steps. A second held token of one gate
+  migration, `schema_migration` holds the row `('gates', 1)`. A second held token of one gate
   for one actor, and a token whose id does not match its entry id, each fail
   their constraint.

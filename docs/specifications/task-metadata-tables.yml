@@ -15,9 +15,9 @@ description: >-
   steps produce. The module's owner name is `metadata`, and every table and
   trigger it creates is named `metadata_<name>`. Its steps are applied by
   the store's `migrate("metadata", steps)`; the module never runs DDL
-  itself. Step 1 is this file's script. Steps are append-only: a change to
-  a table is a new step, and this file is rewritten to the schema all steps
-  produce.
+  itself. At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 
   `metadata_declarations` holds one row per accepted task metadata
   declaration whose content differs from the declaration in force.
@@ -43,7 +43,7 @@ description: >-
   `{ "lifecycle", "fields" }` of the node id of the field each owned field
   matched, `lifecycle` `null` when it matched none and `fields` keyed by
   task field name, and `applied_at` the time
-  the Apply recorded it, in epoch milliseconds. Step 2 creates it.
+  the Apply recorded it, in epoch milliseconds.
 
   `metadata_pending_saves` holds, per binding, the accept save an Apply
   pushed whose commit was not yet in force: `save_id`, the save's id;
@@ -51,7 +51,7 @@ description: >-
   when `Revisions.save` resolves `saved` with no load, replacing the
   binding's earlier row, reads it when a later save of the same id
   rejects, and deletes it when it records the binding's applied
-  configuration. Step 2 creates it.
+  configuration.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/task-metadata-tables.sql` runs without error on an

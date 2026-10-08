@@ -48,6 +48,9 @@ description: >-
   invoke. The row is written once the server has accepted the
   `project.create` command, before the invoke resolves, and writing it
   again leaves the first row.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/t3code-source-database-schema.sql` runs without error
@@ -56,5 +59,4 @@ validation-criteria: >-
   `sqlite_schema` row whose name starts with `t3_` with the rows the same
   file's statements produce on a second empty database, with each run of
   whitespace in `sql` read as one space; they are equal. After the source
-  starts, `schema_migration` holds the row `('tthree', n)`, where n is the number
-  of the source's migration steps.
+  starts, `schema_migration` holds the row `('tthree', 1)`.

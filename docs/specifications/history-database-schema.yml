@@ -17,9 +17,9 @@ description: >-
   steps produce. The module's owner name is `history`, and every table and
   index it creates is named `history_<name>`. Its steps are applied by the
   store's `migrate("history", steps)`; the module never runs DDL itself.
-  Step 1 creates every table and index here. Steps are append-only: an
-  applied step never changes, a change to the tables is a new step, and
-  this file is rewritten to the schema all steps produce.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 
   Visits. `history_visit` holds one row per state visit of an actor,
   numbered from 1 in the order the visits were entered. `machine` is the

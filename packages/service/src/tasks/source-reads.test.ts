@@ -7,12 +7,14 @@ import { openStore } from "../store/index.ts";
 import { githubSteps } from "../github-source/migrations.ts";
 import { createMirror } from "../github-source/mirror.ts";
 
-test("issue titles and URLs survive a mirror write and an older row remains readable", () => {
+test("issue titles and URLs survive a mirror write and a row without a title remains readable", () => {
   const store = openStore({ path: ":memory:" });
   try {
-    store.connection.migrate("github", githubSteps.slice(0, 2));
+    store.connection.migrate("github", githubSteps);
     store.connection.database
-      .prepare("INSERT INTO github_issue VALUES (?,?,?,?,?,?,?,?)")
+      .prepare(
+        "INSERT INTO github_issue(issue_node_id,repository,number,state,state_reason,baselined,revision,present) VALUES (?,?,?,?,?,?,?,?)",
+      )
       .run("old", "example/delivery", 1, "open", null, 1, 0, 1);
     store.connection.migrate("github", githubSteps);
     const mirror = createMirror(store, () => 0),

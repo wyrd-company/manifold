@@ -22,6 +22,9 @@ description: >-
   that writes the event's inbox rows, including for an event that reached no
   actor, and is never updated or deleted, so a second publish of the same
   source event finds it and is a replay.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/router-database-schema.sql` runs without error on an
@@ -30,5 +33,4 @@ validation-criteria: >-
   `sqlite_schema` row whose name starts with `router_` with the rows the same
   file's statements produce on a second empty database, with each run of
   whitespace in `sql` read as one space; they are equal. After the router
-  starts, `schema_migration` holds the row `('router', n)`, where n is the
-  number of the router's migration steps.
+  starts, `schema_migration` holds the row `('router', 1)`.

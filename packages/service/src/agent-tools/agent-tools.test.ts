@@ -696,7 +696,7 @@ test("agent tools migration agrees with the declared DDL and runs once", async (
     expect(rows(db)).toEqual(rows(declared));
     expect(
       db.prepare("SELECT version FROM schema_migration WHERE owner='agenttool'").get()!["version"],
-    ).toBe(3);
+    ).toBe(1);
   } finally {
     declared.close();
   }

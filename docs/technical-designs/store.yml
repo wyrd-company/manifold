@@ -251,17 +251,25 @@ proposed-design:
     `migrate(owner, steps)` brings an owner's tables to the latest step. In
     one transaction it reads the owner's version from `schema_migration`,
     zero when the row is absent, runs each step from that index to the end
-    with `exec`, and writes the number of steps as the version. Steps are
-    append-only: a step that has run on a database is never edited, and a
+    with `exec`, and writes the number of steps as the version. At 0.1.0,
+    each owner has one step that creates its complete schema. A schema
+    change edits that step in place and requires a new store. After
+    0.1.0, steps are append-only: an applied step is never edited, and a
     change is a new step. Running `migrate` twice runs nothing the second
     time; a crash during it rolls back every step of that call. A recorded
     version greater than the number of steps throws an `Error` naming the
-    owner and both numbers and changes nothing, since that file was written
-    by a later build. `openStore` calls `migrate("store", storeSteps)`
+    owner and both numbers, tells the operator to create a new store, and
+    changes nothing. The folded schema rejects stores whose recorded
+    versions exceed this build's steps. `openStore` calls `migrate("store", storeSteps)`
     before it returns. An owner is a lower-case word; `migrate` throws a
     `TypeError` for any other owner string.
   opening: >-
-    `openStore` opens the file with `new DatabaseSync(path)`, runs `PRAGMA
+    `openStore` opens the file with `new DatabaseSync(path)`, checks the
+    recorded store version before changing the file. A version-1 store
+    must contain `store_migration_failure`, which distinguishes the
+    complete schema from the pre-fold version 1; otherwise opening
+    throws an error naming `store` and telling the operator to create a
+    new store. It then runs `PRAGMA
     journal_mode = WAL`, `PRAGMA synchronous = FULL`, and `PRAGMA
     foreign_keys = ON`, then migrates. The service opens one store per
     database file and keeps it for the life of the process. Opening a store
@@ -406,7 +414,7 @@ proposed-design:
     own save clears it. `migrationFailure` and `migrationFailures` read the
     rows, `detail` parsed from JSON. `clearMigrationFailures(to)` deletes
     the rows of one target in one statement, which joins the caller's
-    transaction. Step 4 of the store's migration creates the table and its
+    transaction. The store's one schema step creates the table and its
     index.
   probe: >-
     `probe` observes a delivery between its steps: `sent` after the target
@@ -494,6 +502,8 @@ proposed-design:
     a new `to`, which replaces it; a save on the same machine keeps the
     record, and a save on another machine and a `done` save delete it;
     `migrationFailures` lists one target's records by actor id, and
-    `clearMigrationFailures` deletes only them; a file at step 3 opened by
-    this build has the table and keeps every snapshot, inbox, and
-    deadline row.
+    `clearMigrationFailures` deletes only them. A populated store written
+    by the pre-fold steps is refused with the owner name and an instruction
+    to create a new store, with its file unchanged. SQLite schema tables
+    prove that each owner's one step creates the same tables, columns,
+    indexes, views, and triggers as the pre-fold steps.

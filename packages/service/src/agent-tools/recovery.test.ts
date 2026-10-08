@@ -777,9 +777,9 @@ test("SIGKILL after a read preserves the stored sender despite a mirror rename",
   expect(await resumed.call("get-messages", { thread: "conversation" })).toEqual(read);
 });
 
-test("a populated step-2 message migrates once and reads with its actor label", async () => {
+test("a populated message without a sender name reopens and reads with its actor label", async () => {
   const f = await fixture(true);
-  const service = await recoveryService({ ...f.config, legacyMessage: true });
+  const service = await recoveryService({ ...f.config, seedMessage: true });
   const before = await service.call("get-messages", { thread: "conversation" });
   expect(before).toMatchObject({
     status: "read",
@@ -795,7 +795,7 @@ test("a populated step-2 message migrates once and reads with its actor label", 
     service.store.connection.database
       .prepare("SELECT version FROM schema_migration WHERE owner='agenttool'")
       .get()!["version"],
-  ).toBe(3);
+  ).toBe(1);
   await service.stop();
   const resumed = await recoveryService(f.config);
   cleanup.push(() => resumed.stop());

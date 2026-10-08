@@ -627,8 +627,8 @@ proposed-design:
     mounts, so the service stops taking Project requests and ends each
     Apply in hand before it stops the sources. `github-card-move` is in
     `manifoldImplementationNames`. The `metadata` migration steps run
-    where they run today, and the GitHub source's step 5 runs in the
-    `github-mirror` part with the source's other steps. The GitHub source
+    in the store part, and the GitHub source's one schema step runs in the
+    `github-mirror` part. The GitHub source
     part passes `lifecycleField`, which maps a Project node id to its
     mirror row, the row to its binding through `portfolio.githubProject`,
     and the binding to the declaration in force's lifecycle `field`, read

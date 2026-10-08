@@ -27,6 +27,9 @@ description: >-
   action that changes a hold, in the transaction that publishes its event.
   Rows are never deleted: a row whose environment is no longer configured
   is ignored, and holds again if the name is configured again.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/environment-control-database-schema.sql` runs

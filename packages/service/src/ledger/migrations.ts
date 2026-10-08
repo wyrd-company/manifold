@@ -3,7 +3,7 @@
 //   implements: portfolio-ledger-tables
 // ---
 export const ledgerMigrationSteps: readonly string[] = [
-  String.raw`-- ---
+  `-- ---
 -- relationships:
 --   asset-of: portfolio-ledger-tables
 -- ---
@@ -11,12 +11,13 @@ export const ledgerMigrationSteps: readonly string[] = [
 -- steps produce. The store applies the steps with \`migrate("ledger", steps)\`
 -- and records the version in \`schema_migration\`; the ledger runs no DDL.
 
--- One row per idempotent write: credit, reserve, actual, and move.
+-- One row per idempotent write: credit, reserve, actual, move, and
+-- reattribute.
 -- \`request\` is the canonical JSON of the request (keys sorted), so a replay
 -- with the same key is compared to the first request field by field.
 CREATE TABLE ledger_operations (
   key TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('credit', 'reserve', 'actual', 'move')),
+  kind TEXT NOT NULL CHECK (kind IN ('credit', 'reserve', 'actual', 'move', 'reattribute')),
   request TEXT NOT NULL,
   at INTEGER NOT NULL
 ) STRICT;
@@ -47,10 +48,16 @@ CREATE TABLE ledger_settlements (
 --   settle   retires an actor's net reservation on an item. No window.
 --   move     carries an outstanding reservation from one item to another,
 --            as a pair of rows with the same operation and opposite signs.
+--   reattribute
+--            carries a posted actual from one actor and item to another in
+--            the window of its use, as a pair of rows with the same
+--            operation and opposite signs.
 -- \`amount\` is an integer in the account's native unit.
 CREATE TABLE ledger_entries (
   seq INTEGER PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('credit', 'actual', 'reserve', 'settle', 'move')),
+  kind TEXT NOT NULL CHECK (
+    kind IN ('credit', 'actual', 'reserve', 'settle', 'move', 'reattribute')
+  ),
   operation TEXT,
   account TEXT NOT NULL,
   window_key TEXT,
@@ -59,17 +66,18 @@ CREATE TABLE ledger_entries (
   amount INTEGER NOT NULL,
   at INTEGER NOT NULL,
   CHECK ((kind = 'settle') = (operation IS NULL)),
-  CHECK ((kind IN ('credit', 'actual')) = (window_key IS NOT NULL)),
+  CHECK ((kind IN ('credit', 'actual', 'reattribute')) = (window_key IS NOT NULL)),
   CHECK ((kind = 'credit') = (item IS NULL)),
   CHECK ((kind = 'credit') = (actor IS NULL)),
   CHECK (kind <> 'credit' OR amount > 0),
   CHECK (kind <> 'actual' OR amount >= 0),
   CHECK (kind <> 'reserve' OR amount > 0),
   CHECK (kind <> 'settle' OR amount < 0),
-  CHECK (kind <> 'move' OR amount <> 0)
+  CHECK (kind <> 'move' OR amount <> 0),
+  CHECK (kind <> 'reattribute' OR amount <> 0)
 ) STRICT;
 
--- Window sums: credits and actuals of one account window.
+-- Window sums: credits, actuals, and reattributions of one account window.
 CREATE INDEX ledger_entries_by_window
   ON ledger_entries (account, window_key, kind);
 
@@ -106,5 +114,4 @@ CREATE TRIGGER ledger_entries_no_delete
   BEFORE DELETE ON ledger_entries
   BEGIN SELECT RAISE(ABORT, 'ledger_entries is append-only'); END;
 `,
-  "ALTER TABLE ledger_operations RENAME TO ledger_operations_step_one;\n\nCREATE TABLE ledger_operations (\n  key TEXT PRIMARY KEY,\n  kind TEXT NOT NULL CHECK (kind IN ('credit', 'reserve', 'actual', 'move', 'reattribute')),\n  request TEXT NOT NULL,\n  at INTEGER NOT NULL\n) STRICT;\n\nINSERT INTO ledger_operations SELECT * FROM ledger_operations_step_one;\n\nDROP TABLE ledger_operations_step_one;\n\nALTER TABLE ledger_entries RENAME TO ledger_entries_step_one;\n\nCREATE TABLE ledger_entries (\n  seq INTEGER PRIMARY KEY,\n  kind TEXT NOT NULL CHECK (\n    kind IN ('credit', 'actual', 'reserve', 'settle', 'move', 'reattribute')\n  ),\n  operation TEXT,\n  account TEXT NOT NULL,\n  window_key TEXT,\n  item TEXT,\n  actor TEXT,\n  amount INTEGER NOT NULL,\n  at INTEGER NOT NULL,\n  CHECK ((kind = 'settle') = (operation IS NULL)),\n  CHECK ((kind IN ('credit', 'actual', 'reattribute')) = (window_key IS NOT NULL)),\n  CHECK ((kind = 'credit') = (item IS NULL)),\n  CHECK ((kind = 'credit') = (actor IS NULL)),\n  CHECK (kind <> 'credit' OR amount > 0),\n  CHECK (kind <> 'actual' OR amount >= 0),\n  CHECK (kind <> 'reserve' OR amount > 0),\n  CHECK (kind <> 'settle' OR amount < 0),\n  CHECK (kind <> 'move' OR amount <> 0),\n  CHECK (kind <> 'reattribute' OR amount <> 0)\n) STRICT;\n\nINSERT INTO ledger_entries SELECT * FROM ledger_entries_step_one;\n\nDROP TABLE ledger_entries_step_one;\n\nCREATE INDEX ledger_entries_by_window\n  ON ledger_entries (account, window_key, kind);\n\n-- Outstanding reservations: entries of one actor on one item and account.\nCREATE INDEX ledger_entries_by_actor\n  ON ledger_entries (actor, account, item);\n\nCREATE TRIGGER ledger_operations_no_update\n  BEFORE UPDATE ON ledger_operations\n  BEGIN SELECT RAISE(ABORT, 'ledger_operations is append-only'); END;\n\nCREATE TRIGGER ledger_operations_no_delete\n  BEFORE DELETE ON ledger_operations\n  BEGIN SELECT RAISE(ABORT, 'ledger_operations is append-only'); END;\n\nCREATE TRIGGER ledger_entries_no_update\n  BEFORE UPDATE ON ledger_entries\n  BEGIN SELECT RAISE(ABORT, 'ledger_entries is append-only'); END;\n\nCREATE TRIGGER ledger_entries_no_delete\n  BEFORE DELETE ON ledger_entries\n  BEGIN SELECT RAISE(ABORT, 'ledger_entries is append-only'); END;",
 ];

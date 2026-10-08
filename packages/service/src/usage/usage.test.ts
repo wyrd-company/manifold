@@ -1176,11 +1176,10 @@ it.each([false, true])(
   },
 );
 
-it("usage step 3 preserves populated late mappings and every posting", () => {
+it("fresh usage mappings preserve postings and enforce append-only reattributions", () => {
   const db = new DatabaseSync(":memory:");
   try {
     db.exec(usageMigrationSteps[0]!);
-    db.exec(usageMigrationSteps[1]!);
     db.prepare("INSERT INTO usage_calls VALUES (?,?,?,?,?,?)").run(
       "env-one",
       "call-1",
@@ -1192,9 +1191,10 @@ it("usage step 3 preserves populated late mappings and every posting", () => {
     db.prepare(
       "INSERT INTO usage_postings (seq,environment,call_key,revision,used_at,provider,speed,base_tokens,tokens,actor,item,account,amount,status,ledger_key,posted_at) VALUES (7,'env-one','call-1',1,100,'codex','standard','{}','{}','session:env-one:codex:one','other','acct',10,'posted','usage-1',200)",
     ).run();
-    db.prepare("INSERT INTO usage_late_attributions VALUES (7,'actor-1','alpha',2,300)").run();
     const before = db.prepare("SELECT * FROM usage_postings").all();
-    db.exec(usageMigrationSteps[2]!);
+    db.prepare(
+      "INSERT INTO usage_reattributions (posting,cause,actor,item,visit,recorded_at) VALUES (7,'mapping','actor-1','alpha',2,300)",
+    ).run();
     expect(db.prepare("SELECT * FROM usage_postings").all()).toEqual(before);
     expect(db.prepare("SELECT * FROM usage_reattributions").get()).toEqual({
       seq: 1,

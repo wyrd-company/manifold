@@ -64,6 +64,9 @@ description: >-
   version.
 
   Times. Every time is an integer count of milliseconds since the Unix epoch.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/store-database-schema.sql` runs without error on an
@@ -72,5 +75,4 @@ validation-criteria: >-
   name is `schema_migration`, `sqlite_sequence`, or starts with `store_` with
   the rows the same file's statements produce on a second empty database,
   with each run of whitespace in `sql` read as one space; they are equal.
-  After the store opens, `schema_migration` holds the row `('store', n)`,
-  where n is the number of the store's migration steps.
+  After the store opens, `schema_migration` holds the row `('store', 1)`.

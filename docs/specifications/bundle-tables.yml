@@ -15,9 +15,9 @@ description: >-
   definition: the schema that the module's migration steps produce. The
   module's owner name is `bundle`, and every table it creates is named
   `bundle` or `bundle_<name>`. Its steps are applied by the store's
-  `migrate("bundle", steps)`; the module never runs DDL itself. Step 1 is
-  this file's script. Steps are append-only: a change to a table is a new
-  step, and this file is rewritten to the schema all steps produce.
+  `migrate("bundle", steps)`; the module never runs DDL itself. At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
 
 
   `bundle` holds one row per bundle the service has run with, keyed by
