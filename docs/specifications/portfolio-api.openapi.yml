@@ -227,7 +227,8 @@ components:
     Item:
       type: object
       additionalProperties: false
-      required: [id, parent, title, other, archived, projects, activeTasks, allocations]
+      required:
+        [id, parent, title, other, archived, projects, activeTasks, completedTasks, allocations]
       properties:
         id:
           type: string
@@ -282,6 +283,10 @@ components:
         activeTasks:
           type: integer
           minimum: 0
+        completedTasks:
+          type: integer
+          minimum: 0
+          description: The ended actors the store keeps whose portfolio item is the item or an item under it.
         allocations:
           type: array
           items:

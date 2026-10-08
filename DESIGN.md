@@ -557,9 +557,13 @@ the actor page.
   sub-item, holding tasks and usage that match none of its sub-items; an
   item with no sub-items shows none. Every "Other" has an allocation like
   any item, but it has no Edit button and cannot be renamed or archived.
+- Active tasks and Completed tasks count the tasks on the item and its
+  sub-items, a muted dash for 0. Completed tasks counts the ended tasks
+  Manifold still keeps.
 - Under the table, "Show archived (N)" lists archived items with their
-  archive date, lifetime cost, completed tasks, and "Restore". A restored
-  item comes back with a 0% allocation.
+  archive date, lifetime cost, completed tasks ("N completed"), and
+  "Restore". A
+  restored item comes back with a 0% allocation.
 
 #### Edit allocations
 
@@ -572,6 +576,16 @@ most 100%.
 While the allocations under one parent add up to more than 100%, their
 inputs have error borders, the status bar is error and names that parent
 and its sum, and "Save allocations" is disabled.
+
+While editing, the Current usage column becomes "Sharing preview": what
+each item could reserve, from the edited allocations, halfway through an
+idle window with nothing spent. Two lines: "Alone" (only this item has
+waiting work) and "All waiting" (every item has waiting work), each a
+percentage of capacity with "of capacity" muted. The status bar's last
+line, muted, names the scenario. The cells update as the edit is
+checked, show the last answer muted while a check runs, and show a muted
+dash while the edit has a finding. Nothing else on the screen changes
+until the edit is saved.
 
 Under the status bar, a problems list shows each lint finding and warning
 on one line: the kind in mono, the file and location in mono, and the
@@ -588,6 +602,9 @@ remainder of the sub-items shows next to the heading. While the sub-item
 allocations add up to more than 100%, their inputs have error borders, the
 heading shows the sum in error color, and "Save" is disabled.
 
+Under the Allocation row, a muted line previews the item: "Can reserve,
+halfway through an idle window: N% alone, N% with every item waiting."
+
 The dialog has 24px insets. Allocation, Ceiling, and Weight share a row with
 20px gaps. Name, Pacing, and Sub-items span the full width. Below 420px the
 allocation controls stack. The fields scroll while the footer stays reachable.
@@ -595,11 +612,25 @@ allocation controls stack. The fields scroll while the footer stays reachable.
 The footer has "Archive item" on the left (error text, outline). Items are
 archived, never deleted: an archived item keeps its history and its
 allocation goes back to the parent's unallocated remainder. A muted note
-beside the button says so: "Its allocation returns to <parent>." When the
-item has attached projects, "Archive item" opens a 480px dialog listing
-each project with a choice: "Move to <parent>" (it lands on the parent's
-"Other"), "Reassign to" a sibling picked from a select, or "Archive
-project". The confirm button is solid error.
+beside the button says so: "Its allocation returns to <parent>." While
+the dialog has unsaved changes, the button is disabled and the note reads
+"Save or discard your changes first." With no attached projects, "Archive
+item" asks in the 400px alert dialog. When the item or a sub-item has
+attached projects, it opens a 480px dialog, "Archive <name>", with the
+muted line "Choose where each project goes. The archive and every choice
+are saved in one commit." It lists each project: its name, a muted mono
+line (`owner/number`, or environment and project id), "on <sub-item>"
+when it is attached to a sub-item, and "and N associated T3code
+projects" when its GitHub Project has any, since they follow it. Each
+row has a radio group with no preselected choice: "Move to <parent>" (it
+lands on the parent's "Other"; absent for a top-level item), "Reassign
+to" a sibling picked from a select ("No sibling", disabled, when there is
+none), or "Archive project". The confirm button, "Archive <name>", is
+solid error and disabled until every project has a choice. A conflict,
+a finding, or a failed save shows in an error alert above the footer and
+keeps the dialog and its choices; a conflict offers "Read again", a
+failure "Try again". On success both dialogs close and a toast reads
+"Archived <name>".
 
 "Add item" opens the same dialog with only a name and adds a top-level
 item. A new item starts at 0%. The item's id, made from the name, shows

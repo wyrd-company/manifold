@@ -84,7 +84,8 @@ description: >-
     last. Each holds its `id`; `parent`, the parent's id or `null`;
     `title`, the declared title, the id when none is declared, and
     `Other` for an Other item; `other`; `archived`, true when it or an
-    ancestor is archived; `projects`; `activeTasks`; `allocations`; and,
+    ancestor is archived; `projects`; `activeTasks`; `completedTasks`;
+    `allocations`; and,
     for an item with sub-items, `unallocated`.
 
   - `unallocated`: the top level's unallocated remainder, one entry per
@@ -118,6 +119,10 @@ description: >-
   Project binding associates, as `{ environment, project, via:
   "association" }`. `activeTasks` counts the active snapshots whose
   `context.manifold.portfolioItem` is the item or an item under it.
+  `completedTasks` counts, by the same rule, the snapshots of ended
+  actors, `done` or `stopped`, that the store keeps: the actors
+  `GET /api/actors?status=completed` of `actors-api` lists. An actor
+  whose snapshot the store no longer keeps is not counted.
 
   `allocations` holds one entry per account in `accounts`, in that order.
   Each holds `account`; `declared`, true when the declaration in force has
@@ -186,7 +191,11 @@ validation-criteria: >-
   `alpha/other` follows `gamma` and the top-level `other` comes last; that
   `unallocated` at the top level and under `alpha` hold the remainder's
   percentage and amount; that `activeTasks` counts an active snapshot on
-  `gamma` under `alpha`; that after a commit that changes `alpha`'s
+  `gamma` under `alpha`; that `completedTasks` counts a `done` and a
+  `stopped` snapshot on `gamma` on `gamma` and `alpha`, one on `delta` on
+  `delta`, and no errored snapshot, and that after an active actor on
+  `beta` ends, `beta`'s `activeTasks` falls by one and its
+  `completedTasks` rises by one; that after a commit that changes `alpha`'s
   guarantee is applied, the read answers its commit and the new guarantee;
   that a revision that declares `acct-c` in `accounts.yml` and leaves
   `portfolio.yml` unchanged removes the warning and lists `acct-c` as

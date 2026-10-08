@@ -8,6 +8,7 @@ relationships:
     - service-assembly
     - bindings-declaration
     - portfolio-declaration
+    - portfolio-ledger
     - task-metadata-declaration
     - accounts-declaration
     - price-table
@@ -25,8 +26,9 @@ description: >-
   `bindings.yml`, `task-metadata.yml`, `portfolio.yml`, and
   `accounts.yml`; the edit of
   one task field in a task metadata text; the read of the bindings with
-  what a binding may name; and the save of one binding as a structured
-  edit.
+  what a binding may name; the save of one binding as a structured
+  edit; and the archive of one portfolio item, with a choice for each
+  project attached to it, in one commit.
   `docs/specifications/declarations-api.openapi.yml` is the
   machine-readable definition. The console reads and writes through them,
   and any automation may.
@@ -34,7 +36,7 @@ description: >-
   The endpoints are mounted with the HTTP host's `mount` at the prefix
   `/api/declarations` and are always served without authentication.
   Access control belongs to the deployment. A path under the prefix that
-  is not one of the six below answers `404`. A method an endpoint does not
+  is not one of the seven below answers `404`. A method an endpoint does not
   take answers `405` with `Allow` naming the one it takes.
 
   **Declaration paths.** A declaration path is `bindings.yml`,
@@ -50,7 +52,7 @@ description: >-
   the linted text and has a place there, by the rule `blueprints-api`
   states for a finding located by a JSON Pointer or by a line and column.
   A finding keeps its `file` only in an answer for `portfolio.yml` or
-  `accounts.yml`. A text lints with the same functions and the same companion files as the
+  `accounts.yml` and in an answer of the archive. A text lints with the same functions and the same companion files as the
   service's revision follower and the host CLI:
 
   - `task-metadata.yml` lints with `lintTaskMetadataDeclaration`, with
@@ -127,20 +129,41 @@ description: >-
   gives each field row's `onGitHub`. Impact reads GitHub state the
   service already holds and makes no GitHub request.
 
+  **Sharing preview.** A lint of a `portfolio.yml` text with no finding
+  answers `preview`: the sharing rule's answer on a fixed scenario for
+  the portfolio the text declares, so that an operator sees what an
+  allocation edit does before it is saved. The scenario is one window of
+  each account, halfway through, with nothing spent and nothing reserved
+  on any item. `preview` holds one entry per account that the accounts
+  declaration in force declares and does not archive, in declaration
+  order, each with `account` and `items`: every item of the text that is
+  not archived, Others included, in the order of the portfolio read of
+  `portfolio-api`, each with `item`, its id; `alone`, what the item could
+  reserve while it alone has waiting work; and `allWaiting`, what it
+  could reserve while every item that is not archived has waiting work.
+  Each is a percentage of the window's capacity, rounded down to two
+  decimal places. The answer is the ledger's sharing rule, the rule a
+  gate's grant asks, run on the text's ledger portfolio with a capacity
+  of 1,000,000, no usage, and the window's midpoint as the time. It reads
+  no ledger and writes nothing, so the portfolio read and every balance
+  stay as they are until the text is saved and applied.
+
   **Source.** `GET /api/declarations/source?path=<path>` answers `200`
   with `path`; `commit`, the commit of the latest applied revision, which
   is the base for a save of this path; `exists`, whether the revision
   holds the file; `text`, the file's text, or the empty string when it
   holds none; `findings`; `warnings`; for `task-metadata.yml`, `fields`
   and `storageKinds` when the text parses and `impact` when it has no
-  finding; and for `accounts.yml`, `environments`, the environment names
-  of service configuration in its order, which a usage entry names.
+  finding; for `portfolio.yml`, `preview` when it has no finding; and for
+  `accounts.yml`, `environments`, the environment names of service
+  configuration in its order, which a usage entry names.
   Before the first applied revision it answers `503`.
 
   **Lint.** `POST /api/declarations/lint` takes `{ path, text }` and
-  answers `200` with `findings`, `warnings`, and for `task-metadata.yml`,
+  answers `200` with `findings`, `warnings`, for `task-metadata.yml`,
   `fields` and `storageKinds` when the text parses and `impact` when it
-  has no finding. It reads and writes nothing else. Before the first
+  has no finding, and for `portfolio.yml`, `preview` when it has no
+  finding. It reads and writes nothing else. Before the first
   applied revision it answers `503`.
 
   **Field edit.** `POST /api/declarations/task-fields/edit` takes `{
@@ -243,8 +266,61 @@ description: >-
   answers are those of a save, the `409` text being `bindings.yml` on the
   branch. A `base` the process repository does not hold answers `400`.
 
-  **Requests.** `lint`, `save`, `task-fields/edit`, and `bindings/save`
-  take the request
+  **Archive item.** `POST /api/declarations/archive-item` takes `{ item,
+  projects, base, message, saveId }`. `base`, `message`, and `saveId`
+  have the meaning and limits of a save. `item` is the id of the
+  portfolio item to archive. `projects` holds one choice for each
+  binding that is not archived and names the item or an item under it:
+
+  - `{ binding, choice: "move" }` sets the binding's `item` to the
+    archived item's parent, where intake places the binding's tasks by
+    the rule it uses for any binding of that item, so that a task no
+    sub-item matches lands on the parent's Other.
+  - `{ binding, choice: "reassign", item }` sets the binding's `item` to
+    `item`.
+  - `{ binding, choice: "archive" }` sets `archived: true` on the binding
+    and keeps its `item`.
+
+  The service reads `portfolio.yml` and `bindings.yml` at `base`,
+  answering `400` when `revisionAt(base)` holds no revision. It sets
+  `archived: true` on the item in `portfolio.yml` and applies each
+  choice to its binding in `bindings.yml`, both with the `yaml` package's
+  document model, so every comment stays, and in a file in the block
+  style the `yaml` package writes, every line outside the edited entries
+  stays unchanged. Its other members, `t3codeProjects` included, stay. It
+  lints the two texts together with `lintPortfolioDeclaration`, as the
+  service lints a revision, and takes the warnings of
+  `lintAllocatedAccounts` with `accounts.yml` at the latest applied
+  revision. It then saves both files in one commit as a save does, so
+  the archive and every choice reach the branch together or not at all.
+  An item already archived at `base` is archived again with no change,
+  so the request converges.
+
+  It answers `422`, and writes nothing, with every finding of the two
+  texts, each with its `file`, and with these findings of the request,
+  each located at the empty pointer of its `file`:
+
+  - `item-missing` (`portfolio`): `item` names no item of `portfolio.yml`
+    at `base`, or names an Other item.
+  - `name-missing` (`bindings`): a choice names no binding of either
+    section.
+  - `not-attached` (`bindings`): a choice names a binding that is
+    archived, or that names neither the item nor an item under it.
+  - `duplicate-choice` (`bindings`): two choices name one binding.
+  - `no-parent` (`bindings`): a `move` for an item at the top level,
+    whose parent is the top level, which no binding may name.
+
+  A binding that is not archived, names the item or an item under it,
+  and has no choice gives the lint's `archived-item` finding at that
+  binding, and a `reassign` to an Other item or an item that is not
+  declared gives `unknown-item`, and to an archived item `archived-item`.
+  The `200`, `409`, `502`, and `503` answers are those of a save; the
+  `409` holds no `text`, since two files are compared, and its `reason`
+  is `file-changed` when either file at the branch's head differs from
+  `base`.
+
+  **Requests.** `lint`, `save`, `task-fields/edit`, `bindings/save`, and
+  `archive-item` take the request
   checks of `blueprints-api`: `Content-Type: application/json` or `415`,
   the same-site checks or `403`, a body of 8 MiB at most or `413`, and a
   body that is not JSON or not of the stated shape `400` with the first
@@ -279,7 +355,15 @@ validation-criteria: >-
   `portfolio.yml` save with a `bindings` finding answers `422`, and one
   with only warnings saves; that `source` of `accounts.yml` answers the
   configured environment names and of an absent file `exists` false; that
-  `lint` of `accounts.yml` answers a `duplicate-usage` finding with its
+  `lint` of a `portfolio.yml` text with `alpha` at 60% and a ceiling of
+  70% and `beta` at 20% answers `alpha` `alone` 70 and `allWaiting`
+  66.66, `beta` `alone` 40 and `allWaiting` 26.66, and the top-level
+  Other `alone` 20 and `allWaiting` 6.66; that a weight of 3 on `alpha`
+  gives `beta` `allWaiting` 24 and leaves `alpha` at its ceiling, 70;
+  that a pacing burst of 10% on `beta` gives it `alone` 20; that `source` of
+  that text answers the same `preview`, that a text with a
+  `guarantee-limit` finding answers no `preview`, and that the portfolio
+  read answers the same before and after the lint; that `lint` of `accounts.yml` answers a `duplicate-usage` finding with its
   `file` and range, a `prices` finding of a broken fixture `prices.yml`
   with its `file`, and, for a text that archives an account the fixture
   `portfolio.yml` allocates, the `account-archived` warning with the
@@ -306,5 +390,17 @@ validation-criteria: >-
   `422` `name-taken`, a `replace` of a missing name answers `422`
   `name-missing`, an edit naming an unknown item answers `422`
   `unknown-item` at the item, and the same binding save again answers
-  `already-saved`; and the `400`, `403`, `404`, `405`, `413`, `415`, and
+  `already-saved`; that an archive of an item holding two bindings, one
+  moved and one reassigned to a sibling, answers `saved` with `loaded`
+  true, the remote branch holds one new commit with the message that
+  changes `portfolio.yml` and `bindings.yml`, both keep a comment, and
+  the portfolio read then lists the item archived and the moved binding
+  on the parent; that an archive of a sub-item's item with a `move`
+  sets the binding to that item's parent; that an archive that leaves a
+  binding with no choice answers `422` `archived-item` and the remote
+  branch is unchanged; that `item-missing`, `name-missing`,
+  `not-attached`, `duplicate-choice`, and `no-parent` answer `422`; that
+  the same archive again answers `already-saved`; that an archive whose
+  base `bindings.yml` changed on the branch answers `409` with no
+  `text`; and the `400`, `403`, `404`, `405`, `413`, `415`, and
   `503` answers. Fixtures use a domain unrelated to Manifold.

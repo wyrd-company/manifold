@@ -2012,8 +2012,8 @@ proposed-design:
     `src/api/declarations.ts` exports
     `fetchDeclarationSource(path)`, `lintDeclarationText(path, text,
     signal)`, `saveDeclaration(request)`, `editTaskFields(request)`,
-    `fetchBindings()`, and `saveBinding(request)`, for the endpoints of
-    `declarations-api`. Each
+    `fetchBindings()`, `saveBinding(request)`, and `archiveItem(request)`,
+    for the endpoints of `declarations-api`. Each
     sends its request without authentication headers, with `Content-Type:
     application/json` for a body, and turns the answer into a result as
     the blueprints client does: `ok` with the body, a typed `conflict` or
@@ -2022,9 +2022,12 @@ proposed-design:
     boundary with the guards of
     `@wyrd-company/manifold-shared/declarations-api`. Reads go through
     TanStack Query under `["declaration", path]` and `["bindings"]`; lint,
-    field edits, and saves are mutations, never cached. A settled binding save marks
-    `["bindings"]`, `["projects"]`, and `["tasks"]` stale, and a settled
-    declaration save marks its path's key and `["projects"]` stale.
+    field edits, saves, and archives are mutations, never cached. A settled binding save marks
+    `["bindings"]`, `["projects"]`, and `["tasks"]` stale, a settled
+    declaration save marks its path's key and `["projects"]` stale, and a
+    settled archive marks `["declaration", "portfolio.yml"]`,
+    `["declaration", "bindings.yml"]`, `["bindings"]`, `["projects"]`,
+    `["portfolio"]`, and `["tasks"]` stale.
   projects-list: >-
     `ProjectsContent` on `projects` reads `fetchProjects()`,
     `fetchTasks()`, and `fetchBindings()`. Its title row is "GitHub
@@ -2340,8 +2343,8 @@ proposed-design:
   declarations-endpoints: >-
     `mountDeclarationsApi(host, options)` mounts one listener at
     `/api/declarations` that implements `declarations-api`, with the paths
-    `/source`, `/lint`, `/save`, `/task-fields/edit`, `/bindings`, and
-    `/bindings/save` under the prefix. Every read takes the commit of `revisions.latest()` and
+    `/source`, `/lint`, `/save`, `/task-fields/edit`, `/bindings`,
+    `/bindings/save`, and `/archive-item` under the prefix. Every read takes the commit of `revisions.latest()` and
     reads files at it through `processRepository.revisionAt`, and answers
     `503` before the first. `task-metadata.yml` lints with
     `lintTaskMetadataDeclaration` and `bindings.yml` at that commit;
@@ -2354,8 +2357,14 @@ proposed-design:
     `lintUsageDeclaration` and `prices.yml` at that commit, keeping the
     findings of both files with their `file`, and with
     `lintAllocatedAccounts`, `portfolio.yml` at that commit, and the
-    linted text for its warnings. A source of `accounts.yml` answers
-    `options.environments` as `environments`. `findingRanges` gives each finding of
+    linted text for its warnings. A `portfolio.yml` text with no finding
+    answers `preview` from the pure `sharingPreview(ledgerPortfolio,
+    accounts)` in `declarations-api/sharing-preview.ts`, with the lint's
+    ledger portfolio and `options.accounts()`, which runs the ledger's
+    `sharingRule` for each account and item as `declarations-api` states.
+    The ledger's `index.ts` exports `sharingRule`, so the gate's answer
+    and the preview are one function. A source of
+    `accounts.yml` answers `options.environments` as `environments`. `findingRanges` gives each finding of
     the edited file its range; its parameter takes any finding with
     `kind`, `location`, and `message`. A task metadata text that parses
     answers `fields` from the pure `taskFieldRows(text)`, which reads the
@@ -2375,7 +2384,20 @@ proposed-design:
     of `options.environments` with `options.t3codeProjects(name)`. A
     binding save reads `bindings.yml` at `base`, answering `400` when
     `revisionAt(base)` holds no revision, applies `editBindings`, and
-    saves the result as a save of `bindings.yml`. `Revisions.save` takes
+    saves the result as a save of `bindings.yml`. An archive reads
+    `portfolio.yml` and `bindings.yml` at `base`, answering `400` when
+    `revisionAt(base)` holds no revision, applies the pure
+    `archiveItemEdit(files, request)` of `declarations-api/archive-item.ts`,
+    which answers both texts or the request's findings, lints the two
+    texts together with `lintPortfolioDeclaration` and their warnings
+    with `lintAllocatedAccounts` and `accounts.yml` at the latest applied
+    revision, answers `422` with every finding, each with its `file`, and
+    otherwise awaits `revisions.save` with both files in one request and
+    maps its result as a save does, a conflict with no `text`.
+    `archiveItemEdit` parses both texts as `editBindings` does, sets
+    `archived: true` on the item's mapping, and sets each binding's `item`
+    or `archived`, writing both documents as `editBindings` does.
+    `Revisions.save` takes
     any path, so the listener's path check is what keeps every save to the
     four declaration paths. The same-site and
     content-type checks are the blueprints endpoints'; they move from
@@ -2428,7 +2450,7 @@ proposed-design:
     import type { HttpHost } from "../http-host/index.ts";
     import type { ProcessRepository } from "../process-repository/index.ts";
     import type { Revisions } from "../service/index.ts";
-    import type { TaskMetadataDeclaration } from "@wyrd-company/manifold-shared";
+    import type { TaskMetadataDeclaration, UsageAccount } from "@wyrd-company/manifold-shared";
 
     export interface DeclarationsApiOptions {
       readonly revisions: Pick<Revisions, "latest" | "save">;
@@ -2441,6 +2463,8 @@ proposed-design:
       t3codeProjects(environment: string): readonly DeclarationsT3codeProject[] | undefined;
       /** The task-metadata module's planner over a declaration that is not in force. */
       planDeclaration(declaration: TaskMetadataDeclaration): readonly DeclarationImpact[];
+      /** The accounts declaration in force: usage intake's `accounts`. */
+      accounts(): Readonly<Record<string, UsageAccount>>;
       readonly log: (entry: { level: "error"; path: string; error: string }) => void;
     }
 
@@ -2484,8 +2508,10 @@ proposed-design:
     module's index. Its start calls `mountDeclarationsApi` on
     `members.http` with the revision follower, the process repository,
     the configured repository URL and branch, the environment names of
-    service configuration, the T3 Code source's `projects`, and the
-    task-metadata module's planner as `planDeclaration`. It registers no
+    service configuration, the T3 Code source's `projects`, the
+    task-metadata module's planner as `planDeclaration`, and usage
+    intake's `accounts`, read through `context.later` when usage intake's
+    part starts after it. It registers no
     `context.onStop`, since it opens nothing that stop closes; the HTTP
     host closes its listeners in the `requests` stage.
   declarations-module-layout: >-
@@ -2494,7 +2520,9 @@ proposed-design:
     request checks, `answers.ts` the pure functions from a lint, a save,
     or a read to an answer, `binding-edit.ts` `editBindings`,
     `task-field-edit.ts` `editTaskFields`, `task-fields.ts`
-    `taskFieldRows`, and `wiring.ts` the wiring part. In
+    `taskFieldRows`, `archive-item.ts` `archiveItemEdit`,
+    `sharing-preview.ts` `sharingPreview`, and `wiring.ts` the wiring
+    part. In
     `packages/console`, `src/screens/projects/` holds `ProjectsList.tsx`,
     `T3codeProjectsTable.tsx`, `ProjectPage.tsx`, `PlanCard.tsx`,
     `RemoveDialog.tsx`, `BindProjectDialog.tsx`,
@@ -2621,15 +2649,16 @@ proposed-design:
     number.
   portfolio-table: >-
     `PortfolioTable` shows the read's items for the selected account. The
-    columns are those of `DESIGN.md` that the read answers, in its order:
-    Name, Allocation, Current usage, Lifetime cost, Active tasks, and an
+    columns are those of `DESIGN.md`, in its order: Name, Allocation,
+    Current usage, Lifetime cost, Active tasks, Completed tasks, and an
     Edit icon button. Name is the title with a muted line of the attached
     projects: their binding names, GitHub Projects as `owner/number`, when
     they fit, and otherwise counts, "2 GitHub Projects, 1 T3code project".
     Allocation is the guarantee as a percentage with the guarantee amount
     muted under it, and "up to N%" after the percentage when the
     allocation declares a ceiling. Lifetime cost is the allocation's
-    `lifetime`. Active tasks is `activeTasks`, or a muted dash for 0.
+    `lifetime`. Active tasks is `activeTasks`, and Completed tasks
+    `completedTasks`, each a muted dash for 0.
     Rows follow the read's order: each level's items, then its Other,
     then its "Unallocated" row (muted, no Edit button) with the level's
     `unallocated` percentage and amount for the account. A total row
@@ -2658,11 +2687,10 @@ proposed-design:
     expiry, and an early reset are observations of a subscription's
     provider, which Manifold does not read, so the cards show no
     granted-reset badge and no early-reset note, and a subscription's
-    capacity is its declared capacity. The Completed tasks column is
-    absent, since the store keeps the snapshots of active actors only and
-    the ledger knows only actors that reserved or spent, so a count from
-    either misses tasks. The archived list shows no archive date, since
-    the declaration holds none.
+    capacity is its declared capacity. The archived list shows no archive
+    date, since the declaration holds none. Completed tasks counts the
+    ended actors the store keeps, so an actor whose snapshot the store no
+    longer keeps is not counted.
   edit-allocations: >-
     "Edit allocations" opens the portfolio draft, or starts one from the
     source, and turns the guarantee and ceiling of every item row and
@@ -2675,9 +2703,30 @@ proposed-design:
     text; it is a display, and the lint's findings alone decide whether
     the draft saves. While a draft exists the screen stays in this mode,
     across a reload, and the row Edit buttons, "Add item", and "Restore"
-    are hidden. "Cancel" with no change leaves the mode; with changes it
+    are hidden. The Current usage column becomes "Sharing preview", as
+    `sharing-preview` states. "Cancel" with no change leaves the mode; with changes it
     asks first in the 400px alert dialog, "Discard changes to
     portfolio.yml?", naming the number of edits, and removes the draft.
+  sharing-preview: >-
+    While allocations are edited, each item row's Current usage cell is
+    replaced by `SharingPreviewCell`, headed "Sharing preview", with two
+    lines for the selected account: "Alone" and the item's `alone`, and
+    "All waiting" and its `allWaiting`, each with `formatPercent` and
+    "of capacity" muted. The `preview` comes from the latest lint answer
+    for the draft's text, or, before the first, from the source read. The
+    status bar's last line is muted: "Sharing preview: halfway through an
+    idle window, nothing spent." While a lint is pending the cells keep
+    the last preview muted; when the latest answer has a finding, or the
+    account has no entry because the accounts declaration does not
+    declare it or archives it, each cell shows a muted dash. The preview
+    is computed on the service from the draft's text by the lint, which
+    writes nothing, so `GET /api/portfolio`, the cards, and every other
+    column answer what is in force until the draft is saved. The edit
+    item dialog shows, under the Allocation row, the muted line "Can
+    reserve, halfway through an idle window: <alone> alone, <allWaiting>
+    with every item waiting." for the item, from its candidate draft's
+    latest lint answer. `sharing.ts` holds the pure lookup from a lint
+    answer, an account, and an item to the two values.
   portfolio-findings: >-
     The latest lint answer marks the draft. A `guarantee-limit` finding
     gives an error border to the guarantee input of every child of the
@@ -2724,21 +2773,63 @@ proposed-design:
     it, and the dialog shows it under the name in muted mono.
   archive-and-restore: >-
     The dialog's footer has "Archive item" on the left (error text,
-    outline) with the muted note "Its allocation returns to <parent>."
-    When a binding that is not archived names the item or an item under
-    it, the button is disabled and the note reads "Move its projects in
-    GitHub Projects first.", linking to GitHub Projects, since a
-    declaration in which a live binding names an archived item is refused
-    and the bindings are saved from that screen. Otherwise it asks in the
-    400px alert dialog, with a solid error confirm button, and saves the
-    draft with `archived: true` on the item and the message "Archive
-    portfolio item <id>". "Show archived (N)" lists each archived item
-    whose parent is not archived, with its title, its lifetime cost for
-    the selected account, and "Restore". "Restore" removes `archived` from
+    outline) with the muted note "Its allocation returns to <parent>.",
+    the parent's title, or "the top level". While the dialog holds
+    changes, the button is disabled and the note reads "Save or discard
+    your changes first.", since an archive saves from the source and not
+    from the dialog's draft. When no binding that is not archived names
+    the item or an item under it, the button asks in the 400px alert
+    dialog, "Archive <title>?", with a solid error confirm button, and
+    sends `archiveItem` with no projects. Otherwise it opens
+    `ArchiveItemDialog`, as `archive-dialog` states. Either way the
+    request's message is "Archive portfolio item <id>". "Show archived
+    (N)" lists each archived item whose parent is not archived, with its
+    title, its lifetime cost for the selected account, its completed
+    tasks, `completedTasks`, as "N completed" or a muted dash, and
+    "Restore". "Restore" removes `archived` from
     the item and sets the guarantee of every allocation of the item and
     every item under it to 0, so the restored item comes back at 0% and
     never breaks the guarantee limit, and saves with "Restore portfolio
     item <id>".
+  archive-dialog: >-
+    `ArchiveItemDialog` is the 480px dialog of `DESIGN.md`, titled
+    "Archive <title>", with the muted line "Choose where each project
+    goes. The archive and every choice are saved in one commit." It reads
+    `fetchBindings()` under `["bindings"]` when it opens, and lists, in
+    the read's order, each GitHub Project binding and then each T3code
+    project binding that is not archived and names the item or an item
+    under it, from the portfolio read's `parent` links. A row shows the
+    binding's name, a muted line with `owner/number` for a GitHub Project
+    or `environment · project` for a T3code project, "on <title>" when
+    it names an item under the archived one, and "and N associated
+    T3code projects", which follow it, when it lists any. Under it is a
+    radio group: "Move to <parent>" (it lands on the parent's "Other"),
+    shown only when the archived item has a parent; "Reassign to" with a
+    select of the archived item's siblings in the bindings read's
+    `items`, which are neither Other nor archived, disabled with the
+    muted note "No sibling" when there is none; and "Archive project".
+    No choice is preselected. The confirm button, "Archive <title>"
+    (solid error), is disabled until every row has a choice and every
+    "Reassign to" has a sibling. Confirm sends `archiveItem({ item,
+    projects, base, message, saveId })` with the bindings read's
+    `commit` as `base` and a `saveId` the dialog makes with
+    `createSaveId` and keeps while its choices and base stay, so a second
+    confirm or a "Try again" is the same save. A `200` closes the dialog
+    and the edit item dialog, shows the success toast "Archived <title>",
+    or "Already archived" for `already-saved` or `unchanged`, and marks
+    the keys a settled archive marks stale; with `loaded` false it shows
+    the pending alert of `portfolio-drafts` with "Load saved version",
+    which sends the same request. A `409` keeps the dialog open with an
+    error alert above the footer: "portfolio.yml or bindings.yml changed
+    on <branch> at <short head>." and "Read again", which reads the
+    bindings again, keeps the choice of each binding still listed, drops
+    the others, and makes a new `saveId`. A `422` lists its findings in
+    the alert, each with its kind and file in mono and its message. A
+    `502`, a `503`, or a network failure shows the message with "Try
+    again". The dialog never writes the portfolio draft, and a failed
+    archive changes nothing in force. `archive.ts` holds the pure
+    functions that list the attached bindings from the two reads, list
+    the sibling targets, and build the request from the choices.
   unowned-usage: >-
     `UnownedUsage`, in `src/screens/portfolio/`, lists the read's ledger
     actors of unowned usage for the selected account under the heading
@@ -2944,7 +3035,10 @@ proposed-design:
     `portfolioRead(input)` in `read.ts`, builds the answer from the
     declaration in force, the accounts in force, each item's balance and
     the account's window and totals for each account, the warnings, and
-    the active snapshots; the listener gathers them per request. It reads
+    the active and ended snapshots; the listener gathers them per
+    request. `completedTasks` counts the ended snapshots,
+    `store.endedSnapshots()`, by the rule `activeTasks` counts the active
+    ones. It reads
     balances through the portfolio whose ledger is the capacity module's,
     so the first `balance` of a declared account credits its current
     window as a gate's read does; it then reads the window with
@@ -2996,7 +3090,7 @@ proposed-design:
       /** Usage intake's `pricing`. */
       pricing(): UsagePricing;
       readonly processRepository: Pick<ProcessRepository, "revisionAt">;
-      readonly store: Pick<Store, "activeSnapshots">;
+      readonly store: Pick<Store, "activeSnapshots" | "endedSnapshots">;
       /** The service clock. Defaults to Date.now. */
       readonly now?: () => number;
       readonly log: (entry: { level: "error"; path: string; error: string }) => void;
@@ -3023,9 +3117,11 @@ proposed-design:
     `packages/console`, `src/screens/portfolio/` holds `PortfolioContent.tsx`,
     `BudgetSourceCards.tsx`, `PortfolioTable.tsx`, `CurrentUsageCell.tsx`,
     `StatusBar.tsx`, `ProblemsList.tsx`, `EditItemDialog.tsx`,
-    `ArchivedList.tsx`, and the pure modules `edits.ts`, `draft.ts`,
-    `rows.ts` (the read to table rows for an account, the current-usage
-    choice, and the window labels), and `findings.ts`.
+    `ArchiveItemDialog.tsx`, `SharingPreviewCell.tsx`, `ArchivedList.tsx`,
+    and the pure modules `edits.ts`, `draft.ts`, `rows.ts` (the read to
+    table rows for an account, the current-usage choice, and the window
+    labels), `findings.ts`, `preview.ts` (the draft's text over the read
+    for the status bar), `sharing.ts`, and `archive.ts`.
   portfolio-wiring: >-
     `portfolioApiPart` is the service wiring part `{ name: "portfolio-api",
     start(members, context) }` in
@@ -3051,7 +3147,18 @@ proposed-design:
     draft is written whole on each edit, so a reload or a crash of the
     browser leaves the last edit. Applying a draft's edits to the same text
     twice gives the same text, since each edit sets values rather than
-    adding to them.
+    adding to them. An archive converges as a save does: the dialog keeps
+    its `saveId`, so a repeated confirm, a "Try again", or "Load saved
+    version" sends the same request, which answers `already-saved` with
+    the first commit or pushes the archive once, and the request computes
+    the same two texts from the same base each time, so a retry after a
+    crash at any point pushes the same commit content. The two files are
+    one commit pushed as one ref update, so a failed or refused save
+    leaves the branch, and the declaration in force, as they were; a
+    commit that holds the archive and leaves a live binding on the item
+    is never pushed, since the request lints the pair as the service
+    applies it. A lint that answers a preview writes nothing, and
+    `completedTasks` is read, so neither adds a write.
   portfolio-tests: >-
     Each behavior is red before green, and tests go through public
     interfaces. The endpoint is tested as `portfolio-api`'s validation
@@ -3071,7 +3178,12 @@ proposed-design:
     `-2`, then its first 62 followed by `-3`, each a declared name of 64
     characters and unique; the draft functions as `tests` states them for the
     blueprint draft, and a draft's edits applied again to a later text;
-    `rows.ts` on a nested read with an archived item; `findings.ts`
+    `rows.ts` on a nested read with an archived item and a completed
+    count; `archive.ts` listing the binding of a sub-item, leaving out an
+    archived binding and one on another item, offering no move for a
+    top-level item, listing siblings without Other or archived items, and
+    building the request; `sharing.ts` for an account with no entry and
+    an answer with a finding; `findings.ts`
     for a `guarantee-limit` at the top level and under an item; and the
     usage client's result mapping for a `moved` answer, a `422`, and a
     body that does not match. The
@@ -3098,7 +3210,37 @@ proposed-design:
     the toast, `alpha`'s lifetime cost up and `beta`'s down by the
     amount, the card's used unchanged, and the row now counting on
     `alpha`; then moves it to the task and reads the row gone and the
-    task page's actual including the amount. The Board and Task page browser test checks the
+    task page's actual including the amount. A second browser test,
+    `packages/service/src/portfolio-api/portfolio-archive.browser.test.ts`,
+    starts the service with the built console on a fixture process
+    repository served over smart HTTP with push enabled, with account
+    `acct-a`, items `alpha` at 40% holding `beta` and `gamma` at 40% of
+    it each, and `delta` at 30%, GitHub Project bindings `board-one` and
+    `board-two` on `beta`, `board-one` associating one T3code project,
+    and a comment in each file, fresh for each case. It covers, each red
+    before green: archive with
+    projects: it opens `beta`'s edit dialog, "Archive item", sees both
+    bindings and the associated project, picks "Move to alpha" for
+    `board-one` and "Reassign to" `gamma` for `board-two`, confirms, and
+    sees the toast and `beta` under "Show archived (1)"; the fixture
+    remote holds one new commit with the message "Archive portfolio item
+    beta" whose `portfolio.yml` sets `archived: true` on `beta` and whose
+    `bindings.yml` names `alpha` for `board-one`, keeping its
+    association, and `gamma` for `board-two`, both comments kept, and
+    `GET /api/portfolio` answers that commit with `board-one` on `alpha`
+    and `board-two` on `gamma`. Refused save: with the dialog open, the
+    test pushes a commit that changes `bindings.yml` to the fixture
+    remote; confirm shows the conflict alert, the remote branch holds no
+    archive commit, and `GET /api/portfolio` still answers `beta` live
+    with both bindings, at the commit before. Preview: "Edit allocations"
+    shows `delta` "Alone" 60%, its 30% and the unallocated 30%, and "All
+    waiting" 40%, its 30% and a third of the unallocated; setting `delta`
+    to 50% shows "All waiting" 53.33% once the lint answers, while `GET
+    /api/portfolio` still answers `delta` at 30% with its `reservable`
+    unchanged; "Cancel" discards. Completed count: a task actor on
+    `gamma` is active; the test sends the event that ends it, reloads,
+    and reads `gamma` Completed tasks 1 and Active tasks a dash, and
+    `alpha` Completed tasks 1. The Board and Task page browser test checks the
     estimate, actual, variance, and reserved of its settled task in
     dollars, such as `$0.0177`.
   environments-route: >-

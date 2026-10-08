@@ -13,8 +13,8 @@ objective: >-
   at one commit through one read-only seam, so that loaders never see a
   half-pulled tree, a file read at a commit reads the same text after any
   later pull, and a crash during a pull leaves the last complete commit
-  current; and save one changed file as one commit pushed to the
-  followed branch, so that a process changes from the console with no
+  current; and save one or more changed files as one commit pushed to
+  the followed branch, so that a process changes from the console with no
   redeploy, a retried save never pushes its change twice, and a branch that
   moved under an edit is answered as a conflict, never overwritten.
 background:
@@ -73,7 +73,7 @@ proposed-design:
     fetched commit's tree, and replaces the pointer file atomically.
     `current()` and `revisionAt(commit)` return a `ProcessRepositoryRevision`
     that reads blobs and trees at that commit straight from the object
-    database, with no working tree. `save(request)` writes one file as a
+    database, with no working tree. `save(request)` writes its files as one
     commit on top of the current commit and pushes it to the branch
     without force; the revision follower then pulls it, so a saved commit
     reaches the loaders by the same path as any pushed commit. The
@@ -143,7 +143,7 @@ proposed-design:
       revisionAt(commit: string): Promise<ProcessRepositoryRevision | undefined>;
       /** Moves the current commit to the remote branch's commit. */
       pull(request?: PullRequest): Promise<PullOutcome>;
-      /** Commits one file on top of the current commit and pushes it to the branch. */
+      /** Commits the request's files on top of the current commit as one commit and pushes it to the branch. */
       save(request: SaveRequest): Promise<SaveOutcome>;
       /** The commit, from the current commit down its first parents to `base`, that carries the save's trailer. Reads only. */
       findSave(request: Pick<SaveRequest, "base" | "saveId">): Promise<string | undefined>;
@@ -152,11 +152,10 @@ proposed-design:
     }
 
     export interface SaveRequest {
-      /** A process repository path: `/`-separated segments, none empty, `.`, or `..`, and no `\`. */
-      readonly path: string;
+      /** One or more files, no two with the same path. */
+      readonly files: readonly SaveFile[];
       /** The commit the edit started from. */
       readonly base: string;
-      readonly text: string;
       /** The commit message the caller gives; the save appends its trailer. */
       readonly message: string;
       /** 32 lower-case hexadecimal characters, the same for every retry of one text. */
@@ -167,7 +166,19 @@ proposed-design:
       | { readonly kind: "pushed"; readonly commit: string; readonly parent: string }
       | { readonly kind: "already-saved"; readonly commit: string }
       | { readonly kind: "unchanged"; readonly commit: string }
-      | { readonly kind: "conflict"; readonly head: string; readonly text: string | undefined };
+      | { readonly kind: "conflict"; readonly head: string; readonly files: readonly SaveFileAt[] };
+
+    export interface SaveFile {
+      /** A process repository path: `/`-separated segments, none empty, `.`, or `..`, and no `\`. */
+      readonly path: string;
+      readonly text: string;
+    }
+
+    /** A requested path's text at the current commit, undefined when it holds none. */
+    export interface SaveFileAt {
+      readonly path: string;
+      readonly text: string | undefined;
+    }
 
     export type SaveStep = "committed" | "pushed";
     export type SaveProbe = (step: SaveStep, commit: string) => void;
@@ -381,14 +392,16 @@ proposed-design:
     trailer `Manifold-Save: <saveId>`, or to `undefined`; it writes
     nothing and makes no request, and waits for a running pull or save as
     a save does.
-    (2) It reads `path` at H and at `base`. When `revisionAt(base)` is
-    `undefined`, or the two differ, it returns `conflict` with H and the
-    text at H. Two absent files are equal, so a save of a new path
-    conflicts only when another commit created it, and a branch that moved
-    only in other files takes the save on top of its new commit. (3) When
-    `text` equals the file at H, it returns `unchanged` with H. (4) It
-    writes the file's blob, a tree for each directory from the file's up to
-    the root with every other entry as H holds it, and a commit whose only
+    (2) It reads each file's `path` at H and at `base`. When
+    `revisionAt(base)` is `undefined`, or any path's two texts differ, it
+    returns `conflict` with H and the text at H of every requested path, in
+    the request's order. Two absent files are equal, so a save of a new
+    path conflicts only when another commit created it, and a branch that
+    moved only in other files takes the save on top of its new commit. (3)
+    When every file's `text` equals the file at H, it returns `unchanged`
+    with H. (4) It writes each file's blob, a tree for each directory from
+    each file's up to the root with every other entry as H holds it, and
+    one commit whose only
     parent is H, with the identity and message of save-identity. It writes
     `refs/manifold/save` naming the commit, and calls the save probe with
     `committed`. (5) It calls `push` with the configured `url`, `ref`
@@ -406,12 +419,17 @@ proposed-design:
     `remote`; each carries H as `head`. The follower decides what a
     refused push means, as `service-assembly` states. `path` and `saveId`
     are checked against the shapes of `SaveRequest`, and `save` throws a
-    `TypeError` for any other value, since each caller checks them first.
+    `TypeError` for any other value, as is a request with no file or with
+    two files at one path, since each caller checks them first. A save of
+    several files is one commit pushed as one ref update, so the branch
+    holds every file of it or none.
     Which paths may be saved is each caller's policy, and `save` takes any
     process repository path a caller passes: the blueprints API saves only
     blueprint paths under `blueprints/`, as `blueprints-api` states, and
     the task metadata module saves only `task-metadata.yml`, as
-    `task-metadata` states. Every save keeps the same commit author, typed
+    `task-metadata` states, and the declarations API saves only its
+    declaration paths, `portfolio.yml` and `bindings.yml` together in an
+    archive, as `declarations-api` states. Every save keeps the same commit author, typed
     conflict, and convergence by `saveId`, whatever its path.
   save-identity: >-
     The commit's author and committer are both `commitAuthor` from the
@@ -496,6 +514,10 @@ proposed-design:
     commit, the same request returns `already-saved` with it. A remote
     commit that changes the same file returns `conflict` with its text; a
     remote commit that changes another file takes the save on top of it.
+    A save of two files pushes one commit whose tree differs from its
+    parent at both paths; when a remote commit changed either file, it
+    returns `conflict` with the text of both at the head and pushes
+    nothing; and the same request after a pull returns `already-saved`.
     `findSave` finds a pushed commit's trailer from a later descendant,
     and resolves to `undefined` for a `saveId` no commit down to `base`
     carries. A remote that moves between the save's pull and its push fails the

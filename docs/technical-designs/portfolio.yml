@@ -86,10 +86,15 @@ proposed-design:
     unallocated remainder. For each project attached to it, the operator
     chooses: move it up to the parent, where it lands on the parent's Other
     by the same rule as intake; reassign it to a sibling; or archive the
-    project. An archived item keeps its history, and its usage stays
+    project. Moving up is open to an item under another item; the projects
+    of a top-level item are reassigned or archived, since no binding names
+    an Other. An archived item keeps its history, and its usage stays
     charged to its parent and to the account. The choice is made in the
     same commit as the archive: a declaration in which a binding that is not
-    archived names an archived item is refused.
+    archived names an archived item is refused. The operator archives
+    through the `archive-item` endpoint of `declarations-api`, which
+    writes `portfolio.yml` and `bindings.yml` in one commit, so a save
+    that fails leaves the declaration in force as it was.
   sharing-rule: >-
     An item may reserve while its usage counted as it arrives plus the new
     reservation stays within its guarantee, or within its guarantee plus the
@@ -119,6 +124,16 @@ proposed-design:
     equals allocation less settled actuals. The Portfolio page shows the
     sharing rule's answer, what the item could reserve now, beside the
     balance, and previews the rule on a fixed scenario when it is edited.
+    The scenario is one window of the account, halfway through, with
+    nothing spent and nothing reserved on any item; the preview answers,
+    for each item that is not archived, what it could reserve while it
+    alone has waiting work and while every item has waiting work, as
+    percentages of the window's capacity. The two answers show the
+    guarantee, the borrowing up to the ceiling, the weight's split, and
+    pacing's spread, and depend only on the declaration, so they are the
+    same for every window. The service computes it from the edited text
+    with the ledger's sharing rule, as the lint of `portfolio.yml` in
+    `declarations-api` states, and keeps nothing of it.
   portfolio-read: >-
     The operator reads the portfolio through `GET /api/portfolio` of
     `portfolio-api`: the items of the declaration in force with their

@@ -129,6 +129,7 @@ proposed-design:
       PullOutcome,
       PullProbe,
       PullRequest,
+      SaveFileAt,
       SaveProbe,
       SaveRequest,
     } from "../process-repository/index.ts";
@@ -318,7 +319,8 @@ proposed-design:
           /** `file-changed`: the branch changed the file; `branch-moved`: the branch moved under the retry. */
           readonly reason: "file-changed" | "branch-moved";
           readonly head: string;
-          readonly text: string | undefined;
+          /** Each requested path's text at `head`, in the request's order. */
+          readonly files: readonly SaveFileAt[];
         };
 
     export interface AppliedRevision {
@@ -598,7 +600,7 @@ proposed-design:
     `unchanged`, the commit is the current commit or one of its first
     parents, found after the job's own pull and apply, so it resolves with
     that outcome, the commit, and `latest`, and for `conflict` with reason
-    `file-changed`, the head, and its text. When the save rejects with
+    `file-changed`, the head, and the text of each requested file at it. When the save rejects with
     `ProcessRepositorySaveError`, the job pulls and applies again; when the
     current commit is then the error's `head`, nothing else moved the
     branch and the job rejects with the error, so an authentication or a
@@ -613,7 +615,7 @@ proposed-design:
     with that commit and `latest`. Otherwise, when the current commit is
     not the second error's `head`, the branch moved again under the retry,
     and the job resolves `conflict` with reason `branch-moved`, the
-    current commit, and the file's text at it; otherwise it rejects with
+    current commit, and the text of each requested file at it; otherwise it rejects with
     the second error. No push follows the second one.
     A branch that moves under a save is therefore answered by what it
     changed, as a typed conflict and never as a remote error, and no save

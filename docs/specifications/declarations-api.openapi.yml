@@ -11,8 +11,8 @@ info:
   description: >-
     The declarations endpoints of Manifold's API: read, lint, and save of
     `bindings.yml`, `task-metadata.yml`, `portfolio.yml`, and
-    `accounts.yml`, the edit of one task field, the read of the bindings, and the save of one binding
-    as a structured edit.
+    `accounts.yml`, the edit of one task field, the read of the bindings, the save of one binding
+    as a structured edit, and the archive of one portfolio item with its projects' choices.
 security: []
 paths:
   /api/declarations/source:
@@ -187,6 +187,37 @@ paths:
           $ref: "#/components/responses/RemoteError"
         "503":
           $ref: "#/components/responses/Error"
+  /api/declarations/archive-item:
+    post:
+      operationId: archiveItem
+      summary: Archive one portfolio item and set each attached project's choice, in one commit of portfolio.yml and bindings.yml.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ArchiveItemRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Saved"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "502":
+          $ref: "#/components/responses/RemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
 components:
   headers:
     NoStore:
@@ -231,7 +262,7 @@ components:
           schema:
             $ref: "#/components/schemas/SaveConflict"
     Invalid:
-      description: The text has lint findings, or the binding edit's name is taken or missing; nothing was written.
+      description: The text has lint findings, the binding edit's name is taken or missing, or an archive names an item or a binding it cannot change; nothing was written.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -279,7 +310,8 @@ components:
       description: >-
         The declaration lint's finding, with `range` when it is in the
         linted text and has a place there, and with `file` only in an
-        answer for `portfolio.yml` or `accounts.yml`. Members beyond
+        answer for `portfolio.yml` or `accounts.yml` and in an archive's
+        answer. Members beyond
         those listed are the lint's finding details.
       required: [kind, location, message]
       properties:
@@ -424,6 +456,39 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectImpact"
+        preview:
+          type: array
+          description: >-
+            For a `portfolio.yml` text with no finding, the sharing rule's
+            answer on the fixed scenario, one entry per account.
+          items:
+            $ref: "#/components/schemas/SharingPreview"
+    SharingPreview:
+      type: object
+      additionalProperties: false
+      required: [account, items]
+      properties:
+        account:
+          $ref: "#/components/schemas/DeclaredName"
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [item, alone, allWaiting]
+            properties:
+              item:
+                type: string
+                minLength: 1
+              alone:
+                $ref: "#/components/schemas/Percent"
+              allWaiting:
+                $ref: "#/components/schemas/Percent"
+    Percent:
+      type: number
+      minimum: 0
+      maximum: 100
+      description: A percentage of the scenario's window capacity with at most two decimal places.
     DeclarationSource:
       allOf:
         - $ref: "#/components/schemas/Findings"
@@ -551,6 +616,41 @@ components:
             text:
               type: string
       unevaluatedProperties: false
+    ArchiveItemRequest:
+      allOf:
+        - $ref: "#/components/schemas/SaveFields"
+        - type: object
+          required: [item, projects]
+          properties:
+            item:
+              type: string
+              minLength: 1
+            projects:
+              type: array
+              items:
+                $ref: "#/components/schemas/ProjectChoice"
+      unevaluatedProperties: false
+    ProjectChoice:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [binding, choice]
+          properties:
+            binding:
+              type: string
+            choice:
+              enum: [move, archive]
+        - type: object
+          additionalProperties: false
+          required: [binding, choice, item]
+          properties:
+            binding:
+              type: string
+            choice:
+              const: reassign
+            item:
+              type: string
+              minLength: 1
     BindingSaveRequest:
       allOf:
         - $ref: "#/components/schemas/SaveFields"
