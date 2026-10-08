@@ -7,7 +7,11 @@ import type { OrchestrationThread } from "@wyrd-company/t3code-client";
 import type { Logger } from "@wyrd-company/t3code-client";
 import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
 import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
-import type { CreatedProject, EnvironmentHolds, EnvironmentsConfiguration } from "../t3code-source/index.ts";
+import type {
+  CreatedProject,
+  EnvironmentHolds,
+  EnvironmentsConfiguration,
+} from "../t3code-source/index.ts";
 import type { Invocation, ActorHost } from "../actor-host/index.ts";
 import type { ManifoldIdentity } from "@wyrd-company/manifold-shared";
 export type { Invocation, ManifoldIdentity };
@@ -32,7 +36,11 @@ export interface AgentThreadsOptions {
   readonly recordProject: (record: CreatedProject) => void;
   readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
   readonly sending?: (command: SendingCommand) => void;
-  readonly probe?: (accepted: InvokedCommand | (AcceptedCommand & { readonly implementation: "t3code-project-create" })) => void;
+  readonly probe?: (
+    accepted:
+      | InvokedCommand
+      | (AcceptedCommand & { readonly implementation: "t3code-project-create" }),
+  ) => void;
   readonly logger?: Logger;
 }
 export interface SendingCommand {

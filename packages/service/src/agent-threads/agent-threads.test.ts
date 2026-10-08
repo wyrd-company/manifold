@@ -756,6 +756,7 @@ const projectInput = {
 test("project create renders templates, keeps invocation ids, and records before resolving", async () => {
   let entryId = invocation.entryId;
   const f = await setup({ invocationOf: () => ({ ...invocation, entryId }) });
+  expect(f.module.implementations.actorKinds?.["t3code-project-create"]).toBe("promise");
   const first = await f.run("t3code-project-create", projectInput);
   expect(first["projectId"]).toBe("ba54cc5e-4164-8d75-bd73-47bf49b71005");
   expect(f.commands[0]!["commandId"]).toBe("a57f3db8-c759-87ca-91bd-460edec4cdbe");

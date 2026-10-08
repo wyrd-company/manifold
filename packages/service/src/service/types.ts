@@ -5,7 +5,7 @@
 //     - gate-runtime
 // ---
 import type { History } from "../history/index.ts";
-import type { InvokedCommand } from "../agent-threads/index.ts";
+import type { AgentThreadsOptions } from "../agent-threads/index.ts";
 import type { Environments } from "../environments/index.ts";
 import type { AgentTools } from "../agent-tools/index.ts";
 import type { AgentThreads } from "../agent-threads/index.ts";
@@ -57,7 +57,7 @@ export interface StartServiceOptions {
 }
 
 export interface ServiceProbes {
-  readonly command?: (command: InvokedCommand) => void;
+  readonly command?: AgentThreadsOptions["probe"];
   readonly migrated?: (step: "migrated", actorId: string) => void;
   readonly capacityCredited?: (credit: import("../capacity/index.ts").CapacityCredit) => void;
   /** Called after each start and stop step completes. */

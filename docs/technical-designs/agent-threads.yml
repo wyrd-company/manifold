@@ -531,7 +531,7 @@ proposed-design:
       /** Called before the first attempt to send an invoked command. */
       readonly sending?: (command: SendingCommand) => void;
       /** Called after the server answers an invoked command and before the promise resolves. */
-      readonly probe?: (accepted: InvokedCommand) => void;
+      readonly probe?: (accepted: InvokedCommand | (AcceptedCommand & { readonly implementation: "t3code-project-create" })) => void;
       readonly logger?: Logger;
     }
 
@@ -730,7 +730,7 @@ proposed-design:
     started lets it send once with no further hold change; with the
     environment disconnected, the fake server sees no socket from the
     module, a command waits, and it is sent once after reconnect,
-    including one in flight when the disconnect committed.     For `t3code-project-create`,
+    including one in flight when the disconnect committed. For `t3code-project-create`,
     the fake server answers `project.create` with receipts as measured,
     keeps the workspace roots that exist on its host as a set the test
     seeds, makes a missing root when the command asks, and rejects a

@@ -491,7 +491,7 @@ proposed-design:
     and transactions. `source.ts` implements `startT3CodeSource`.
     `migrations.ts` holds the migration steps under the owner `tthree`.
     `types.ts` declares the `EnvironmentHolds` port that
-    `environment-control` implements. Tests
+    `environment-control` implements.
     `created-projects.ts` reads and writes `t3_created_project`.
     Tests
     import only `index.ts`, the router's `index.ts`, and the store's

@@ -159,7 +159,20 @@ test("ServiceParts wires commands to the real host, source readiness, revision a
   });
   await expect.poll(() => typeof release).toBe("function");
   expect(server.commands).toHaveLength(0);
+  service.environments.act("station", "disconnect");
+  delete server.hooks.beforeReadModel;
   release();
+  await expect.poll(() => service.t3code.status()[0]?.state).toBe("disconnected");
+  expect(server.commands).toHaveLength(0);
+  service.environments.act("station", "pause");
+  service.environments.act("station", "reconnect");
+  await expect.poll(() => server.projects.size).toBe(1);
+  await expect.poll(() => service.agentThreads.scheduled("station")).toBe(1);
+  expect(server.commands.map((command) => command.type)).toEqual(["project.create"]);
+  expect(service.history.read("worker")!.commands.map((command) => command.kind)).toEqual([
+    "thread-create",
+  ]);
+  service.environments.act("station", "resume");
   await expect.poll(() => service.store.loadSnapshot("worker")?.snapshot.value).toBe("waiting");
   expect(server.threads.size).toBe(1);
   const thread = [...server.threads.values()][0]!;
