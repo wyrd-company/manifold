@@ -445,6 +445,11 @@ proposed-design:
     export function leafStatePaths(value: unknown): readonly string[];
     ```
 
+    Tokens. A token total is `input + output + cacheRead + cacheWrite`
+    of a usage answer's `tokens`. `reasoning` is not added, since the
+    providers that report it count it in `output` too; the tooltip of a
+    token total shows each class.
+
     Visits. Each history visit gets a number, its place in `visits` from
     1, which is the state visit number the usage answer's `visits`
     carry, and its leaf state paths, the rule `actors-api` gives. A visit
