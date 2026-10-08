@@ -32,6 +32,7 @@ const children = [
   "src/console/board.browser.test.ts",
   "src/console/actors.browser.test.ts",
   "src/console/console.browser.test.ts",
+  "src/console/overview.browser.test.ts",
   "src/console/readability.browser.test.ts",
   "src/escalations/recovery.test.ts",
   "src/foundation.integration.test.ts",

@@ -1,0 +1,192 @@
+// ---
+// relationships:
+//   verifies: [operator-console, tasks-api, portfolio-api, escalation-contract]
+// ---
+import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
+import { stringify } from "yaml";
+import { boardWorld } from "../../tasks/test-fixtures/world.ts";
+import { createLedger } from "../../ledger/index.ts";
+import { openTasks } from "../../tasks/index.ts";
+import { startRouter } from "../../router/index.ts";
+import { mountPortfolioApi } from "../../portfolio-api/index.ts";
+import { mountEscalations } from "../../escalations/index.ts";
+import { mountConsole } from "../index.ts";
+import { consoleHost } from "./host.ts";
+export async function overviewWorld() {
+  const f = boardWorld(true);
+  const server = await consoleHost();
+  const now = Date.now();
+  for (const id of ["parcel", "waiting", "child"])
+    f.store.saveSnapshot({
+      actorId: id === "child" ? id : `task:${id}`,
+      machine: `${"b".repeat(40)}:blueprints/delivery.yml`,
+      snapshot: {
+        status: "active",
+        value: "waiting",
+        context: {
+          manifold: {
+            environment: "sample-host",
+            portfolioItem: "alpha",
+            threads: id === "parcel" ? ["thread-1"] : [],
+          },
+        },
+      },
+    });
+  const router = startRouter({
+    store: f.store,
+    host: {
+      subscription: () => ({ topics: [] }),
+      restore: (stored) =>
+        stored.actorId === "task:waiting"
+          ? { status: "held", reason: "Sample failure" }
+          : {
+              status: "restored",
+              target: {
+                actorId: stored.actorId,
+                send: () => {},
+                persist: () => ({ machine: stored.machine, snapshot: stored.snapshot }),
+              },
+            },
+    },
+  });
+  const held = f.module.raise({
+    kind: "held-actor",
+    subject: { actorId: "task:waiting" },
+    title: "Collection stopped",
+    question: "Try again?",
+    choices: [{ id: "dismiss", label: "Dismiss" }],
+  });
+  f.module.answer(held.id, { choice: "dismiss" }, "api");
+  const references = new Map(
+    f.projects.map((p) => [
+      `project-${p.number}`,
+      { nodeId: `project-${p.number}`, owner: p.owner, number: p.number },
+    ]),
+  );
+  const tasks = openTasks({
+    store: f.store,
+    held: (id) => !!router.held(id),
+    boundProjects: () => f.projects,
+    github: {
+      trackedIssueIds: () => f.mirror.trackedIssueIds(references),
+      trackedIssue: (id) => f.mirror.trackedIssue(id, references),
+    },
+    actorUsage: f.ledger.actorUsage,
+    accountUnit: () => "usd",
+    listEscalations: f.module.list,
+    thread: (_environment, id) =>
+      id === "thread-1"
+        ? { url: "https://example.test/environment/thread-1", archived: false }
+        : undefined,
+    tokenHolder: () => undefined,
+  });
+  const declaration = lintPortfolioDeclaration({
+    portfolio: stringify({
+      items: {
+        alpha: { allocations: { "acct-a": { guarantee: 50 } } },
+        beta: {
+          allocations: { "acct-a": { guarantee: 50 } },
+          items: { "beta-one": { allocations: { "acct-a": { guarantee: 20 } } } },
+        },
+      },
+    }),
+    bindings: undefined,
+  });
+  if (!declaration.ok) throw Error(JSON.stringify(declaration));
+  const ledger = createLedger({
+    connection: f.store.connection,
+    portfolio: declaration.ledgerPortfolio,
+    now: () => now,
+  });
+  for (const account of ["acct-a", "acct-b"])
+    ledger.credit({
+      key: `overview-credit:${account}`,
+      account,
+      window: "current",
+      opensAt: now - 1000,
+      closesAt: now + 86400000,
+      amount: 10000000,
+    });
+  for (const [item, amount] of [
+    ["alpha", 4250000],
+    ["beta", 1150000],
+    ["beta-one", 850000],
+  ] as const)
+    ledger.postActual({
+      key: `overview-actual:${item}`,
+      actor: `task:${item}`,
+      item,
+      account: "acct-a",
+      amount,
+      usedAt: now,
+    });
+  // Account use reaches 85%; the extra usage has no portfolio allocation.
+  ledger.postActual({
+    key: "overview-extra",
+    actor: "session:sample",
+    item: "other",
+    account: "acct-a",
+    amount: 2250000,
+    usedAt: now,
+  });
+  mountConsole(server.host, { store: f.store });
+  server.host.mount("/api/tasks", tasks.requestListener);
+  mountEscalations(server.host, f.module);
+  mountPortfolioApi(server.host, {
+    portfolio: { current: () => ({ commit: null, declaration: declaration.declaration }), ledger },
+    accounts: () =>
+      Object.fromEntries(
+        ["acct-a", "acct-b"].map((name) => [
+          name,
+          {
+            unit: "usd" as const,
+            kind: "api" as const,
+            capacity: { amount: 10, reset: new Date(now - 1000).toISOString(), every: { days: 7 } },
+          },
+        ]),
+      ),
+    processRepository: { revisionAt: async () => undefined },
+    store: f.store,
+    now: () => now,
+    log: (e) => {
+      throw Error(e.error);
+    },
+  });
+  let environmentsFailed = false;
+  // Structural stand-in replaced with the environment module at Rebase.
+  server.host.mount("/api/environments", (_request, response) => {
+    response.writeHead(environmentsFailed ? 500 : 200, { "Content-Type": "application/json" });
+    response.end(
+      JSON.stringify({
+        environments: [
+          {
+            name: "north",
+            host: "https://example.test/north",
+            status: "connected",
+            activeThreads: 1,
+            scheduledThreads: 0,
+          },
+          {
+            name: "south",
+            host: "https://example.test/south",
+            status: "paused",
+            activeThreads: null,
+            scheduledThreads: 2,
+          },
+        ],
+      }),
+    );
+  });
+  return {
+    url: server.url,
+    ask: f.ask,
+    failEnvironments: (failed: boolean) => {
+      environmentsFailed = failed;
+    },
+    async close() {
+      router.stop();
+      await server.close();
+      await f.close();
+    },
+  };
+}

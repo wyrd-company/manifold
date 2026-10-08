@@ -105,3 +105,9 @@ export function isEscalation(v: unknown): v is Escalation {
 export function isEscalationAnswerResponse(v: unknown): v is EscalationAnswerResponse {
   return shape(v, { outcome: oneOf("answered", "closed"), escalation: isEscalation });
 }
+export interface EscalationsResponse {
+  readonly escalations: readonly Escalation[];
+}
+export function isEscalationsResponse(v: unknown): v is EscalationsResponse {
+  return shape(v, { escalations: array(isEscalation) });
+}
