@@ -163,6 +163,10 @@ export function openHistory({ store, log, now = Date.now }: HistoryOptions): His
         const commands = db
           .prepare("DELETE FROM history_command WHERE actor_id=?")
           .run(actorId).changes;
+        connection.afterCommit(() => {
+          for (const [id, write] of pending)
+            if (write.command.invocation.actorId === actorId) pending.delete(id);
+        });
         return Number(links) + Number(commands);
       });
     },

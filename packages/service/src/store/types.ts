@@ -48,6 +48,7 @@ export interface Store {
 export interface StoreConnection {
   readonly database: DatabaseSync;
   transaction<T>(work: () => T): T;
+  afterCommit(work: () => void): void;
   migrate(owner: string, steps: readonly string[]): void;
 }
 

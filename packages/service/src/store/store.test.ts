@@ -169,6 +169,32 @@ test("nested transactions share commits, rollbacks and reject thenables", () => 
   ]);
 });
 
+test("commit callbacks wait for the outer commit and discard only rolled-back work", () => {
+  const { connection } = store;
+  const calls: string[] = [];
+  connection.afterCommit(() => calls.push("immediate"));
+  connection.transaction(() => {
+    connection.afterCommit(() => calls.push("outer"));
+    expect(() =>
+      connection.transaction(() => {
+        connection.afterCommit(() => calls.push("rolled-back-inner"));
+        throw new Error("inner");
+      }),
+    ).toThrow("inner");
+    connection.transaction(() => connection.afterCommit(() => calls.push("inner")));
+    expect(calls).toEqual(["immediate"]);
+  });
+  expect(calls).toEqual(["immediate", "outer", "inner"]);
+  expect(() =>
+    connection.transaction(() => {
+      connection.transaction(() => connection.afterCommit(() => calls.push("rolled-back-outer")));
+      throw new Error("outer");
+    }),
+  ).toThrow("outer");
+  connection.transaction(() => connection.afterCommit(() => calls.push("next")));
+  expect(calls).toEqual(["immediate", "outer", "inner", "next"]);
+});
+
 test("snapshot state paths include ancestors, parallel regions and empty nodes with machine filtering", () => {
   store.saveSnapshot({
     actorId: "parallel",

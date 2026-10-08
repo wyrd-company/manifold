@@ -17,14 +17,17 @@ export function openConnection(path: string): StoreConnection {
   const database = new DatabaseSync(path);
   let depth = 0;
   let nextSavepoint = 0;
+  const committed: (() => void)[] = [];
   const connection: StoreConnection = {
     database,
-    transaction(work) {
+    transaction<T>(work: () => T) {
       const savepoint = depth === 0 ? undefined : `store_transaction_${nextSavepoint++}`;
       database.exec(savepoint ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE");
       depth++;
+      const checkpoint = committed.length;
+      let result: T;
       try {
-        const result = work();
+        result = work();
         if (
           result !== null &&
           (typeof result === "object" || typeof result === "function") &&
@@ -33,14 +36,20 @@ export function openConnection(path: string): StoreConnection {
         )
           throw new TypeError("Transactions must be synchronous");
         database.exec(savepoint ? `RELEASE ${savepoint}` : "COMMIT");
-        return result;
       } catch (error) {
+        committed.length = checkpoint;
         database.exec(savepoint ? `ROLLBACK TO ${savepoint}` : "ROLLBACK");
         if (savepoint) database.exec(`RELEASE ${savepoint}`);
         throw error;
       } finally {
         depth--;
       }
+      if (depth === 0) for (const callback of committed.splice(0)) callback();
+      return result;
+    },
+    afterCommit(work) {
+      if (depth === 0) work();
+      else committed.push(work);
     },
     migrate(owner, steps) {
       if (!/^[a-z]+$/.test(owner)) throw new TypeError("Migration owner must be a lower-case word");

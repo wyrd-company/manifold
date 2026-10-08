@@ -1667,15 +1667,27 @@ it("a move and a late mapping both select the history visit after migration", as
 
 it("the populated Accounts last-report read uses the covering account-time index", async () => {
   const f = await setup();
-  f.push([call("first")]);
-  f.push([{ ...call("second"), timestamp: new Date(200).toISOString() }]);
-  expect(f.usage.lastUsedAt()).toEqual({ acct: 200 });
+  f.push(
+    Array.from({ length: 400 }, (_, i) => ({
+      ...call(`report-${i}`, 10, 5),
+      timestamp: new Date(1000 + i).toISOString(),
+    })),
+  );
+  f.connection.database.exec(
+    "UPDATE usage_postings SET account = CASE (seq - 1) % 4 WHEN 0 THEN 'north' WHEN 1 THEN 'south' WHEN 2 THEN 'east' ELSE 'west' END",
+  );
+  expect(f.usage.lastUsedAt()).toEqual({ north: 1396, south: 1397, east: 1398, west: 1399 });
   const plan = f.connection.database
     .prepare(
       "EXPLAIN QUERY PLAN SELECT account, MAX(used_at) AS at FROM usage_postings WHERE account IS NOT NULL GROUP BY account",
     )
     .all();
-  expect(plan.map((row) => row["detail"]).join(" ")).toContain(
-    "COVERING INDEX usage_postings_by_account",
-  );
+  const details = plan.map((row) => String(row["detail"]));
+  expect(details.length).toBeGreaterThan(0);
+  expect(
+    details.every((detail) =>
+      /^SEARCH usage_postings USING COVERING INDEX usage_postings_by_account\b/.test(detail),
+    ),
+  ).toBe(true);
+  expect(details.some((detail) => /SCAN usage_postings\b/.test(detail))).toBe(false);
 });

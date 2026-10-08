@@ -445,3 +445,41 @@ test("command identities reject projects with threads and thread commands with p
   ] as const)
     expect(() => insert.run("invalid", kind, thread, project)).toThrow();
 });
+
+test.each([false, true])(
+  "pruning retires pending commands only after the outer commit (rollback: %s)",
+  (rollback) => {
+    save({ status: "done", value: "delivered" });
+    const db = store.connection.database;
+    history.commandSending(command);
+    db.exec(
+      "CREATE TRIGGER reject_acceptance BEFORE UPDATE ON history_command BEGIN SELECT RAISE(FAIL,'fixture fault'); END",
+    );
+    db.exec(
+      "CREATE TRIGGER reject_command BEFORE INSERT ON history_command BEGIN SELECT RAISE(FAIL,'fixture fault'); END",
+    );
+    history.commandAccepted({ ...command, sequence: 3 });
+    history.commandSending({
+      ...command,
+      commandId: "other-command",
+      invocation: { ...command.invocation, actorId: "other" },
+    });
+    expect(logs).toHaveLength(2);
+    db.exec("DROP TRIGGER reject_command; DROP TRIGGER reject_acceptance");
+    const prune = () =>
+      store.connection.transaction(() => {
+        history.prune("parcel");
+        if (rollback) throw new Error("outer rollback");
+      });
+    if (rollback) expect(prune).toThrow("outer rollback");
+    else prune();
+    save({ status: "done", value: "delivered" });
+    save({ status: "done", value: "delivered" }, { actorId: "other" });
+    expect(history.read("parcel")!.commands.map((c) => c.commandId)).toEqual(
+      rollback ? ["command-one"] : [],
+    );
+    if (rollback)
+      expect(history.read("parcel")!.commands[0]!.acceptedAt).toBe(new Date(at).toISOString());
+    expect(history.read("other")!.commands.map((c) => c.commandId)).toEqual(["other-command"]);
+  },
+);
