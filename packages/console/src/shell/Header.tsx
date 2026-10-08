@@ -5,6 +5,7 @@
 import { PanelLeft, Workflow, ChevronRight } from "lucide-react";
 import { useQuery, skipToken } from "@tanstack/react-query";
 import type { TaskResult } from "../api/tasks.ts";
+import { epicsSearch } from "../screens/EpicsContent.tsx";
 import { boardSearch } from "../screens/BoardContent.tsx";
 import { Link, useParams, useSearch, useLocation } from "@tanstack/react-router";
 import { Button } from "../ui/button.tsx";
@@ -38,8 +39,11 @@ export function Header({ toggleSidebar }: { toggleSidebar: () => void }) {
         <ChevronRight size={14} />
         {actorId ? (
           <>
-            <Link to="/board" search={boardSearch(search)}>
-              Board
+            <Link
+              to={path.startsWith("/epics/") ? "/epics" : "/board"}
+              search={path.startsWith("/epics/") ? epicsSearch(search) : boardSearch(search)}
+            >
+              {path.startsWith("/epics/") ? "Epics" : "Board"}
             </Link>
             <ChevronRight size={14} />
             <span className="mono">{issue ? `${issue.repository}#${issue.number}` : actorId}</span>

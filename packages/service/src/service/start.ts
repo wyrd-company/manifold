@@ -26,6 +26,7 @@ import { console } from "../console/wiring.ts";
 import { blueprintsApi } from "../blueprints-api/wiring.ts";
 import { portfolioApiPart } from "../portfolio-api/wiring.ts";
 import { declarationsApiPart } from "../declarations-api/wiring.ts";
+import { epics } from "../epics/wiring.ts";
 import { tasks } from "../tasks/wiring.ts";
 import { assembleService } from "./wiring.ts";
 import type { Service, StartServiceOptions } from "./types.ts";
@@ -74,6 +75,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     .part(declarationsApiPart)
     .part(portfolioApiPart)
     .part(tasks)
+    .part(epics)
     .part(listen)
     .step("listening")
     .start();

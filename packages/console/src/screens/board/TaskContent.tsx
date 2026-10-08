@@ -10,12 +10,14 @@ import { fetchTask } from "../../api/tasks.ts";
 import { Button } from "../../ui/button.tsx";
 import { EmptyState } from "../EmptyContent.tsx";
 import { EscalationPanel, answerLabel } from "./EscalationPanel.tsx";
-export function TaskContent() {
-  const { actorId } = useParams({ from: "/board/task/$actorId" }),
-    search = useSearch({ from: "/board/task/$actorId" });
+export function TaskContent({ origin = "board" }: { origin?: "board" | "epics" }) {
+  const { actorId } = useParams({ strict: false }),
+    search = useSearch({ strict: false });
+  const back = origin === "epics" ? "/epics" : "/board";
+  const label = origin === "epics" ? "Epics" : "Board";
   const query = useQuery({
     queryKey: ["task", actorId],
-    queryFn: () => fetchTask(actorId),
+    queryFn: () => fetchTask(actorId!),
     staleTime: 0,
     refetchOnWindowFocus: "always",
     refetchOnMount: "always",
@@ -30,8 +32,8 @@ export function TaskContent() {
         title="Task not found"
         description="This issue is not on a bound Project."
       >
-        <Link to="/board" search={search}>
-          Board
+        <Link to={back} search={search}>
+          {label}
         </Link>
       </EmptyState>
     );
@@ -51,8 +53,8 @@ export function TaskContent() {
   return (
     <>
       <div className="task-back">
-        <Link to="/board" search={search}>
-          ← Board
+        <Link to={back} search={search}>
+          ← {label}
         </Link>
         <span className="mono muted">{reference}</span>
         <span className="toolbar-space" />

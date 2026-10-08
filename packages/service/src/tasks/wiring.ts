@@ -24,7 +24,7 @@ export const tasks = wiringPart({
         | "log"
       >
     > & { taskMetadata: ReturnType<typeof openTaskMetadata>; http: HttpHost },
-  ): Record<never, never> => {
+  ) => {
     const {
       store,
       router,
@@ -70,6 +70,6 @@ export const tasks = wiringPart({
         }),
     });
     http.mount("/api/tasks", tasks.requestListener);
-    return {};
+    return { tasks };
   },
 });

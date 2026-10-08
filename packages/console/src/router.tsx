@@ -12,7 +12,7 @@ import { OverviewContent } from "./screens/OverviewContent.tsx";
 import { TaskContent } from "./screens/board/TaskContent.tsx";
 import { boardSearch } from "./screens/BoardContent.tsx";
 import { BoardContent } from "./screens/BoardContent.tsx";
-import { EpicsContent } from "./screens/EpicsContent.tsx";
+import { EpicsContent, epicsSearch } from "./screens/EpicsContent.tsx";
 import { ActorsContent } from "./screens/ActorsContent.tsx";
 import { PortfolioContent, portfolioSearch } from "./screens/PortfolioContent.tsx";
 import { BlueprintsContent } from "./screens/BlueprintsContent.tsx";
@@ -57,6 +57,7 @@ const routes = navigation.map((item, index) => {
     getParentRoute: () => root,
     path: item.path,
     ...(item.path === "/board" ? { validateSearch: boardSearch } : {}),
+    ...(item.path === "/epics" ? { validateSearch: epicsSearch } : {}),
     component: () => (
       <>
         <PageTitle title={item.label} description={item.description} />
@@ -126,6 +127,12 @@ export const router = createRouter({
       path: "/board/task/$actorId",
       validateSearch: boardSearch,
       component: TaskContent,
+    }),
+    createRoute({
+      getParentRoute: () => root,
+      path: "/epics/task/$actorId",
+      validateSearch: epicsSearch,
+      component: () => <TaskContent origin="epics" />,
     }),
   ]),
   basepath: "/console",

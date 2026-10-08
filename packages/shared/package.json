@@ -57,6 +57,10 @@
     "./implementation-catalog": {
       "types": "./dist/implementation-catalog.d.ts",
       "import": "./dist/implementation-catalog.js"
+    },
+    "./epics-api": {
+      "types": "./dist/epics-api.d.ts",
+      "import": "./dist/epics-api.js"
     }
   },
   "scripts": {
