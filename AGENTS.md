@@ -76,6 +76,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **child state machine** a blueprint invoked or spawned by another state machine actor, for work the parent owns.
 - **client** means the web, desktop, or mobile UI for T3Code.
 - **comparator** the user's function that picks which task in a gate's population proceeds next.
+- **created project** a T3code project that a task actor created with `t3code-project-create`, recorded in Manifold's store with the creating actor and its portfolio item, so usage of a thread in it that no actor owns is attributed to that item unless a binding names the project.
 - **console** the web user interface to Manifold
 - **credit** a ledger entry that adds to an account's capacity for a window.
 - **deadline** a time at which an actor in a state receives an event.
@@ -92,6 +93,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **gate** an implementation on a blueprint state that decides which waiting tasks may leave it.
 - **GitHub mirror** the last state the GitHub event source read of each entity it follows, against which it compares current GitHub state.
 - **harness plugin** the MCP server the host CLI serves to each provider T3 Code runs, giving the agent the tools to hand off and escalate.
+- **hold** an operator's pause or disconnect of one T3 Code environment, kept in Manifold's store under the environment's name until the matching resume or reconnect. A pause holds the thread and turn commands actors invoke; a disconnect closes Manifold's connection and holds every command to the environment.
 - **holder** a task actor holding a token from a gate.
 - **implementation** a named piece of code a blueprint binds: actor logic, an action, a guard, or a delay.
 - **inbox** the per-actor store of routed events, each pending until the actor consumes it and kept after.
@@ -107,6 +109,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **notification destination** a name the process repository uses for where an escalation is sent, mapped in service configuration to an ntfy server, topic, security posture, and credential.
 - **pacing** a limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.
 - **parent** a task with subtasks
+- **pass** one turn of an agent thread that a state machine actor follows, from the command or escalation answer that started it to the reply that closed it: the agent's handoff, or the turn settling without one.
 - **population** the task actors in a gated state that hold no token from its gate.
 - **portfolio item** a user-declared node in the portfolio tree that budget is allocated to and usage is attributed to.
 - **project** an adaptable table, board, and roadmap that integrates with your issues and pull requests on GitHub to help you plan and track your work
@@ -134,6 +137,8 @@ We need to be on the same page with terminology. When communicating, use this la
 - **task** a specific piece of work that needs to be completed, documented as an issue and executed as an actor
 - **task field** a field of a bound Project's tasks that the task metadata declaration declares, whose configuration Manifold owns on the Project.
 - **thread** means the durable conversation and work history for a T3code project.
+- **thread change** a difference between two thread states, or the removal of a thread, that the T3 Code environment source publishes as one event whose id is drawn from the change itself, such as a turn id or a request id.
+- **thread state** what the T3 Code environment source keeps of a thread to decide its changes: the thread's latest turn and its state, its open approval and user-input requests, and its session's status.
 - **token** what a gate grants a task actor so it may leave the gated state.
 - **topic** a path of segments joined by `.` that names where an event comes from, whose first segment is its event source.
 - **tracked issue** an issue that is the content of a present item on a bound GitHub Project.

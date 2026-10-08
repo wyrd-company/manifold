@@ -14,6 +14,7 @@ relationships:
     - usage-decoder
     - usage-intake
     - t3code-session-mapping
+    - usage-api
 
 description: >-
   Manifold's gates request estimates from the user's process, which intends to build
@@ -36,9 +37,11 @@ impact: 4
 response-strategy: mitigate
 # Mitigation: the host CLI maps each provider session to its T3 Code thread
 # from T3 Code's own database, and the service maps the thread to its actor
-# and state visit, or to its T3code project's binding, or to the top-level
-# Other. Cursor sessions under T3 Code are stored as ACP agent transcripts
-# in a nested layout the usage decoder does not read, so their usage is
-# not decoded.
+# and state visit, or to its T3code project's binding, or to the portfolio
+# item of the actor that created the project, or to the top-level Other.
+# Usage that no actor owns shows on the Portfolio screen as unowned usage,
+# and the operator moves it to its task or item. Cursor sessions under T3
+# Code are stored as ACP agent transcripts in a nested layout the usage
+# decoder does not read, so their usage is not decoded.
 
 status: mitigated

@@ -335,8 +335,8 @@ proposed-design:
     create on an environment that is not ready waits while the actor's own
     environment is ready, and a project create on a ready environment is
     sent while the actor's own environment is not. An operator's pause,
-    which task 1204's environment control holds thread and turn commands
-    on, does not hold `t3code-project-create`, since it starts no thread
+    on which environment control holds thread and turn commands, does
+    not hold `t3code-project-create`, since it starts no thread
     or turn; an operator's disconnect makes the environment not ready, so
     it holds the create through this readiness. A restart before the
     source's first transaction for the environment commits leaves no row,

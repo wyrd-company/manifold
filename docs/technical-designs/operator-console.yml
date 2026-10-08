@@ -378,8 +378,8 @@ proposed-design:
     regains focus, and on Refresh, which marks every key of the screen
     stale. No timer reads on a schedule, and nothing moves on screen
     between reads: "now" is the time of the screen's latest history read.
-  actor-history-stand-in: >-
-    The console reads the actor history seam as its owner amended it: the
+  actor-history-read: >-
+    The console reads an actor's history from the Actors API: the
     answer is `{ history }`, an `ActorHistory` with `actor`, the actor's
     summary with its `status`, `active`, `done`, or `stopped`; `visits`,
     in order, each a `StateVisit` with its `visit` number from 1, its
@@ -394,13 +394,10 @@ proposed-design:
     when known, `invokeId`, `entryId`, `sentAt`, and `acceptedAt` once
     the server's acceptance is recorded, ordered by `sentAt` then
     `commandId`; and `end`,
-    `{ status, endedAt, output? }`, once the actor has ended. Until the
-    history owner merges, the console holds these types, its
-    `isActorHistoryResponse` guard, and `actorHistoryPath` in
-    `src/api/actor-history.ts` under the owner's names, and its tests
-    serve recorded answers of this shape; at the rebase onto the merged
-    seam, the file is removed and its readers import the same names from
-    `@wyrd-company/manifold-shared/actors-api`. The seam does not tell
+    `{ status, endedAt, output? }`, once the actor has ended. The
+    console imports these types, the `isActorHistoryResponse` guard, and
+    `actorHistoryPath` from `@wyrd-company/manifold-shared/actors-api`.
+    The history does not tell
     whether the router holds an actor, so Failed is read from the task
     read's `actor.status` `held`, for task actors only.
   actor-route: >-
@@ -4004,7 +4001,7 @@ proposed-design:
     the default actor, the running visit, the waiting tone, the "running"
     note, and the axis ending at `now`. Unit tests cover the result
     mappings of `fetchActors(status)`, `fetchActorHistory`, and
-    `fetchActorUsage`, the stand-in `isActorHistoryResponse`, `filterActors`,
+    `fetchActorUsage`, the `isActorHistoryResponse` guard, `filterActors`,
     and the Actors route's search. The Board and Task page browser test
     adds that the escalated task's page shows the timeline bar with each
     visit's state and duration under it, and that "Open actor" opens its
@@ -4025,10 +4022,10 @@ proposed-design:
     with the pass's usage, and the card move with "confirmed"; reloads
     and still sees Sequence; returns with "All actors"; opens the running
     actor and sees Running, the "running" note, and "Open thread" with
-    the thread's link. Until the history owner merges, both browser tests serve
-    recorded history answers at the history and completed paths from a
-    fixture listener, and the rebase replaces it with the merged routes.
-    Fixture values are generic and never drawn from Manifold's own
+    the thread's link. Both browser tests mount the console's actors
+    listener, with its history and completed routes, on the fixture
+    store; the Actors test fails the history read on demand to show its
+    error. Fixture values are generic and never drawn from Manifold's own
     domain.
   tests: >-
     Each behavior is red before green, and tests go through public

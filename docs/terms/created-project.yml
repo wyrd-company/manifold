@@ -1,0 +1,13 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - agent-threads
+    - remember-created-projects-in-the-store
+title: Created project
+description: >-
+  A T3code project that a task actor created with `t3code-project-create`,
+  recorded in Manifold's store with the creating actor and its portfolio
+  item, so usage of a thread in it that no actor owns is attributed to
+  that item unless a binding names the project.
