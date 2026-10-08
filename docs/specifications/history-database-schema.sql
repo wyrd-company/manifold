@@ -8,9 +8,11 @@
 
 -- State visits: one row per run of an actor's saves with one state value
 -- and one blueprint version. `machine` is the key the saves were made
--- with. `exit_event_type` and `exit_event_id` name the event the save
--- that left the visit took; both are null for a visit left by a save
--- that took no event and for a visit closed by the actor's end.
+-- with. `exit_event_type` and `exit_event_id` are the `changedBy` of the
+-- save that left the visit: the event whose macrostep made the state
+-- change, and the inbox event id of the routed event whose delivery made
+-- it, null when none did. Both are null for a visit left by a save that
+-- holds no state change and for a visit closed by the actor's end.
 CREATE TABLE history_visit (
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
   visit INTEGER NOT NULL CHECK (visit >= 1),

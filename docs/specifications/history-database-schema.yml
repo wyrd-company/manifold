@@ -27,9 +27,12 @@ description: >-
   `state_value` the canonical JSON of the snapshot's state value, keys
   sorted. `entered_at` and `exited_at` are milliseconds since the Unix
   epoch; `exited_at` is null for the visit an active actor is in.
-  `exit_event_type` is the type of the event the save that left the visit
-  took, and `exit_event_id` its inbox event id when that save consumed an
-  inbox row. Both are null for a visit left by a save that took no event,
+  `exit_event_type` and `exit_event_id` are the save's `changedBy`, as
+  `actor-host` defines it: the type of the event whose macrostep made the
+  state change the save that left the visit saved, and the inbox event id
+  of the routed event that change was made in the delivery of, null for a
+  change no routed event's delivery made, whatever inbox row that save
+  consumed. Both are null for a visit left by a save that holds no state change,
   such as a migration to a later blueprint version, and for the visit
   closed by the actor's end. Only `exited_at` and the exit event of an
   actor's latest visit are ever set after its insert, and each only from

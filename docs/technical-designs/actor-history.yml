@@ -199,8 +199,10 @@ proposed-design:
     with the kind, the invocation's actor, invoke, and entry ids, the
     environment, the thread and message ids, and `sent_at` `now()`, with
     `INSERT ... ON CONFLICT DO NOTHING`. `commandAccepted` inserts the same
-    row when it is absent and sets its `sequence` and `accepted_at` where
-    they are null. Each writes in its own transaction. Every command the
+    row when it is absent, with the `sent_at` of the command's pending
+    sending write when the module holds one, and its own `now()`
+    otherwise, and sets its `sequence` and `accepted_at` where they are
+    null. Each writes in its own transaction. Every command the
     server may have accepted therefore has a row before it was sent, and a
     command whose answer never arrived, because the invoking state exited
     and aborted the request, keeps its row with no acceptance; a
@@ -209,12 +211,18 @@ proposed-design:
   command-barrier: >-
     A probe write that throws does not fail the invoke: the module logs
     `history-write-failed` with the actor and command ids, and keeps the
-    write in memory as pending for the actor, with the time it was
-    taken, the later of a sending and
-    an acceptance for one command id replacing the earlier. The save hook,
-    at the start of every save of that actor, first drops each pending
-    write whose row the store already holds as the write would leave it,
-    then applies the rest inside the save's transaction. A pending write
+    write in memory as pending for the actor. The module holds one pending
+    write per command id, which merges what each probe gave: the first
+    sending time, kept whatever arrives later, and the acceptance's
+    sequence and time. An acceptance whose own write succeeds after a
+    failed sending write inserts the row with that first sending time, as
+    `commands` states, so the row and the pending write agree. The save
+    hook, at the start of every save of that actor, first drops each
+    pending write whose row the store already holds as the write would
+    leave it, the same `sent_at` and, when the write holds an acceptance,
+    the same `sequence`, then applies the rest inside the save's
+    transaction: it inserts the row with the first sending time when it
+    is absent, and sets the acceptance where it is null. A pending write
     that fails again throws, which rolls back the save, so the actor does
     not advance past a command whose row is missing; the write stays
     pending for the next save. A kept write is dropped only once a
@@ -344,10 +352,19 @@ proposed-design:
     `saved` probe, leaves no visit and no link, and its replay writes one
     of each; an invoked callback that sends an event that changes the
     state and then an event the state ignores, both before the queued
-    save, exits the visit on the first; an accepted `thread-create` and
+    save, exits the visit on the first; a callback that changes the state
+    with no inbox row, followed by a routed event the state ignores whose
+    delivery makes the save, exits the visit on the callback's event with
+    no event id, while the routed event is linked to the visit as
+    consumed; an accepted `thread-create` and
     `turn-start` each give one command with its acceptance, and the turn's
     id once its `t3.turn.started` reaches the inbox; `commandSending` and
-    `commandAccepted` twice keep one row; a `turn-start` whose server
+    `commandAccepted` twice keep one row; a sending write that fails at
+    one time, followed by an acceptance at a later time whose write
+    succeeds, and the same followed by an acceptance whose write fails
+    and is applied by the next save, each give the row the first sending
+    time as `sentAt` and order it among the actor's commands by that
+    time; a `turn-start` whose server
     holds its answer while another event exits the invoking state keeps
     its command row with no acceptance, and with the turn's id once the
     turn starts, after a restart too; a probe write made to throw is

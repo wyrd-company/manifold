@@ -66,12 +66,17 @@ description: >-
     `machine` and `blueprint` are as in a summary, for the blueprint
     version the visit ran on. `enteredAt` and `exitedAt` are ISO 8601 UTC
     times with milliseconds; `exitedAt` is absent for the visit an active
-    actor is in. `exitEvent` is `{ type, eventId }` for the event the save
-    that left the visit took, `eventId` absent when that save consumed no
-    inbox row; it is absent for a visit left by a save that took no event,
-    such as a migration to a later blueprint version, and for the visit
-    the actor ended in. A visit whose blueprint commit differs from the
-    visit before it, with the same `blueprint.path`, is a migration.
+    actor is in. `exitEvent` is `{ type, eventId }` for the event whose
+    macrostep changed the state that the save leaving the visit saved:
+    `eventId` is the inbox event id of the routed event that change was
+    made in the delivery of, and is absent for a change no routed event's
+    delivery made, such as an invoked callback's event, even when the save
+    consumed an unrelated inbox row. `exitEvent` is absent for a visit
+    left by a save that holds no state change, such as a migration to a
+    later blueprint version, and for the visit the actor ended in. The
+    visit in which an event was taken is that event's own `visit`. A visit
+    whose blueprint commit differs from the visit before it, with the same
+    `blueprint.path`, is a migration.
   - `events`: every routed event the store holds in the actor's inbox, in
     the order it was received, each `{ eventId, type, topic, receivedAt,
     consumedAt, visit, payload }`. `type` is the payload's `type`;
