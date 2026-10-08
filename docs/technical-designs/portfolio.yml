@@ -94,7 +94,8 @@ proposed-design:
     archived names an archived item is refused. The operator archives
     through the `archive-item` endpoint of `declarations-api`, which
     writes `portfolio.yml` and `bindings.yml` in one commit, so a save
-    that fails leaves the declaration in force as it was.
+    that fails puts neither the archive nor any choice in the declaration
+    in force.
   sharing-rule: >-
     An item may reserve while its usage counted as it arrives plus the new
     reservation stays within its guarantee, or within its guarantee plus the

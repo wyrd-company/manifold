@@ -2827,7 +2827,7 @@ proposed-design:
     the alert, each with its kind and file in mono and its message. A
     `502`, a `503`, or a network failure shows the message with "Try
     again". The dialog never writes the portfolio draft, and a failed
-    archive changes nothing in force. `archive.ts` holds the pure
+    archive writes neither the archive nor any project choice. `archive.ts` holds the pure
     functions that list the attached bindings from the two reads, list
     the sibling targets, and build the request from the choices.
   unowned-usage: >-
@@ -3154,7 +3154,10 @@ proposed-design:
     the same two texts from the same base each time, so a retry after a
     crash at any point pushes the same commit content. The two files are
     one commit pushed as one ref update, so a failed or refused save
-    leaves the branch, and the declaration in force, as they were; a
+    writes no part of the archive: neither the branch nor the
+    declaration in force holds the archive or any project choice. A save
+    that meets a moved branch still applies the commits it pulled, as
+    every save does; a
     commit that holds the archive and leaves a live binding on the item
     is never pushed, since the request lints the pair as the service
     applies it. A lint that answers a preview writes nothing, and
@@ -3229,10 +3232,14 @@ proposed-design:
     association, and `gamma` for `board-two`, both comments kept, and
     `GET /api/portfolio` answers that commit with `board-one` on `alpha`
     and `board-two` on `gamma`. Refused save: with the dialog open, the
-    test pushes a commit that changes `bindings.yml` to the fixture
-    remote; confirm shows the conflict alert, the remote branch holds no
-    archive commit, and `GET /api/portfolio` still answers `beta` live
-    with both bindings, at the commit before. Preview: "Edit allocations"
+    test pushes to the fixture remote a valid commit that adds a T3code
+    project binding `board-three` on `gamma` to `bindings.yml`; confirm
+    shows the conflict alert; the remote branch's head is that commit,
+    with no archive commit after it; and `GET /api/portfolio` answers
+    that commit, since the save pulls and applies it before it answers
+    the conflict, with `beta` live, `board-one` and `board-two` still on
+    `beta`, and `board-three` on `gamma`, so neither the archive nor any
+    project choice was written. Preview: "Edit allocations"
     shows `delta` "Alone" 60%, its 30% and the unallocated 30%, and "All
     waiting" 40%, its 30% and a third of the unallocated; setting `delta`
     to 50% shows "All waiting" 53.33% once the lint answers, while `GET
