@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   verifies: [default-process, service-assembly, intake, gate-runtime, agent-threads, agent-tools, usage-intake, host-cli-usage, tasks-api, declarations-api, portfolio-api, projects-api]
+//   verifies: [default-process, service-assembly, intake, gate-runtime, agent-threads, agent-tools, usage-intake, host-cli-usage, tasks-api, declarations-api, portfolio-api, projects-api, actor-history, blueprint-migration, environments-api, usage-api]
 // ---
 import { afterEach, expect, it } from "vite-plus/test";
 import { readFile, writeFile } from "node:fs/promises";
@@ -365,7 +365,7 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
     handoff,
   };
 }
-it("runs the starter acceptance scenario through recovery, plugin messages, Project drift, portfolio save and settlement", async () => {
+it("runs the starter acceptance scenario through recovery, plugin messages, Project drift, portfolio save, waiting migration, environment pause, ended history and usage move", async () => {
   const f = await fixture();
   const get = async (path: string) => {
     const response = await fetch(f.url + path);
@@ -416,8 +416,24 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
     id: optionId,
     name: "Todo",
   });
+  await post("/api/environments/workstation/pause", {});
+  expect(await get("/api/environments")).toMatchObject({
+    environments: [expect.objectContaining({ name: "workstation", paused: true })],
+  });
   await f.add();
+  await expect
+    .poll(async () => (await get("/api/environments")).environments[0])
+    .toMatchObject({
+      paused: true,
+      scheduledThreads: 1,
+    });
+  expect(f.t3.commands).toEqual([]);
+  expect(f.t3.threads.size).toBe(0);
+  await post("/api/environments/workstation/resume", {});
   await f.waiting();
+  expect(await get("/api/environments")).toMatchObject({
+    environments: [expect.objectContaining({ paused: false, scheduledThreads: 0 })],
+  });
   expect(f.moves()).toEqual(["In Progress"]);
   expect(f.snapshot()).toMatchObject({ status: "active" });
   expect(f.store.loadSnapshot("task:I_A")!.machine).toBe(
@@ -472,6 +488,44 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
     ).length,
   ).toBeGreaterThanOrEqual(2);
   expect(f.moves()).toEqual(["In Progress"]);
+  // Save a repository replacement for the bundled blueprint while the actor waits.
+  const beforeMigration = f.store.loadSnapshot("task:I_A")!;
+  const next = parse(shippedBundle.files.get("blueprints/task.yml")!);
+  next.machine.context.labelFormat = "revised";
+  next.schemas.context.required.push("labelFormat");
+  next.schemas.context.properties.labelFormat = { const: "revised" };
+  next.migrations = [
+    {
+      from: parse(shippedBundle.files.get("blueprints/task.yml")!).schemas.context,
+      context: {
+        type: "expression.map",
+        params: {
+          expression:
+            '$merge([$sift(context, function($v, $k) { $k != "manifold" }), {"labelFormat": "revised"}])',
+        },
+      },
+    },
+  ];
+  next.machine.states.active.on["agent.handoff"].guard.params.expression +=
+    ' and context.labelFormat = "revised"';
+  const blueprintSaved = await post("/api/blueprints/save", {
+    path: "blueprints/task.yml",
+    base: f.commit,
+    text: stringify(next),
+    message: "Revise parcel label format",
+    saveId: "2".repeat(32),
+  });
+  expect(blueprintSaved).toMatchObject({ outcome: "saved" });
+  await expect
+    .poll(() => f.store.loadSnapshot("task:I_A")!.machine)
+    .toBe(`${blueprintSaved.commit}:blueprints/task.yml`);
+  expect(f.snapshot()).toMatchObject({
+    value: beforeMigration.snapshot.value,
+    context: { labelFormat: "revised", thread: thread.id },
+    entries: beforeMigration.snapshot["entries"],
+  });
+  expect(grantedToken()).toEqual(token);
+  expect(thread.messages).toHaveLength(1);
   // A second issue invokes send-message; the recipient's actor saves its routed event.
   await f.add("I_B", "item-two");
   await expect.poll(() => f.store.loadSnapshot("task:I_B")?.snapshot.status).toBe("done");
@@ -554,6 +608,49 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
     status: "done",
     output: { outcome: "done", handoff: { summary: "Parcel packed" } },
   });
+  // Read the ended actor after GitHub has confirmed both writes.
+  await expect
+    .poll(() =>
+      f.store.connection.database
+        .prepare("SELECT * FROM github_card_move WHERE actor_id=?")
+        .all("task:I_A"),
+    )
+    .toEqual([]);
+  const { isActorHistoryResponse } = await import("@wyrd-company/manifold-shared/actors-api");
+  const ended = await get("/api/actors/task%3AI_A/history");
+  expect(isActorHistoryResponse(ended)).toBe(true);
+  if (!isActorHistoryResponse(ended)) throw new Error("Invalid actor history");
+  expect(ended.history.end).toMatchObject({ status: "done", output: { outcome: "done" } });
+  const receipts = ended.history.events.filter(
+    (event) =>
+      event.type === "github.project-item.field-changed" &&
+      (event.payload as { movedBy?: { confirmed?: boolean } }).movedBy?.confirmed === true,
+  );
+  expect(receipts).toHaveLength(1);
+  expect(receipts[0]).toMatchObject({
+    payload: { to: { name: "In Progress" }, movedBy: { confirmed: true } },
+    visit: expect.any(Number),
+    consumedAt: expect.any(String),
+  });
+  expect(
+    ended.history.events.some(
+      (event) =>
+        event.type === "github.project-item.field-changed" &&
+        (event.payload as { to?: { name?: string } }).to?.name === "Done",
+    ),
+  ).toBe(false);
+  const migratedVisit = ended.history.visits.findIndex(
+    (visit) => visit.blueprint?.commit === blueprintSaved.commit,
+  );
+  expect(migratedVisit).toBeGreaterThan(0);
+  expect(ended.history.visits[migratedVisit]).toMatchObject({
+    value: beforeMigration.snapshot.value,
+  });
+  expect(ended.history.visits[migratedVisit - 1]).not.toHaveProperty("exitEvent");
+  expect(ended.history.commands.map((command) => command.kind)).toEqual([
+    "thread-create",
+    "turn-start",
+  ]);
   // The host reads a provider session and T3 Code's durable session-to-thread mapping.
   const t3home = join(f.directory, "t3-home");
   await fs.mkdir(join(t3home, "userdata"), { recursive: true });
@@ -617,6 +714,47 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
       },
     },
   });
+  // A separate provider session maps to a thread that no task owns.
+  const unownedThread = "unowned-parcel-thread";
+  const mappingDb = new DatabaseSync(join(t3home, "userdata/state.sqlite"));
+  mappingDb
+    .prepare("INSERT INTO provider_session_runtime VALUES (?,?,?,?)")
+    .run(unownedThread, "codex", "provider", JSON.stringify({ threadId: "unowned-session" }));
+  mappingDb.close();
+  await writeFile(
+    join(usageRoot, "sessions/unowned.jsonl"),
+    usage
+      .replaceAll("root-a", "unowned-session")
+      .replaceAll(/2026-01-01T00:00:(?:00|10)Z/g, usedAt),
+  );
+  const unownedPush = await promisify(execFile)(childArtifacts().host, pushArgs);
+  expect(JSON.parse(unownedPush.stdout)).toMatchObject({ calls: { accepted: 1, pending: 0 } });
+  const from = `thread:workstation:${unownedThread}`;
+  expect(await get("/api/usage/unowned")).toMatchObject({
+    unowned: [
+      expect.objectContaining({
+        actor: from,
+        threadId: unownedThread,
+        usage: [expect.objectContaining({ account: "agents", amount: 8, calls: 1 })],
+      }),
+    ],
+  });
+  expect(await post("/api/usage/moves", { from, to: { actor: "task:I_A" } })).toMatchObject({
+    status: "moved",
+    moved: 1,
+    accounts: [{ account: "agents", amount: 8 }],
+  });
+  const movedTask = await get("/api/tasks/task%3AI_A");
+  expect(isTaskResponse(movedTask)).toBe(true);
+  expect(movedTask).toMatchObject({
+    task: {
+      usage: { settled: true, accounts: [{ estimate: 10, actual: 16, variance: 6, reserved: 0 }] },
+    },
+  });
+  expect(await get("/api/usage/unowned")).toEqual({ unowned: [] });
+  expect(await post("/api/usage/moves", { from, to: { actor: "task:I_A" } })).toMatchObject({
+    moved: 0,
+  });
   const replayed = await promisify(execFile)(childArtifacts().host, pushArgs);
   expect(JSON.parse(replayed.stdout)).toMatchObject({ calls: { accepted: 0 } });
   expect(f.t3.commands.map((command) => command.type)).toEqual([
@@ -675,6 +813,10 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
         allocations: [expect.objectContaining({ account: "agents", guarantee: 80 })],
       }),
     ]),
+  });
+  expect(await get("/api/actors/task%3AI_A/history")).toEqual(ended);
+  expect(await get("/api/tasks/task%3AI_A")).toMatchObject({
+    task: { usage: { settled: true, accounts: [{ actual: 16, variance: 6 }] } },
   });
   f.worker.send("stop");
   expect(await f.exited).toBe(0);

@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   verifies: [store, portfolio-ledger, blueprint-expressions, decision-models, process-repository, blueprint-loader, portfolio, durable-event-delivery, github-event-source, t3code-environment-source, service-assembly, intake, gate-runtime, agent-threads, escalations, usage-intake, host-cli-usage]
+//   verifies: [store, portfolio-ledger, blueprint-expressions, decision-models, process-repository, blueprint-loader, portfolio, durable-event-delivery, github-event-source, t3code-environment-source, service-assembly, intake, gate-runtime, agent-threads, escalations, usage-intake, host-cli-usage, actor-history]
 // ---
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1148,6 +1148,28 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
     "thread.create",
     "thread.turn.start",
   ]);
+  const historyResponse = await fetch(serviceUrl + "/api/actors/task%3AI_A/history");
+  expect(historyResponse.status).toBe(200);
+  const { isActorHistoryResponse } = await import("@wyrd-company/manifold-shared/actors-api");
+  const historyBody = await historyResponse.json();
+  expect(isActorHistoryResponse(historyBody)).toBe(true);
+  if (!isActorHistoryResponse(historyBody)) throw new Error("Invalid actor history");
+  expect(historyBody.history.end).toMatchObject({ status: "done" });
+  expect(historyBody.history.actor).toMatchObject({ actorId: "task:I_A", status: "done" });
+  expect(historyBody.history.commands.map((command) => command.kind)).toEqual([
+    "thread-create",
+    "turn-start",
+  ]);
+  expect(
+    historyBody.history.commands.every(
+      (command) => command.threadId === thread.id && command.acceptedAt,
+    ),
+  ).toBe(true);
+  expect(historyBody.history.events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "t3.turn.settled", consumedAt: expect.any(String) }),
+    ]),
+  );
   resumed.child.kill("SIGTERM");
   expect(await resumed.exited).toEqual({ code: 0, signal: null });
   expect(first.errors()).toEqual([]);
