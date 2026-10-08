@@ -9,6 +9,7 @@ relationships:
     - t3code-environment-source
     - escalations
     - usage-intake
+    - store
   mitigates:
     - api-reachable-without-authentication
     - t3code-token-expires
@@ -83,6 +84,15 @@ design-challenges:
     A guide is prose. It is true only while someone follows it against
     real services, and the external steps (GitHub settings pages, T3 Code
     commands) change outside Manifold's releases.
+  interrupted-recovery: >-
+    Upgrade and rollback rename and remove whole install directories while
+    the operator, a power cut, or a lost session can stop them at any
+    point, and the operator recovers by running a command again without
+    knowing where it stopped. The directory state alone must tell each
+    command what is done, so that a rerun neither removes the install that
+    works nor the only copy a rollback returns to, and a recursive removal
+    stopped halfway must never leave a partial tree under a name a command
+    trusts.
 proposed-design:
   high-level-overview: >-
     `task package:service` builds the workspace and writes one service
@@ -94,7 +104,11 @@ proposed-design:
     decision engine binary for that architecture. The operator extracts it
     into an install directory of their choice and runs `node manifold-service/dist/main.js <configuration-file>`,
     the entry point `service-assembly` specifies, on Node 24.11 or later.
-    `task package:smoke` proves an archive outside the workspace. A `package`
+    The build writes `dist/packages/manifold-upgrade.sh` beside the archive,
+    the POSIX shell script that upgrades and rolls back an install, as
+    `install-and-upgrade` states.
+    `task package:smoke` proves an archive outside the workspace, and the
+    script's recovery from an interruption at every rename and removal. A `package`
     job in CI runs both on an x64 and an arm64 runner. The configuration
     example is `docs/specifications/service-configuration.example.yml`, an
     asset of `service-configuration`, whose test loads it through
@@ -132,7 +146,10 @@ proposed-design:
     for pnpm deploy, so the platform package of the target is fetched on any build
     machine. It removes the staging directory before it starts and writes
     the archive with `tar` from the staging directory's parent, so the
-    archive's only top-level entry is `manifold-service/`. The workspace's
+    archive's only top-level entry is `manifold-service/`. It copies
+    `packages/service/scripts/manifold-upgrade.sh` to
+    `dist/packages/manifold-upgrade.sh`, overwriting any earlier copy, so
+    each archive has the script of the same commit beside it. The workspace's
     own `node_modules` and `pnpm-workspace.yaml` are unchanged by a
     package build. The commands live in `Taskfile.yml`, and any logic
     beyond a command line in `packages/service/scripts/`. These are build
@@ -166,18 +183,51 @@ proposed-design:
     and then `started` with the bound address, `GET /console/` on that
     address answers 200 with HTML, `POST /webhooks/github` with no
     signature answers a 4xx, and `SIGTERM` logs `stopped` and exits 0.
-    The smoke then checks the upgrade: it adds a file and a directory that
-    the archive does not hold inside the extracted `manifold-service/`,
-    as an older install would hold, runs the upgrade steps of
-    `install-and-upgrade` with the same archive, and checks that neither
-    is present, that the tree equals a fresh extraction, and that the
-    service starts again; and it runs them again after stopping a run
-    between the two renames of step 3, with the same result. It checks
-    rollback: it upgrades to an archive copy whose `dist/main.js` exits 1
-    at once, sees the start fail, runs the rollback steps, and checks that
-    `manifold-service/` equals the old tree, that the service starts and
-    logs `started`, and that the deployment directory's configuration and
-    `state/` files are unchanged byte for byte. The smoke
+    The smoke then checks `manifold-upgrade.sh` from the build's
+    `dist/packages/`, copied into the temporary install directory, against
+    three archives it derives from the one under test: `A`, the archive
+    itself; `B`, `A` with one added file; and `F`, `A` whose
+    `dist/main.js` exits 1 at once. Each case starts from a known install
+    directory, runs the script with `sh`, and ends with these checks:
+    `manifold-service/` and `manifold-service.previous/` each equal a fresh
+    extraction of the archive the case expects, or are absent where it
+    expects that; no scratch directory and no other entry is left beside
+    them unless the case names it; the deployment directory's
+    configuration and `state/` files are unchanged byte for byte, compared
+    before the service starts; and the service starts on that
+    configuration and store, logs `started`, and stops on `SIGTERM` with
+    exit 0. The cases are: (1) upgrade: from an install of `A` that holds
+    an added file and directory the archive does not hold, as an older
+    install would, `prepare` and `swap` with `B` give current `B` and
+    previous the old `A` tree, added file included, and the added file is
+    absent from current; (2) repeated completion: `prepare` and `swap`
+    with `B` again, and `swap` alone again, change nothing; (3) rollback:
+    from current `F` and previous `A`, the start fails with exit 1,
+    `rollback` gives current `A` and no previous, and `rollback` again
+    changes nothing; (4) interrupted upgrade: from current `A` and a
+    previous holding an older tree, for every rename and removal the
+    upgrade makes, a run of `prepare` and `swap` with `B` is stopped just
+    after that operation, and, for each recursive removal and the
+    extraction, during it; running `prepare` and `swap` with `B` again
+    gives current `B` and previous `A`; (5) interrupted upgrade, then
+    rollback: for every point of case 4 inside `swap`, running `rollback`
+    instead gives current `A`: where the swap had moved current aside,
+    with no previous; where it had not, with current unchanged,
+    `manifold-service.next/` holding `B`, and previous as the swap left
+    it; (6) interrupted
+    rollback: from current `F` and previous `A`, for every rename and
+    removal `rollback` makes, a run stopped after it, and during each
+    recursive removal, then `rollback` again, gives current `A` and no
+    previous. The smoke stops a run at an operation by putting a directory
+    first on the script's `PATH` that holds a stand-in for each command the
+    script mutates the install directory with (`mv`, `rm`, `rmdir`,
+    `mkdir`, and `tar`): each stand-in counts its calls in a file the
+    smoke names, runs the real command, and on the call the smoke selects
+    sends `SIGKILL` to the script's shell; stopped during a recursive
+    removal, it removes one entry of its target first, and during the
+    extraction, it removes one extracted file after the real command. The
+    smoke counts each command's operations by a run without a stop, and
+    fails if a stopped run exits other than by `SIGKILL`. The smoke
     removes its temporary directory when it ends. It is a
     Node script in `packages/service/scripts/` and is not part of
     `task check`, so `task check` stays free of a package build.
@@ -317,8 +367,11 @@ proposed-design:
     operator meets first (`start-failed` with its issues, `pull-failed`,
     `github-error`, a hook delivery answered 401 or 404 in GitHub's
     delivery log, `portfolio-rejected`, `blueprint-invalid`). (14) Stop,
-    restart, and upgrade: `SIGTERM` to stop, the one command to start,
-    and the upgrade steps of `install-and-upgrade`.
+    restart, upgrade, and rollback: `SIGTERM` to stop, the one command to
+    start, and the upgrade and rollback of `install-and-upgrade`: the
+    commands in order, what each leaves in the install directory, that an
+    interrupted command is run again from its start, and what rollback
+    cannot restore.
   install-and-upgrade: >-
     The install directory, which holds `manifold-service/`, and the
     deployment directory, which holds the configuration file,
@@ -327,32 +380,96 @@ proposed-design:
     extraction of the archive into an empty install directory. Upgrade
     replaces the whole `manifold-service/` directory and never extracts
     over it, since an extraction over an existing directory leaves every
-    file the new archive does not hold. The guide states the upgrade as
-    these steps, in order: (1) remove `manifold-service.next/` if present,
-    create it empty, and extract the new archive into it; (2) stop the
-    service; (3) if `manifold-service/` is present, remove
-    `manifold-service.old/` if present and rename `manifold-service/` to
-    `manifold-service.old/`; if current is absent, preserve old;
-    rename `manifold-service.next/manifold-service/` to
-    `manifold-service/`; (4) start the service and check the `started`
-    line; (5) remove `manifold-service.old/` and `manifold-service.next/`.
-    Rollback before step 5 is: stop the service; if
-    `manifold-service.old/` exists, remove
-    `manifold-service/`, the new install, whole; rename
-    `manifold-service.old/` to `manifold-service/`; and start the service.
-    If old is absent, leave current in place:
-    rollback has completed.
-    The new install must be removed first, since a directory cannot be
-    renamed onto a directory that is not empty. A rollback interrupted
-    after the removal converges by running it again: with no
-    `manifold-service/`, it only renames. An upgrade interrupted
-    at any point converges by running all five steps again: step 1
-    rebuilds the new tree from the archive, and step 3 finds either the
-    old install, which it moves aside, or no `manifold-service/` (an
-    interruption between its two renames), in which case the old install
-    is already in `manifold-service.old/` and the new one is moved in. At
-    no point is a `manifold-service/` present that mixes files of two
-    archives.
+    file the new archive does not hold.
+
+    The install directory holds three install trees by role, each a
+    complete extraction of one archive's `manifold-service/`:
+    `manifold-service/`, the current install the service runs;
+    `manifold-service.previous/`, the install the last swap replaced, kept
+    until the next swap so that rollback can return to it; and
+    `manifold-service.next/`, a prepared install that the next swap makes
+    current. Two scratch directories hold partial trees and nothing else
+    reads them: `manifold-service.staging/`, where an archive is
+    extracted, and `manifold-service.discard/`, where a tree goes to be
+    removed. A tree comes under a role name only by one `rename` of a
+    complete tree, and leaves it only by one `rename`: to another role, or
+    to `manifold-service.discard/` before its recursive removal. A rename
+    on one filesystem is atomic, so a role name never holds a partial
+    tree, and a removal stopped halfway leaves its remains only in
+    scratch. `manifold-upgrade.sh` lives in the install directory beside
+    the trees, works in its own directory whatever the caller's working
+    directory, runs under `set -eu`, and starts every command by removing
+    both scratch directories. It discards a tree by removing
+    `manifold-service.discard/`, renaming the tree to it if the tree is
+    present, and removing it again.
+
+    The script has three commands, each guarded only by which role
+    directories are present, so running a command again from its start
+    after an interruption at any point, or after it completed, converges.
+    `prepare <archive>`, run while the service runs: create
+    `manifold-service.staging/`, extract the archive into it, discard
+    `manifold-service.next/`, rename
+    `manifold-service.staging/manifold-service/` to
+    `manifold-service.next/`, and remove the empty staging directory; then,
+    if `manifold-service/` is present and `diff -r -q` finds no difference
+    between it and `manifold-service.next/`, discard
+    `manifold-service.next/` and report that the archive is already the
+    current install. `swap`, run while the service is stopped: if
+    `manifold-service.next/` is absent, change nothing and report that
+    nothing is prepared; otherwise, if `manifold-service/` is present,
+    discard `manifold-service.previous/` and rename `manifold-service/` to
+    `manifold-service.previous/`; then rename `manifold-service.next/` to
+    `manifold-service/`. `rollback`, run while the service is stopped: if
+    `manifold-service/` and `manifold-service.next/` are both present, the
+    swap has not replaced the current install, so change nothing and
+    report it; otherwise, if `manifold-service.previous/` is present,
+    discard `manifold-service.next/`, discard `manifold-service/`, and
+    rename `manifold-service.previous/` to `manifold-service/`; otherwise
+    change nothing and report that there is no previous install. A
+    directory cannot be renamed onto a directory that is not empty, which
+    is why each command discards the target of a rename first.
+
+    Upgrade is: copy the new archive and the `manifold-upgrade.sh` built
+    beside it to the service host, the script into the install directory;
+    run `prepare` with the archive; stop the service; run `swap`; start
+    the service and check the `started` line. Rollback, when the new
+    install does not start or misbehaves, and at any time until the next
+    upgrade, is: stop the service; run `rollback`; start the service and
+    check `started`. An interrupted command is run again from its start;
+    an interrupted upgrade is either run again from `prepare` or rolled
+    back. Install stays a fresh extraction into an empty install
+    directory, whose `manifold-service/` alone is a state the script
+    accepts.
+
+    The guards make each case converge. A `prepare` run again rebuilds
+    `manifold-service.next/` from the archive, since a prepared tree is
+    discarded before its replacement is renamed in. A `swap` stopped after
+    discarding the previous install is run again with current and next
+    present and moves current aside; one stopped between its two renames
+    finds no `manifold-service/`, so it keeps `manifold-service.previous/`,
+    which already holds the replaced install, and moves next in. An
+    upgrade run again after its swap completed prepares a tree equal to
+    the current install, which `prepare` discards, so the following `swap`
+    changes nothing and the previous install is kept; without that guard,
+    the second swap would discard the only copy rollback returns to. A
+    `rollback` stopped after discarding `manifold-service/` is run again
+    with only the previous install present and renames it; one run again
+    after it completed finds no previous install and changes nothing, so
+    it never removes the install it restored. A rollback after an
+    interrupted swap returns to the replaced install when the swap had
+    moved it aside, and otherwise leaves current in place. At every point
+    at least one complete install is under a role name, and no role name
+    holds a tree that mixes files of two archives. The previous install is
+    replaced only by the next swap that changes the current install.
+
+    The script touches no file of the deployment directory, and rollback
+    returns only the install. A store that the newer install's start
+    moved to a later schema step stays at that step: the previous install
+    refuses it, as `store` states for a schema version beyond a build's
+    steps, and the guide says so beside rollback. The script is a tool
+    the operator runs, not service code, so it may run `tar`, `diff`,
+    `mv`, and `rm`; it needs a POSIX shell and those commands, which the
+    guide names where it states the upgrade.
   t3code-token: >-
     The scopes approved for Manifold 0.1.0's T3 Code token are
     `orchestration:read` and `orchestration:operate`, the whole set, and
@@ -434,8 +551,10 @@ proposed-design:
     halfway, gives the same archive content. `task package:smoke` works
     in a new temporary directory each run and removes it at the end; one
     killed halfway leaves only that directory, under the system temporary
-    directory. Install and upgrade converge as `install-and-upgrade`
-    states, and touch no file of the deployment directory. Starting
+    directory. Copying `manifold-upgrade.sh` beside the archive overwrites
+    the earlier copy. Install, upgrade, and rollback converge as
+    `install-and-upgrade` states, and touch no file of the deployment
+    directory. Starting
     the service twice on the same configuration converges as
     `service-assembly` states.
   tests: >-
@@ -445,7 +564,11 @@ proposed-design:
     archive packed without `files` fields (it finds `src/` and test
     files), and against one built for the other architecture (the engine
     binding fails to load), and against an upgrade that extracts over the
-    old `manifold-service/` (the added file survives), and against a
-    rollback that renames the old install without removing the new one
-    (the rename fails). `task check` runs the example test; CI's
+    old `manifold-service/` (the added file survives). The recovery
+    cases fail first against a script without the guards: a `prepare` with
+    no comparison makes a repeated upgrade discard the previous install
+    (case 2); a `swap` that does
+    not discard the previous install before the rename fails on a present
+    previous (case 1); and a `rollback` with no guard for a present current
+    and next removes the install that still works (case 5). `task check` runs the example test; CI's
     `package` job runs the build and the smoke on both architectures.

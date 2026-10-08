@@ -498,33 +498,86 @@ this section against its Project and record the actor returned by the API.
 | T3 Code connection fails         | Server URL, token file, token expiry, and the two scopes.                                  |
 | No notification                  | Destination name, ntfy posture and token, and subscription.                                |
 
-## 14. Stop, restart, and upgrade
+## 14. Stop, restart, upgrade, and rollback
 
 Send SIGTERM to the service process or stop its systemd unit. Check `stopped`
-and exit 0. Restart with the command from section 10. Keep configuration and
-state on disk.
+and exit 0. Restart with the command from section 10. Configuration and state
+stay on disk.
 
-Upgrade replaces the entire install; never extract over an old install. From
-the install directory, perform these steps in order:
+### Upgrade
 
-1. Remove `manifold-service.next/`, create it empty, and extract the new archive
-   into it.
-2. Stop the service.
-3. If `manifold-service/` exists, remove `manifold-service.old/`, then rename
-   `manifold-service/` to `manifold-service.old/`. If current is absent, preserve
-   the old directory: an interrupted upgrade can leave it as the recovery copy.
-   Rename `manifold-service.next/manifold-service/` to `manifold-service/`.
-4. Start with the same configuration and check `started`.
-5. Remove `manifold-service.old/` and `manifold-service.next/`.
+Upgrade replaces the entire install; never extract over an install.
+`manifold-upgrade.sh`, built beside the archive in `dist/packages/`, does each
+directory change. It needs a POSIX `sh`, `tar`, `diff`, `mv`, and `rm`, which
+a glibc Linux host has. It works in the directory that holds it, whatever your
+working directory is.
 
-If interrupted, repeat the five steps. Step 1 reconstructs the fresh tree;
-step 3 accepts an absent current directory. Obsolete files never survive in the
-new install. These operations touch no deployment configuration or state.
+1. Copy the new archive and the `manifold-upgrade.sh` built with it to the
+   service host. Put the script in the install directory, beside
+   `manifold-service/`.
+2. With the service running, prepare the new install:
 
-Before step 5, rollback is: stop the service; if `manifold-service.old/` exists,
-remove the new `manifold-service/` whole and rename `manifold-service.old/` to
-`manifold-service/`; start and check `started`. Remove the new tree before the
-rename, since a nonempty directory cannot be replaced by rename. If interrupted
-after removal, repeat the rollback. If old is absent, rollback already finished;
-leave the current install in place. The archive smoke checks both interruptions
-and rollback after a new entry point exits with an error.
+   ```sh
+   sh /opt/example-service/manifold-upgrade.sh prepare /path/to/manifold-service-<version>-linux-<arch>.tar.gz
+   ```
+
+   Check: `manifold-service.next/` holds the new install. If the script reports
+   that the archive is already the current install, the upgrade is done; start
+   the service if it is stopped.
+
+3. Stop the service.
+4. Make the new install current:
+
+   ```sh
+   sh /opt/example-service/manifold-upgrade.sh swap
+   ```
+
+   Check: `manifold-service/` is the new install and
+   `manifold-service.previous/` is the install it replaced.
+
+5. Start with the same configuration and check `started`.
+
+The install directory then holds `manifold-service/` and
+`manifold-service.previous/`. The previous install stays until the next upgrade
+replaces it, so you can roll back to it at any time until then.
+
+### Rollback
+
+Roll back when the new install does not start or does not work:
+
+1. Stop the service.
+2. Return to the previous install:
+
+   ```sh
+   sh /opt/example-service/manifold-upgrade.sh rollback
+   ```
+
+   Check: `manifold-service/` is the previous install and
+   `manifold-service.previous/` is absent.
+
+3. Start and check `started`.
+
+If `swap` has not yet replaced the current install, `rollback` changes nothing
+and says so; start the service. If there is no previous install, it changes
+nothing and says so.
+
+Rollback returns the install only. If the newer install's start moved the store
+to a later schema step, the previous install refuses that store: the
+`start-failed` message names the schema owner, the store's version, and the
+version the install supports. To keep a store you can roll back to, copy the
+store file and the `-wal` and `-shm` files beside it while the service is
+stopped at upgrade step 3.
+
+### If a command stops
+
+If `prepare`, `swap`, or `rollback` stops before it ends (a closed session, a
+killed process, a power cut), run the same command again. To recover an
+interrupted upgrade, run it again from `prepare`, or roll it back. Each command
+reads which install directories are present, so a command run again, or run
+after it completed, ends with one working `manifold-service/` and keeps the
+previous install. `manifold-service/`, `manifold-service.previous/`, and
+`manifold-service.next/` each hold a whole install or are absent. Only
+`manifold-service.staging/` and `manifold-service.discard/` hold partial trees,
+and each command removes them first. These commands touch no deployment
+configuration or state. The archive smoke stops each command at every rename
+and removal, and checks that running it again ends with a service that starts.
