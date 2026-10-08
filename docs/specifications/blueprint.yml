@@ -13,6 +13,7 @@ relationships:
     - task-metadata-declaration
     - github-events
     - agent-tools
+    - agent-threads
 description: |-
   Defines the blueprint file: the YAML document in a process repository
   from which Manifold builds an XState v5 state machine, the version
@@ -378,6 +379,21 @@ description: |-
   runs again after a crash, sets the same option again and leaves one
   value. A blueprint that retries after an error enters the state again.
 
+  - `t3code-project-create`, an actor: creates a T3code project on an
+    environment, the invoking actor's unless the input names another, with
+    a title and a workspace root rendered from Nunjucks templates, as
+    `agent-threads` defines. Its input is `#/$defs/project-create-input`
+    of the `agent-threads` schema asset, `{ environment, title,
+    workspaceRoot, values, createWorkspaceRoot }`. It resolves with
+    `#/$defs/project-create-output`, `{ projectId }`, which a
+    `thread-create` invoke takes as its `project`, and fails with
+    `#/$defs/error`, of kind `input`, `environment`, `archived`,
+    `template`, `rejected`, or `unauthorized`. A blueprint that invokes it
+    declares its input and output under
+    `schemas.actors.t3code-project-create`, with schemas that those
+    definitions satisfy. An invoke that one state entry runs again, before
+    or after a restart, creates one project; an invoke that fails creates
+    none and attributes none.
   - `send-message`, an actor: sends a message to a task's threads or to
     one thread, as `agent-tools` defines. Its input is
     `#/$defs/send-message-input` of the `agent-tools` schema asset,

@@ -1,0 +1,54 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - agent-threads
+    - portfolio
+    - bindings-declaration
+description: >-
+  A blueprint creates T3code projects with `t3code-project-create`, so that
+  a process can give an epic its own project. Usage of a thread that no
+  actor owns is posted on the item its T3code project resolves to, and a
+  project with no binding resolves to the top-level Other. A created
+  project's usage belongs to the creating actor's portfolio item, so the
+  association between the project and that item lives somewhere
+  resolution reads. The process repository holds what the user declares,
+  Manifold's store holds what Manifold observes and remembers, and service
+  configuration holds what is host-local.
+considered-options:
+  "1": >-
+    Manifold's store. Once the server accepts `project.create`, the
+    implementation records the environment, project id, creating actor,
+    and its item in `t3_created_project`. Portfolio resolution answers a
+    created project with that item after the declared bindings, so a
+    binding the operator declares later takes precedence.
+  "2": >-
+    The process repository. The service commits the project id to the
+    `t3codeProjects` of the creating actor's GitHub Project binding in
+    `bindings.yml` and pushes, so the association is declared as an
+    operator's association is.
+  "3": >-
+    Service configuration. The service writes the association to its
+    host-local configuration.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    The association is a fact of Manifold's own action, made at a moment
+    Manifold chose, and the store already remembers that action in the
+    creating actor's snapshot. A row written once the server accepts, and
+    left as it is when written again, converges across a crash at any point
+    with the server's receipt. Option 2 puts a commit and a push to the
+    user's repository, and a merge with the user's own edits, in the path
+    of every project create, and a create would wait on, or fail with, the
+    process repository's remote; the association it declares is also
+    narrower, a GitHub Project binding's item rather than the creating
+    actor's. Option 3 makes service configuration hold something that is
+    neither host-local nor declared, and the service does not write its
+    own configuration.
+expected-outcomes:
+  positive:
+    - A created project's unowned usage posts on the creating actor's item from the moment it exists, with no write to the process repository.
+    - An operator who binds a created project in `bindings.yml` moves it, since a declared binding takes precedence.
+    - A project create depends on T3 Code and the store alone.
+  negative:
+    - The process repository does not show which T3code projects Manifold created; the store does.
+    - A store rebuilt from empty loses the record, and created projects resolve to the top-level Other until an operator binds them.

@@ -6,6 +6,7 @@ relationships:
     - store
     - process-repository
     - usage-intake
+    - agent-threads
   # GAP-EDGE: the technical-design schema declares no edge to a
   # specification; `references` is the best fit.
   references:
@@ -475,6 +476,8 @@ proposed-design:
     export function openPortfolio(options: {
       connection: LedgerConnection;
       now?: () => number; // defaults to Date.now; passed to the ledger
+      /** The item recorded for a T3code project a `t3code-project-create` invoke created; undefined for any other. */
+      createdProject?: (project: { environment: string; id: string }) => { actorId: string; item: string } | undefined;
     }): Portfolio;
 
     export interface Portfolio {
@@ -506,6 +509,7 @@ proposed-design:
 
     export type T3codeProjectResolution =
       | { item: string; via: "binding" | "association"; binding: string; archived: boolean }
+      | { item: string; via: "created"; actorId: string }
       | { item: "other"; via: "unbound" };
     ```
 
@@ -557,7 +561,14 @@ proposed-design:
     binding names it. `t3codeProject` answers the item of a T3code project
     on an environment: its own binding's item, else the item of the GitHub
     Project binding whose environment matches and whose `t3codeProjects`
-    lists it, else the top-level Other with `via: "unbound"`. The lint
+    lists it, else, for a project `createdProject` answers, its recorded
+    item with `via: "created"` and the creating actor's id when the
+    declaration in force declares that item, archived or not, else the
+    top-level Other with `via: "unbound"`. A declared binding takes
+    precedence over the record, so an operator who binds a created project
+    moves it. `createdProject` is read at each call, since the record
+    changes between declarations; the service wiring answers it from the
+    T3 Code environment source's `t3_created_project` table. The lint
     refuses a T3code project that is both bound and associated, or
     associated twice, so the answer is unique. Resolution reads in-memory
     maps built from the declaration in force, keyed by the lower-case owner
@@ -780,7 +791,10 @@ proposed-design:
       a T3code project the GitHub Project binding lists resolves `via:
       "association"` to the Project's item; the same id on another
       environment resolves to `other`; an archived binding resolves with
-      `archived: true`.
+      `archived: true`; a project `createdProject` answers with `beta`
+      resolves `via: "created"` to `beta` with the actor's id, to its
+      binding's item once a revision binds it, and to `other` once a
+      revision no longer declares `beta`.
 
     - Several projects: `alpha` holds two GitHub Projects and two T3code
       project bindings, and all four resolve to `alpha`.

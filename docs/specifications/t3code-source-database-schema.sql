@@ -29,3 +29,11 @@ UPDATE t3_thread SET project_id = json_extract(thread, '$.projectId');
 ALTER TABLE t3_thread ADD COLUMN attribution TEXT NOT NULL
   DEFAULT '{"turnId":null,"messageId":null,"pendingMessageId":null}'
   CHECK (json_valid(attribution));
+
+CREATE TABLE t3_created_project (
+  environment TEXT NOT NULL REFERENCES t3_environment (environment) ON DELETE CASCADE,
+  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+  item TEXT NOT NULL CHECK (length(item) > 0),
+  PRIMARY KEY (environment, project_id)
+) STRICT, WITHOUT ROWID;

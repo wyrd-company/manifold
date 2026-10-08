@@ -130,9 +130,10 @@ properties:
     T3code project to Manifold by name: its environment and the portfolio
     item it attaches to. An item may hold several projects of either kind.
     A T3code project associated with a bound GitHub Project follows that
-    Project's item and needs no binding of its own. Threads in a T3code
-    project with no binding are attributed to the top-level Other, and an
-    operator can move them.
+    Project's item and needs no binding of its own. A T3code project a
+    process creates follows the item of the task that created it until a
+    binding names it. Threads in any other T3code project are attributed
+    to the top-level Other, and an operator can move them.
   portfolio: >-
     A tree of portfolio items the user declares. GitHub Projects and T3code
     projects attach to items through their bindings. Every item with

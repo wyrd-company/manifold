@@ -7,6 +7,8 @@ relationships:
   references:
     - portfolio-declaration
     - service-configuration
+    - agent-threads
+    - t3code-source-database-schema
 terms:
   - binding
   - portfolio-item
@@ -32,9 +34,7 @@ description: >-
   that places every thread for the Project's tasks; and `item`, the
   portfolio item it attaches to. Logins compare without regard to case.
   `t3codeProjects` lists the ids of the T3code projects on the binding's
-  environment that are associated with the Project, one or many. Manifold
-  appends an id when it creates a T3code project for the Project, and the
-  operator adds one to associate an existing T3code project.
+  environment that are associated with the Project, one or many.
 
   T3code project bindings. A binding in `t3codeProjects` names the T3code
   project by `environment` and `project`, its id on that environment, and
@@ -47,7 +47,9 @@ description: >-
   thread through an archived binding.
 
   Resolution. Every answer reads the bindings and the portfolio of one
-  commit.
+  commit, and the T3code projects that `t3code-project-create` invokes
+  created, which Manifold's store records with the creating actor's
+  portfolio item.
 
   - A GitHub Project resolves to its binding's item. A GitHub Project with
     no binding has no item; it is not a bound Project.
@@ -57,6 +59,10 @@ description: >-
   - A T3code project listed in a GitHub Project binding's
     `t3codeProjects`, on that binding's environment, resolves to that
     binding's item.
+
+  - Any other T3code project that a `t3code-project-create` invoke
+    created resolves to the creating actor's portfolio item, when the
+    portfolio declares that item.
 
   - Any other T3code project resolves to the top-level Other, `other`.
 
@@ -103,6 +109,10 @@ validation-criteria: >-
   finding kind with its location, and a digit-leading binding name or
   environment name as a `schema` finding. Tests of the portfolio module's
   resolution show a GitHub Project, a bound T3code project, an associated
-  T3code project, an unbound T3code project resolving to `other`, a login
+  T3code project, a created T3code project resolving to its creating
+  actor's item, a created T3code project that is also bound resolving to
+  its binding's item, a created T3code project whose item the portfolio
+  no longer declares resolving to `other`, an unbound T3code project
+  resolving to `other`, a login
   in another case, an archived binding, and one item holding two GitHub
   Projects and two T3code projects.

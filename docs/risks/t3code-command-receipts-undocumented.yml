@@ -17,9 +17,9 @@ relationships:
 description: >-
   T3 Code 0.0.45 keeps a receipt per orchestration command id and answers a
   repeated command id with its first receipt, so a command sent twice is
-  applied once. Manifold relies on this to send `thread.create` and
-  `thread.turn.start` again after a crash without creating a second thread
-  or starting a second turn. The behaviour is measured and read from the
+  applied once. Manifold relies on this to send `project.create`,
+  `thread.create`, and `thread.turn.start` again after a crash without
+  creating a second project or thread or starting a second turn. The behaviour is measured and read from the
   server source, and T3 Code documents no guarantee of it;
   `@wyrd-company/t3code-client` treats command ids as attempt ids and mints
   a new one per dispatch. Manifold runs with stable T3 Code releases it

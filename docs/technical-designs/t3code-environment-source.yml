@@ -3,6 +3,7 @@ relationships:
   related-to:
     - durable-event-delivery
     - store
+    - agent-threads
   mitigates:
     - t3code-thread-resume-bounded
   # GAP-EDGE: the technical-design schema declares no edge to the
@@ -244,8 +245,12 @@ proposed-design:
     The source fails writes admitted by `write` when the identity changes,
     so writers retry only after the replacement origin commits. `write`
     checks readiness and admits a send without yielding, with a signal
-    that identity invalidation aborts. Each admitted write names its thread.
-    Before aborting it, the source saves that thread with a null projection.
+    that identity invalidation aborts. Each admitted write names its
+    thread, or `null` for a write that targets no thread, such as
+    `project.create`. Before aborting a write that names a thread, the
+    source saves that thread with a null projection; a write that names
+    none saves nothing, since the replacement origin's shell lists every
+    project the server holds.
     Replacement origins preserve null projections as observations to recover,
     rather than adopting their snapshot state as baseline. The thread is
     subscribed without a cursor and compared with the empty state, so a
@@ -344,7 +349,8 @@ proposed-design:
        * environment stops, is not configured, or `signal` aborts.
        */
       ready(environment: string, signal?: AbortSignal): Promise<void>;
-      write<T>(environment: string, threadId: string, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>): Promise<T>;
+      /** `threadId` is `null` for a write that targets no thread. */
+      write<T>(environment: string, threadId: string | null, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>): Promise<T>;
       /** The stored view of a thread the source follows or followed; undefined for any other. */
       thread(environment: string, threadId: string): ThreadView | undefined;
       /** Resolves after `ready` with the `environmentId` this run's connection confirmed. */
@@ -353,6 +359,10 @@ proposed-design:
       projects(environment: string): readonly T3CodeProjectView[] | undefined;
       /** Starts again the loop of an environment whose state is `stopped`; does nothing for one that runs. */
       restart(environment: string): void;
+      /** Records a project a `t3code-project-create` invoke created; a second record of the same project changes nothing. */
+      recordCreatedProject(record: CreatedProject): void;
+      /** The record of a created project; undefined for any other project. */
+      createdProject(environment: string, projectId: string): CreatedProject | undefined;
       /** Closes every client; resolves when every environment loop has ended. */
       stop(): Promise<void>;
     }
@@ -373,6 +383,14 @@ proposed-design:
       readonly workspaceRoot: string;
       /** The count of the project's threads the source follows. */
       readonly activeThreads: number;
+    }
+
+    export interface CreatedProject {
+      readonly environment: string;
+      readonly projectId: string;
+      readonly actorId: string;
+      /** The creating actor's portfolio item. */
+      readonly item: string;
     }
 
     export interface EnvironmentStatus {
@@ -424,6 +442,18 @@ proposed-design:
     and the thread id, each id percent-encoded, which is the route the T3
     Code web client serves a thread on. The operator console links a
     task's threads through it.
+  created-projects: >-
+    The source keeps the record of the T3code projects that
+    `t3code-project-create` invokes created, in `t3_created_project`, so
+    that the portfolio resolves a created project to the creating actor's
+    item. `recordCreatedProject` inserts a row keyed by environment and
+    project id with the actor id and item, and leaves an existing row as
+    it is; it runs synchronously in its own transaction and throws when
+    the environment has no `t3_environment` row. `createdProject` reads
+    the row synchronously and answers `undefined` for a project with
+    none. A reset of an environment whose `environmentId` changed deletes
+    its rows with the environment's other rows, since the projects they
+    name were on the other server.
   project-view: >-
     `projects(environment)` answers the T3code projects of the
     environment's shell: the projects of the last shell snapshot the
@@ -452,6 +482,8 @@ proposed-design:
     `migrations.ts` holds the migration steps under the owner `tthree`.
     `types.ts` declares the `EnvironmentHolds` port that
     `environment-control` implements. Tests
+    `created-projects.ts` reads and writes `t3_created_project`.
+    Tests
     import only `index.ts`, the router's `index.ts`, and the store's
     `index.ts`.
   convergence: >-
@@ -466,7 +498,8 @@ proposed-design:
     or reconnect taken twice changes the loop once. `restart` of an
     environment that runs does nothing. Resetting an environment whose `environmentId` changed deletes
     its rows in one transaction, so a crash leaves either the old rows,
-    which reset again, or none. `stop` twice does nothing more.
+    which reset again, or none. `recordCreatedProject` twice for one
+    project leaves the first row. `stop` twice does nothing more.
   dependencies: >-
     `@wyrd-company/t3code-client` 0.5.0 or later, the release whose
     `T3ClientOptions` accepts `backoff`, `pingIntervalMs`,
@@ -539,4 +572,8 @@ proposed-design:
     takes as `started` with that turn, before the turn's started change is
     published, and, from a snapshot past the replay bound, a message inside
     the latest turn's span as `joined` and one placed neither way as
-    `unknown`; a hook that throws rolls back the item.
+    `unknown`; a hook that throws rolls back the item. A write that names
+    no thread, interrupted by an identity change, saves no thread row and
+    is retried after the replacement origin commits. `recordCreatedProject`
+    twice keeps the first row, `createdProject` answers it and `undefined`
+    for another project, and a changed `environmentId` deletes it.
