@@ -121,11 +121,6 @@ export function EditItemDialog({
                 findings={lint?.findings ?? []}
                 onChange={(v) => change("guarantee", v)}
               />
-              <p className="muted portfolio-dialog-sharing">
-                {sharing
-                  ? `Can reserve, halfway through an idle window: ${formatPercent(sharing.alone)} alone, ${formatPercent(sharing.allWaiting)} with every item waiting.`
-                  : "—"}
-              </p>
               <AllocationInput
                 item={current}
                 account={account}
@@ -142,6 +137,11 @@ export function EditItemDialog({
                 findings={lint?.findings ?? []}
                 onChange={(v) => change("weight", v)}
               />
+              <p className="muted portfolio-dialog-sharing">
+                {sharing
+                  ? `Can reserve, halfway through an idle window: ${formatPercent(sharing.alone)} alone, ${formatPercent(sharing.allWaiting)} with every item waiting.`
+                  : "—"}
+              </p>
               <label className="portfolio-pacing">
                 Pacing
                 <input
