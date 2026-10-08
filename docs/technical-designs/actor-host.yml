@@ -163,6 +163,7 @@ proposed-design:
         | "version-invalid"
         | "restore-mismatch"
         | "gate-missing"
+        | "token-return"
         | "token-trap"
         | "no-path"
         | "mapping-failed"
@@ -553,9 +554,15 @@ proposed-design:
     identity, so the value, history value, and children carry over
     unchanged. (2) For each token `heldTokens(actorId)` lists, it finds
     the gate whose `statePath` is the gate key's state path in
-    `to.tokens.gates`; none fails with `gate-missing`; a verdict of
-    `unknown` passes; otherwise a `to.tokens.configurationKey` of the
-    snapshot in the gate's `traps` fails with `token-trap`. (3) It maps
+    `to.tokens.gates`; none fails with `gate-missing`. It reads the gate's
+    return point in `to.document`: a return point the migrated
+    configuration already reaches, `{ state }` whose path the configuration
+    holds, or `exit` when the configuration no longer holds the gated
+    state, fails with `token-return`, since the migration's save would
+    return the token. Then a verdict of `unknown` passes; otherwise a
+    `to.tokens.configurationKey` of the snapshot in the gate's `traps`
+    fails with `token-trap`. A migration therefore never returns or
+    strands a token. (3) It maps
     the root context with `to.migrateContext`, and each child blueprint's
     context with its own version's `migrateContext`, as `blueprint-loader`
     states; the first failure fails with its kind and the expression
@@ -570,12 +577,16 @@ proposed-design:
     delay. It then creates the XState actor from `to.machine` with the
     migrated snapshot, without starting it, records it under the actor id
     with the new `entries` and an empty entry log, and calls
-    `router.attach` with its target. The attach saves the snapshot with
+    `router.attach` with its target. The new record holds no last change,
+    `changedBy`, since no event changed the state on the new version, so
+    the actor's history ends the visit before the migration with no exit
+    event and starts a visit on the new version. The attach saves the snapshot with
     `machine` set to `to.key` and the deadline arms of the new `entries`,
     and runs every save hook in the save's transaction: the hooks see the
     same `entries` ids, an empty `entered`, and the same active invokes,
     so a gate sees no exit and no entry, and keeps the actor's entry row
-    and token. When the attach throws, the host puts the old record back,
+    and token, whose return point step (2) showed the save does not
+    reach. When the attach throws, the host puts the old record back,
     discards the new actor, and answers `failed` with kind `store` and the
     error's message; the old actor never stopped. When it returns, the
     host has called `probe("migrated", actorId)` from the router's `saved`
@@ -715,7 +726,8 @@ proposed-design:
     context migrates by the child's own path; an actor with a pending
     inbox row, a queued save, or a running promise is `deferred` with that
     reason and stays loaded on its version; a holder fails with
-    `gate-missing` and with `token-trap`; a mapping that throws, one that
+    `gate-missing`, with `token-return` when the new version's return
+    point is a state the actor is already in, and with `token-trap`; a mapping that throws, one that
     times out, one whose result the new context schema rejects, a context
     no path accepts, and a state the new version does not declare each
     answer `failed` with their kind and leave the stored snapshot

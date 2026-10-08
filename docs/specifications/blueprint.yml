@@ -132,10 +132,11 @@ description: |-
       delivered: { x: 0, y: 272 }
   ```
 
-  Migrations. An actor runs one blueprint version at a time. When the
-  service applies a revision whose version at a blueprint's path is later
-  than an actor's version at that path, the actor migrates to it while it
-  waits on events, as `blueprint-migration` states: it keeps its state,
+  Migrations. An actor runs one blueprint version at a time. A migration
+  moves an actor to the latest version at its blueprint's path, when that
+  version is later than the actor's and only while the actor waits on
+  events, as `blueprint-migration` states, which also states what starts
+  a migration. The actor keeps its state,
   its identity, its threads, its gate token and reservation, its inbox,
   and each deadline the later version still declares on its state, and
   its context becomes the later version's context. State names are

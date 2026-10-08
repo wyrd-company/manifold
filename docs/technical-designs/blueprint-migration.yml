@@ -17,11 +17,11 @@ relationships:
     - blueprint-expressions
     - escalation-contract
     - store-database-schema
-    - migrate-waiting-actors-to-each-later-version
 objective: >-
-  Move every running actor to the latest version of its blueprint's path,
-  so that a process that evolves takes its running work with it: an actor
-  that waits on events migrates to a later version at the same path, keeps
+  Move a running actor to the latest version of its blueprint's path when
+  a migration starts for it, so that a process that evolves can take its
+  running work with it: an actor that waits on events migrates to a later
+  version at the same path, keeps
   its identity, threads, gate token, reservation, deadlines, and inbox,
   reads its context through the migration path its blueprint's author
   wrote, and an actor that cannot migrate stays exactly where it was and
@@ -79,15 +79,15 @@ proposed-design:
     saves it through the router as the actor's next snapshot, with the
     save hooks, in one transaction; it answers with a typed outcome and
     changes nothing unless the save commits. The `migrations` module,
-    `packages/service/src/migrations/`, decides when and to what: after
-    each applied revision, at service start, and after each save of an
-    actor that is behind, it finds the actors whose version is earlier
-    than the latest version of their path, attempts each through
-    `migrate`, records each failure in the store once, logs it, and raises
-    a `migration-failed` escalation whose `retry` attempts again. The
-    author writes migration paths in the blueprint's top-level
-    `migrations` member, which `blueprint` specifies; the machine never
-    reads it.
+    `packages/service/src/migrations/`, decides when and to what: it finds
+    the actors whose version is earlier than the latest version of their
+    path, attempts each through `migrate`, records each failure in the
+    store once, logs it, and raises a `migration-failed` escalation whose
+    `retry` attempts again. What starts a migration is the trigger, a
+    decision reserved to the user and pending, as `trigger` states; every
+    other part of this design holds under each of its options. The author
+    writes migration paths in the blueprint's top-level `migrations`
+    member, which `blueprint` specifies; the machine never reads it.
   public-interface: |-
     `packages/service/src/migrations/index.ts` exports exactly these names.
 
@@ -140,6 +140,37 @@ proposed-design:
     question text. `wiring.ts` is the module's wiring part. Tests live
     beside the module and import only `index.ts`, the store's, the actor
     host's, and the loader's `index.ts`.
+  trigger: >-
+    The trigger removes, under its first two options, the guarantee that
+    an actor runs to its end on the version it started on, so it is a
+    decision reserved to the user, and it is pending. Its decision record
+    is written with the answer. The options:
+    (1) Automatic, recommended. Passes run after each applied revision and
+    at start, and an actor that is behind is attempted after each of its
+    saves, as `pass` and `saves` state. An author who wants running actors
+    to finish on the old text saves the new text at another path. Nothing
+    in this design changes.
+    (2) Automatic with an opt-out. As option 1, and a blueprint may declare
+    the top-level boolean `pinActors: true`: the automatic trigger takes no
+    actor to a target version that declares it, so actors on earlier
+    versions of the path run to their end, and a `retry` attempts nothing
+    toward it. This adds the member to `blueprint` and its schema, and one
+    test: an actor behind a target that declares `pinActors` is not
+    attempted by a pass, by a save, or by a retry.
+    (3) Operator request only. No pass runs on a revision or at start, and
+    no save starts an attempt. The module adds `request(selector)`,
+    mounted by its wiring part as `POST /api/migrations` with a body of `{
+    actorId }` or `{ path }`: it queues an attempt to the current target
+    of each named actor, or of every active actor behind at the path, and
+    answers `202` with `{ queued }`, the actor ids, or `400` for a body of
+    neither shape. An actor the request deferred is attempted again after
+    its next save while the service runs, and the request ends when it
+    migrates or fails. `retry` on `migration-failed` keeps its meaning.
+    This drops the `applied` call from the revision follower and the first
+    pass from the wiring part, adds the endpoint to the operator's API,
+    and replaces the pass and save tests with request tests.
+    Until the answer, the implementation builds option 1, and does not
+    merge into `epic/foundation`.
   later-version: >-
     The target of a path is the `LoadedBlueprint` of that path in
     `latest().blueprints`. An actor is behind when its stored snapshot is
@@ -163,11 +194,15 @@ proposed-design:
     context by its shape and not by the version it was written under.
   version-invalid: >-
     When `latest()` holds a path in `failures` and not in `blueprints`, the
-    later version at that path did not load or lint. For each active actor
-    on an earlier version of the path, as `later-version` orders them with
-    the failed version `{ commit: latest().commit, path }`, the module
-    records a failure of kind `version-invalid` whose detail holds the
-    load's findings, and logs it. It raises no escalation: the follower
+    later version at that path did not load or lint. `latest().versions`
+    gives that failed version as the loader tried it: the repository file
+    at the commit, or the current bundle's text at the commit with its
+    `bundle`. For each active actor on an earlier version of the path, as
+    `later-version` orders it against that failed version, so a newer
+    bundle that fails at the same commit is later than the bundle the
+    actor runs, the module records a failure of kind `version-invalid`
+    with `to` the failed version's key and the load's findings as its
+    detail, and logs it. It raises no escalation: the follower
     logs `blueprint-invalid` for the file, intake fails visibly for new
     tasks, and the fix is a new commit, whose revision every such actor
     then attempts. A version that is `missing` at the actor's target for a
@@ -183,13 +218,13 @@ proposed-design:
     `deferred` outcome adds the actor to the deferred set and is logged
     `migration-deferred` once per actor and target with its reason. A
     `failed` outcome is recorded. A `current` or `ended` outcome does
-    nothing. Passes run after each revision the follower applies, through
-    its `applied` callback, and once when the module's wiring part starts,
-    which awaits that pass.
+    nothing. Under the automatic trigger, passes run after each revision
+    the follower applies, through its `applied` callback, and once when
+    the module's wiring part starts, which awaits that pass.
   saves: >-
     `openMigrations` registers a listener with `actorHost.onSaved`, which
-    the host calls after each committed save of an active actor. When the
-    saved version is behind its path's target and no failure record names
+    the host calls after each committed save of an active actor. Under the
+    automatic trigger, when the saved version is behind its path's target and no failure record names
     that pair, the listener adds one job for that actor to the queue on
     the next macrotask, so the attempt runs outside the router's delivery
     and save. An actor deferred because an event was pending, a promise
@@ -236,6 +271,7 @@ proposed-design:
     | `version-invalid` | module or host | The later version, or a child blueprint it invokes, did not load or lint at the target commit. | Log `migration-failed` with the findings; the follower's `blueprint-invalid`. |
     | `restore-mismatch` | host | The target's `checkRestore` finds a state, history state, or invoke of the snapshot that the target does not declare. | Escalation and log, with each mismatch. |
     | `gate-missing` | host | The actor holds a token of a gate the target does not declare at the gated state. | Escalation and log, with the gate and token. |
+    | `token-return` | host | The actor holds a token, and the migrated configuration already reaches the gate's return point in the target, so the migration's save would return it. | Escalation and log, with the gate, the token, and the return point. |
     | `token-trap` | host | The actor holds a token, and the configuration key of the migrated snapshot is in the target's trap set for that gate. | Escalation and log, with the gate, the token, and the configuration key. |
     | `no-path` | host | The context fails the target's context schema and no migration path's `from` accepts it. | Escalation and log, with the schema errors. |
     | `mapping-failed` | host | The migration path's mapping throws or returns a value that is not an object, or an object holding `manifold`. | Escalation and log, with the expression error. |
@@ -271,7 +307,8 @@ proposed-design:
     the escalations module delivers. It opens the module with the store,
     the actor host, `revisions.latest`, the process repository's
     `isAncestor`, the bundles, the escalations module, and the log,
-    registers `stop` at stage `delivery`, and awaits the first pass. The
+    registers `stop` at stage `delivery`, and, under the automatic
+    trigger, awaits the first pass. Under the automatic trigger the
     revision follower's `applied` callback calls `pass()` on the module
     through `context.later`, as it reaches intake, and the escalations
     part gives the `migration-failed` handler the same way.
@@ -314,7 +351,15 @@ proposed-design:
     records and no pass attempts the pair; a holder whose migrated
     configuration is in the target's trap set fails with `token-trap` and
     keeps its token; a holder of a gate the target drops fails with
-    `gate-missing`. A fault test runs the service in a child Node process
+    `gate-missing`; a holder past its gated state whose target moves the
+    return point to the state it waits in fails with `token-return`, and
+    a holder past its gated state whose target makes the return point
+    `exit` fails the same way, each
+    keeping its token, entry row, and reservation unchanged; a revision
+    whose newer bundle fails the lint at the same commit records
+    `version-invalid` for an actor on the earlier bundle, with the failed
+    bundled version's key, beside the same failure for a repository file
+    that fails the lint. A fault test runs the service in a child Node process
     that sends itself `SIGKILL` at the actor host's `migrated` probe,
     after the new snapshot commits and before the router re-arms its
     deadline timer and subscription; the parent asserts the kill signal,

@@ -68,7 +68,7 @@ CREATE TABLE store_migration_failure (
   actor_id TEXT PRIMARY KEY CHECK (length(actor_id) > 0),
   from_machine TEXT NOT NULL CHECK (length(from_machine) > 0),
   to_machine TEXT NOT NULL CHECK (length(to_machine) > 0),
-  kind TEXT NOT NULL CHECK (kind IN ('version-invalid', 'restore-mismatch', 'gate-missing', 'token-trap', 'no-path', 'mapping-failed', 'mapping-timeout', 'context-rejected', 'store')),
+  kind TEXT NOT NULL CHECK (kind IN ('version-invalid', 'restore-mismatch', 'gate-missing', 'token-return', 'token-trap', 'no-path', 'mapping-failed', 'mapping-timeout', 'context-rejected', 'store')),
   message TEXT NOT NULL,
   detail TEXT NOT NULL CHECK (json_valid(detail)),
   failed_at INTEGER NOT NULL

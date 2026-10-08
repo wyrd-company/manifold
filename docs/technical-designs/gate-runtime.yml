@@ -388,13 +388,13 @@ proposed-design:
     takes it like any save, in the new version's view, which `revision`
     added before any actor migrates to it: the configuration still holds
     the gated state and its entry id is unchanged, so the entry row, its
-    age, and an unreturned token stay; a return point of the new version
-    that the configuration already holds returns the token on that save.
-    The actor host refuses the migration of a holder whose gate the new
-    version does not declare at the gated state, or whose migrated
-    configuration is in the new version's trap set for the gate, reading
-    the holder's tokens through `heldTokens`, so no migration strands a
-    token. `heldTokens(actorId)` reads the actor's token rows whose
+    age, and an unreturned token stay. The actor host refuses the
+    migration of a holder whose gate the new version does not declare at
+    the gated state, whose migrated configuration already reaches the new
+    version's return point for the gate, or whose migrated configuration
+    is in the new version's trap set for the gate, reading the holder's
+    tokens through `heldTokens`; so the migration's save returns no token
+    and strands none, and the save hook's rules apply to it unchanged. `heldTokens(actorId)` reads the actor's token rows whose
     `returned_at` is null.
   restore: >-
     The router's `afterDrain` calls the module's `afterDrain` with the
@@ -672,8 +672,6 @@ proposed-design:
     that follow in the comparator's order; after the kill at
     `comparator-failed`, one open `comparator-failed` escalation for the
     gate. A holder's save with a later version key, the same entry ids,
-    and an empty `entered` keeps its entry row and its token, and a
-    return point the later version declares and the configuration holds
-    returns it on that save; `heldTokens` lists a holder's unreturned
+    and an empty `entered` keeps its entry row and its token; `heldTokens` lists a holder's unreturned
     tokens and drops a returned one. Values are generic and never
     drawn from Manifold's own domain.

@@ -456,7 +456,7 @@ proposed-design:
     | `blueprint-loader` | `blueprint-loader/wiring.ts` | `createBlueprintLoader` with `serviceImplementations` of every registry added before it, `onStateEntry: recordStateEntry`, the configured lint bound, the repository's `revisionAt`, and an `onExpressionError` that logs `expression-error`. | `blueprints` | |
     | step `process-repository-opened` | | | | |
     | `gates` | `gates/wiring.ts` | The `gates` option, or `createGates` with the comparator sandbox, the token lint, and `trackedIssue` read from the GitHub mirror over the Projects the portfolio's `githubProject` binds. | `gates` | `timers` |
-    | `revisions` | `service/revisions-wiring.ts` | `createRevisions`, with an `applied` that tells intake once it starts, runs a pass of the migrations module once it starts, and calls the `applied` probe; awaits `follow()`, then retries pending usage. | `revisions` | `pulls` |
+    | `revisions` | `service/revisions-wiring.ts` | `createRevisions`, with an `applied` that tells intake once it starts, runs a pass of the migrations module once it starts under the automatic migration trigger of `blueprint-migration`, and calls the `applied` probe; awaits `follow()`, then retries pending usage. | `revisions` | `pulls` |
     | step `revision-followed` | | | | |
     | `pull` | `service/revisions-wiring.ts` | Awaits `revisions.pull()`; a pull that fails logs `pull-failed` and start continues on the current commit, or with no revision when there is none, since every sweep pulls again. | | |
     | step `pulled` | | | | |
@@ -468,7 +468,7 @@ proposed-design:
     | `escalations-delivery` | `escalations/wiring.ts` | The escalations module's `start`. | | |
     | `agent-tools-delivery` | `agent-tools/wiring.ts` | The agent tools module's `start`. | | |
     | step `escalations-started` | | | | |
-    | `migrations` | `migrations/wiring.ts` | `openMigrations` as `blueprint-migration` states, with the store, the actor host, `revisions.latest`, the process repository's `isAncestor`, the bundles, the escalations module, and the log; awaits its first pass. | `migrations` | `delivery` |
+    | `migrations` | `migrations/wiring.ts` | `openMigrations` as `blueprint-migration` states, with the store, the actor host, `revisions.latest`, the process repository's `isAncestor`, the bundles, the escalations module, and the log; under the automatic migration trigger, awaits its first pass. | `migrations` | `delivery` |
     | `github-source` | `github-source/wiring.ts` | `startGitHubSource` with the `github` section, the credentials, the store, the router, `boundProjects` read from `portfolio.current()`, a `processRepository` trigger whose `url` and `branch` are the section's and whose `pull` is `revisions.pull`, the `cardMove` probe, an `onTracked` and an `onMirrorChanged` that tell intake once it starts and the gates, and an `onError` that logs `github-error`; mounts its `requestListener` at `githubWebhookPath`. | `github` | `sources` |
     | step `github-started` | | | | |
     | `intake` | `intake/wiring.ts` | `startIntake` as `intake` states, with the GitHub source as `tracked`, and an `onFailed` and `onError` that log `intake-failed` and `intake-error`. | `intake` | `intake` |

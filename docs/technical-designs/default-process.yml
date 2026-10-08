@@ -53,10 +53,10 @@ background:
       identity of its own.
 design-challenges:
   bundled-versions: >-
-    An actor started on a bundled blueprint must restore into the same
-    machine after Manifold is upgraded to a build whose bundle differs,
-    and must read its comparator, templates, and schemas from the process
-    repository commit it started at.
+    An actor saved on a bundled blueprint version must restore into the
+    same machine after Manifold is upgraded to a build whose bundle
+    differs, and must read its comparator, templates, and schemas from the
+    process repository commit of that version.
   a-starting-point: >-
     The default must run with nothing but the starter's files, and every
     part of it must be replaceable from the process repository, while

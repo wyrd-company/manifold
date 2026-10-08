@@ -14,9 +14,9 @@ objective: >-
   the engine runs, one per blueprint version, so that a pushed change to a
   blueprint is taken with no redeploy, a broken blueprint fails alone with
   findings that name its file and location, a restored actor runs the
-  version it started on, and the host CLI reports exactly what loading
-  would report, and an actor moves to a later version only through the
-  migration paths its author wrote.
+  version it was last saved with, an actor that migrates reads its context
+  through the migration paths its author wrote, and the host CLI reports
+  exactly what loading would report.
 background:
   problems:
     - >-
@@ -36,7 +36,8 @@ background:
 design-challenges:
   versions: >-
     A push changes blueprints under running actors. Every actor must keep
-    the machine it started on, and every new actor must take the latest.
+    the machine it was last saved with until a migration moves it, and
+    every new actor must take the latest.
   isolation: >-
     One broken blueprint in a repository must not stop the others from
     loading, and its failure must name what to fix.
@@ -49,8 +50,8 @@ design-challenges:
     XState sees it, and handed to the caller as data.
   bundled: >-
     Manifold ships its default blueprints in its own build, and a
-    restored actor must run the bundled text it started on after a
-    Manifold upgrade changes that text.
+    restored actor must run the bundled text it was last saved with after
+    a Manifold upgrade changes that text.
   later-names: >-
     Gates and task actors register implementations in a later wave. The
     loader must accept names it does not know about today without a change
@@ -146,6 +147,8 @@ proposed-design:
       readonly commit: string;
       readonly blueprints: ReadonlyMap<string, LoadedBlueprint>; // by path
       readonly failures: ReadonlyMap<string, readonly BlueprintFinding[]>; // by path
+      /** The version the loader tried at every path, loaded or failed: the repository file, or the current bundle's text with its `bundle`. */
+      readonly versions: ReadonlyMap<string, BlueprintVersion>; // by path
     }
 
     export type VersionLoad =
@@ -201,7 +204,8 @@ proposed-design:
     from the bundle, so a repository file that fails the lint is in
     `failures` and its bundled blueprint is not loaded. The result holds
     each path once, in `blueprints` when it loaded and in `failures` when
-    it did not.
+    it did not, and in `versions` with the version it tried, so a failed
+    bundled path keeps its bundle digest.
   loading: >-
     Loading one version runs four steps. It reads the file through the
     revision, and reads `task-metadata.yml` and `bindings.yml` at the same
