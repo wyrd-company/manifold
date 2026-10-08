@@ -133,6 +133,8 @@ export async function migrationServiceFixture(document: Record<string, unknown> 
       f.file,
       stringify({
         ...f.configuration,
+        // Loaded migration saves also bind the starter comparator; 100 ms expires there.
+        comparatorSandbox: { timeoutMs: 500 },
         credentials: {
           ...f.configuration.credentials,
           writer: { kind: "t3code-token", tokenFile: "t3.token" },

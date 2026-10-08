@@ -1046,7 +1046,8 @@ test("mirror notifications rerun gate critical paths on a transitive close, trac
     store: s.store,
     version: async () => ({ status: "loaded", blueprint }),
     revisionAt: async () => revision,
-    sandbox: await createComparatorSandbox(),
+    // Paired service gates expire the ordering comparator at 100 ms.
+    sandbox: await createComparatorSandbox({ timeoutMs: 500 }),
     portfolio: {
       ledger,
       current: () => ({ declaration: { ledger: { items: [{ id: "left" }], allocations: [] } } }),

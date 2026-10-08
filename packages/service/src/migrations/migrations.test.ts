@@ -10,6 +10,7 @@ import { fromCallback, fromPromise } from "xstate";
 import type { ActorHostOptions, SaveHook } from "../actor-host/index.ts";
 import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
 import { stringify } from "yaml";
+import { configureBlueprintExpressions } from "../blueprint-expressions.ts";
 import { memoryRevision } from "@wyrd-company/manifold-shared";
 import { createBlueprintLoader } from "../blueprint-loader/index.ts";
 import { openStore } from "../store/index.ts";
@@ -51,6 +52,7 @@ const next = () => ({
 });
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
+  configureBlueprintExpressions();
   for (const fn of cleanup.splice(0).toReversed()) await fn();
 });
 async function fixture(
@@ -65,6 +67,8 @@ async function fixture(
     newFiles?: Record<string, string>;
   } = {},
 ) {
+  // A loaded cold worker expires the simple migration mapping at 1000 ms.
+  configureBlueprintExpressions({ timeoutMs: 10000 });
   const directory = mkdtempSync(join(tmpdir(), "migration-"));
   cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
   const store = openStore({ path: join(directory, "store.sqlite") });
