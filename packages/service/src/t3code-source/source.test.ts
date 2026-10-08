@@ -1173,8 +1173,19 @@ test("SIGKILL before the origin commit leaves no readiness and the next run comm
     { silent: true },
   );
   const messages = new Set<unknown>();
-  child.on("message", (message) => {
-    messages.add(message);
+  let stderr = "";
+  child.stderr!.on("data", (value) => {
+    stderr += String(value);
+  });
+  const insideOrigin = new Promise<void>((resolve, reject) => {
+    child.on("message", (message) => {
+      messages.add(message);
+      if (message === "inside-origin") resolve();
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      reject(new Error(`Worker exited before origin (${code}, ${signal}): ${stderr}`));
+    });
   });
   cleanup.push(async () => {
     if (child.exitCode === null && child.signalCode === null) {
@@ -1183,7 +1194,7 @@ test("SIGKILL before the origin commit leaves no readiness and the next run comm
       await exited;
     }
   });
-  await expect.poll(() => messages.has("inside-origin")).toBe(true);
+  await insideOrigin;
   expect(messages.has("ready")).toBe(false);
   expect(store.connection.database.prepare("SELECT * FROM t3_environment").all()).toEqual([]);
   const exited = once(child, "exit");
