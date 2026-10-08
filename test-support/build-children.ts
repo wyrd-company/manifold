@@ -60,6 +60,7 @@ export default async function setup(project: TestProject) {
             "task-metadata/test-fixtures/project-config-worker.ts",
             "capacity/test-fixtures/recovery-worker.ts",
             "service/test-fixtures/crash-worker.ts",
+            "service/test-fixtures/blueprint-save-worker.ts",
           ].map((file) => join(service, "src", file)),
         }),
       );

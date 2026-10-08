@@ -2,27 +2,18 @@
 // relationships:
 //   verifies: service-assembly
 // ---
-import { fork, spawn } from "node:child_process";
+import { fork } from "node:child_process";
 import { once } from "node:events";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import * as fs from "node:fs/promises";
 import git from "isomorphic-git";
-import { afterEach, beforeAll, expect, test } from "vite-plus/test";
+import { afterEach, expect, test } from "vite-plus/test";
+import { childArtifacts } from "../../../../test-support/child-process.ts";
 import { startService } from "./index.ts";
 import { serviceFixture } from "./test-fixtures/repository.ts";
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
-});
-beforeAll(async () => {
-  const build = spawn("pnpm", ["run", "build"], {
-    cwd: fileURLToPath(new URL("../../", import.meta.url)),
-    stdio: "pipe",
-  });
-  let output = "";
-  build.stderr.on("data", (chunk) => (output += String(chunk)));
-  const [code] = await once(build, "exit");
-  if (code !== 0) throw new Error(output);
 });
 test.each(["committed", "pushed"])(
   "SIGKILL after %s keeps exactly one remote save and loads it on restart",
@@ -36,9 +27,9 @@ test.each(["committed", "pushed"])(
       value: "true",
     });
     const child = fork(
-      fileURLToPath(new URL("./test-fixtures/blueprint-save-worker.ts", import.meta.url)),
+      join(childArtifacts().service, "service/test-fixtures/blueprint-save-worker.js"),
       [fixture.file, step],
-      { stdio: ["ignore", "pipe", "pipe", "ipc"] },
+      { stdio: ["ignore", "pipe", "pipe", "ipc"], execArgv: [] },
     );
     cleanup.push(async () => {
       if (child.exitCode === null && child.signalCode === null) {

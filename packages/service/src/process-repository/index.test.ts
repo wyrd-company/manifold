@@ -166,7 +166,9 @@ test("recovery removes only unpublished residue and rejects corrupted current", 
 });
 
 test("concurrent requests share one subsequent pull and it runs after a timeout", async () => {
-  const { remote, configuration } = await setup(200);
+  // The same deadline covers the healthy negotiation before the stalled pack.
+  // A 200 ms deadline can expire before packStarted on a shared machine.
+  const { remote, configuration } = await setup();
   const repository = await openProcessRepository({ configuration, credentials });
   await repository.pull();
   const b = await remote.commit("second");
@@ -212,7 +214,7 @@ test("verification rejects an unreadable newly fetched object before publication
 });
 
 test("a request from a settled-pull callback joins the already queued successor", async () => {
-  const { remote, configuration, a } = await setup(200);
+  const { remote, configuration, a } = await setup();
   const repository = await openProcessRepository({ configuration, credentials });
   await repository.pull();
   const b = await remote.commit("second");

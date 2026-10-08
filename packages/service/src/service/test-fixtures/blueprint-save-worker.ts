@@ -2,10 +2,7 @@
 // relationships:
 //   verifies: service-assembly
 // ---
-import type { startService as StartService } from "../index.ts";
-const { startService } = (await import(
-  new URL("../../../dist/service/index.js", import.meta.url).href
-)) as { startService: typeof StartService };
+import { startService } from "../index.ts";
 const service = await startService({
   configurationFile: process.argv[2]!,
   log: () => {},

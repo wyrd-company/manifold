@@ -376,7 +376,7 @@ describe("comparator sandbox", () => {
   });
   it("lets a caller record failures and continue on the same loaded comparator", async () => {
     const { comparator } = await loaded(
-      `export default input => { const mode = input.population[0].fields.mode; if (mode === 'throw') throw new Error('sample'); if (mode === 'loop') for (;;) {} if (mode === 'hoard') { const h = []; for (;;) h.push(new Array(1024).fill(1)); } return { task: input.population[0].id }; };`,
+      `export default input => { const mode = input.population[0].fields.mode; if (mode === 'throw') throw new Error('sample'); if (mode === 'loop') for (;;) {} if (mode === 'hoard') return new Array(16 * 1024 * 1024).fill(1); return { task: input.population[0].id }; };`,
       { timeoutMs: 100, memoryLimitMiB: 16 },
     );
     const records = ["throw", "loop", "hoard", "pick"].map((mode) =>
