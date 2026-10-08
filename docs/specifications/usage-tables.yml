@@ -88,7 +88,9 @@ description: >-
   A `mapping` row is the late attribution its session's mapping gives,
   an `ownership` row the late attribution its thread's ownership gives,
   and a `move` row an operator's usage move, whose `ledger_key` names
-  the ledger's reattribution operation; only a `move` row has one. A
+  the ledger's reattribution operation. Only a `move` row has one, and a
+  `move` row of a posting whose amount is 0 has none, since the ledger
+  holds nothing for that posting. A
   row is written only while the posting's attribution names a ledger
   actor of unowned usage, `thread:…` or `session:…`. A trigger aborts
   every `UPDATE` and `DELETE`.
@@ -114,8 +116,8 @@ validation-criteria: >-
   run of whitespace in `sql` read as one space; they are equal. An
   `UPDATE` or `DELETE` on `usage_declarations` fails with its append-only
   message, and so does one on `usage_reattributions`. A
-  `move` reattribution without a ledger key and a `mapping` one with
-  one each fail a CHECK constraint. The view answers, for a posting with
+  `mapping` or `ownership` reattribution with a ledger key fails a CHECK
+  constraint, and a `move` one without a ledger key is accepted. The view answers, for a posting with
   a `move` row followed by a `mapping` row, the `mapping` row's
   attribution and the `move` row's actor and item as held. A database
   at step 2 holding late attributions, migrated by step 3, holds each as

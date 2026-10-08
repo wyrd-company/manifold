@@ -642,8 +642,11 @@ proposed-design:
       in that actor's actual.
 
     - Migration: a database at step 1 holding entries of every kind is
-      migrated by step 2; every row keeps its `seq` and values, and the
-      balances, totals, and actor usage read the same as before it.
+      migrated by step 2; every row of every ledger table keeps its `seq`
+      or key and its values, every index and append-only trigger of
+      `portfolio-ledger-tables.sql` exists after it, an `UPDATE` and a
+      `DELETE` on each table still fail, and the balances, totals, and
+      actor usage read the same as before it.
 
     - Durability: a second `Ledger` on the same file returns the same
       balances and actor usage.

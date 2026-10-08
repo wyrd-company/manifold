@@ -99,7 +99,10 @@ description: |-
   A move answers `200` with `{ "status": "moved", "from", "to": { actor,
   item }, "moved", "accounts" }`: the target's actor and item as
   resolved, the number of calls moved, and per account the amount moved,
-  in account name order. A move that finds no call to move answers `200`
+  in account name order, 0 for an account whose moved calls priced to
+  nothing. A call whose amount is 0 moves like any other: it leaves the
+  ledger actor's unowned usage and counts in the target's calls, and it
+  changes no balance. A move that finds no call to move answers `200`
   with `moved` 0 and `accounts` empty, so the same move sent twice moves
   each call once.
 
@@ -110,7 +113,8 @@ description: |-
   `to.actor` that is a ledger actor of unowned usage or that the usage
   intake module has never seen saved; `422` with `invalid-target`
   answers a target item that the portfolio declaration in force does not
-  hold or has archived. A refused move writes nothing. A failure inside
+  hold or has archived, whether or not the calls to move have amounts
+  above 0. A refused move writes nothing. A failure inside
   the move rolls it back whole, is reported through the service log, and
   answers `500` with `internal`.
 format: openapi
@@ -126,7 +130,8 @@ validation-criteria: >-
   response schema; that the read lists a `thread` ledger actor with its
   project and title, a `session` ledger actor with its provider and
   session, and a pending call's count, in order; that a move to an item
-  and a move to an actor answer the calls and amounts moved, after which
+  and a move to an actor answer the calls and amounts moved, a move of
+  calls with amounts 0 and 1 answering every call and the amount 1, after which
   `GET /api/portfolio` answers each moved call on its target item's
   `actual` and `lifetime` and not on the item it left, with the
   account's `used` unchanged, and `GET /api/tasks/{actorId}` answers the

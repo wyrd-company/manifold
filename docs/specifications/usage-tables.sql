@@ -120,7 +120,8 @@ CREATE INDEX usage_postings_by_actor ON usage_postings (actor, visit);
 -- it again to the actor, item, and visit its cause gives. `mapping` and
 -- `ownership` are late attributions, which leave the posting's ledger
 -- entry where it posted; `move` is a usage move, whose ledger key names
--- the ledger's reattribution operation that carried it.
+-- the ledger's reattribution operation that carried it, absent for a
+-- posting of amount 0, which the ledger holds nothing for.
 CREATE TABLE usage_reattributions (
   seq INTEGER PRIMARY KEY,
   posting INTEGER NOT NULL REFERENCES usage_postings (seq),
@@ -130,7 +131,7 @@ CREATE TABLE usage_reattributions (
   visit INTEGER,
   ledger_key TEXT UNIQUE,
   recorded_at INTEGER NOT NULL,
-  CHECK ((cause = 'move') = (ledger_key IS NOT NULL))
+  CHECK (cause = 'move' OR ledger_key IS NULL)
 ) STRICT;
 
 CREATE INDEX usage_reattributions_by_posting ON usage_reattributions (posting, seq);

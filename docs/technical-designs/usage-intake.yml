@@ -391,20 +391,32 @@ proposed-design:
     actor, the actor and its item from the module's actor row, else
     `other`. An actor id that is a ledger actor of unowned usage, or that
     the module holds no row for, is refused with `unknown-actor` before
-    any write. The move takes, in `seq` order, the posted postings whose
+    any write. A target item that the portfolio declaration in force,
+    `portfolio.current()`, does not hold, Others included, or that is
+    archived or under an archived item, is refused with `invalid-target`
+    before any write, whether or not any posting has an amount above 0.
+    The move takes, in `seq` order, the posted postings whose
     attribution is `from`, and skips each the ledger already holds under
-    the target's actor and item. For each, it calls `ledger.reattribute`
-    with key `usage-move:<posting seq>:<n>`, where `n` counts the
-    posting's `move` reattributions from 1, the posting's account,
-    amount, and `used_at`, `from` the actor and item the ledger holds it
-    under, and `to` the target. Then it records a reattribution of cause
-    `move` with the target's actor and item, the visit the call's time
-    falls in among the actor's visits for an actor target and none for an
-    item target, and the ledger key. A ledger `invalid-input` error for
-    the target item, an item the portfolio does not hold or has
-    archived, rolls the whole move back and is answered as
+    the target's actor and item. For each posting whose amount is above
+    0, it calls `ledger.reattribute` with key
+    `usage-move:<posting seq>:<n>`, where `n` counts the posting's
+    `move` reattributions from 1, the posting's account, amount, and
+    `used_at`, `from` the actor and item the ledger holds it under, and
+    `to` the target. A posting whose amount is 0, a call whose price
+    rounds to nothing, makes no ledger write, since it adds nothing to
+    any balance. Then, for every posting it takes, it records a
+    reattribution of cause `move` with the target's actor and item, the
+    visit the call's time falls in among the actor's visits for an actor
+    target and none for an item target, and the ledger key, which is
+    absent for a posting of amount 0. A zero posting's held actor and
+    item are the target's, like any moved posting's, and the ledger holds
+    nothing for it anywhere, so the move changes no balance through it
+    and the posting leaves `from`'s unowned usage. A ledger
+    `invalid-input` error rolls the whole move back and is answered as
     `invalid-target`. Any other ledger error fails the move. The move
-    answers how many postings it moved and the amount per account. A
+    answers how many postings it moved, zero postings included, and the
+    amount per account of every account a moved posting is on, 0 for an
+    account whose moved postings are all 0. A
     pending posting is not moved: it has counted against nothing, and
     once it posts it is unowned usage that a later move takes. A move
     that finds nothing to move writes nothing and answers 0. After a
@@ -573,7 +585,7 @@ proposed-design:
     export function openUsage(options: {
       connection: LedgerConnection;
       ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage" | "reattribute">;
-      portfolio: Pick<Portfolio, "t3codeProject">;
+      portfolio: Pick<Portfolio, "t3codeProject" | "current">;
       threadProject(environment: string, threadId: string): string | undefined;
       threadTitle(environment: string, threadId: string): string | undefined;
       environments: ReadonlySet<string>;
@@ -685,7 +697,8 @@ proposed-design:
     nothing left whose attribution is `from` that the ledger does not
     already hold under the target, and answers 0. A ledger
     reattribution is keyed by its posting and the posting's move number,
-    so it is written once. A crash inside any of these rolls its
+    so it is written once. A zero posting moves by its reattribution row
+    alone, which the same eligibility rule finds once. A crash inside any of these rolls its
     transaction back whole.
   tests: |-
     Service tests live in `packages/service/src/usage/usage.test.ts` and
@@ -830,6 +843,20 @@ proposed-design:
       the thread. A later save of `actor-2` listing `thread-2` attributes
       nothing. With `actor-1` settled before the move, the move reads the
       same with `settled` true.
+
+    - Move with zero postings: on `model-c`, a session total of 1, 2, 3,
+      4, and 5 input tokens of `thread-2`, which no actor owns, posts
+      amounts 0, 0, 1, 0, and 0 on `beta`; a move of
+      `thread:env-one:thread-2` to `alpha` answers 5 moved and 1 on
+      `acct`, writes one ledger reattribution operation, and records five
+      `move` reattributions, four without a ledger key; `alpha`'s actual
+      rises by 1 and `beta`'s falls by 1; `unowned()` lists the thread
+      with 1 on `alpha` in 5 calls. The same move again answers 0 and
+      writes nothing. A move of the thread to `actor-1` then answers 5
+      moved and 1, and `actorUsage("actor-1")` and `GET
+      /api/tasks/{actorId}` read actual 1. A thread whose only posting
+      has amount 0 moves to `gamma` refused `invalid-target`, and to
+      `alpha` with 1 moved, 0 on `acct`, and no ledger operation.
 
     - Move refused: a move to `gamma`, to an item the portfolio does not
       hold, to `actor-3`, which the module holds no row for, or to
