@@ -139,6 +139,7 @@ export interface ActorEnd {
   readonly output?: JsonValue;
 }
 export interface ActorHistory {
+  readonly prunedAt?: string;
   readonly actor: ActorSummary;
   readonly visits: readonly StateVisit[];
   readonly events: readonly ReceivedEvent[];
@@ -259,7 +260,8 @@ export function isActorHistoryResponse(value: unknown): value is ActorHistoryRes
   if (!record(value) || Object.keys(value).length !== 1 || !record(value["history"])) return false;
   const h = value["history"];
   return (
-    keys(h, ["actor", "visits", "events", "commands", "end"]) &&
+    keys(h, ["actor", "visits", "events", "commands", "end", "prunedAt"]) &&
+    optional(h, "prunedAt", date) &&
     isActorsResponse({ actors: [h["actor"]] }) &&
     Array.isArray(h["visits"]) &&
     h["visits"].every(visit) &&

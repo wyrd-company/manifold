@@ -10,6 +10,7 @@ import type { SecretValue } from "./credentials.ts";
 export interface ServiceConfiguration {
   readonly http: HttpHostConfiguration;
   readonly store: StoreConfiguration;
+  readonly retention: RetentionConfiguration;
   readonly blueprintLint: { readonly configurationBound: number };
   readonly escalations: EscalationsConfiguration;
   readonly agentTools: AgentToolsConfiguration;
@@ -114,4 +115,13 @@ export interface EscalationsConfiguration {
 
 export interface AgentToolsConfiguration {
   readonly identifyTimeoutMs: number;
+}
+
+export type RetentionWindow = number | "forever";
+export interface RetentionConfiguration {
+  readonly historyDays: RetentionWindow;
+  readonly sourceEventDays: Readonly<Record<string, RetentionWindow>> & {
+    readonly default: RetentionWindow;
+  };
+  readonly gateEvaluationDays: RetentionWindow;
 }

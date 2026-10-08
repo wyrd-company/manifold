@@ -26,6 +26,24 @@ import { migrations as owner12Steps } from "../t3code-source/migrations.ts";
 import { taskMetadataMigrationSteps as owner13Steps } from "../task-metadata/migrations.ts";
 import { usageMigrationSteps as owner14Steps } from "../usage/migrations.ts";
 const predecessors = predecessorFixture.owners;
+// These owners' initial schemas include retention's approved additions.
+const retentionSchemas: Record<string, string> = {
+  store: "store-database-schema",
+  router: "router-database-schema",
+  gates: "gates-database-schema",
+  usage: "usage-tables",
+};
+function referenceSteps(owner: string, predecessor: readonly string[]) {
+  const asset = retentionSchemas[owner];
+  return asset
+    ? [
+        readFileSync(
+          new URL(`../../../../docs/specifications/${asset}.sql`, import.meta.url),
+          "utf8",
+        ),
+      ]
+    : predecessor;
+}
 const currentSteps = [
   owner0Steps,
   owner1Steps,
@@ -62,12 +80,13 @@ const schema = (db: DatabaseSync) =>
     }));
 
 const expectedSteps = (owner: string, steps: string[]) => {
-  const specification =
-    owner === "history"
-      ? "history-database-schema"
-      : owner === "usage"
-        ? "usage-tables"
-        : undefined;
+  const specification = ({
+    store: "store-database-schema",
+    router: "router-database-schema",
+    gates: "gates-database-schema",
+    history: "history-database-schema",
+    usage: "usage-tables",
+  } as Record<string, string>)[owner];
   return specification
     ? [
         readFileSync(
@@ -87,6 +106,7 @@ for (const [index, { owner, steps }] of predecessors.entries()) {
     try {
       for (const step of expectedSteps(owner, steps)) old.exec(step);
       for (const step of current) fresh.exec(step);
+      if (owner === "store") old.exec("DROP TABLE schema_migration");
       expect(schema(fresh)).toEqual(schema(old));
     } finally {
       old.close();

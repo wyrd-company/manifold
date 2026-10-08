@@ -49,6 +49,10 @@ export function ActorContent() {
       ? `${detail.issue.repository}#${detail.issue.number}`
       : (actor?.issue ?? actorId),
     thread = detail?.threads.findLast((t) => t.url);
+  const prunedAt = input?.history.prunedAt;
+  const removed = prunedAt
+    ? `Retention removed this actor's events and commands on ${new Date(prunedAt).toLocaleString()}.`
+    : undefined;
   const status = input?.held ? "Failed" : actor?.status === "active" ? "Running" : "Completed";
   return (
     <>
@@ -135,8 +139,13 @@ export function ActorContent() {
             duration={timeline.duration}
             passes={actorPasses(input!).length}
           />
+          {removed ? <p className="muted">{removed}</p> : null}
           {search.view === "sequence" ? (
-            <ActorSequence sequence={sequence} />
+            removed ? (
+              <EmptyState icon={SearchX} title="Events removed" description={removed} />
+            ) : (
+              <ActorSequence sequence={sequence} />
+            )
           ) : (
             <ActorTimeline timeline={timeline} active={actor.status === "active"} />
           )}

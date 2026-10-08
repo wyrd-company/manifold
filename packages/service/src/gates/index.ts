@@ -20,3 +20,4 @@ export type {
   GateStrandedEscalation,
   GateEvaluationResult,
 } from "./types.ts";
+export { pruneGateEvaluations } from "./prune.ts";

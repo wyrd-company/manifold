@@ -536,3 +536,37 @@ test("commit author defaults each identity part and rejects git identity delimit
     });
   }
 });
+
+test("retention defaults and per-source windows are frozen", async () => {
+  const { file } = await config(minimal);
+  const defaults = await loadServiceConfiguration(file);
+  expect(defaults.retention).toEqual({
+    historyDays: 90,
+    sourceEventDays: { default: 30 },
+    gateEvaluationDays: 30,
+  });
+  const custom = await config({
+    ...minimal,
+    retention: {
+      historyDays: "forever",
+      sourceEventDays: { weather: 7, default: "forever" },
+      gateEvaluationDays: 36500,
+    },
+  });
+  const loaded = await loadServiceConfiguration(custom.file);
+  expect(loaded.retention.sourceEventDays).toEqual({ weather: 7, default: "forever" });
+  expect(Object.isFrozen(loaded.retention.sourceEventDays)).toBe(true);
+});
+
+test.each([
+  { historyDays: 0 },
+  { historyDays: 1.5 },
+  { historyDays: 36501 },
+  { historyDays: "never" },
+  { sourceEventDays: { deadline: 2 } },
+  { sourceEventDays: { "Bad.source": 7 } },
+  { unexpected: 7 },
+])("rejects invalid retention windows: %j", async (retention) => {
+  const { file } = await config({ ...minimal, retention });
+  await expect(loadServiceConfiguration(file)).rejects.toBeInstanceOf(ServiceConfigurationError);
+});

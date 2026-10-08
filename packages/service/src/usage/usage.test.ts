@@ -1664,3 +1664,18 @@ it("a move and a late mapping both select the history visit after migration", as
     );
   }
 });
+
+it("the populated Accounts last-report read uses the covering account-time index", async () => {
+  const f = await setup();
+  f.push([call("first")]);
+  f.push([{ ...call("second"), timestamp: new Date(200).toISOString() }]);
+  expect(f.usage.lastUsedAt()).toEqual({ acct: 200 });
+  const plan = f.connection.database
+    .prepare(
+      "EXPLAIN QUERY PLAN SELECT account, MAX(used_at) AS at FROM usage_postings WHERE account IS NOT NULL GROUP BY account",
+    )
+    .all();
+  expect(plan.map((row) => row["detail"]).join(" ")).toContain(
+    "COVERING INDEX usage_postings_by_account",
+  );
+});

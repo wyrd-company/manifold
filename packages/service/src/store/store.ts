@@ -23,6 +23,9 @@ function readSnapshot(row: Row): StoredSnapshot {
     machine: row["machine"] as string,
     snapshot: JSON.parse(row["snapshot"] as string) as PersistedSnapshot,
     savedAt: row["saved_at"] as number,
+    ...(row["history_pruned_at"] != null
+      ? { historyPrunedAt: Number(row["history_pruned_at"]) }
+      : {}),
   };
 }
 function readInbox(row: Row): InboxRow {
@@ -186,6 +189,36 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         )
         .all()
         .map(readSnapshot);
+    },
+    prunableEnded({ endedBefore, after, limit }) {
+      return database
+        .prepare(
+          "SELECT actor_id, saved_at FROM store_snapshot WHERE status <> 'active' AND history_pruned_at IS NULL AND saved_at < ? AND (saved_at > ? OR (saved_at = ? AND actor_id > ?)) ORDER BY saved_at, actor_id LIMIT ?",
+        )
+        .all(
+          endedBefore,
+          after?.savedAt ?? -Infinity,
+          after?.savedAt ?? -Infinity,
+          after?.actorId ?? "",
+          limit,
+        )
+        .map((row) => ({ actorId: String(row["actor_id"]), savedAt: Number(row["saved_at"]) }));
+    },
+    pruneEnded(actorId) {
+      return connection.transaction(() => {
+        const changed = database
+          .prepare(
+            "UPDATE store_snapshot SET history_pruned_at=? WHERE actor_id=? AND status IN ('done','stopped') AND history_pruned_at IS NULL",
+          )
+          .run(now(), actorId).changes;
+        if (!changed) return { status: "unchanged" };
+        const inboxRows = Number(
+          database
+            .prepare("DELETE FROM store_inbox WHERE actor_id=? AND consumed_at IS NOT NULL")
+            .run(actorId).changes,
+        );
+        return { status: "pruned", inboxRows };
+      });
     },
     loadSnapshot(actorId) {
       const row = database.prepare("SELECT * FROM store_snapshot WHERE actor_id = ?").get(actorId);

@@ -5,6 +5,7 @@
 import { migrations } from "../migrations/wiring.ts";
 import { configuration } from "../service-configuration/wiring.ts";
 import { httpHost, listen } from "../http-host/wiring.ts";
+import { retention } from "../retention/wiring.ts";
 import { history } from "../history/wiring.ts";
 import { store } from "../store/wiring.ts";
 import { bundles } from "../bundle/wiring.ts";
@@ -63,6 +64,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     .step("actor-host-opened")
     .part(router)
     .step("router-started")
+    .part(retention)
     .part(escalationsDelivery)
     .part(agentToolsDelivery)
     .step("escalations-started")

@@ -17,3 +17,4 @@ export type {
   PublishOutcome,
   EventIssue,
 } from "./types.ts";
+export { sourceEventSources, pruneSourceEvents } from "./prune.ts";

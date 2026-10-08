@@ -62,12 +62,16 @@ export const serviceConfigurationSchema = {
       $ref: "https://manifold.wyrd.company/schemas/blueprint-lint-configuration",
       default: {},
     },
+    escalations: {
+      $ref: "https://manifold.wyrd.company/schemas/escalations-configuration",
+      default: {},
+    },
     agentTools: {
       $ref: "https://manifold.wyrd.company/schemas/agent-tools-configuration",
       default: {},
     },
-    escalations: {
-      $ref: "https://manifold.wyrd.company/schemas/escalations-configuration",
+    retention: {
+      $ref: "https://manifold.wyrd.company/schemas/retention-configuration",
       default: {},
     },
   },
@@ -284,7 +288,70 @@ export const storeConfigurationSchema = {
     },
   },
 } as const;
+export const retentionConfigurationSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://manifold.wyrd.company/schemas/retention-configuration",
+  title: "Retention configuration",
+  description: "The value of the `retention` section of the service configuration.",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    historyDays: {
+      description:
+        "Days after an actor ends before retention removes its consumed inbox rows, its event links, and its commands. Its visits stay.",
+      $ref: "#/$defs/window",
+      default: 90,
+    },
+    sourceEventDays: {
+      description:
+        "Days after a source event's first acceptance before retention removes the record that makes a later publish of it a replay, by event source.",
+      type: "object",
+      default: {},
+      propertyNames: {
+        description:
+          "`default`, or the name of an event source as `router-events` defines it; `deadline` names no source.",
+        pattern: "^[a-z][a-z0-9-]{0,62}$",
+        not: {
+          const: "deadline",
+        },
+      },
+      properties: {
+        default: {
+          description: "The window of every source this section does not name.",
+          $ref: "#/$defs/window",
+          default: 30,
+        },
+      },
+      additionalProperties: {
+        $ref: "#/$defs/window",
+      },
+    },
+    gateEvaluationDays: {
+      description:
+        "Days after a comparator evaluation before retention removes its row, unless a held token or an open escalation of its gate keeps it.",
+      $ref: "#/$defs/window",
+      default: 30,
+    },
+  },
+  $defs: {
+    window: {
+      description:
+        "A retention window: a whole number of days from 1 to 36500, or `forever`, which removes nothing of its kind.",
+      oneOf: [
+        {
+          type: "integer",
+          minimum: 1,
+          maximum: 36500,
+        },
+        {
+          const: "forever",
+        },
+      ],
+    },
+  },
+} as const;
 export const serviceConfigurationSchemas = [
+  retentionConfigurationSchema,
   agentToolsConfigurationSchema,
   blueprintLintConfigurationSchema,
   serviceConfigurationSchema,

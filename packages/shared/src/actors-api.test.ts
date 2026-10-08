@@ -178,3 +178,23 @@ test("project command boundary requires a project and excludes thread identities
   ])
     expect(valid(malformed)).toBe(false);
 });
+
+test("history accepts a retention timestamp and rejects an invalid timestamp", async () => {
+  const { isActorHistoryResponse } = await import("./actors-api.ts");
+  const actor = {
+    actorId: "parcel",
+    machine: "delivery",
+    status: "done",
+    states: ["delivered"],
+    savedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const history = {
+    actor,
+    visits: [],
+    events: [],
+    commands: [],
+    prunedAt: "2026-04-01T00:00:00.000Z",
+  };
+  expect(isActorHistoryResponse({ history })).toBe(true);
+  expect(isActorHistoryResponse({ history: { ...history, prunedAt: "yesterday" } })).toBe(false);
+});

@@ -21,6 +21,8 @@ export interface Store {
   saveSnapshot(write: SnapshotWrite): SaveOutcome;
   activeSnapshots(): StoredSnapshot[];
   endedSnapshots(): StoredSnapshot[];
+  prunableEnded(query: PrunableQuery): PrunableActor[];
+  pruneEnded(actorId: string): PruneOutcome;
   loadSnapshot(actorId: string): StoredSnapshot | undefined;
   loadErroredSnapshot(actorId: string): StoredErroredSnapshot | undefined;
   findActorsInState(query: StateQuery): StoredSnapshot[];
@@ -82,6 +84,7 @@ export interface StoredSnapshot {
   readonly machine: string;
   readonly snapshot: PersistedSnapshot;
   readonly savedAt: number;
+  readonly historyPrunedAt?: number;
 }
 
 export interface StoredErroredSnapshot extends StoredSnapshot {
@@ -158,3 +161,16 @@ export interface MigrationFailureWrite {
 export interface StoredMigrationFailure extends MigrationFailureWrite {
   readonly failedAt: number;
 }
+
+export interface PrunableActor {
+  readonly actorId: string;
+  readonly savedAt: number;
+}
+export interface PrunableQuery {
+  readonly endedBefore: number;
+  readonly after?: PrunableActor;
+  readonly limit: number;
+}
+export type PruneOutcome =
+  | { readonly status: "pruned"; readonly inboxRows: number }
+  | { readonly status: "unchanged" };

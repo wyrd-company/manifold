@@ -20,3 +20,5 @@ export type {
   InstallationTokenRequest,
   ConfigurationIssue,
 } from "./types.ts";
+
+export type { RetentionConfiguration, RetentionWindow } from "./types.ts";

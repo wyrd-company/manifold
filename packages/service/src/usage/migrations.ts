@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   implements: usage-tables
+//   realizes: usage-tables
 // ---
 export const usageMigrationSteps: readonly string[] = [
   `-- ---
@@ -109,6 +109,10 @@ CREATE TABLE usage_postings (
 CREATE INDEX usage_postings_pending ON usage_postings (seq) WHERE status = 'pending';
 
 CREATE INDEX usage_postings_by_actor ON usage_postings (actor, visit);
+
+-- Each account's postings by call time, for each account's latest call.
+CREATE INDEX usage_postings_by_account ON usage_postings (account, used_at)
+  WHERE account IS NOT NULL;
 
 -- The reattributions of a posted posting, in \`seq\` order: each attributes
 -- it again to the actor, item, and visit its cause gives. \`mapping\` and

@@ -28,6 +28,7 @@ export interface History {
   read(actorId: string): ActorHistory | undefined;
   visits(actorId: string): readonly StateVisit[];
   visitAt(actorId: string, at: number): number | undefined;
+  prune(actorId: string): number;
 }
 interface Pending {
   command: SendingCommand;
@@ -155,6 +156,15 @@ export function openHistory({ store, log, now = Date.now }: HistoryOptions): His
         )
         .get(actorId, at, at, at);
       return row?.["visit"] as number | undefined;
+    },
+    prune(actorId) {
+      return connection.transaction(() => {
+        const links = db.prepare("DELETE FROM history_event WHERE actor_id=?").run(actorId).changes;
+        const commands = db
+          .prepare("DELETE FROM history_command WHERE actor_id=?")
+          .run(actorId).changes;
+        return Number(links) + Number(commands);
+      });
     },
     read(actorId) {
       const snapshot = store.loadSnapshot(actorId);

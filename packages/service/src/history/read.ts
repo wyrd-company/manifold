@@ -35,6 +35,7 @@ export function assembleHistory(
   const actor = actorSummaries([snapshot])[0]!;
   return {
     actor,
+    ...(snapshot.historyPrunedAt !== undefined ? { prunedAt: iso(snapshot.historyPrunedAt) } : {}),
     visits: visits.map(stateVisit),
     events: inbox.map((row) => ({
       eventId: row.eventId,
