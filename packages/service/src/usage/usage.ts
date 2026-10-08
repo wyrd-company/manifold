@@ -8,6 +8,7 @@ import { canonical } from "./types.ts";
 import type { Usage, UsageApplyResult, UsageOptions, UsageRevision } from "./types.ts";
 import { moveUsage } from "./moves.ts";
 import { unownedUsage } from "./unowned.ts";
+import { actorVisitUsage } from "./actor-visit-usage.ts";
 import { actorUsage } from "./actor-usage.ts";
 import { saveActor } from "./hooks.ts";
 import { pushUsage, retryPostings } from "./push.ts";
@@ -46,11 +47,20 @@ export function openUsage(options: UsageOptions): Usage {
   };
   const move: Usage["move"] = (request) => moveUsage(options, now, request);
   const unowned = () => unownedUsage(options);
+  const readActor = (actor: string) =>
+    actorVisitUsage(
+      options,
+      actor,
+      Object.fromEntries(
+        Object.entries(declaration.accounts).map(([name, account]) => [name, account.unit]),
+      ),
+    );
   return {
     move,
     unowned,
     lastUsedAt: () => lastUsedAt(options.connection),
     pricing: () => pricing(options.connection, declaration.prices),
+    actorVisitUsage: readActor,
     actorUsage: (actor) => actorUsage(options, actor),
     accounts: () => structuredClone(declaration.accounts),
     push,
@@ -58,7 +68,7 @@ export function openUsage(options: UsageOptions): Usage {
     listener: usageListener(options.environments, push, options.onError ?? (() => {}), {
       move,
       unowned,
-    }),
+    }, readActor),
     saveHook: (save) => saveActor(options, now, save, declaration),
     apply: (revision) => {
       const result = queue.then(() => applyRevision(revision));

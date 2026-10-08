@@ -53,6 +53,9 @@ export interface Usage {
   retryPending(): UsageRetryResult;
   accounts(): Readonly<Record<string, UsageAccount>>;
   actorUsage: Ledger["actorUsage"];
+  actorVisitUsage(
+    actor: string,
+  ): import("@wyrd-company/manifold-shared/actor-usage-api").ActorUsageResponse;
 }
 export type UsageOptions = {
   connection: LedgerConnection;

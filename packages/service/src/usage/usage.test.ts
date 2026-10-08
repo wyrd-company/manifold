@@ -1435,3 +1435,115 @@ it("pricing excludes pending calls waiting for a window or an account", async ()
   expect(f.usage.pricing().unpriced).toEqual([]);
   expect(f.usage.lastUsedAt()).toEqual({});
 });
+it("reads actor usage through the HTTP host, including pending and late calls without changing the store", async () => {
+  const { createHttpHost } = await import("../http-host/index.ts");
+  const { isActorUsageResponse } = await import("@wyrd-company/manifold-shared/actor-usage-api");
+  const { Ajv2020 } = await import("ajv/dist/2020.js");
+  const { parse } = await import("yaml");
+  const api = parse(
+    readFileSync(
+      new URL("../../../../docs/specifications/actor-usage-api.openapi.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+  const validate = new Ajv2020({ strict: false, validateFormats: false }).compile({
+    $ref: "#/components/schemas/ActorUsageResponse",
+    components: api.components,
+  });
+  const s = await setup();
+  s.save();
+  // The first session is posted before its thread mapping arrives.
+  s.push([{ ...call("late", 10, 5), tokens: { ...tokens(10, 5), reasoning: 3 } }], false);
+  s.push([], true);
+  s.now(200);
+  s.save("active", "checking");
+  s.push([{ ...call("second", 20, 5), timestamp: new Date(250).toISOString() }]);
+  const secondAccounts = accounts
+    .replaceAll("acct:", "second:")
+    .replaceAll("provider: codex", "provider: claude");
+  s.ledger.credit({
+    key: "second-credit",
+    account: "second",
+    window: "w1",
+    opensAt: 0,
+    closesAt: 10000,
+    amount: 100000000,
+  });
+  await s.apply(secondAccounts);
+  s.usage.push({
+    environment: "env-one",
+    threads: [{ provider: "claude", providerSessionId: "another", threadId: "thread-1" }],
+    records: [
+      {
+        ...call("third", 3, 2),
+        provider: "claude",
+        providerSessionId: "another",
+        timestamp: new Date(300).toISOString(),
+        tokens: { ...tokens(3, 2), reasoning: 4 },
+      },
+    ],
+  });
+  // Unknown provider stays pending, but still contributes tokens.
+  s.usage.push({
+    environment: "env-one",
+    threads: [{ provider: "cursor", providerSessionId: "pending", threadId: "thread-1" }],
+    records: [
+      {
+        ...call("pending", 7, 0),
+        provider: "cursor",
+        providerSessionId: "pending",
+        timestamp: new Date(350).toISOString(),
+      },
+    ],
+  });
+  const host = createHttpHost({
+    configuration: { host: "127.0.0.1", port: 0 },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  host.mount("/api/usage", s.usage.listener);
+  const address = await host.listen(),
+    url = `http://${address.host}:${address.port}/api/usage/actors/`;
+  try {
+    const before = s.connection.database.prepare("SELECT count(*) AS n FROM usage_postings").get();
+    const response = await fetch(url + "actor-1"),
+      body = await response.json();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(isActorUsageResponse(body)).toBe(true);
+    expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
+    expect(body).toMatchObject({
+      actorId: "actor-1",
+      tokens: { total: 56 },
+      accounts: [
+        { account: "acct", actual: 140 },
+        { account: "second", actual: 54, unit: "usd" },
+      ],
+      visits: [
+        { visit: 1, tokens: { total: 15 } },
+        { visit: 2, tokens: { total: 41 } },
+      ],
+    });
+    expect(body.calls).toHaveLength(4);
+    expect(
+      body.accounts.map((a: { account: string; actual: number }) => [a.account, a.actual]),
+    ).toEqual(s.usage.actorUsage("actor-1").accounts.map((a) => [a.account, a.actual]));
+    expect(s.usage.actorVisitUsage("session:env-one:codex:session-1").tokens.total).toBe(0);
+    expect((await fetch(url + "task%3Anode")).status).toBe(200);
+    expect(await (await fetch(url + "task%3Anode")).json()).toMatchObject({
+      actorId: "task:node",
+      tokens: { total: 0 },
+      calls: [],
+    });
+    expect((await fetch(url)).status).toBe(404);
+    expect((await fetch(url + "actor-1/deeper")).status).toBe(404);
+    const wrong = await fetch(url + "actor-1", { method: "POST" });
+    expect(wrong.status).toBe(405);
+    expect(wrong.headers.get("allow")).toBe("GET");
+    expect(s.connection.database.prepare("SELECT count(*) AS n FROM usage_postings").get()).toEqual(
+      before,
+    );
+  } finally {
+    await host.close();
+  }
+});

@@ -2,7 +2,8 @@
 // relationships:
 //   implements: [operator-console, tasks-api]
 // ---
-import { useQuery } from "@tanstack/react-query";
+import { TaskActorTimeline } from "../actors/TaskActorTimeline.tsx";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { LockKeyhole, SearchX, RefreshCw, ExternalLink } from "lucide-react";
 import { formatAmount, formatAmountExact } from "@wyrd-company/manifold-shared/amounts";
@@ -15,6 +16,7 @@ export function TaskContent({ origin = "board" }: { origin?: "board" | "epics" }
     search = useSearch({ strict: false });
   const back = origin === "epics" ? "/epics" : "/board";
   const label = origin === "epics" ? "Epics" : "Board";
+  const client = useQueryClient();
   const query = useQuery({
     queryKey: ["task", actorId],
     queryFn: () => fetchTask(actorId!),
@@ -41,7 +43,13 @@ export function TaskContent({ origin = "board" }: { origin?: "board" | "epics" }
     return (
       <div role="alert" className="error-alert">
         <p>{result.message}</p>
-        <Button variant="outline" onClick={() => void query.refetch()}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            void query.refetch();
+            void client.invalidateQueries({ queryKey: ["actor-history", actorId] });
+          }}
+        >
           Try again
         </Button>
       </div>
@@ -63,7 +71,10 @@ export function TaskContent({ origin = "board" }: { origin?: "board" | "epics" }
           size="icon"
           aria-label="Refresh task"
           disabled={query.isFetching}
-          onClick={() => void query.refetch()}
+          onClick={() => {
+            void query.refetch();
+            void client.invalidateQueries({ queryKey: ["actor-history", actorId] });
+          }}
         >
           <RefreshCw size={16} />
         </Button>
@@ -130,6 +141,7 @@ export function TaskContent({ origin = "board" }: { origin?: "board" | "epics" }
                   <p className="mono">{actor.environment}</p>
                 ) : null}
                 <small>Saved {new Date(actor.savedAt).toLocaleString()}</small>
+                <TaskActorTimeline actorId={actorId} task={task} />
               </>
             ) : (
               <p className="muted">Waiting for intake</p>

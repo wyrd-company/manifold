@@ -50,3 +50,18 @@ test("reports invalid JSON", async () => {
   expect((await fetchActors()).kind).toBe("failed");
   expect(fetch).toHaveBeenCalledWith("/api/actors");
 });
+test("reads completed actors and encoded history and usage paths, rejecting malformed answers", async () => {
+  const { fetchActorHistory, fetchActorUsage, mapActorHistoryResult, mapActorUsageResult } =
+    await import("./client.ts");
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ actors: [actor] })));
+  vi.stubGlobal("fetch", fetch);
+  await fetchActors("completed");
+  expect(fetch).toHaveBeenLastCalledWith("/api/actors?status=completed");
+  fetch.mockResolvedValue(new Response("{}", { status: 404 }));
+  expect(await fetchActorHistory("task:a/b")).toEqual({ kind: "missing" });
+  expect(fetch).toHaveBeenLastCalledWith("/api/actors/task%3Aa%2Fb/history");
+  expect(await fetchActorUsage("task:a/b")).toEqual({ kind: "missing" });
+  expect(fetch).toHaveBeenLastCalledWith("/api/usage/actors/task%3Aa%2Fb");
+  expect(mapActorHistoryResult(200, { history: {} }).kind).toBe("failed");
+  expect(mapActorUsageResult(200, {}).kind).toBe("failed");
+});

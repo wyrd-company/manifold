@@ -40,7 +40,7 @@ export const navigation = [
     label: "Actors",
     icon: Activity,
     group: "",
-    description: "Every active actor and where it is in its blueprint.",
+    description: "Every actor and its progress through a blueprint.",
   },
   {
     path: "/portfolio",

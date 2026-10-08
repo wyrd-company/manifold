@@ -22,6 +22,9 @@ export function usageListener(
   push: (request: UsagePushRequest) => UsagePushResult,
   onError: (error: unknown) => void,
   operator: Pick<Usage, "move" | "unowned">,
+  readActor?: (
+    actor: string,
+  ) => import("@wyrd-company/manifold-shared/actor-usage-api").ActorUsageResponse,
 ): (request: IncomingMessage, response: ServerResponse) => void {
   return (request, response) => {
     const answer = (status: number, body: unknown) => {
@@ -34,7 +37,29 @@ export function usageListener(
     const failure = (status: number, error: string, message: string) =>
       answer(status, { error, message });
     const run = async () => {
-      const path = request.url?.split("?")[0];
+      const path = request.url?.split("?")[0] ?? "";
+      if (path.startsWith("/api/usage/actors/") && readActor) {
+        const segment = path.slice("/api/usage/actors/".length);
+        let actor: string;
+        try {
+          actor = decodeURIComponent(segment);
+        } catch {
+          failure(404, "invalid-request", "Unknown usage path.");
+          return;
+        }
+        if (!actor || segment.includes("/")) {
+          failure(404, "invalid-request", "Unknown usage path.");
+          return;
+        }
+        if (request.method !== "GET") {
+          response.setHeader("allow", "GET");
+          failure(405, "invalid-request", "Expected GET.");
+          return;
+        }
+        response.setHeader("cache-control", "no-store");
+        answer(200, readActor(actor));
+        return;
+      }
       if (!["/api/usage/push", "/api/usage/unowned", "/api/usage/moves"].includes(path ?? "")) {
         failure(404, "not-found", "Unknown usage path.");
         return;

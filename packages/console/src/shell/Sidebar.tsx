@@ -24,7 +24,9 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   title={collapsed ? item.label : undefined}
                   activeOptions={{
                     exact:
-                      item.path !== "/settings" && item.path !== "/board" && item.path !== "/epics",
+                      item.path !== "/settings" &&
+                      item.path !== "/board" &&
+                      item.path !== "/actors" && item.path !== "/epics",
                   }}
                   activeProps={{ className: "active", "aria-current": "page" }}
                 >

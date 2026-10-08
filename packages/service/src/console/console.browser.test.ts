@@ -84,7 +84,7 @@ test("built console serves the shell and live actors without authentication", as
       snapshot: { status: "active", value: "changed" },
     });
     await page.getByRole("button", { name: "Refresh actors" }).click();
-    await page.getByRole("cell", { name: "changed", exact: true }).waitFor();
+    await page.getByRole("cell", { name: "changed Running", exact: true }).waitFor();
     await page.getByRole("button", { name: "Search pages" }).click();
     await page.getByRole("dialog").getByLabel("Search pages").fill("Blueprints");
     await page.getByRole("dialog").getByLabel("Search pages").press("Enter");

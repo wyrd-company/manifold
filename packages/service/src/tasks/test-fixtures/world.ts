@@ -9,7 +9,7 @@ import { createMirror } from "../../github-source/mirror.ts";
 import { githubSteps } from "../../github-source/migrations.ts";
 import { openTasks } from "../index.ts";
 import type { TasksBoundProject } from "../index.ts";
-export function boardWorld(usd = false) {
+export function boardWorld(usd = false, withActor = true) {
   let entry = 0;
   let raisedTime = 100;
   const f = fixture({
@@ -121,21 +121,22 @@ export function boardWorld(usd = false) {
     revision: 0,
   });
   mirror.write(before, after);
-  f.store.saveSnapshot({
-    actorId: "task:parcel",
-    machine: `${"b".repeat(40)}:blueprints/delivery.yml`,
-    snapshot: {
-      status: "done",
-      value: "delivered",
-      context: {
-        manifold: {
-          environment: "sample-host",
-          portfolioItem: "deliveries",
-          threads: ["thread-1", "unfollowed"],
+  if (withActor)
+    f.store.saveSnapshot({
+      actorId: "task:parcel",
+      machine: `${"b".repeat(40)}:blueprints/delivery.yml`,
+      snapshot: {
+        status: "done",
+        value: "delivered",
+        context: {
+          manifold: {
+            environment: "sample-host",
+            portfolioItem: "deliveries",
+            threads: ["thread-1", "unfollowed"],
+          },
         },
       },
-    },
-  });
+    });
   const questions: ReturnType<typeof createActor>[] = [];
   function ask() {
     entry++;

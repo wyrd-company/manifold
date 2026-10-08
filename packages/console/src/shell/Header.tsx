@@ -37,7 +37,15 @@ export function Header({ toggleSidebar }: { toggleSidebar: () => void }) {
       </div>
       <div className="breadcrumb">
         <ChevronRight size={14} />
-        {actorId ? (
+        {actorId && path.startsWith("/actors/") ? (
+          <>
+            <Link to="/actors">Actors</Link>
+            <ChevronRight size={14} />
+            <span className="mono">
+              {issue ? `${issue.repository}#${issue.number}` : actorId} actor
+            </span>
+          </>
+        ) : actorId ? (
           <>
             <Link
               to={path.startsWith("/epics/") ? "/epics" : "/board"}

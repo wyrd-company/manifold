@@ -69,6 +69,10 @@
     "./usage-api": {
       "types": "./dist/usage-api.d.ts",
       "import": "./dist/usage-api.js"
+    },
+    "./actor-usage-api": {
+      "types": "./dist/actor-usage-api.d.ts",
+      "import": "./dist/actor-usage-api.js"
     }
   },
   "scripts": {
