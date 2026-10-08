@@ -175,9 +175,8 @@ test("Accept saves one valid declaration and records only after it enters force"
     });
     expect(f.saves).toHaveLength(1);
     expect(f.saves[0]).toMatchObject({
-      path: "task-metadata.yml",
       base: "a".repeat(40),
-      text: expect.stringContaining("# keep this comment"),
+      files: [{ path: "task-metadata.yml", text: expect.stringContaining("# keep this comment") }],
     });
     expect(f.metadata.current()?.projects["parcels"]?.fields["mass"]?.storage?.name).toBe("Weight");
     expect((await f.metadata.projects.apply("parcels", { removeUndeclared: false })).writes).toBe(
@@ -365,7 +364,7 @@ test("a declaration-only revision changes the acceptance save base to the revisi
     await f.metadata.projects.apply("parcels", { removeUndeclared: false });
     expect(f.saves[0]).toMatchObject({
       base: "c".repeat(40),
-      text: expect.stringContaining("# a comment change"),
+      files: [{ path: "task-metadata.yml", text: expect.stringContaining("# a comment change") }],
     });
   } finally {
     await f.close();
