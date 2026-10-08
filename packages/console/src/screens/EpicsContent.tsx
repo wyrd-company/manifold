@@ -113,11 +113,17 @@ export function EpicsContent() {
   };
   const cyclic = graph?.edges.filter((e) => e.cyclic).length ?? 0;
   return (
-    <>
+    <div
+      className="epics-screen"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") select();
+      }}
+    >
       <div className="epics-toolbar">
         <label>
           Root task
           <select
+            className="mono"
             aria-label="Root task"
             value={root}
             onChange={(e) => {
@@ -244,6 +250,6 @@ export function EpicsContent() {
           <span className="muted">Select a task to see the chain through it.</span>
         )}
       </div>
-    </>
+    </div>
   );
 }

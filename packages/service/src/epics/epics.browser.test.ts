@@ -60,6 +60,10 @@ test("built Epics screen reads the mirror, focuses dependencies, and returns fro
     expect(await page.locator(".epic-selection").textContent()).toContain(
       "example/delivery#20 → example/delivery#11 → example/delivery#2 → example/delivery#31",
     );
+    await page.getByRole("link", { name: "Open task", exact: true }).focus();
+    await page.keyboard.press("Escape");
+    expect(await page.getByRole("link", { name: "Open task", exact: true }).count()).toBe(0);
+    await node("parcel").getByRole("button").click();
     await page.getByRole("link", { name: "Open task", exact: true }).click();
     await page.getByRole("heading", { name: "Deliver parcel", exact: true }).waitFor();
     expect(
@@ -76,6 +80,11 @@ test("built Epics screen reads the mirror, focuses dependencies, and returns fro
     expect(await node("parcel").getByRole("button").getAttribute("aria-pressed")).toBe("true");
     await page.getByRole("button", { name: "Clear", exact: true }).click();
     await node("branch").getByRole("button").focus();
+    await node("branch").getByRole("button").hover();
+    await page.mouse.move(0, 0);
+    await expect
+      .poll(() => node("waiting").evaluate((el) => getComputedStyle(el).opacity))
+      .toBe("0.3");
     await page.keyboard.press("Enter");
     expect(await node("branch").getByRole("button").getAttribute("aria-pressed")).toBe("true");
     await page.keyboard.press("Escape");

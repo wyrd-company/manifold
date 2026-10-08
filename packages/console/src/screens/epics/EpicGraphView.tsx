@@ -27,7 +27,7 @@ type TaskFlowNode = Node<
     opacity: number;
     selected: boolean;
     onSelect: () => void;
-    onHover: (active: boolean) => void;
+    onFocus: (active: boolean) => void;
   },
   "task"
 >;
@@ -48,8 +48,8 @@ function TaskNode({ data }: NodeProps<TaskFlowNode>) {
           event.stopPropagation();
           data.onSelect();
         }}
-        onFocus={() => data.onHover(true)}
-        onBlur={() => data.onHover(false)}
+        onFocus={() => data.onFocus(true)}
+        onBlur={() => data.onFocus(false)}
         aria-label={reference + " " + (issue.title ?? "")}
         aria-pressed={data.selected}
       >
@@ -122,6 +122,7 @@ export function EpicGraphView({
   onSelect: (id?: string) => void;
 }) {
   const [hovered, setHovered] = useState<string>();
+  const [focused, setFocused] = useState<string>();
   const layoutQuery = useQuery({
     queryKey: ["epic-layout", graph.nodes, graph.edges.map((e) => [e.blocking, e.blocked])],
     queryFn: () => layoutEpic(graph),
@@ -130,7 +131,8 @@ export function EpicGraphView({
     retry: false,
   });
   const layout = layoutQuery.data;
-  const emphasis = epicEmphasis(graph, { ...state, ...(hovered ? { hovered } : {}) });
+  const focus = hovered ?? focused;
+  const emphasis = epicEmphasis(graph, { ...state, ...(focus ? { hovered: focus } : {}) });
   const byId = useMemo(() => new Map(epic.issues.map((i) => [i.issue.nodeId, i])), [epic]);
   const nodes: TaskFlowNode[] =
     layout?.nodes.map((n) => ({
@@ -141,7 +143,7 @@ export function EpicGraphView({
         opacity: emphasis.nodes.get(n.id)!,
         selected: state.selected === n.id,
         onSelect: () => onSelect(state.selected === n.id ? undefined : n.id),
-        onHover: (active) => setHovered(active ? n.id : undefined),
+        onFocus: (active) => setFocused(active ? n.id : undefined),
       },
       draggable: false,
       connectable: false,
@@ -176,12 +178,7 @@ export function EpicGraphView({
     return <div role="alert">Cannot lay out this epic. Refresh to try again.</div>;
   if (!layout) return <p role="status">Laying out tasks…</p>;
   return (
-    <div
-      className="epic-canvas"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onSelect();
-      }}
-    >
+    <div className="epic-canvas">
       <ReactFlow
         key={epic.root}
         nodes={nodes}
