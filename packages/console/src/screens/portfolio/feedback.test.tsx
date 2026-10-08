@@ -3,6 +3,12 @@
 //   verifies: operator-console
 // ---
 import { expect, test } from "vite-plus/test";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterContextProvider,
+} from "@tanstack/react-router";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { PortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api";
 import { BudgetSourceCards } from "./BudgetSourceCards.tsx";
@@ -54,26 +60,34 @@ test("problems list has no empty container and retains findings or warnings", ()
 });
 
 test("archived budget cards direct restoration without a meter", () => {
+  const router = createRouter({
+    routeTree: createRootRoute(),
+    history: createMemoryHistory(),
+    basepath: "/console",
+  });
   const html = renderToStaticMarkup(
-    <BudgetSourceCards
-      accounts={[
-        {
-          name: "acct-a",
-          declared: true,
-          archived: true,
-          kind: "api",
-          unit: "usd",
-          window: {
-            key: "sample-window",
-            opensAt: new Date(0).toISOString(),
-            closesAt: new Date(1000).toISOString(),
-            capacity: 100,
-            used: 25,
+    <RouterContextProvider router={router}>
+      <BudgetSourceCards
+        accounts={[
+          {
+            name: "acct-a",
+            declared: true,
+            archived: true,
+            kind: "api",
+            unit: "usd",
+            window: {
+              key: "sample-window",
+              opensAt: new Date(0).toISOString(),
+              closesAt: new Date(1000).toISOString(),
+              capacity: 100,
+              used: 25,
+            },
           },
-        },
-      ]}
-    />,
+        ]}
+      />
+    </RouterContextProvider>,
   );
+  expect(html).toContain('href="/console/settings/accounts"');
   expect(html).toContain("Archived");
   expect(html).toContain("warning-text");
   expect(html).toContain("Restore it in Settings, Accounts");

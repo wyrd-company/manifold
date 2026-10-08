@@ -11,12 +11,7 @@ import { Meter } from "../portfolio/BudgetSourceCards.tsx";
 import { resetLabel, windowLabel } from "../portfolio/rows.ts";
 import type { AccountRow } from "./rows.ts";
 export function reportAge(at: string, now: number) {
-  const elapsed = Math.max(0, now - Date.parse(at));
-  return elapsed < 3600000
-    ? `${Math.floor(elapsed / 60000)} minutes ago`
-    : elapsed < 86400000
-      ? `${Math.floor(elapsed / 3600000)} hours ago`
-      : `${Math.floor(elapsed / 86400000)} days ago`;
+  return `${resetLabel(new Date(now).toISOString(), Date.parse(at))} ago`;
 }
 export function AccountsTable({
   rows,

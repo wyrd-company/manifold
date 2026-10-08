@@ -2,6 +2,7 @@
 // relationships:
 //   implements: operator-console
 // ---
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import type { PortfolioAccount } from "@wyrd-company/manifold-shared/portfolio-api";
 import { formatAmount, formatAmountExact } from "@wyrd-company/manifold-shared/amounts";
@@ -52,7 +53,9 @@ export function BudgetSourceCards({ accounts }: { accounts: readonly PortfolioAc
             </span>
           </header>
           {a.archived ? (
-            <p className="muted">Restore it in Settings, Accounts</p>
+            <p className="muted">
+              <Link to="/settings/accounts">Restore it in Settings, Accounts</Link>
+            </p>
           ) : !a.declared ? (
             <p className="muted">Declare it in accounts.yml</p>
           ) : a.window ? (

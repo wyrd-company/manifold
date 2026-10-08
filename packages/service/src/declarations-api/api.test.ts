@@ -3,15 +3,37 @@
 //   verifies: declarations-api
 // ---
 import { afterEach, expect, test, vi } from "vite-plus/test";
+import * as fs from "node:fs/promises";
+import git from "isomorphic-git";
+import { stringify } from "yaml";
 import { startService } from "../service/index.ts";
 import { serviceFixture } from "../service/test-fixtures/repository.ts";
 const closes: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of closes.splice(0).toReversed()) await close();
 });
-async function setup() {
+async function setup(environmentNames: readonly string[] = []) {
   const fixture = await serviceFixture();
   closes.push(fixture.close);
+  if (environmentNames.length) {
+    await fs.writeFile(fixture.directory + "/environment.token", "sample-token");
+    await fs.writeFile(
+      fixture.file,
+      stringify({
+        ...fixture.configuration,
+        credentials: {
+          ...fixture.configuration.credentials,
+          environment: { kind: "t3code-token", tokenFile: "environment.token" },
+        },
+        environments: Object.fromEntries(
+          environmentNames.map((name) => [
+            name,
+            { url: "http://127.0.0.1:1", credential: "environment" },
+          ]),
+        ),
+      }),
+    );
+  }
   const service = await startService({ configurationFile: fixture.file, log: () => {} });
   closes.push(service.stop);
   return {
@@ -294,12 +316,14 @@ test("an empty portfolio item gives a binding finding instead of a malformed req
 });
 
 test("reads and lints accounts with configured environments and portfolio warnings", async () => {
-  const { url } = await setup();
+  const { url } = await setup(["env-one", "env-two"]);
   const source = await fetch(url + "/source?path=accounts.yml");
   expect(source.status).toBe(200);
   expect(await source.json()).toMatchObject({
     path: "accounts.yml",
-    environments: expect.any(Array),
+    environments: ["env-one", "env-two"],
+    text: "",
+    exists: false,
     findings: [],
   });
   const lint = await fetch(url + "/lint", {
@@ -308,4 +332,62 @@ test("reads and lints accounts with configured environments and portfolio warnin
     body: JSON.stringify({ path: "accounts.yml", text: "accounts: [" }),
   });
   expect(await lint.json()).toMatchObject({ findings: [{ file: "accounts", kind: "syntax" }] });
+});
+
+test("accounts lint answers duplicate usage ranges, archived allocation warnings and broken prices", async () => {
+  const { url, fixture, service } = await setup();
+  const account =
+    "    unit: usd\n    kind: api\n    capacity: { amount: 10, reset: '2026-01-01T00:00:00Z', every: { days: 1 } }\n    usage: [{ environment: env-one, provider: codex }]\n";
+  const lint = async (text: string) => {
+    const response = await fetch(url + "/lint", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "accounts.yml", text }),
+    });
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  const duplicate = `accounts:\n  acct:\n${account}  acct-b:\n${account}`;
+  const usage = "{ environment: env-one, provider: codex }";
+  const from = duplicate.lastIndexOf(usage);
+  expect(await lint(duplicate)).toMatchObject({
+    findings: [
+      {
+        kind: "duplicate-usage",
+        file: "accounts",
+        location: "/accounts/acct-b/usage/0",
+        range: { from, to: from + usage.length, line: 11, column: 13 },
+      },
+    ],
+  });
+  const archived = `accounts:\n  acct:\n    archived: true\n${account}`;
+  expect(await lint(archived)).toMatchObject({
+    findings: [],
+    warnings: [
+      {
+        kind: "account-archived",
+        file: "portfolio",
+        location: "/items/alpha/allocations/acct",
+        details: { item: "alpha", account: "acct" },
+      },
+      {
+        kind: "account-archived",
+        file: "portfolio",
+        location: "/items/beta/allocations/acct",
+        details: { item: "beta", account: "acct" },
+      },
+    ],
+  });
+  await git.setConfig({ fs, gitdir: fixture.remote.gitdir, path: "http.receivepack", value: true });
+  const saved = await service.revisions.save({
+    path: "prices.yml",
+    text: "models: [",
+    base: service.processRepository.current()!.commit,
+    message: "Declare malformed sample prices",
+    saveId: "3".repeat(32),
+  });
+  expect(saved.outcome).toBe("saved");
+  expect(await lint(`accounts:\n  acct:\n${account}`)).toMatchObject({
+    findings: [{ kind: "syntax", file: "prices" }],
+  });
 });

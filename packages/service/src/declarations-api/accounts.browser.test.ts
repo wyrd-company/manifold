@@ -137,6 +137,14 @@ test("Accounts adds, edits, retries a saved commit, archives and restores throug
     await archive.getByText("alpha", { exact: true }).waitFor();
     await archive.getByRole("button", { name: "Archive account", exact: true }).click();
     await page.getByRole("button", { name: "Show archived (1)", exact: true }).waitFor();
+    await page.goto(url + "/console/portfolio");
+    const restoreLink = page.getByRole("link", {
+      name: "Restore it in Settings, Accounts",
+      exact: true,
+    });
+    expect(await restoreLink.getAttribute("href")).toBe("/console/settings/accounts");
+    await restoreLink.click();
+    await page.getByRole("heading", { name: "Accounts and budget sources", exact: true }).waitFor();
     const archivedRead = await (await fetch(url + "/api/portfolio")).json();
     expect(archivedRead.warnings).toContainEqual(
       expect.objectContaining({

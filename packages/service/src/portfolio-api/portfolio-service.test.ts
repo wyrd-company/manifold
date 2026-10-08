@@ -10,6 +10,8 @@ import { parse, stringify } from "yaml";
 import Ajv from "ajv/dist/2020.js";
 import { serviceFixture } from "../service/test-fixtures/repository.ts";
 import { startService } from "../service/index.ts";
+import { bundledPriceTable, bundledPriceTableCommit } from "@wyrd-company/manifold-shared";
+import type { UsageCall } from "@wyrd-company/manifold-shared";
 import type { PortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api";
 const schema = parse(
   readFileSync(
@@ -30,6 +32,7 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
     "acct-a": {
       unit: "usd",
       kind: "api",
+      usage: [{ environment: "env-one", provider: "codex" }],
       capacity: { amount: 10, reset: "2026-10-04T00:00:00Z", every: { days: 1 } },
     },
     "acct-b": {
@@ -38,7 +41,14 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
       capacity: { amount: 20, reset: "2026-10-04T00:00:00Z", every: { days: 1 } },
     },
   };
-  await f.commit(50, { accounts: { accounts } });
+  const archived = { ...accounts["acct-b"], archived: true };
+  await f.commit(50, {
+    accounts: { accounts: { ...accounts, "acct-d": archived } },
+    prices: {
+      unit: "usd",
+      models: { "model-a": { standard: { input: 1, output: 1 } } },
+    },
+  });
   await git.setConfig({ fs, gitdir: f.remote.gitdir, path: "http.receivepack", value: true });
   let service = await startService({ configurationFile: f.file, log: () => {} });
   try {
@@ -99,8 +109,10 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
       ["acct-c", false],
     ]);
     expect(first.accounts[2]?.window).toBeUndefined();
+    expect(first.accounts.some((a) => a.name === "acct-d")).toBe(false);
     expect(first.warnings).toMatchObject([
       {
+        kind: "account-undeclared",
         location: "/items/alpha/allocations/acct-c",
         details: { item: "alpha", account: "acct-c" },
       },
@@ -121,19 +133,66 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
       account: "acct-a",
       amount: 1000000,
     });
-    for (const [item, amount] of [
-      ["beta", 100000],
-      ["delta", 200000],
-      ["epsilon", 300000],
-    ] as const)
-      ledger.postActual({
-        key: "actual-" + item,
-        actor: "task:" + item,
-        item,
-        account: "acct-a",
-        amount,
-        usedAt: at,
+    const call = (key: string, model: string, timestamp: number, input: number): UsageCall => ({
+      type: "call",
+      key,
+      provider: "codex",
+      providerSessionId: `session-${key}`,
+      unit: { id: `session-${key}`, kind: "session" },
+      timestamp: new Date(timestamp).toISOString(),
+      model,
+      tokens: {
+        input,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cacheWriteOneHour: 0,
+        reasoning: 0,
+        webSearchRequests: 0,
+      },
+      speed: "standard",
+      granularity: "call",
+      estimated: false,
+    });
+    for (const [index, [item, amount]] of (
+      [
+        ["beta", 100000],
+        ["delta", 200000],
+        ["epsilon", 300000],
+      ] as const
+    ).entries()) {
+      const key = `actual-${item}`;
+      service.usage.saveHook({
+        actorId: `task:${item}`,
+        snapshot: {
+          status: "done",
+          value: "done",
+          context: {
+            manifold: { environment: "env-one", portfolioItem: item, threads: [`thread-${key}`] },
+          },
+        },
       });
+      expect(
+        service.usage.push({
+          environment: "env-one",
+          threads: [
+            {
+              provider: "codex",
+              providerSessionId: `session-${key}`,
+              threadId: `thread-${key}`,
+            },
+          ],
+          records: [call(key, "model-a", at - (2 - index) * 1000, amount)],
+        }).calls,
+      ).toEqual({ accepted: 1, pending: 0, replayed: 0 });
+    }
+    expect(
+      service.usage.push({
+        environment: "env-one",
+        threads: [],
+        records: [call("unpriced", "unpriced-model", at - 3000, 100)],
+      }).calls,
+    ).toEqual({ accepted: 0, pending: 1, replayed: 0 });
     await save(text.replace("  epsilon: {}\n", ""));
     service.store.saveSnapshot({
       actorId: "task:parcel",
@@ -168,6 +227,14 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
       });
     }
     expect(body.accounts[0]?.window?.used).toBe(1600000);
+    expect(body.accounts[0]?.lastUsedAt).toBe(new Date(at).toISOString());
+    expect(body.accounts[1]).not.toHaveProperty("lastUsedAt");
+    expect(body.pricing).toEqual({
+      bundledCommit: bundledPriceTableCommit,
+      bundledModels: Object.keys(bundledPriceTable.models).length,
+      overrides: 1,
+      unpriced: [{ provider: "codex", model: "unpriced-model", postings: 1 }],
+    });
     expect(body.items.some((i) => i.id === "epsilon")).toBe(false);
     expect(body.items.find((i) => i.id === "delta")?.archived).toBe(true);
     expect(body.items.find((i) => i.id === "alpha")?.activeTasks).toBe(1);
@@ -178,6 +245,40 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
       percent: 30,
       amount: 1800000,
     });
+    const withArchived = text.replace(
+      "      acct-c: { guarantee: 30 }",
+      "      acct-c: { guarantee: 30 }\n      acct-d: { guarantee: 10 }",
+    );
+    await save(withArchived);
+    const archivedRead = await read();
+    expect(archivedRead.accounts.map((a) => a.name)).toEqual([
+      "acct-a",
+      "acct-b",
+      "acct-c",
+      "acct-d",
+    ]);
+    expect(archivedRead.accounts[3]).toMatchObject({
+      name: "acct-d",
+      declared: true,
+      archived: true,
+    });
+    expect(archivedRead.accounts[3]).not.toHaveProperty("window");
+    expect(archivedRead.warnings).toContainEqual(
+      expect.objectContaining({
+        kind: "account-archived",
+        location: "/items/alpha/allocations/acct-d",
+        details: { item: "alpha", account: "acct-d" },
+      }),
+    );
+    expect(credits()).toEqual([
+      { account: "acct-a", count: 1 },
+      { account: "acct-b", count: 1 },
+    ]);
+    await read();
+    expect(credits()).toEqual([
+      { account: "acct-a", count: 1 },
+      { account: "acct-b", count: 1 },
+    ]);
     const changed = await save(
       text.replace("  epsilon: {}\n", "").replace("guarantee: 60", "guarantee: 70"),
     );
@@ -217,7 +318,7 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
       await f.remote.force(commit);
       await service.revisions.pull();
     }
-    await setAccounts({ ...accounts, "acct-c": accounts["acct-a"] });
+    await setAccounts({ ...accounts, "acct-c": { ...accounts["acct-a"], usage: [] } });
     expect((await read()).warnings).toEqual([]);
     expect((await read()).accounts.find((a) => a.name === "acct-c")?.declared).toBe(true);
     expect(service.portfolio.current().commit).toBe(portfolioCommit);
