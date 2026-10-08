@@ -13,9 +13,11 @@ import {
   fetchDeclarationSource,
   lintDeclarationText,
   saveDeclaration,
+  archiveItem,
 } from "../../api/declarations.ts";
 import type {
   LintDeclarationResponse as DeclarationLint,
+  ArchiveItemRequest,
   SaveConflictResponse as DeclarationConflict,
 } from "@wyrd-company/manifold-shared/declarations-api";
 import type { PortfolioItem } from "@wyrd-company/manifold-shared/portfolio-api";
@@ -91,7 +93,8 @@ export function PortfolioContent() {
     [dropped, setDropped] = useState<readonly PortfolioEdit[]>([]),
     [dialog, setDialog] = useState<{ item?: PortfolioItem; before: PortfolioDraft | undefined }>(),
     [discard, setDiscard] = useState(false),
-    [autoSave, setAutoSave] = useState<string>();
+    [autoSave, setAutoSave] = useState<string>(),
+    [pendingArchive, setPendingArchive] = useState<ArchiveItemRequest>();
   const source = sourceQuery.data?.kind === "ok" ? sourceQuery.data.body : undefined;
   useEffect(() => {
     writePortfolioDraft(localStorage, draft);
@@ -357,6 +360,23 @@ export function PortfolioContent() {
               process repository.
             </div>
           ) : null}
+          {pendingArchive ? (
+            <div role="alert" className="info-alert">
+              The service has not loaded the saved archive yet. Your choices are kept.
+              <Button
+                onClick={async () => {
+                  const result = await archiveItem(pendingArchive);
+                  if (result.kind === "ok" && result.body.loaded) {
+                    setPendingArchive(undefined);
+                    await refresh();
+                  } else if (result.kind !== "ok")
+                    setError(result.kind === "conflict" ? result.body.message : result.message);
+                }}
+              >
+                Load saved version
+              </Button>
+            </div>
+          ) : null}
           {draft?.saved ? (
             <div role="alert" className="info-alert">
               Saved as {draft.saved.slice(0, 7)}. The service has not loaded it yet. Your changes
@@ -431,6 +451,8 @@ export function PortfolioContent() {
               localStorage.setItem("manifold.portfolio.expanded", JSON.stringify(next));
             }}
             editing={!!draft && !dialog}
+            lint={findings}
+            pending={pending}
             findings={findings?.findings ?? []}
             onAllocation={(item, field, value) =>
               edit({
@@ -491,6 +513,25 @@ export function PortfolioContent() {
                 setAutoSave(`Archive portfolio item ${id}`);
               }}
 
+              onArchiveSaved={(request, answer) => {
+                setDraft(dialog.before);
+                setDialog(undefined);
+                setToast(
+                  answer.outcome === "saved"
+                    ? `Archived ${display.items.find((i) => i.id === request.item)?.title ?? request.item}`
+                    : "Already archived",
+                );
+                if (!answer.loaded) setPendingArchive(request);
+                void Promise.all(
+                  [
+                    ["portfolio"],
+                    ["bindings"],
+                    ["declaration", "portfolio.yml"],
+                    ["actors"],
+                    ["usage", "unowned"],
+                  ].map((queryKey) => client.invalidateQueries({ queryKey })),
+                );
+              }}
               onSave={(m) => void save(m)}
               onClose={() => {
                 setDraft(dialog.before);

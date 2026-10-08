@@ -29,6 +29,7 @@ const item = (
   other,
   archived: false,
   projects: { github: [], t3code: [] },
+  completedTasks: 0,
   activeTasks: 0,
   allocations: [allocation(guarantee, amount)],
 });

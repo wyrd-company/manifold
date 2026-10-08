@@ -100,3 +100,27 @@ export function taskFieldEdit(value: unknown): value is TaskFieldEdit {
   );
 }
 export const onlyKeys = keys;
+export function archiveRequest(
+  value: Record<string, unknown>,
+): value is Record<string, unknown> &
+  import("@wyrd-company/manifold-shared/declarations-api").ArchiveItemRequest {
+  return (
+    keys(value, ["item", "projects", "base", "message", "saveId"]) &&
+    saveFields(value) &&
+    typeof value["item"] === "string" &&
+    value["item"].length > 0 &&
+    Array.isArray(value["projects"]) &&
+    value["projects"].every(
+      (choice: unknown) =>
+        record(choice) &&
+        typeof choice["binding"] === "string" &&
+        choice["binding"].length > 0 &&
+        (choice["choice"] === "reassign"
+          ? keys(choice, ["binding", "choice", "item"]) &&
+            typeof choice["item"] === "string" &&
+            choice["item"].length > 0
+          : keys(choice, ["binding", "choice"]) &&
+            (choice["choice"] === "move" || choice["choice"] === "archive")),
+    )
+  );
+}

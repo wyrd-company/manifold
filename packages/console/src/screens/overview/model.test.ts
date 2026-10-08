@@ -42,6 +42,7 @@ const item = (
   parent,
   archived,
   other: id === "other",
+  completedTasks: 0,
   activeTasks: 0,
   projects: { github: [], t3code: [] },
   allocations: [

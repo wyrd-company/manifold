@@ -71,6 +71,7 @@ export interface PortfolioItem {
     }[];
   };
   readonly activeTasks: number;
+  readonly completedTasks: number;
   readonly allocations: readonly PortfolioAllocation[];
   readonly unallocated?: readonly PortfolioUnallocated[];
 }
@@ -158,6 +159,7 @@ export function isPortfolioResponse(v: unknown): v is PortfolioResponse {
             other: boolean,
             archived: boolean,
             activeTasks: natural,
+            completedTasks: natural,
             allocations: array(allocation),
             projects: (v) =>
               shape(v, {

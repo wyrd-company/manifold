@@ -42,11 +42,10 @@ test("built Portfolio reads settled balances, lints allocations, saves one commi
     const text =
       "# allocation comment\nitems:\n  alpha:\n    allocations:\n      acct-a: { guarantee: 50 }\n      acct-b: { guarantee: 50 }\n  beta:\n    allocations:\n      acct-a: { guarantee: 50 }\n      acct-b: { guarantee: 50 }\n";
     const seeded = await service.revisions.save({
-      path: "portfolio.yml",
-      text,
       base: revision.commit,
       message: "Declare sample budgets",
       saveId: "1".repeat(32),
+      files: [{ path: "portfolio.yml", text: text }],
     });
     expect(seeded.outcome).toBe("saved");
     for (const [account, item, amount] of [
@@ -384,11 +383,10 @@ test("Portfolio screen keeps nested remainders, changed-parent status, project c
     const text =
       "items:\n  alpha:\n    allocations:\n      acct-a: { guarantee: 50 }\n    items:\n      gamma:\n        allocations:\n          acct-a: { guarantee: 8.04 }\n      other:\n        allocations:\n          acct-a: { guarantee: 20 }\n  beta:\n    allocations:\n      acct-a: { guarantee: 50 }\n";
     await service.revisions.save({
-      path: "portfolio.yml",
       base: service.processRepository.current()!.commit,
-      text,
       message: "Declare nested budgets",
       saveId: "3".repeat(32),
+      files: [{ path: "portfolio.yml", text: text }],
     });
     const address = service.http.address(),
       url = `http://${address.host}:${address.port}`,

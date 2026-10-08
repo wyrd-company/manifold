@@ -196,11 +196,10 @@ export function createProjects(
       let saved;
       try {
         saved = await options.revisions.save({
-          path: "task-metadata.yml",
           base: commit,
-          text: acceptedText,
           message: `Accept GitHub changes to the task fields of ${binding}`,
           saveId: saveId!,
+          files: [{ path: "task-metadata.yml", text: acceptedText }],
         });
       } catch (error) {
         const pending = records.pending(binding, saveId!);

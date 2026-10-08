@@ -16,6 +16,7 @@ export type {
   PullStep,
   PullProbe,
   SaveRequest,
+  SaveFile,
   SaveOutcome,
   SaveStep,
   SaveProbe,

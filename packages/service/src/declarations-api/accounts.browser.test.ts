@@ -34,11 +34,15 @@ test("Accounts adds, edits, retries a saved commit, archives and restores throug
   const browser = await chromium.launch({ headless: true });
   try {
     const seeded = await service.revisions.save({
-      path: "accounts.yml",
       base: service.processRepository.current()!.commit,
-      text: "# account comment\naccounts:\n  acct:\n    unit: usd\n    kind: api\n    capacity: { amount: 250, reset: '2026-01-01T00:00:00Z', every: { months: 1 } }\n    usage: [{ environment: env-one, provider: claude }]\n",
       message: "Declare sample account",
       saveId: "1".repeat(32),
+      files: [
+        {
+          path: "accounts.yml",
+          text: "# account comment\naccounts:\n  acct:\n    unit: usd\n    kind: api\n    capacity: { amount: 250, reset: '2026-01-01T00:00:00Z', every: { months: 1 } }\n    usage: [{ environment: env-one, provider: claude }]\n",
+        },
+      ],
     });
     expect(seeded.outcome).toBe("saved");
     const url = `http://127.0.0.1:${service.http.address().port}`;
@@ -187,11 +191,10 @@ test("Accounts rebases a conflict and reuses the saved request while loading its
     const text =
       "# original comment\naccounts:\n  acct:\n    unit: usd\n    kind: api\n    capacity: { amount: 10, reset: '2026-01-01T01:00:00+01:00', every: { days: 1 } }\n    usage: [{ environment: env-one, provider: codex, instance: first }, { environment: env-one, provider: codex, instance: second }]\n";
     await service.revisions.save({
-      path: "accounts.yml",
-      text,
       base: service.processRepository.current()!.commit,
       message: "Declare sample account",
       saveId: "1".repeat(32),
+      files: [{ path: "accounts.yml", text: text }],
     });
     const url = `http://127.0.0.1:${service.http.address().port}`;
     const page = await browser.newPage();
@@ -232,11 +235,12 @@ test("Accounts rebases a conflict and reuses the saved request while loading its
     }
     await page.unrouteAll({ behavior: "wait" });
     await service.revisions.save({
-      path: "accounts.yml",
-      text: text.replace("# original comment", "# latest comment"),
       base: service.processRepository.current()!.commit,
       message: "Change sample comment",
       saveId: "2".repeat(32),
+      files: [
+        { path: "accounts.yml", text: text.replace("# original comment", "# latest comment") },
+      ],
     });
     const ids: string[] = [];
     await page.route("**/api/declarations/save", async (route) => {

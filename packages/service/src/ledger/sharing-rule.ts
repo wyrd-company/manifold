@@ -37,12 +37,14 @@ export function sharingRule(input: {
     guarantees.set(id, value);
     return value;
   }
+  const path = itemPath(portfolio, item);
+  if (path.some((id) => data.items.get(id)!.archived))
+    return { allocation: guarantee(item), reservable: 0n };
   let parent: string | null = null;
   let parentGuarantee = capacity;
   let parentLimit = capacity;
   let answer = max(0n, capacity - input.total);
-  for (const id of itemPath(portfolio, item)) {
-    if (data.items.get(id)!.archived) return { allocation: guarantee(item), reservable: 0n };
+  for (const id of path) {
     const siblings = data.children.get(parent) ?? [];
     const remainder = parentLimit - siblings.reduce((sum, child) => sum + guarantee(child), 0n);
     const borrowed = siblings.reduce(

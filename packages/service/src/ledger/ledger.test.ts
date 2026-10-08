@@ -938,3 +938,20 @@ it("replaying ledger writes preserves rows, indexes and append-only triggers", (
     expect(() => s.database.exec(`DELETE FROM ${table}`)).toThrow("append-only");
   }
 });
+
+it("archived child balances retain actuals without sharing at a live ancestor", () => {
+  const s = setup({
+    items: [
+      { id: "alpha", parent: null },
+      { id: "beta", parent: "alpha", archived: true },
+    ],
+    allocations: [{ item: "alpha", account: "acct", guarantee: 40 }],
+  });
+  s.actual(10, "beta");
+  expect(s.balance("beta")).toMatchObject({
+    allocation: 0,
+    actual: 10,
+    available: -10,
+    reservable: 0,
+  });
+});

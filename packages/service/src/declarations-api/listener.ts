@@ -9,6 +9,7 @@ import type {
   BindingEdit,
   TaskFieldEdit,
   SaveFields,
+  ArchiveItemRequest,
 } from "@wyrd-company/manifold-shared/declarations-api";
 import type { HttpHost } from "../http-host/index.ts";
 import { jsonContent, sameSite } from "../http-host/request-checks.ts";
@@ -20,7 +21,10 @@ import {
   bindingEdit,
   taskFieldEdit,
   onlyKeys,
+  archiveRequest,
 } from "./request-checks.ts";
+import { archiveItemEdit } from "./archive-item.ts";
+import { lintAllocatedAccounts } from "@wyrd-company/manifold-shared";
 import { lintAnswer, bindingsAnswer } from "./answers.ts";
 import { editBindings } from "./binding-edit.ts";
 import { editTaskFields } from "./task-field-edit.ts";
@@ -48,7 +52,7 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
     const method =
       path === "/source" || path === "/bindings"
         ? "GET"
-        : ["/lint", "/save", "/task-fields/edit", "/bindings/save"].includes(path)
+        : ["/lint", "/save", "/task-fields/edit", "/bindings/save", "/archive-item"].includes(path)
           ? "POST"
           : undefined;
     const fail = (status: number, error: string, message: string) =>
@@ -63,6 +67,7 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
     let fieldEdit: TaskFieldEdit | undefined;
     let binding: BindingEdit | undefined;
     let save: SaveFields | undefined;
+    let archive: ArchiveItemRequest | undefined;
     if (method === "GET" && path === "/source") {
       const value = url.searchParams.get("path");
       if (!validPath(value)) return fail(400, "bad-request", "Expected a declaration path.");
@@ -104,6 +109,14 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
         if (path === "/save" && !saveFields(body))
           return fail(400, "bad-request", "Expected base, message and saveId.");
         if (path === "/save") save = body as unknown as SaveFields;
+      } else if (path === "/archive-item") {
+        if (!archiveRequest(body))
+          return fail(
+            400,
+            "bad-request",
+            "Expected an item, project choices, base, message and saveId.",
+          );
+        archive = body;
       } else if (path === "/task-fields/edit") {
         if (
           !onlyKeys(body, ["text", "edit"]) ||
@@ -137,6 +150,46 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
         text: text ?? "",
         ...(await lintAnswer(options, revision, declarationPath!, text ?? "")),
       });
+    }
+    if (path === "/archive-item") {
+      const request = archive!;
+      const base = await options.processRepository.revisionAt(request.base);
+      if (!base) return fail(400, "bad-request", "Unknown base revision.");
+      const [portfolio, bindings] = await Promise.all([
+        base.read("portfolio.yml"),
+        base.read("bindings.yml"),
+      ]);
+      const edited = archiveItemEdit(
+        { portfolio: portfolio ?? "", bindings: bindings ?? "" },
+        request,
+      );
+      if (!edited.ok)
+        return answer(response, 422, {
+          error: "invalid",
+          message: "Archive has findings.",
+          findings: edited.findings,
+          warnings: lintAllocatedAccounts({
+            portfolio,
+            accounts: await revision.read("accounts.yml"),
+          }),
+        });
+      const result = await options.revisions.save({
+        files: [
+          { path: "portfolio.yml", text: edited.portfolio },
+          { path: "bindings.yml", text: edited.bindings },
+        ],
+        base: request.base,
+        message: request.message,
+        saveId: request.saveId,
+      });
+      const mapped = saveAnswer(result);
+      return answer(
+        response,
+        mapped.status,
+        result.outcome === "conflict"
+          ? mapped.body
+          : { ...mapped.body, loaded: result.blueprints !== undefined },
+      );
     }
     let text = typeof body["text"] === "string" ? body["text"] : "";
     if (path === "/task-fields/edit") {
@@ -180,8 +233,7 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
         warnings: lint.warnings,
       });
     const result = await options.revisions.save({
-      path: declarationPath!,
-      text,
+      files: [{ path: declarationPath!, text }],
       base: save!.base,
       message: save!.message,
       saveId: save!.saveId,

@@ -2,6 +2,11 @@
 // relationships:
 //   implements: operator-console
 // ---
+import { ArchiveItemDialog } from "./ArchiveItemDialog.tsx";
+import type {
+  ArchiveItemRequest,
+  SaveDeclarationResponse,
+} from "@wyrd-company/manifold-shared/declarations-api";
 import { useState } from "react";
 import { formatPercent } from "@wyrd-company/manifold-shared/amounts";
 import type { PortfolioItem, PortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api";
@@ -25,6 +30,7 @@ export function EditItemDialog({
   onReplaceNew,
   onRemoveNew,
   onArchive,
+  onArchiveSaved,
   onClose,
 }: {
   item: PortfolioItem | undefined;
@@ -38,11 +44,13 @@ export function EditItemDialog({
   onReplaceNew: (edit: PortfolioEdit) => void;
   onRemoveNew: (id: string) => void;
   onArchive: (id: string) => void;
+  onArchiveSaved: (request: ArchiveItemRequest, answer: SaveDeclarationResponse) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(item?.title ?? ""),
     [created, setCreated] = useState<string>(),
     [confirm, setConfirm] = useState<string>(),
+    [archive, setArchive] = useState<PortfolioItem>(),
     [newChildren, setNewChildren] = useState<string[]>([]);
   const id =
       item?.id ??
@@ -196,13 +204,15 @@ export function EditItemDialog({
                     />
                     <Button
                       variant="ghost"
-                      disabled={[child, ...descendants(child.id)].some(
-                        (i) => i.projects.github.length + i.projects.t3code.length > 0,
-                      )}
+                      disabled={busy}
                       onClick={() =>
                         newChildren.includes(child.id)
                           ? onRemoveNew(child.id)
-                          : setConfirm(child.id)
+                          : [child, ...descendants(child.id)].some(
+                                (i) => i.projects.github.length + i.projects.t3code.length > 0,
+                              )
+                            ? setArchive(child)
+                            : setConfirm(child.id)
                       }
                     >
                       Remove
@@ -229,8 +239,8 @@ export function EditItemDialog({
             <Button
               variant="outline"
               className="error-text"
-              disabled={attached || busy}
-              onClick={() => setConfirm(id)}
+              disabled={busy}
+              onClick={() => (attached && current ? setArchive(current) : setConfirm(id))}
             >
               Archive item
             </Button>
@@ -248,15 +258,15 @@ export function EditItemDialog({
           </Button>
         </div>
         {item ? (
-          <p className="muted">
-            {attached ? (
-              <>
-                <a href="/console/projects">Move its projects in GitHub Projects first.</a>
-              </>
-            ) : (
-              `Its allocation returns to ${item.parent ?? "the top level"}.`
-            )}
-          </p>
+          <p className="muted">{`Its allocation returns to ${item.parent ?? "the top level"}.`}</p>
+        ) : null}
+        {archive ? (
+          <ArchiveItemDialog
+            item={archive}
+            read={read}
+            onClose={() => setArchive(undefined)}
+            onSaved={onArchiveSaved}
+          />
         ) : null}
         <Dialog
           open={!!confirm}

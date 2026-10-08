@@ -21,6 +21,7 @@ export function portfolioRead(input: {
   lastUsedAt: Readonly<Record<string, number>>;
   pricing: PortfolioPricing;
   snapshots: readonly StoredSnapshot[];
+  ended: readonly StoredSnapshot[];
   at: number;
 }): PortfolioResponse {
   const declaration = input.portfolio.declaration;
@@ -141,6 +142,13 @@ export function portfolioRead(input: {
             ?.portfolioItem ?? "",
           item.id,
         ),
+    ).length,
+    completedTasks: input.ended.filter((s) =>
+      under(
+        (s.snapshot["context"] as { manifold?: { portfolioItem?: string } } | undefined)?.manifold
+          ?.portfolioItem ?? "",
+        item.id,
+      ),
     ).length,
     allocations: names.map((account) => {
       const row = declaration.ledger.allocations.find(

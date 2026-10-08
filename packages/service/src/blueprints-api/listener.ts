@@ -118,7 +118,12 @@ export function mountBlueprintsApi(host: HttpHost, options: BlueprintsApiOptions
       answer(response, 422, invalidAnswer(lint));
       return;
     }
-    const result = await options.revisions.save(save!);
+    const result = await options.revisions.save({
+      files: [{ path: save!.path, text: save!.text }],
+      base: save!.base,
+      message: save!.message,
+      saveId: save!.saveId,
+    });
     const blueprint =
       result.outcome !== "conflict" && result.blueprints
         ? (await catalog(options, result.blueprints)).blueprints.find(

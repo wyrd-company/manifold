@@ -57,11 +57,10 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
     let sequence = 0;
     async function save(text: string) {
       const result = await service.revisions.save({
-        path: "portfolio.yml",
-        text,
         base: service.processRepository.current()!.commit,
         message: "Change sample budget",
         saveId: (++sequence).toString(16).padStart(32, "0"),
+        files: [{ path: "portfolio.yml", text: text }],
       });
       expect(result.outcome).toBe("saved");
       return result;

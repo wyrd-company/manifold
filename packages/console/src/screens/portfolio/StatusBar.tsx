@@ -22,7 +22,7 @@ export function StatusBar({
 }) {
   const limits = lint?.findings.filter((f) => f.kind === "guarantee-limit") ?? [];
   if (!editing && !limits.length) return null;
-  if (!pending && !limits.length && !parents.length) return null;
+  if (!editing && !pending && !limits.length && !parents.length) return null;
   return (
     <div role="status" className={limits.length ? "error-alert" : "info-alert"}>
       {pending
@@ -42,6 +42,11 @@ export function StatusBar({
                 </p>
               );
             })}
+      {editing ? (
+        <p className="muted">
+          Sharing preview: halfway through an empty window, with no usage or reservations.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -62,18 +62,26 @@ export async function saveRevision(
   request: SaveRequest,
 ): Promise<SaveOutcome> {
   if (
-    request.path === "" ||
-    request.path.includes("\\") ||
-    request.path
-      .split("/")
-      .some((segment) => segment === "" || segment === "." || segment === "..") ||
+    !Array.isArray(request.files) ||
+    !request.files.length ||
+    new Set(request.files.map((file) => file.path)).size !== request.files.length ||
+    request.files.some(
+      (file: { path: string; text: string }) =>
+        typeof file.path !== "string" ||
+        typeof file.text !== "string" ||
+        file.path.includes("\\") ||
+        file.path
+          .split("/")
+          .some((segment) => segment === "" || segment === "." || segment === ".."),
+    ) ||
     !/^[a-f0-9]{32}$/.test(request.saveId)
   )
     throw new TypeError("Invalid save path or saveId");
   if (!head) throw new TypeError("Save requires a current commit");
   const saved = await findSave(objects, head, request);
   if (saved) return { kind: "already-saved", commit: saved };
-  const text = await revision(objects, head).read(request.path);
+  const current = revision(objects, head);
+  const texts = await Promise.all(request.files.map((file) => current.read(file.path)));
   let base;
   try {
     await git.readCommit({ ...objects, oid: request.base });
@@ -81,11 +89,21 @@ export async function saveRevision(
   } catch {
     /* Unknown base is a conflict. */
   }
-  if (!base || (await base.read(request.path)) !== text) return { kind: "conflict", head, text };
-  if (request.text === text) return { kind: "unchanged", commit: head };
+  if (
+    !base ||
+    (await Promise.all(request.files.map((file) => base.read(file.path)))).some(
+      (text, index) => text !== texts[index],
+    )
+  )
+    return { kind: "conflict", head, text: request.files.length === 1 ? texts[0] : undefined };
+  if (request.files.every((file, index) => file.text === texts[index]))
+    return { kind: "unchanged", commit: head };
   const { commit: parent } = await git.readCommit({ ...objects, oid: head });
-  const blob = await git.writeBlob({ ...objects, blob: Buffer.from(request.text) });
-  const tree = await changedTree(objects, parent.tree, request.path.split("/"), blob);
+  let tree = parent.tree;
+  for (const file of request.files) {
+    const blob = await git.writeBlob({ ...objects, blob: Buffer.from(file.text) });
+    tree = await changedTree(objects, tree, file.path.split("/"), blob);
+  }
   const author = {
     ...options.configuration.commitAuthor,
     timestamp: Math.floor(Date.now() / 1000),

@@ -52,7 +52,25 @@ export interface ProjectImpact {
   readonly changes?: number;
   readonly removes?: number;
 }
+export interface SharingPreview {
+  readonly account: string;
+  readonly items: readonly {
+    readonly item: string;
+    readonly alone: number;
+    readonly allWaiting: number;
+  }[];
+}
+export type ArchiveProjectChoice =
+  | { readonly binding: string; readonly choice: "move" }
+  | { readonly binding: string; readonly choice: "archive" }
+  | { readonly binding: string; readonly choice: "reassign"; readonly item: string };
+export interface ArchiveItemEdit {
+  readonly item: string;
+  readonly projects: readonly ArchiveProjectChoice[];
+}
+export interface ArchiveItemRequest extends SaveFields, ArchiveItemEdit {}
 export interface DeclarationFindings {
+  readonly preview?: readonly SharingPreview[];
   readonly findings: readonly DeclarationFinding[];
   readonly warnings: readonly DeclarationFinding[];
   readonly fields?: readonly TaskField[];
@@ -209,7 +227,20 @@ const field = (v: unknown) =>
       range,
     },
   );
+const preview = array((v) =>
+  shape(v, {
+    account: name,
+    items: array((v) =>
+      shape(v, {
+        item: nonempty,
+        alone: (v) => typeof v === "number" && v >= 0 && v <= 100,
+        allWaiting: (v) => typeof v === "number" && v >= 0 && v <= 100,
+      }),
+    ),
+  }),
+);
 const metadata = {
+  preview,
   fields: array(field),
   storageKinds: array((v) =>
     shape(v, {

@@ -32,6 +32,9 @@ export function ArchivedList({
         ? items.map((i) => (
             <div key={i.id}>
               <strong>{i.title}</strong>
+              <span className="muted">
+                {i.completedTasks ? `${i.completedTasks} completed` : "—"}
+              </span>
               <Amount
                 value={i.allocations.find((a) => a.account === account)?.lifetime ?? 0}
                 unit={unit}

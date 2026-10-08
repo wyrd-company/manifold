@@ -16,6 +16,7 @@ import {
 } from "@wyrd-company/manifold-shared/declarations-api";
 import type {
   BindingSaveRequest,
+  ArchiveItemRequest,
   BindingsResponse,
   DeclarationPath,
   DeclarationSourceResponse,
@@ -93,3 +94,6 @@ export const editTaskFields = (body: TaskFieldEditRequest) =>
 export const fetchBindings = () => request("bindings", "/bindings");
 export const saveBinding = (body: BindingSaveRequest) =>
   request("save", "/bindings/save", post(body));
+
+export const archiveItem = (body: ArchiveItemRequest) =>
+  request("save", "/archive-item", post(body));

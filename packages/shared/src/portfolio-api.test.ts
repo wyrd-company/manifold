@@ -56,6 +56,7 @@ const item = {
     github: [{ binding: "sample", owner: "example", number: 1 }],
     t3code: [{ environment: "local", project: "sample", via: "binding", binding: "sample" }],
   },
+  completedTasks: 0,
   activeTasks: 1,
   allocations: [allocation],
 };

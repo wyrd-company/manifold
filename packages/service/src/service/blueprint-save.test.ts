@@ -34,33 +34,57 @@ test("a saved blueprint is applied, retries converge and later same-file edits r
     message: "Change counter",
     saveId: "a".repeat(32),
   };
-  const saved = await service.revisions.save(request);
+  const saved = await service.revisions.save({
+    ...request,
+    files: [{ path: request.path, text: request.text }],
+  });
   expect(saved.outcome).toBe("saved");
   if (saved.outcome === "conflict") throw new Error("unexpected conflict");
   expect(saved.blueprints?.commit).toBe(saved.commit);
   expect(saved.blueprints?.blueprints.get(request.path)?.document.machine["context"]).toEqual({
     count: 61,
   });
-  expect(await service.revisions.save(request)).toMatchObject({
+  expect(
+    await service.revisions.save({
+      ...request,
+      files: [{ path: request.path, text: request.text }],
+    }),
+  ).toMatchObject({
     outcome: "already-saved",
     commit: saved.commit,
   });
   expect(
-    await service.revisions.save({ ...request, base: saved.commit, saveId: "b".repeat(32) }),
+    await service.revisions.save({
+      ...request,
+      base: saved.commit,
+      saveId: "b".repeat(32),
+      files: [{ path: request.path, text: request.text }],
+    }),
   ).toMatchObject({ outcome: "unchanged", commit: saved.commit });
   const later = await service.revisions.save({
     ...request,
     base: saved.commit,
-    text: text.replace("count: 61", "count: 62"),
     saveId: "c".repeat(32),
+    files: [{ path: request.path, text: text.replace("count: 61", "count: 62") }],
   });
   if (later.outcome === "conflict") throw new Error("unexpected conflict");
-  expect(await service.revisions.save(request)).toMatchObject({
+  expect(
+    await service.revisions.save({
+      ...request,
+      files: [{ path: request.path, text: request.text }],
+    }),
+  ).toMatchObject({
     outcome: "already-saved",
     commit: saved.commit,
     blueprints: { commit: later.commit },
   });
-  expect(await service.revisions.save({ ...request, saveId: "d".repeat(32) })).toMatchObject({
+  expect(
+    await service.revisions.save({
+      ...request,
+      saveId: "d".repeat(32),
+      files: [{ path: request.path, text: request.text }],
+    }),
+  ).toMatchObject({
     outcome: "conflict",
     reason: "file-changed",
     head: later.commit,
@@ -119,7 +143,10 @@ test("retries once on a branch moved in other files and answers branch-moved aft
     await appendOtherFile(fixture);
     moved++;
   };
-  const result = await service.revisions.save(request);
+  const result = await service.revisions.save({
+    ...request,
+    files: [{ path: request.path, text: request.text }],
+  });
   expect(moved).toBe(2);
   expect(result).toMatchObject({ outcome: "conflict", reason: "branch-moved" });
   expect(await git.log({ fs, gitdir: fixture.remote.gitdir, ref: "main" })).toHaveLength(3);
@@ -127,7 +154,10 @@ test("retries once on a branch moved in other files and answers branch-moved aft
     delete fixture.remote.state.beforeReceive;
     await appendOtherFile(fixture);
   };
-  const saved = await service.revisions.save(request);
+  const saved = await service.revisions.save({
+    ...request,
+    files: [{ path: request.path, text: request.text }],
+  });
   expect(saved.outcome).toBe("saved");
   if (saved.outcome === "conflict") throw new Error("Unexpected conflict");
   expect(saved.blueprints?.commit).toBe(saved.commit);
@@ -140,7 +170,10 @@ test("a retry push accepted with a lost reply is reconciled before branch-moved 
     if (receives === 1) await appendOtherFile(fixture);
     else fixture.remote.state.loseReceiveReply = true;
   };
-  const saved = await service.revisions.save(request);
+  const saved = await service.revisions.save({
+    ...request,
+    files: [{ path: request.path, text: request.text }],
+  });
   expect(saved.outcome).toBe("already-saved");
   expect(receives).toBe(2);
   if (saved.outcome === "conflict") throw new Error("Unexpected conflict");
@@ -181,10 +214,18 @@ test("a pushed save with a failed follow retains its outcome and a retry loads i
     message: "Change counter",
     saveId: "a".repeat(32),
   };
-  const saved = await service.revisions.save(request);
+  const saved = await service.revisions.save({
+    ...request,
+    files: [{ path: request.path, text: request.text }],
+  });
   expect(saved).toMatchObject({ outcome: "saved", blueprints: undefined });
   if (saved.outcome === "conflict") throw new Error("Unexpected conflict");
-  expect(await service.revisions.save(request)).toMatchObject({
+  expect(
+    await service.revisions.save({
+      ...request,
+      files: [{ path: request.path, text: request.text }],
+    }),
+  ).toMatchObject({
     outcome: "already-saved",
     commit: saved.commit,
     blueprints: { commit: saved.commit },
@@ -200,7 +241,9 @@ test("an unmoved branch keeps the remote refusal kind and is not pushed again", 
     '#!/bin/sh\necho "Example policy refusal" >&2\nexit 1\n',
     { mode: 0o755 },
   );
-  await expect(service.revisions.save(request)).rejects.toMatchObject({ kind: "rejected" });
+  await expect(
+    service.revisions.save({ ...request, files: [{ path: request.path, text: request.text }] }),
+  ).rejects.toMatchObject({ kind: "rejected" });
   expect(fixture.remote.requests.filter((r) => r.path.endsWith("/git-receive-pack"))).toHaveLength(
     1,
   );

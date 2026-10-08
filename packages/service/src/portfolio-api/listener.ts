@@ -26,7 +26,7 @@ export interface PortfolioApiOptions {
   };
   accounts(): Readonly<Record<string, UsageAccount>>;
   readonly processRepository: Pick<ProcessRepository, "revisionAt">;
-  readonly store: Pick<Store, "activeSnapshots">;
+  readonly store: Pick<Store, "activeSnapshots" | "endedSnapshots">;
   readonly now?: () => number;
   readonly log: (entry: { level: "error"; path: string; error: string }) => void;
 }
@@ -104,6 +104,7 @@ export function mountPortfolioApi(host: HttpHost, options: PortfolioApiOptions):
           totals,
           warnings,
           snapshots: options.store.activeSnapshots(),
+          ended: options.store.endedSnapshots(),
           at,
         }),
       );

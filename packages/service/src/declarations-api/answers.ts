@@ -27,6 +27,7 @@ import type {
   BindingsResponse,
   DeclarationFinding,
 } from "@wyrd-company/manifold-shared/declarations-api";
+import { sharingPreview } from "./sharing-preview.ts";
 import { taskFieldRows } from "./task-fields.ts";
 import type { DeclarationsApiOptions } from "./types.ts";
 import {
@@ -123,7 +124,17 @@ export async function lintAnswer(
           lintAllocatedAccounts({ portfolio: text, accounts: await revision.read("accounts.yml") }),
         )
       : [];
-  return { findings: located, warnings };
+  const accounts =
+    path === "portfolio.yml" && lint.ok
+      ? lintUsageDeclaration({ prices: undefined, accounts: await revision.read("accounts.yml") })
+      : undefined;
+  return {
+    findings: located,
+    warnings,
+    ...(lint.ok && accounts?.ok
+      ? { preview: sharingPreview(lint.ledgerPortfolio, accounts.declaration.accounts) }
+      : {}),
+  };
 }
 export async function bindingsAnswer(
   options: DeclarationsApiOptions,

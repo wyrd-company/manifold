@@ -166,7 +166,8 @@ export function createRevisions(options: {
           outcome: "conflict",
           reason: "branch-moved",
           head: revision.commit,
-          text: await revision.read(request.path),
+          text:
+            request.files.length === 1 ? await revision.read(request.files[0]!.path) : undefined,
         };
       }
     }

@@ -24,9 +24,11 @@ const read: PortfolioResponse = {
   warnings: [],
 };
 const empty = { findings: [], warnings: [] };
-test("status has no empty region when unchanged or ceiling-only edits settle", () => {
+test("editing status explains the preview even when allocations are unchanged", () => {
   const props = { read, account: "acct-a", lint: empty, editing: true, parents: [] };
-  expect(renderToStaticMarkup(<StatusBar {...props} pending={false} />)).toBe("");
+  expect(renderToStaticMarkup(<StatusBar {...props} pending={false} />)).toContain(
+    "Sharing preview: halfway through an empty window",
+  );
   expect(renderToStaticMarkup(<StatusBar {...props} pending={true} />)).toContain("Checking…");
   expect(renderToStaticMarkup(<StatusBar {...props} parents={[null]} pending={false} />)).toContain(
     "Top level",

@@ -75,11 +75,19 @@ test.each(["committed", "pushed"])(
     expect(await exited).toEqual([null, "SIGKILL"]);
     const restarted = await startService({ configurationFile: fixture.file, log: () => {} });
     cleanup.push(restarted.stop);
-    const result = await restarted.revisions.save(request);
+    const result = await restarted.revisions.save({
+      ...request,
+      files: [{ path: request.path, text: request.text }],
+    });
     expect(result.outcome).toBe(step === "committed" ? "saved" : "already-saved");
     if (result.outcome === "conflict") throw new Error("Unexpected conflict");
     expect(result.blueprints?.commit).toBe(result.commit);
-    expect(await restarted.revisions.save(request)).toMatchObject({
+    expect(
+      await restarted.revisions.save({
+        ...request,
+        files: [{ path: request.path, text: request.text }],
+      }),
+    ).toMatchObject({
       outcome: "already-saved",
       commit: result.commit,
     });

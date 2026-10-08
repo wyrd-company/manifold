@@ -380,11 +380,10 @@ test("accounts lint answers duplicate usage ranges, archived allocation warnings
   });
   await git.setConfig({ fs, gitdir: fixture.remote.gitdir, path: "http.receivepack", value: true });
   const saved = await service.revisions.save({
-    path: "prices.yml",
-    text: "models: [",
     base: service.processRepository.current()!.commit,
     message: "Declare malformed sample prices",
     saveId: "3".repeat(32),
+    files: [{ path: "prices.yml", text: "models: [" }],
   });
   expect(saved.outcome).toBe("saved");
   expect(await lint(`accounts:\n  acct:\n${account}`)).toMatchObject({

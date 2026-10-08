@@ -161,11 +161,10 @@ test("a holder keeps its token, gate entry and reservation through the assembled
       schemas: { ...changed.schemas, events: original.schemas.events },
     };
     const saved = await service.revisions.save({
-      path: "blueprints/parcel.yml",
       base: f.commit,
-      text: stringify(document),
       message: "Split parcel depot",
       saveId: "b".repeat(32),
+      files: [{ path: "blueprints/parcel.yml", text: stringify(document) }],
     });
     if (saved.outcome === "conflict") throw new Error("Unexpected conflict");
     await service.migrations.pass();

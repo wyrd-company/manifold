@@ -13,6 +13,7 @@ const item = (id: string, parent: string | null = null): PortfolioItem => ({
   other: false,
   archived: false,
   projects: { github: [], t3code: [] },
+  completedTasks: 0,
   activeTasks: 0,
   allocations: [],
 });

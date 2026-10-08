@@ -53,7 +53,7 @@ test("portfolio read uses balances and updates warnings when accounts alone chan
         return memoryRevision("a".repeat(40), { "portfolio.yml": text });
       },
     },
-    store: { activeSnapshots: () => [] },
+    store: { activeSnapshots: () => [], endedSnapshots: () => [] },
     now: () => at,
     log: () => {},
   };
@@ -109,7 +109,7 @@ test("read failure answers JSON and logs the path", async () => {
       pricing: () => ({ overrides: 0, unpriced: [] }),
       accounts: () => ({}),
       processRepository: { revisionAt: async () => undefined },
-      store: { activeSnapshots: () => [] },
+      store: { activeSnapshots: () => [], endedSnapshots: () => [] },
       log: (e) => logs.push(e),
     });
     const response = await fetch(h.url + "/api/portfolio");

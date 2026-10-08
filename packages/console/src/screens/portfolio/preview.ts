@@ -59,6 +59,7 @@ export function draftRead(read: PortfolioResponse, text: string): PortfolioRespo
           pair.value.get("archived") === true || !!items.find((i) => i.id === parent)?.archived,
         projects: old?.projects ?? { github: [], t3code: [] },
         activeTasks: old?.activeTasks ?? 0,
+        completedTasks: old?.completedTasks ?? 0,
         allocations: rows,
         ...(isMap(children) ? { unallocated: old?.unallocated ?? [] } : {}),
       });

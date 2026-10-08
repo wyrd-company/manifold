@@ -54,8 +54,23 @@ test("preserves declared account order, counts descendant tasks, and retains int
         },
       },
     ],
+    ended: [
+      {
+        actorId: "task:parcel",
+        machine: "sample",
+        savedAt: 1,
+        snapshot: {
+          status: "done",
+          value: "finished",
+          context: { manifold: { portfolioItem: "beta" } },
+        },
+      },
+    ],
     at: 0,
   });
+  expect(read.items.find((i) => i.id === "alpha")?.completedTasks).toBe(1);
+  expect(read.items.find((i) => i.id === "beta")?.completedTasks).toBe(1);
+  expect(read.items.find((i) => i.id === "gamma")?.completedTasks).toBe(0);
   expect(read.accounts.map((a) => a.name)).toEqual(["acct-z", "acct-a"]);
   expect(read.items.find((i) => i.id === "alpha")?.activeTasks).toBe(1);
   expect(read.items.find((i) => i.id === "alpha")?.allocations[0]?.lifetime).toBe(10);
@@ -82,6 +97,7 @@ test("active accounts precede sorted allocated archived or undeclared names, wit
     lastUsedAt: { "acct-z": 200 },
     pricing,
     snapshots: [],
+    ended: [],
     at: 1000,
   });
   expect(read.accounts.map((account) => account.name)).toEqual(["acct-a", "acct-z", "constructor"]);

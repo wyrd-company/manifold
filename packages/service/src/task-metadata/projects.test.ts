@@ -91,7 +91,7 @@ function setup(initial: ProjectField[] = []) {
           return { outcome: "saved", commit: "b".repeat(40), blueprints: undefined };
         await metadata.apply(
           memoryRevision("b".repeat(40), {
-            "task-metadata.yml": request.text,
+            "task-metadata.yml": request.files[0]!.text,
             "bindings.yml": bindings,
           }),
         );
@@ -252,7 +252,7 @@ test("a pushed accept save remains drift and retries report its commit without s
     expect(f.saves[1]!.saveId).toBe(f.saves[0]!.saveId);
     await f.metadata.apply(
       memoryRevision("b".repeat(40), {
-        "task-metadata.yml": f.saves[0]!.text,
+        "task-metadata.yml": f.saves[0]!.files[0]!.text,
         "bindings.yml": bindings,
       }),
     );
@@ -433,10 +433,10 @@ test("accept after restart reads the persisted clean revision even when the curr
       revisions: {
         save: async (request) => {
           expect(request.base).toBe(clean.commit);
-          expect(request.text).toContain("# keep this comment");
+          expect(request.files[0]!.text).toContain("# keep this comment");
           await reopened!.apply(
             memoryRevision("b".repeat(40), {
-              "task-metadata.yml": request.text,
+              "task-metadata.yml": request.files[0]!.text,
               "bindings.yml": bindings,
             }),
           );

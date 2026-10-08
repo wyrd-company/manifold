@@ -48,10 +48,13 @@ export class ProcessRepositoryOpenError extends Error {
   }
 }
 
-export interface SaveRequest {
+export interface SaveFile {
   readonly path: string;
-  readonly base: string;
   readonly text: string;
+}
+export interface SaveRequest {
+  readonly files: readonly SaveFile[];
+  readonly base: string;
   readonly message: string;
   readonly saveId: string;
 }

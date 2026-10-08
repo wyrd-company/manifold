@@ -2,6 +2,8 @@
 // relationships:
 //   implements: operator-console
 // ---
+import { SharingPreviewCell } from "./SharingPreviewCell.tsx";
+import type { DeclarationFindings } from "@wyrd-company/manifold-shared/declarations-api";
 import { ProjectNames } from "./ProjectNames.tsx";
 import type { PortfolioResponse, PortfolioItem } from "@wyrd-company/manifold-shared/portfolio-api";
 import type { DeclarationFinding } from "@wyrd-company/manifold-shared/declarations-api";
@@ -59,7 +61,11 @@ export function PortfolioTable({
   findings,
   onAllocation,
   onEdit,
+  lint,
+  pending,
 }: {
+  lint?: DeclarationFindings | undefined;
+  pending?: boolean;
   read: PortfolioResponse;
   account: string;
   expanded: readonly string[];
@@ -76,11 +82,17 @@ export function PortfolioTable({
       <table className="task-table portfolio-table">
         <thead>
           <tr>
-            {["Name", "Allocation", "Current usage", "Lifetime cost", "Active tasks", ""].map(
-              (h) => (
-                <th key={h}>{h}</th>
-              ),
-            )}
+            {[
+              "Name",
+              "Allocation",
+              editing ? "Sharing preview" : "Current usage",
+              "Lifetime cost",
+              "Active tasks",
+              "Completed tasks",
+              "",
+            ].map((h) => (
+              <th key={h}>{h}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -98,6 +110,7 @@ export function PortfolioTable({
                       </small>
                     ) : null}
                   </td>
+                  <td />
                   <td />
                   <td />
                   <td />
@@ -164,12 +177,22 @@ export function PortfolioTable({
                   )}
                 </td>
                 <td>
-                  <CurrentUsageCell item={i} accounts={read.accounts} selected={account} />
+                  {editing ? (
+                    <SharingPreviewCell
+                      lint={lint}
+                      account={account}
+                      item={i.id}
+                      pending={!!pending}
+                    />
+                  ) : (
+                    <CurrentUsageCell item={i} accounts={read.accounts} selected={account} />
+                  )}
                 </td>
                 <td>
                   {a ? <Amount value={a.lifetime} unit={unit} /> : <span className="muted">—</span>}
                 </td>
                 <td>{i.activeTasks || <span className="muted">—</span>}</td>
+                <td>{i.completedTasks || <span className="muted">—</span>}</td>
                 <td>
                   {!editing && !i.other ? (
                     <Button
@@ -210,6 +233,7 @@ export function PortfolioTable({
                 unit={unit}
               />
             </td>
+            <td />
             <td />
             <td />
           </tr>
