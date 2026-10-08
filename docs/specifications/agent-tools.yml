@@ -344,6 +344,11 @@ description: |-
   happens to the issue. A thread that an invoke run again sends to for the
   first time gets the sender as it is read on that run.
 
+  A blueprint that takes `agent.message` with its own schema, rather than
+  a `$ref` to `#/$defs/agent-message-event`, allows `from.task`: a `from`
+  schema that admits only `actorId` and `issue` does not describe the
+  event the service publishes.
+
   ```json
   { "actorId": "task:I_kwDOA1", "issue": "I_kwDOA1",
     "task": { "repository": "example-org/widgets", "number": 7, "title": "Repaint the garden shed" } }
