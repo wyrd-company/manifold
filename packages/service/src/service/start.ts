@@ -21,6 +21,7 @@ import { revisions, pull } from "./revisions-wiring.ts";
 import { actorHost } from "../actor-host/wiring.ts";
 import { router } from "../router/wiring.ts";
 import { intake } from "../intake/wiring.ts";
+import { environments } from "../environments/wiring.ts";
 import { t3codeSource } from "../t3code-source/wiring.ts";
 import { console } from "../console/wiring.ts";
 import { blueprintsApi } from "../blueprints-api/wiring.ts";
@@ -68,6 +69,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     .step("github-started")
     .part(intake)
     .step("intake-started")
+    .part(environments)
     .part(t3codeSource)
     .step("t3code-started")
     .part(console)

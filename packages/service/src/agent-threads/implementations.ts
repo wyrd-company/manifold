@@ -12,10 +12,23 @@ import { createInput, turnInput } from "./inputs.ts";
 import { render } from "./templates.ts";
 import { createCommand, turnCommand } from "./commands.ts";
 import { clients } from "./clients.ts";
-import { dispatch } from "./dispatch.ts";
+import { dispatch, PausedAdmission } from "./dispatch.ts";
 export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
-  const pool = clients(options);
   const lifetime = new AbortController();
+  const pool = clients(options, lifetime.signal);
+  const scheduled = new Map<string, number>();
+  async function send<T>(name: string, signal: AbortSignal, command: () => Promise<T>) {
+    scheduled.set(name, (scheduled.get(name) ?? 0) + 1);
+    try {
+      return await dispatch(options, name, signal, command);
+    } finally {
+      scheduled.set(name, scheduled.get(name)! - 1);
+    }
+  }
+  function admit(name: string) {
+    const hold = options.holds?.held(name);
+    if (hold?.paused) throw new PausedAdmission(hold.sequence);
+  }
   function actor(invocation: Invocation) {
     const actor = options.actorOf(invocation.actorId);
     const environment = actor?.manifold.environment;
@@ -47,10 +60,11 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
       threadId: id,
     };
     options.sending?.(sending);
-    const result = await dispatch(options, owner.environment, signal, () =>
-      options.sourceWrite(owner.environment, id, signal, (writeSignal) =>
-        pool.get(owner.environment).threads.dispatcher.dispatch(command, writeSignal),
-      ),
+    const result = await send(owner.environment, signal, () =>
+      options.sourceWrite(owner.environment, id, signal, (writeSignal) => {
+        admit(owner.environment);
+        return pool.get(owner.environment).threads.dispatcher.dispatch(command, writeSignal);
+      }),
     );
     options.probe?.({ ...sending, sequence: result.sequence });
     signal.throwIfAborted();
@@ -84,7 +98,7 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
       false,
     );
     let command: ClientOrchestrationCommand | undefined;
-    const result = await dispatch(options, owner.environment, signal, async () => {
+    const result = await send(owner.environment, signal, async () => {
       const client = pool.get(owner.environment);
       if (!command) {
         const current =
@@ -103,9 +117,10 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
           messageId: requested,
         });
       }
-      return options.sourceWrite(owner.environment, id, signal, (writeSignal) =>
-        client.threads.dispatcher.dispatch(command!, writeSignal),
-      );
+      return options.sourceWrite(owner.environment, id, signal, (writeSignal) => {
+        admit(owner.environment);
+        return pool.get(owner.environment).threads.dispatcher.dispatch(command!, writeSignal);
+      });
     });
     options.probe?.({
       invocation,
@@ -143,20 +158,23 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
   }
   async function readThread(name: string, id: string, signal?: AbortSignal) {
     const currentSignal = environment(name, signal);
-    await options.sourceReady(name, currentSignal);
-    try {
-      return (await pool.get(name).threads.detail(threadId(id), {}, currentSignal)).thread;
-    } catch (error) {
-      if (error instanceof T3NotFoundError) return null;
-      throw error;
-    }
+    return dispatch(options, name, currentSignal, async () => {
+      try {
+        return (await pool.get(name).threads.detail(threadId(id), {}, currentSignal)).thread;
+      } catch (error) {
+        if (error instanceof T3NotFoundError) return null;
+        throw error;
+      }
+    });
   }
   return {
     readThread,
+    scheduled: (name) => scheduled.get(name) ?? 0,
     async runningThreads(name, signal) {
       const currentSignal = environment(name, signal);
-      await options.sourceReady(name, currentSignal);
-      const shells = await pool.get(name).threads.list({}, currentSignal);
+      const shells = await dispatch(options, name, currentSignal, () =>
+        pool.get(name).threads.list({}, currentSignal),
+      );
       const running = shells.filter(
         (shell) => shell.session?.status === "running" || shell.session?.status === "starting",
       );
@@ -169,7 +187,7 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
       const { environment: name, threadId: id, messageId: requested, text } = request;
       const signal = environment(name, request.signal);
       let command: ClientOrchestrationCommand | undefined;
-      const result = await dispatch(options, name, signal, async () => {
+      const result = await send(name, signal, async () => {
         const client = pool.get(name);
         if (!command) {
           const current = await client.threads.get(threadId(id), signal);
@@ -182,7 +200,7 @@ export function openAgentThreads(options: AgentThreadsOptions): AgentThreads {
           );
         }
         return options.sourceWrite(name, id, signal, (writeSignal) =>
-          client.threads.dispatcher.dispatch(command!, writeSignal),
+          pool.get(name).threads.dispatcher.dispatch(command!, writeSignal),
         );
       });
       return { sequence: result.sequence };

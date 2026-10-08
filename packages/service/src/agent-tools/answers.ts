@@ -18,7 +18,8 @@ interface AnswerRow {
 export function answers(options: AgentToolsOptions, signal: AbortSignal) {
   const db = options.store.connection.database;
   let running = false;
-  let work: Promise<void> | undefined;
+  const workers = new Map<string, Promise<void>>();
+  const wakes = new Set<string>();
   function placed(row: AnswerRow, turnId: string | null) {
     const question = db
       .prepare("SELECT environment_id FROM agenttool_question WHERE escalation_id=?")
@@ -57,14 +58,14 @@ export function answers(options: AgentToolsOptions, signal: AbortSignal) {
     });
     if (result.status === "rejected") throw new Error("Invalid escalation answer event");
   }
-  async function send() {
+  async function send(environment: string) {
     while (!signal.aborted) {
       if (!running) return;
       const row = db
         .prepare(
-          "SELECT * FROM agenttool_answer WHERE status='pending' ORDER BY written_at,escalation_id LIMIT 1",
+          "SELECT * FROM agenttool_answer WHERE status='pending' AND environment=? ORDER BY written_at,rowid LIMIT 1",
         )
-        .get() as unknown as AnswerRow | undefined;
+        .get(environment) as unknown as AnswerRow | undefined;
       if (!row) return;
       try {
         const receipt = await options.threads.startTurn({
@@ -105,15 +106,21 @@ export function answers(options: AgentToolsOptions, signal: AbortSignal) {
       }
     }
   }
-  function wake() {
-    if (!running || work) return;
-    work = send()
+  function wake(environment: string) {
+    if (!running) return;
+    if (workers.has(environment)) {
+      wakes.add(environment);
+      return;
+    }
+    const work = send(environment)
       .catch((error: unknown) => {
         options.log({ level: "error", event: "agent-answer-failed", message: String(error) });
       })
       .finally(() => {
-        work = undefined;
+        workers.delete(environment);
+        if (wakes.delete(environment)) wake(environment);
       });
+    workers.set(environment, work);
   }
   const questionHandler: ServiceEscalationHandler = (escalation: Escalation) => {
     if (escalation.raiser.type !== "service" || !escalation.answer) return;
@@ -128,7 +135,7 @@ export function answers(options: AgentToolsOptions, signal: AbortSignal) {
       answerText(escalation),
       Date.now(),
     );
-    return wake;
+    return () => wake(environment!);
   };
   return {
     questionHandler,
@@ -146,11 +153,14 @@ export function answers(options: AgentToolsOptions, signal: AbortSignal) {
     },
     start() {
       running = true;
-      wake();
+      const pending = db
+        .prepare("SELECT DISTINCT environment FROM agenttool_answer WHERE status='pending'")
+        .all();
+      for (const row of pending) wake(String(row["environment"]));
     },
     async stop() {
       running = false;
-      await work;
+      await Promise.all(workers.values());
     },
   };
 }

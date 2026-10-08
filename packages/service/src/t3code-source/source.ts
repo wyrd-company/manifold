@@ -38,26 +38,51 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
         readiness.ready = true;
         readiness.resolve();
       },
-      async () => {
+      async (identityChanged = true) => {
         if (readiness.ready) readiness = pendingReadiness();
         // A request may already have committed even when its response is aborted.
         // Keep its thread outside the replacement baseline until observation catches up.
-        stored.atomic(() => {
-          for (const id of writes.values()) {
-            const row = stored.row(id);
-            stored.save(id, "followed", row?.cursor ?? stored.environment()!.shell_sequence, null);
-          }
-        });
+        if (identityChanged)
+          stored.atomic(() => {
+            for (const id of writes.values()) {
+              const row = stored.row(id);
+              stored.save(
+                id,
+                "followed",
+                row?.cursor ?? stored.environment()!.shell_sequence,
+                null,
+              );
+            }
+          });
         for (const controller of writes.keys())
-          controller.abort(new T3ConnectionError("closed", "T3 Code environment identity changed"));
+          controller.abort(
+            new T3ConnectionError("closed", "T3 Code environment connection invalidated"),
+          );
       },
     );
-    void loop.done.then(
-      () => readiness.reject(environmentError(name)),
-      () => readiness.reject(environmentError(name)),
-    );
+    let generation = 0;
+    function watchDone() {
+      const watchedGeneration = generation;
+      const ended = () => {
+        if (generation === watchedGeneration) readiness.reject(environmentError(name));
+      };
+      void loop.done.then(ended, ended);
+    }
+    watchDone();
     return {
-      ...loop,
+      loop,
+      status: loop.status,
+      projects: loop.projects,
+      get done() {
+        return loop.done;
+      },
+      restart() {
+        if (loop.status.state !== "stopped") return;
+        generation++;
+        readiness = pendingReadiness();
+        loop.restart();
+        watchDone();
+      },
       writes,
       get readiness() {
         return readiness;
@@ -97,11 +122,23 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
       return persistence(options.store, name).environment()!.environment_id;
     },
     status: () => environments.map((e) => ({ ...e.status })),
+    restart(name) {
+      if (stop.signal.aborted) return;
+      environments.find((entry) => entry.status.environment === name)?.restart();
+    },
     ready(name, signal) {
       const environment = environments.find((entry) => entry.status.environment === name);
       if (!environment || stop.signal.aborted || environment.status.state === "stopped")
         return Promise.reject(environmentError(name));
       if (signal?.aborted) return Promise.reject(signal.reason);
+      const hold = options.holds?.held(name);
+      if (hold?.disconnected && environment.readiness.ready) {
+        const waiting = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
+        return options.holds!.changed(name, hold.sequence, waiting).then(
+          () => source.ready(name, signal),
+          (error: unknown) => Promise.reject(stop.signal.aborted ? environmentError(name) : error),
+        );
+      }
       return new Promise<void>((resolve, reject) => {
         const aborted = () => {
           signal?.removeEventListener("abort", aborted);
@@ -127,6 +164,12 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
         signal.throwIfAborted();
         // Check and acquire without yielding: invalidation cannot interleave.
         if (!environment!.readiness.ready) continue;
+        // Hold admission and the send share one synchronous turn.
+        const hold = options.holds?.held(name);
+        if (hold?.disconnected) {
+          await options.holds!.changed(name, hold.sequence, signal);
+          continue;
+        }
         const controller = new AbortController();
         const writeSignal = AbortSignal.any([signal, controller.signal, stop.signal]);
         writeSignal.throwIfAborted();

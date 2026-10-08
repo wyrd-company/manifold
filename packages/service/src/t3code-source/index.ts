@@ -10,6 +10,8 @@ export type {
   T3CodeProjectView,
   ThreadView,
   EnvironmentStatus,
+  EnvironmentHold,
+  EnvironmentHolds,
   EnvironmentsConfiguration,
   ThreadChangeEvent,
   MessagePlacement,

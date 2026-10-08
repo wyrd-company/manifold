@@ -61,6 +61,10 @@
     "./epics-api": {
       "types": "./dist/epics-api.d.ts",
       "import": "./dist/epics-api.js"
+    },
+    "./environments-api": {
+      "types": "./dist/environments-api.d.ts",
+      "import": "./dist/environments-api.js"
     }
   },
   "scripts": {

@@ -6,6 +6,7 @@
 // ---
 import type { History } from "../history/index.ts";
 import type { InvokedCommand } from "../agent-threads/index.ts";
+import type { Environments } from "../environments/index.ts";
 import type { AgentTools } from "../agent-tools/index.ts";
 import type { AgentThreads } from "../agent-threads/index.ts";
 import type { Escalations, ServiceEscalationHandler } from "../escalations/index.ts";
@@ -118,6 +119,7 @@ export interface Service extends ServiceParts {
   readonly router: Router;
   readonly github: GitHubSource;
   readonly t3code: T3CodeSource;
+  readonly environments: Environments;
   readonly http: ServiceHttp;
   /** Stops the service; every call returns the first call's promise. */
   stop(): Promise<void>;

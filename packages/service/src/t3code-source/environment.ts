@@ -35,7 +35,7 @@ export function environmentLoop(
   environment: string,
   signal: AbortSignal,
   onReady: () => void,
-  onNotReady: () => Promise<void>,
+  onNotReady: (identityChanged?: boolean) => Promise<void>,
 ) {
   let projects: Omit<T3CodeProjectView, "activeThreads">[] | undefined;
   let projectSequence = -1;
@@ -46,8 +46,15 @@ export function environmentLoop(
     state: EnvironmentStatus["state"];
     error?: string;
     followedThreads: number;
+    activeThreads: number;
     openSubscriptions: number;
-  } = { environment, state: "connecting", followedThreads: 0, openSubscriptions: 0 };
+  } = {
+    environment,
+    state: "connecting",
+    followedThreads: 0,
+    activeThreads: 0,
+    openSubscriptions: 0,
+  };
   const log = (message: string, thread?: string) =>
     options.logger?.warn(message, { environment, ...(thread ? { thread } : {}) });
   function validId(id: string) {
@@ -59,19 +66,78 @@ export function environmentLoop(
       return false;
     }
   }
+  const countThreads = () => {
+    const followed = stored.rows().filter((row) => row.status === "followed");
+    status.followedThreads = followed.length;
+    status.activeThreads = followed.filter(
+      (row) =>
+        row.thread &&
+        (threadState(row.thread).turn?.state === "running" ||
+          row.thread.session?.status === "starting" ||
+          row.thread.session?.status === "running"),
+    ).length;
+  };
   const run = async () => {
     let attempt = 0;
     while (!signal.aborted && status.state !== "stopped") {
+      countThreads();
+      const hold = options.holds?.held(environment);
+      if (hold?.disconnected) {
+        status.state = "disconnected";
+        await onNotReady(false);
+        await options.holds!.changed(environment, hold.sequence, signal).catch(() => {});
+        attempt = 0;
+        continue;
+      }
       const lifetime = new AbortController();
       const abort = () => lifetime.abort();
       signal.addEventListener("abort", abort, { once: true });
+      let operatorDisconnect = false;
+      const watchHolds = async () => {
+        if (!options.holds || !hold) return;
+        let sequence = hold.sequence;
+        while (!lifetime.signal.aborted) {
+          await options.holds.changed(environment, sequence, lifetime.signal);
+          const next = options.holds.held(environment);
+          sequence = next.sequence;
+          if (next.disconnected) {
+            operatorDisconnect = true;
+            lifetime.abort();
+            await onNotReady(false);
+            return;
+          }
+        }
+      };
+      const holdWatch = watchHolds().catch(() => {});
+      const retainDiagnostic = (data?: Record<string, unknown>) => {
+        if (
+          (status.state === "connecting" || status.state === "retrying") &&
+          data?.["error"] !== undefined
+        )
+          status.error = String(data["error"]);
+      };
       const client = T3Client.create({
         baseUrl: configuration.url,
         backoff: configuration.reconnect,
         pingIntervalMs: configuration.heartbeat.intervalMs,
         missedPongLimit: configuration.heartbeat.missedPongLimit,
         openTimeoutMs: configuration.openTimeoutMs,
-        ...(options.logger ? { logger: options.logger } : {}),
+        logger: {
+          debug(message, data) {
+            options.logger?.debug(message, data);
+          },
+          info(message, data) {
+            options.logger?.info(message, data);
+          },
+          warn(message, data) {
+            retainDiagnostic(data);
+            options.logger?.warn(message, data);
+          },
+          error(message, data) {
+            retainDiagnostic(data);
+            options.logger?.error(message, data);
+          },
+        },
         credentials: {
           async load() {
             return {
@@ -107,7 +173,7 @@ export function environmentLoop(
       };
       const count = () => {
         status.openSubscriptions = open.size;
-        status.followedThreads = stored.rows().filter((r) => r.status === "followed").length;
+        countThreads();
       };
       const deleted = (id: string) =>
         stored.atomic(() => {
@@ -199,6 +265,7 @@ export function environmentLoop(
                     attribution,
                   );
                 });
+              count();
               const current = stored.row(id);
               if (current?.thread && canClose(current.thread, synchronized, catchup)) {
                 stored.atomic(() =>
@@ -271,7 +338,7 @@ export function environmentLoop(
         server = (await client.server.environment(lifetime.signal)).environmentId;
         const previous = stored.environment();
         const baseline = !previous || previous.environment_id !== server;
-        if (baseline) await onNotReady();
+        if (baseline) await onNotReady(true);
         const model = await client.shell.readModel(lifetime.signal);
         projectSequence = model.snapshotSequence;
         projects = model.projects
@@ -299,6 +366,7 @@ export function environmentLoop(
                 );
           });
         }
+        lifetime.signal.throwIfAborted();
         onReady();
         const cursor = stored.environment()!.shell_sequence;
         for (const row of stored.rows())
@@ -385,7 +453,7 @@ export function environmentLoop(
         })();
         await Promise.race([shell, failure]);
       } catch (error) {
-        if (!signal.aborted) {
+        if (!signal.aborted && !operatorDisconnect) {
           status.error = error instanceof Error ? error.message : String(error);
           if (error instanceof SourceDefect || error instanceof T3DecodeError)
             status.state = "stopped";
@@ -395,17 +463,56 @@ export function environmentLoop(
       } finally {
         lifetime.abort();
         await client.close();
+        await holdWatch;
         await Promise.allSettled([...open.values()].map((entry) => entry.done));
         signal.removeEventListener("abort", abort);
         status.openSubscriptions = 0;
       }
+      if (operatorDisconnect) {
+        attempt = 0;
+        continue;
+      }
       if (!signal.aborted && status.state !== "stopped") {
         const policy = configuration.reconnect;
         const wait = retryDelay(policy, attempt++, Math.random());
-        await delay(wait, undefined, { signal }).catch(() => {});
+        const waiting = new AbortController();
+        const waitSignal = AbortSignal.any([signal, waiting.signal]);
+        const holdDuringRetry = async () => {
+          if (!options.holds) return;
+          let current = options.holds.held(environment);
+          while (!current.disconnected) {
+            await options.holds.changed(environment, current.sequence, waitSignal);
+            current = options.holds.held(environment);
+          }
+        };
+        await Promise.race([
+          delay(wait, undefined, { signal: waitSignal }).catch(() => {}),
+          ...(options.holds ? [holdDuringRetry().catch(() => {})] : []),
+        ]);
+        waiting.abort();
       }
     }
     status.state = "stopped";
   };
-  return { status, done: run(), projects: () => projects };
+  let done = run();
+  let restarting = false;
+  return {
+    status,
+    get done() {
+      return done;
+    },
+    restart() {
+      if (status.state !== "stopped" || signal.aborted || restarting) return;
+      restarting = true;
+      const previous = done;
+      status.state = "connecting";
+      delete status.error;
+      done = previous.then(() => {
+        restarting = false;
+        status.state = "connecting";
+        return run();
+      });
+    },
+    projects: () => projects,
+  };
 }

@@ -1374,3 +1374,252 @@ test("projects reflect shell snapshots and live project edits with followed thre
   await expect.poll(() => reads).toBe(2);
   await expect.poll(() => source.projects("station")?.[0]?.title).toBe("Meadow");
 });
+
+function operatorHolds(disconnected = false) {
+  let current = { paused: false, disconnected, sequence: 0 };
+  const waits = new Set<() => void>();
+  return {
+    held: () => current,
+    changed(_environment: string, after: number, signal?: AbortSignal) {
+      if (current.sequence !== after) return Promise.resolve();
+      if (signal?.aborted) return Promise.reject(signal.reason);
+      return new Promise<void>((resolve, reject) => {
+        const finish = () => {
+          waits.delete(finish);
+          signal?.removeEventListener("abort", aborted);
+          resolve();
+        };
+        const aborted = () => {
+          waits.delete(finish);
+          reject(signal?.reason);
+        };
+        waits.add(finish);
+        signal?.addEventListener("abort", aborted, { once: true });
+      });
+    },
+    set(change: Partial<{ paused: boolean; disconnected: boolean }>) {
+      current = { ...current, ...change, sequence: current.sequence + 1 };
+      for (const finish of waits) finish();
+    },
+    waiting: () => waits.size,
+  };
+}
+
+test("a disconnected hold waits without connecting and resumes immediately; pause keeps following", async () => {
+  const { server, options } = await setup();
+  const holds = operatorHolds(true);
+  const source = startT3CodeSource({ ...options, holds });
+  cleanup.push(() => source.stop());
+  await expect.poll(() => source.status()[0]?.state).toBe("disconnected");
+  expect(server.requests).toHaveLength(0);
+  let ready = false;
+  void source.ready("station").then(() => {
+    ready = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(ready).toBe(false);
+  holds.set({ disconnected: false });
+  await source.ready("station");
+  await expect.poll(() => source.status()[0]?.state).toBe("following");
+  holds.set({ paused: true });
+  await expect.poll(() => holds.waiting()).toBe(1);
+  expect(source.status()[0]?.state).toBe("following");
+  await source.stop();
+  expect(holds.waiting()).toBe(0);
+});
+
+test("disconnect aborts admitted writes, preserves cursors, and replays settlement once", async () => {
+  const { server, store, options } = await setup();
+  const holds = operatorHolds();
+  const thread = fixtureThread();
+  thread.latestTurn = {
+    turnId: "turn-one" as NonNullable<typeof thread.latestTurn>["turnId"],
+    state: "running",
+    requestedAt: thread.createdAt,
+    startedAt: thread.createdAt,
+    completedAt: null,
+    assistantMessageId: null,
+  };
+  thread.session = {
+    threadId: thread.id,
+    status: "running",
+    providerName: "provider",
+    runtimeMode: "full-access",
+    activeTurnId: thread.latestTurn.turnId,
+    lastError: null,
+    updatedAt: thread.createdAt,
+  };
+  server.baseline(thread);
+  const source = startT3CodeSource({
+    ...options,
+    holds,
+    environments: {
+      station: {
+        ...options.environments.station,
+        reconnect: { initialMs: 10000, factor: 2, maxMs: 20000, jitter: 0 },
+      },
+    },
+  });
+  cleanup.push(() => source.stop());
+  await source.ready("station");
+  await expect.poll(() => source.status()[0]?.activeThreads).toBe(1);
+  let admitted = false;
+  const write = source.write("station", thread.id, new AbortController().signal, async () => {
+    admitted = true;
+    return new Promise<void>(() => {});
+  });
+  const interrupted = expect(write).rejects.toMatchObject({ name: "T3ConnectionError" });
+  await expect.poll(() => admitted).toBe(true);
+  holds.set({ disconnected: true });
+  await expect.poll(() => source.status()[0]?.state).toBe("disconnected");
+  await interrupted;
+  await expect.poll(() => source.status()[0]?.openSubscriptions).toBe(0);
+  thread.latestTurn = { ...thread.latestTurn, state: "completed", completedAt: thread.createdAt };
+  thread.session = { ...thread.session, status: "ready", activeTurnId: null };
+  server.change(thread);
+  holds.set({ disconnected: false });
+  await source.ready("station");
+  await expect.poll(() => source.status()[0]?.activeThreads).toBe(0);
+  await expect
+    .poll(() => store.pendingInbox("reader").map((row) => row.payload))
+    .toMatchObject([{ type: "t3.turn.settled" }]);
+});
+
+test("restart resumes a stopped environment and has no effect on one already following", async () => {
+  const { server, options } = await setup();
+  let reject = true;
+  const source = startT3CodeSource({
+    ...options,
+    router: {
+      ...options.router,
+      publish(event) {
+        return reject ? { status: "rejected", issues: [] } : options.router.publish(event);
+      },
+    },
+  });
+  cleanup.push(() => source.stop());
+  await source.ready("station");
+  const thread = fixtureThread();
+  thread.session = {
+    threadId: thread.id,
+    status: "error",
+    providerName: "provider",
+    runtimeMode: "full-access",
+    activeTurnId: null,
+    lastError: "fixture",
+    updatedAt: thread.createdAt,
+  };
+  server.change(thread);
+  await expect.poll(() => source.status()[0]?.state).toBe("stopped");
+  reject = false;
+  source.restart("station");
+  await source.ready("station");
+  await expect.poll(() => source.status()[0]?.state).toBe("following");
+  const requests = server.requests.length;
+  source.restart("station");
+  expect(source.status()[0]?.state).toBe("following");
+  expect(server.requests).toHaveLength(requests);
+});
+
+test("write admission sees a disconnect committed after readiness resolves", async () => {
+  const { options } = await setup();
+  const holds = operatorHolds();
+  let armed = false;
+  let reads = 0;
+  const source = startT3CodeSource({
+    ...options,
+    holds: {
+      ...holds,
+      held() {
+        if (armed && ++reads === 2) holds.set({ disconnected: true });
+        return holds.held();
+      },
+    },
+  });
+  cleanup.push(() => source.stop());
+  await source.ready("station");
+  armed = true;
+  let sent = false;
+  const abort = new AbortController();
+  const write = source.write("station", "conversation", abort.signal, async () => {
+    sent = true;
+  });
+  const outcome = write.then(
+    () => "sent",
+    (error: unknown) => error,
+  );
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(sent).toBe(false);
+  } finally {
+    abort.abort("fixture-abort");
+    await outcome;
+  }
+  expect(await outcome).toBe("fixture-abort");
+});
+
+test("write admission uses the sequence read before a reconnect commits", async () => {
+  const { options } = await setup();
+  const holds = operatorHolds();
+  let armed = false;
+  let reads = 0;
+  const source = startT3CodeSource({
+    ...options,
+    holds: {
+      ...holds,
+      held() {
+        if (armed && ++reads === 2) {
+          holds.set({ disconnected: true });
+          const snapshot = holds.held();
+          holds.set({ disconnected: false });
+          return snapshot;
+        }
+        return holds.held();
+      },
+    },
+  });
+  cleanup.push(() => source.stop());
+  await source.ready("station");
+  armed = true;
+  let sent = false;
+  const abort = new AbortController();
+  const write = source.write("station", "conversation", abort.signal, async () => {
+    sent = true;
+  });
+  const outcome = write.then(
+    () => "sent",
+    () => "aborted",
+  );
+  try {
+    await expect.poll(() => sent).toBe(true);
+  } finally {
+    abort.abort("fixture-abort");
+    await outcome;
+  }
+});
+
+test("a server unavailable during initial connection exposes and forwards its diagnostic", async () => {
+  const { server, options } = await setup();
+  server.hooks.ticketStatus = 503;
+  const warnings: { message: string; data?: Record<string, unknown> }[] = [];
+  const source = startT3CodeSource({
+    ...options,
+    logger: {
+      debug() {},
+      info() {},
+      error() {},
+      warn(message, data) {
+        warnings.push({ message, ...(data ? { data } : {}) });
+      },
+    },
+  });
+  cleanup.push(() => source.stop());
+  await expect.poll(() => source.status()[0]?.error).toBeDefined();
+  const diagnostic = warnings.find((warning) => typeof warning.data?.["error"] === "string");
+  expect(diagnostic).toBeDefined();
+  expect(source.status()[0]?.error).toBe(diagnostic?.data?.["error"]);
+  expect(source.status()[0]?.state).toBe("connecting");
+  delete server.hooks.ticketStatus;
+  await source.ready("station");
+  expect(source.status()[0]?.error).toBeUndefined();
+});

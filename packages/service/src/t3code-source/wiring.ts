@@ -9,7 +9,9 @@ import type { T3CodeSource } from "./index.ts";
 export const t3codeSource = wiringPart({
   name: "t3code-source",
   start: (
-    members: Required<Pick<Service, "store" | "router" | "configuration" | "agentTools" | "log">>,
+    members: Required<
+      Pick<Service, "store" | "router" | "configuration" | "agentTools" | "environments" | "log">
+    >,
     context,
   ): { t3code: T3CodeSource } => {
     const { store, router, configuration, agentTools, log } = members;
@@ -24,6 +26,7 @@ export const t3codeSource = wiringPart({
     const t3code = startT3CodeSource({
       store,
       router,
+      holds: members.environments,
       environments: configuration.environments,
       tokenFile,
       messagePlaced: agentTools.messagePlaced,

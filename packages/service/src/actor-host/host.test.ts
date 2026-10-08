@@ -184,6 +184,7 @@ test("start validates both schemas, initializes identity before actions, and con
   expect(f.host.subscription(f.store.loadSnapshot("parcel")!)).toEqual({
     topics: [
       "agent.environment.station.thread.delivery%2E1",
+      "environment.station",
       "github.issue.parcel-node",
       "t3.environment.station.thread.delivery%2E1",
     ],
@@ -1074,4 +1075,29 @@ test("a routed re-entry keeps one history visit and links the event to that visi
   await f.send("repeat");
   expect(history.read("parcel")!.visits).toHaveLength(1);
   expect(history.read("parcel")!.events[0]).toMatchObject({ eventId: "github:repeat", visit: 1 });
+});
+
+test("environment actions reach only actors on that environment, without a thread", async () => {
+  const document = parcel({ waiting: { on: { "environment.paused": "delivered" } } });
+  document.schemas.events = { "environment.paused": true };
+  const f = await fixture(document);
+  f.host.start({
+    actorId: "parcel",
+    blueprint: f.blueprint,
+    input: { manifold: { environment: "station" } },
+  });
+  f.host.start({
+    actorId: "other-parcel",
+    blueprint: f.blueprint,
+    input: { manifold: { environment: "depot" } },
+  });
+  const result = f.router.publish({
+    source: "environment",
+    eventId: "station/1",
+    topics: ["environment.station"],
+    event: { type: "environment.paused", environment: "station", at: "2026-01-01T00:00:00.000Z" },
+  });
+  expect(result.status).toBe("accepted");
+  await expect.poll(() => f.store.loadSnapshot("parcel")?.snapshot.status).toBe("done");
+  expect(f.store.loadSnapshot("other-parcel")?.snapshot.value).toBe("waiting");
 });

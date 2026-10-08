@@ -9,6 +9,8 @@ import { childProcessLimit } from "../../test-support/limits.ts";
 const children = [
   "src/epics/epics.browser.test.ts",
   "src/epics/service-wiring.test.ts",
+  "src/environments/service.test.ts",
+  "src/environments/environments.browser.test.ts",
   "src/declarations-api/api.test.ts",
   "src/declarations-api/projects.browser.test.ts",
   "src/portfolio-api/portfolio.browser.test.ts",

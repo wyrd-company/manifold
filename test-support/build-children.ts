@@ -49,6 +49,7 @@ export default async function setup(project: TestProject) {
           include: [join(service, "src/**/*.ts")],
           exclude: [join(service, "src/**/*.test.ts"), join(service, "src/**/test-fixtures/**")],
           files: [
+            "environments/test-fixtures/control-worker.ts",
             "gates/test-fixtures/crash-worker.ts",
             "gates/test-fixtures/comparator-failure-worker.ts",
             "test-fixtures/foundation-worker.ts",

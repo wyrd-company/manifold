@@ -569,3 +569,171 @@ test("reports a returned acceptance even when the invoking state has exited", as
   expect(accepted[0]).toMatchObject({ invocation, implementation: "thread-create", sequence: 1 });
   expect(actor.getSnapshot().status).toBe("stopped");
 });
+
+function operatorHolds() {
+  let hold = { paused: false, disconnected: false, sequence: 0 };
+  const waiters = new Set<() => void>();
+  return {
+    held: (_name: string) => hold,
+    changed: async (_name: string, after: number, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      if (hold.sequence !== after) return;
+      await new Promise<void>((resolve, reject) => {
+        const finish = () => {
+          waiters.delete(finish);
+          signal?.removeEventListener("abort", aborted);
+          resolve();
+        };
+        const aborted = () => {
+          waiters.delete(finish);
+          reject(signal?.reason);
+        };
+        waiters.add(finish);
+        signal?.addEventListener("abort", aborted, { once: true });
+      });
+    },
+    set: (patch: Partial<typeof hold>) => {
+      hold = { ...hold, ...patch, sequence: hold.sequence + 1 };
+      for (const wake of waiters) wake();
+    },
+  };
+}
+
+test.each(["thread-create", "turn-start"])(
+  "pause at write admission holds %s, counts it, and lets answers pass",
+  async (implementation) => {
+    const holds = operatorHolds();
+    let admit = true;
+    const f = await setup({
+      holds,
+      sourceWrite: (_environment, _thread, signal, send) => {
+        if (admit) {
+          admit = false;
+          holds.set({ paused: true });
+        }
+        return send(signal);
+      },
+    });
+    f.server.baseline(fixtureThread());
+    const pending = f.run(
+      implementation,
+      implementation === "thread-create"
+        ? input
+        : {
+            threadId: "conversation",
+            messageId: "blueprint-message",
+            prompt: "templates/prompt.njk",
+            values: { parcel: "sample" },
+          },
+    );
+    await expect.poll(() => f.module.scheduled("station")).toBe(1);
+    await f.module.startTurn({
+      environment: "station",
+      threadId: "conversation",
+      messageId: "answer",
+      text: "Continue",
+    });
+    expect(f.commands).toHaveLength(1);
+    expect(f.module.scheduled("station")).toBe(1);
+    holds.set({ paused: false });
+    await pending;
+    expect(f.commands).toHaveLength(2);
+    expect(f.module.scheduled("station")).toBe(0);
+  },
+);
+
+test("resume between admission hold read and wait is never missed", async () => {
+  const holds = operatorHolds();
+  holds.set({ paused: true });
+  let readingAdmission = false;
+  const waitedSequences: number[] = [];
+  const f = await setup({
+    sourceWrite: (_name, _thread, signal, send) => {
+      readingAdmission = true;
+      try {
+        return send(signal);
+      } finally {
+        readingAdmission = false;
+      }
+    },
+    holds: {
+      changed: (name, after, signal) => {
+        waitedSequences.push(after);
+        return holds.changed(name, after, signal);
+      },
+      held: (name) => {
+        const read = holds.held(name);
+        if (readingAdmission && read.paused) holds.set({ paused: false });
+        return read;
+      },
+    },
+  });
+  await f.run("thread-create", input);
+  expect(f.commands).toHaveLength(1);
+  expect(waitedSequences).toContain(1);
+});
+
+test("stopping a paused invocation removes it from scheduled sends", async () => {
+  const holds = operatorHolds();
+  holds.set({ paused: true });
+  const f = await setup({ holds });
+  const actor = createActor(f.module.implementations.actors["thread-create"]!, { input });
+  actor.start();
+  await expect.poll(() => f.module.scheduled("station")).toBe(1);
+  actor.stop();
+  await expect.poll(() => f.module.scheduled("station")).toBe(0);
+  holds.set({ paused: false });
+  expect(f.commands).toHaveLength(0);
+});
+
+test("disconnect holds reads and answers until reconnect without creating a client", async () => {
+  const holds = operatorHolds();
+  holds.set({ disconnected: true });
+  let readinessCalls = 0;
+  const f = await setup({
+    holds,
+    sourceReady: async () => {
+      readinessCalls++;
+    },
+  });
+  f.server.baseline(fixtureThread());
+  const read = f.module.readThread("station", "conversation");
+  const answer = f.module.startTurn({
+    environment: "station",
+    threadId: "conversation",
+    messageId: "answer",
+    text: "Continue",
+  });
+  await expect.poll(() => f.module.scheduled("station")).toBe(1);
+  expect(readinessCalls).toBe(0);
+  expect(f.server.requests).toHaveLength(0);
+  holds.set({ disconnected: false });
+  expect((await read)?.id).toBe("conversation");
+  await answer;
+  expect(f.commands).toHaveLength(1);
+  expect(f.module.scheduled("station")).toBe(0);
+});
+
+test("disconnect closes an in-flight command client and retry uses the same receipt", async () => {
+  const holds = operatorHolds();
+  const f = await setup({ holds });
+  let accepted = false;
+  let release!: () => void;
+  f.server.hooks.beforeDispatchResponse = async () => {
+    if (accepted) return;
+    accepted = true;
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  };
+  const command = f.run("thread-create", input);
+  await expect.poll(() => accepted).toBe(true);
+  holds.set({ disconnected: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  holds.set({ disconnected: false });
+  await command;
+  expect(f.commands).toHaveLength(2);
+  expect(f.receipts.size).toBe(1);
+  expect(f.module.scheduled("station")).toBe(0);
+});

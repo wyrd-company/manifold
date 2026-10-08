@@ -7,12 +7,13 @@ import type { OrchestrationThread } from "@wyrd-company/t3code-client";
 import type { Logger } from "@wyrd-company/t3code-client";
 import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
 import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
-import type { EnvironmentsConfiguration } from "../t3code-source/index.ts";
+import type { EnvironmentHolds, EnvironmentsConfiguration } from "../t3code-source/index.ts";
 import type { Invocation, ActorHost } from "../actor-host/index.ts";
 import type { ManifoldIdentity } from "@wyrd-company/manifold-shared";
 export type { Invocation, ManifoldIdentity };
 export interface AgentThreadsOptions {
   readonly environments: EnvironmentsConfiguration;
+  readonly holds?: EnvironmentHolds;
   readonly tokenFile: (credential: string) => string;
   readonly actorOf: ActorHost["actorOf"];
   readonly invocationOf: (args: Parameters<Parameters<typeof fromPromise>[0]>[0]) => Invocation;
@@ -47,6 +48,7 @@ export interface AcceptedCommand {
 }
 export interface AgentThreads {
   readonly implementations: ImplementationRegistry;
+  scheduled(environment: string): number;
   readThread(
     environment: string,
     threadId: string,

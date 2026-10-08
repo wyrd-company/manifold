@@ -2,8 +2,4 @@
 // relationships:
 //   implements: operator-console
 // ---
-import { navigation } from "../shell/navigation.ts";
-import { EmptyState } from "./EmptyContent.tsx";
-export function EnvironmentsContent() {
-  return <EmptyState icon={navigation.find((item) => item.label === "Environments")!.icon} />;
-}
+export { EnvironmentsContent } from "./environments/EnvironmentsContent.tsx";

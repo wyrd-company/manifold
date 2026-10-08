@@ -35,13 +35,15 @@ export interface T3CodeSourceOptions {
   readonly environments: EnvironmentsConfiguration;
   readonly tokenFile: (credential: string) => string;
   readonly messagePlaced?: (placement: MessagePlacement) => void;
+  readonly holds?: EnvironmentHolds;
   readonly logger?: Logger;
 }
 export interface EnvironmentStatus {
   readonly environment: string;
-  readonly state: "connecting" | "following" | "retrying" | "stopped";
+  readonly state: "connecting" | "following" | "retrying" | "disconnected" | "stopped";
   readonly error?: string;
   readonly followedThreads: number;
+  readonly activeThreads: number;
   readonly openSubscriptions: number;
 }
 export interface ThreadView {
@@ -68,5 +70,16 @@ export interface T3CodeSource {
     signal: AbortSignal,
     send: (signal: AbortSignal) => Promise<T>,
   ): Promise<T>;
+  restart(environment: string): void;
   stop(): Promise<void>;
+}
+
+export interface EnvironmentHold {
+  readonly paused: boolean;
+  readonly disconnected: boolean;
+  readonly sequence: number;
+}
+export interface EnvironmentHolds {
+  held(environment: string): EnvironmentHold;
+  changed(environment: string, after: number, signal?: AbortSignal): Promise<void>;
 }

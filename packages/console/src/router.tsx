@@ -60,7 +60,9 @@ const routes = navigation.map((item, index) => {
     ...(item.path === "/epics" ? { validateSearch: epicsSearch } : {}),
     component: () => (
       <>
-        <PageTitle title={item.label} description={item.description} />
+        {item.path === "/environments" ? null : (
+          <PageTitle title={item.label} description={item.description} />
+        )}
         <Content />
       </>
     ),

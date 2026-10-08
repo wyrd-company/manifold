@@ -349,6 +349,7 @@ export async function fakeServer() {
             chunk(socket, id, [{ kind: "project-removed", sequence, projectId }]);
     },
     requests,
+    sockets: () => ws.clients.size,
     log,
     acknowledgements: () => acknowledgements,
     hooks,

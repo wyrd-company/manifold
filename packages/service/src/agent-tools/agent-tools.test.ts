@@ -24,7 +24,17 @@ afterEach(async () => {
   for (const close of closing.splice(0).toReversed()) await close();
 });
 async function fixture(
-  options: { declared?: boolean; rejected?: boolean; available?: boolean } = {},
+  options: {
+    declared?: boolean;
+    rejected?: boolean;
+    available?: boolean;
+    send?: (input: {
+      environment: string;
+      messageId: string;
+      text: string;
+      signal?: AbortSignal;
+    }) => Promise<void>;
+  } = {},
 ) {
   const notifications: { title: string; click?: string }[] = [];
   const ntfy = await serve((req, res) => {
@@ -129,6 +139,7 @@ async function fixture(
       runningThreads: async () => [],
       startTurn: async (input) => {
         if (options.rejected) throw { kind: "rejected", message: "Rejected by fixture" };
+        await options.send?.(input);
         sent.push(input);
         return { sequence: 7 };
       },
@@ -712,3 +723,45 @@ test.each([
     ).toThrow(/CHECK constraint failed/);
   },
 );
+test("pending answers wait independently by environment and retain order within each", async () => {
+  let release!: () => void;
+  const attempted: string[] = [];
+  const f = await fixture({
+    send: async (input) => {
+      attempted.push(input.environment);
+      if (input.environment === "held")
+        await new Promise<void>((resolve, reject) => {
+          release = resolve;
+          input.signal?.addEventListener("abort", () => reject(input.signal!.reason), {
+            once: true,
+          });
+        });
+    },
+  });
+  function answer(environment: string, threadId: string, text: string) {
+    const question = f.escalations.raise({
+      kind: "agent-question",
+      subject: { environment, threadId },
+      question: "Which shelf?",
+      choices: [],
+      freeText: true,
+    });
+    f.escalations.answer(question.id, { text }, "api");
+  }
+  answer("held", "first", "First");
+  await eventually(() => expect(attempted).toEqual(["held"]));
+  answer("held", "second", "Second");
+  answer("available", "third", "Third");
+  await eventually(() => expect(f.sent).toHaveLength(1));
+  expect(f.sent[0]!.text).toContain("Third");
+  expect(attempted).toEqual(["held", "available"]);
+  release();
+  await eventually(() => expect(attempted).toEqual(["held", "available", "held"]));
+  release();
+  await eventually(() => expect(f.sent).toHaveLength(3));
+  expect(f.sent.map((row) => row.text)).toEqual([
+    expect.stringContaining("Third"),
+    expect.stringContaining("First"),
+    expect.stringContaining("Second"),
+  ]);
+});

@@ -10,6 +10,7 @@ import type { Service } from "../service/types.ts";
 import type { AgentThreads } from "./index.ts";
 import { actorHost as actorHostPart } from "../actor-host/wiring.ts";
 import { t3codeSource } from "../t3code-source/wiring.ts";
+import { environments as environmentsPart } from "../environments/wiring.ts";
 export const agentThreads = wiringPart({
   name: "agent-threads",
   start: (
@@ -21,6 +22,7 @@ export const agentThreads = wiringPart({
     const { configuration, portfolio, processRepository, log, githubMirror } = members;
     const actorHost = context.later(actorHostPart);
     const source = context.later(t3codeSource);
+    const controls = context.later(environmentsPart);
     const tokenFile = (name: string) => {
       const credential = configuration.credentials.resolve(name);
       if (credential.kind !== "t3code-token")
@@ -37,6 +39,20 @@ export const agentThreads = wiringPart({
       },
       environments: configuration.environments,
       tokenFile,
+      holds: {
+        // Restored invokes can enter before this later part opens. Readiness
+        // waits for it before any client or write admission is possible.
+        held: (name) =>
+          controls.current()?.environments.held(name) ?? {
+            paused: false,
+            disconnected: false,
+            sequence: 0,
+          },
+        changed: async (name, after, signal) => {
+          const { environments } = await controls.ready(signal);
+          await environments.changed(name, after, signal);
+        },
+      },
       actorOf: (id) => actorHost.current()?.actorHost.actorOf(id),
       invocationOf,
       bindingArchived: (projectNodeId) => {
@@ -45,6 +61,7 @@ export const agentThreads = wiringPart({
       },
       revisionAt: processRepository.revisionAt,
       sourceReady: async (environment, signal) => {
+        await controls.ready(signal);
         const { t3code } = await source.ready(signal);
         await t3code.ready(environment, signal);
       },

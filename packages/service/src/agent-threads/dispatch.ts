@@ -13,6 +13,12 @@ import {
 import type { AgentThreadsOptions } from "./types.ts";
 import { failure } from "./types.ts";
 import { retryDelay } from "../t3code-source/retry.ts";
+export class PausedAdmission {
+  readonly sequence: number;
+  constructor(sequence: number) {
+    this.sequence = sequence;
+  }
+}
 export async function dispatch<T>(
   options: AgentThreadsOptions,
   environment: string,
@@ -22,6 +28,12 @@ export async function dispatch<T>(
   let attempt = 0;
   while (true) {
     signal.throwIfAborted();
+    const hold = options.holds?.held(environment);
+    if (hold?.disconnected) {
+      await options.holds!.changed(environment, hold.sequence, signal);
+      attempt = 0;
+      continue;
+    }
     try {
       await options.sourceReady(environment, signal);
     } catch (error) {
@@ -40,11 +52,16 @@ export async function dispatch<T>(
       return await send();
     } catch (error) {
       signal.throwIfAborted();
+      if (error instanceof PausedAdmission) {
+        await options.holds!.changed(environment, error.sequence, signal);
+        continue;
+      }
       if (
         error instanceof T3ConnectionError ||
         error instanceof T3TimeoutError ||
         (error instanceof T3HttpError && error.status >= 500)
       ) {
+        if (options.holds?.held(environment).disconnected) continue;
         options.logger?.warn("Retrying agent thread command", { environment });
         await delay(
           retryDelay(options.environments[environment]!.reconnect, attempt++, Math.random()),

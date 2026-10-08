@@ -40,6 +40,7 @@ export function identityOf(snapshot: { readonly [key: string]: unknown }): Manif
 }
 export function identityTopics(identity: ManifoldIdentity): string[] {
   const topics: string[] = [];
+  if (typeof identity.environment === "string") topics.push(`environment.${identity.environment}`);
   if (typeof identity.issue === "string") topics.push(`github.issue.${identity.issue}`);
   if (
     typeof identity.environment === "string" &&
