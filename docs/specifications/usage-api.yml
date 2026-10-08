@@ -1,0 +1,136 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `realizes` names the design this
+  # contract serves and `references` the contracts it reads beside.
+  realizes:
+    - usage-intake
+  references:
+    - usage-push
+    - usage-tables
+    - portfolio-ledger
+    - portfolio-api
+    - tasks-api
+    - operator-console
+    - move-operator-usage-through-the-ledger
+terms:
+  - actual
+  - call
+  - late-attribution
+  - portfolio-item
+  - unowned-usage
+  - usage-move
+  - window
+description: |-
+  Defines the operator's usage endpoints of Manifold's API: the read of
+  unowned usage, `GET /api/usage/unowned`, and the usage move, `POST
+  /api/usage/moves`. `docs/specifications/usage-api.openapi.yml` is the
+  machine-readable definition. The Portfolio screen of the operator
+  console reads and moves through them, and any automation may.
+
+  The endpoints are served by the usage intake module's listener, mounted
+  with the HTTP host's `mount` at the prefix `/api/usage` beside `POST
+  /api/usage/push` of `usage-push`, and are always served without
+  authentication. Access control belongs to the deployment. A path under
+  the prefix that is none of the three answers `404`. A method an
+  endpoint does not take answers `405` with `Allow` naming the one it
+  takes. Every answer is JSON with `Cache-Control: no-store`, and every
+  error answer holds `error` and `message`. The query string is ignored.
+
+  **Unowned usage.** A ledger actor of unowned usage is
+  `thread:<environment>:<thread id>`, the calls of a thread no actor
+  owns, or `session:<environment>:<provider>:<provider session id>`, the
+  calls of a provider session whose thread the service does not know.
+  Its unowned usage is every posted call whose attribution names it.
+  Amounts are integers in the account's native unit, as the ledger holds
+  them: for an account whose unit is `usd`, millionths of a US dollar.
+  Instants are ISO 8601 UTC strings with milliseconds.
+
+  **Read.** `GET /api/usage/unowned` answers `200` with `{ "unowned":
+  [...] }`, one entry per ledger actor of unowned usage that a posted
+  call's attribution names or a pending call is under, newest latest
+  call first, then by ledger actor id:
+
+  - `actor`: the ledger actor id.
+  - `kind`: `thread` or `session`.
+  - `environment`: the environment the calls ran on.
+  - `threadId`: for `thread`, the T3 Code thread id.
+  - `provider` and `providerSessionId`: for `session`, the provider and
+    its session id.
+  - `project` and `title`: for `thread`, the T3code project id and the
+    thread's title as the T3 Code environment source holds them; absent
+    when it holds none.
+  - `lastUsedAt`: the time of its latest call, posted or pending.
+  - `pending`: the number of its calls that wait for an account, a
+    price, or a ledger window; a usage move takes them once they post.
+  - `usage`: its posted calls grouped by the portfolio item the ledger
+    holds each on and its account, ordered by item, then account. Each
+    is `{ item, account, amount, calls }`: the item id, the account, the
+    sum of the calls' amounts, and how many calls.
+
+  **Move.** `POST /api/usage/moves` with `Content-Type:
+  application/json` and a body of at most 64 KiB moves the unowned usage
+  of one ledger actor to a portfolio item or to an actor:
+
+  ```json
+  { "from": "thread:env-one:thread-2", "to": { "item": "alpha" } }
+  ```
+
+  ```json
+  { "from": "session:env-one:codex:session-3", "to": { "actor": "task:I_kwDOAAAAAA" } }
+  ```
+
+  `from` is the ledger actor. `to.item` is a portfolio item id, an
+  Other included; the usage stays the ledger actor's and counts on the
+  item. `to.actor` is an actor id, such as a task actor's; the usage
+  becomes the actor's and counts on the actor's portfolio item, or on
+  `other` when the actor has none. The move takes every posted call
+  whose attribution is `from`, except those the ledger already holds
+  under the target's actor and item, and records each as a usage move in
+  one transaction. Each moved call keeps its account, its amount, and
+  the window of its use, so the account's capacity and window usage do
+  not change. Balances read each moved call on the target item and its
+  ancestors, in the window of its use, and no longer on the item it
+  left; the target actor's actual and variance, as `GET
+  /api/tasks/{actorId}` answers them, include it. Calls that are
+  pending are not moved; once they post they are unowned usage that a
+  later move takes.
+
+  A move answers `200` with `{ "status": "moved", "from", "to": { actor,
+  item }, "moved", "accounts" }`: the target's actor and item as
+  resolved, the number of calls moved, and per account the amount moved,
+  in account name order. A move that finds no call to move answers `200`
+  with `moved` 0 and `accounts` empty, so the same move sent twice moves
+  each call once.
+
+  Errors. A body that is not JSON or does not match the request schema
+  answers `400` with `error` `invalid-request`; a body above 64 KiB
+  `413` with `too-large`; another content type `415` with
+  `unsupported-media-type`. `422` with `unknown-actor` answers a
+  `to.actor` that is a ledger actor of unowned usage or that the usage
+  intake module has never seen saved; `422` with `invalid-target`
+  answers a target item that the portfolio declaration in force does not
+  hold or has archived. A refused move writes nothing. A failure inside
+  the move rolls it back whole, is reported through the service log, and
+  answers `500` with `internal`.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/usage-api.openapi.yml` is a valid OpenAPI 3.1
+  document. Shared tests check that `isUsageUnownedResponse`,
+  `isUsageMoveRequest`, and `isUsageMoveResponse` accept the examples
+  above and bodies that validate against their schemas, and refuse
+  bodies that do not. Tests in `packages/service` request both endpoints
+  without authentication through the HTTP host, with the usage intake
+  module, the portfolio module and its ledger, and the tasks read model
+  on one database file, and check that each body validates against its
+  response schema; that the read lists a `thread` ledger actor with its
+  project and title, a `session` ledger actor with its provider and
+  session, and a pending call's count, in order; that a move to an item
+  and a move to an actor answer the calls and amounts moved, after which
+  `GET /api/portfolio` answers each moved call on its target item's
+  `actual` and `lifetime` and not on the item it left, with the
+  account's `used` unchanged, and `GET /api/tasks/{actorId}` answers the
+  actor's actual with it, for a running and a settled actor; that the
+  same move again answers `moved` 0; and the `400`, `404`, `405`,
+  `413`, `415`, and `422` answers, each `422` writing nothing. Fixture
+  values are generic and never drawn from Manifold's own domain.

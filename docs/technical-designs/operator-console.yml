@@ -27,6 +27,7 @@ relationships:
     - portfolio-declaration
     - environments-api
     - environment-events
+    - usage-api
 objective: >-
   Give the operator console one package that builds into static files, one
   place in the service that serves them and the API the console reads, and a
@@ -55,7 +56,8 @@ objective: >-
   window, and each portfolio item's allocation, usage, and what it can
   reserve, every amount in its account's unit, and edits allocations and
   items as a draft of `portfolio.yml`, linted as it changes with the
-  service's own lint and saved as a commit.
+  service's own lint and saved as a commit; and moves the unowned usage
+  of threads opened outside Manifold to an item or a task.
   It shows each T3 Code environment's connection and thread counts on the
   Environments screen, and pauses, resumes, disconnects, and reconnects
   one there.
@@ -2262,7 +2264,8 @@ proposed-design:
     read lists. The screen reads `GET /api/portfolio` of `portfolio-api`
     under the key `["portfolio"]`, and the text of `portfolio.yml` with
     `fetchDeclarationSource("portfolio.yml")` of `declarations-api` under
-    `["declaration", "portfolio.yml"]`. Both read again when the window
+    `["declaration", "portfolio.yml"]`, and `GET /api/usage/unowned` of
+    `usage-api` under `["usage", "unowned"]`. All three read again when the window
     regains focus, when the screen opens, and from the ghost "Refresh"
     icon button in the title row. No timer reads on a schedule. The
     screen lints and saves `portfolio.yml` through the `portfolio.yml`
@@ -2273,8 +2276,8 @@ proposed-design:
     From top to bottom, as `DESIGN.md` lays out Portfolio: the title row,
     with "Edit allocations" (outline) and "Add item" (primary); the budget
     source cards; the account row; the status bar and the problems list
-    while they have content; the Portfolio table; and "Show archived (N)"
-    when an item is archived. The account row holds "Allocations for"
+    while they have content; the Portfolio table; "Show archived (N)"
+    when an item is archived; and the Unowned usage section. The account row holds "Allocations for"
     and a select of the listed accounts, shown when more than one account
     is listed. With no account listed, the cards and the account row are
     replaced by the info alert "No accounts are declared. Declare them in
@@ -2419,6 +2422,59 @@ proposed-design:
     every item under it to 0, so the restored item comes back at 0% and
     never breaks the guarantee limit, and saves with "Restore portfolio
     item <id>".
+  unowned-usage: >-
+    `UnownedUsage`, in `src/screens/portfolio/`, lists the read's ledger
+    actors of unowned usage for the selected account under the heading
+    "Unowned usage" and the muted line "Usage from threads no task owns.
+    Move it to the item or task it was for." It lists an entry that has
+    usage on the selected account or pending calls, in the read's order;
+    with none, the section shows the muted line "No unowned usage." alone.
+    The columns, as `DESIGN.md` lays them out, are Thread, Counts on,
+    Amount, Last used, and a "Move" button (outline, small). Thread is
+    the thread's title, else "Untitled thread", with a muted mono line of
+    the environment and the thread id; for a session entry it is
+    "Unmapped session" with a muted mono line of the environment, the
+    provider, and the session id. Counts on is the title of each item
+    the entry's usage on the account is held on, joined by ", ", from the
+    portfolio read, else the item id. Amount is the sum of the entry's
+    usage on the account, formatted by `amounts`, with "N calls" muted
+    under it and, when `pending` is above 0, a "N pending" muted badge.
+    Last used is "about <duration> ago" from `lastUsedAt` by the
+    duration rule of the budget source cards. The first 20 entries show;
+    "Show all (N)" shows the rest. A failed read shows an error alert with
+    the message and "Try again" in place of the list.
+  move-usage: >-
+    "Move" opens `MoveUsageDialog`, the 480px dialog of `DESIGN.md`,
+    titled "Move usage", naming the entry's thread and its amount on each
+    account. A radio group picks the target: "To a portfolio item", with a
+    select of the read's items that are not archived, Others included,
+    each indented under its parent, its first option the item the usage
+    counts on when it is one; or "To a task", with a combobox over the
+    tasks of `GET /api/tasks`, read under the key the Board reads, each
+    as "<repository>#<number> <title>" with its bound Project as a muted
+    group label and the task's `actorId` as its value, filtered by the
+    typed text. "Move" (primary) is disabled until a target is chosen,
+    and sends `moveUsage({ from: entry.actor, to })`. A `moved` answer
+    closes the dialog, shows the success toast "Moved N calls to
+    <target>", the item's title or the task's reference, and marks
+    `["portfolio"]`, `["usage", "unowned"]`, and the tasks keys stale.
+    An answer of `moved` 0 shows the info toast "Nothing left to move.".
+    A refused answer keeps the dialog open with the message in an error
+    alert above the footer: for `unknown-actor`, "This task has not
+    started, so its usage cannot be counted yet."; for `invalid-target`,
+    the answer's message. A failed request shows the generic message in
+    the alert, and "Move" stays enabled for a retry, which converges as
+    `usage-api` states.
+  usage-client: >-
+    `src/api/usage.ts` exports `fetchUnownedUsage()` and
+    `moveUsage(request)`. They send `GET /api/usage/unowned` and `POST
+    /api/usage/moves` without authentication headers and turn the answer
+    into `ok` with the body, `refused` with the error and message of a
+    `422`, or `failed` with the API's message or a generic message for a
+    network error or a body that does not match. The mapping from a
+    status and a body to a result is a pure function, and the body is
+    checked at this boundary with the guards of
+    `@wyrd-company/manifold-shared/usage-api`.
   portfolio-edits: |-
     `src/screens/portfolio/edits.ts` holds the edits as data and one pure
     function that applies them to a text. It parses the text with the
@@ -2685,8 +2741,10 @@ proposed-design:
     `-2`, then its first 62 followed by `-3`, each a declared name of 64
     characters and unique; the draft functions as `tests` states them for the
     blueprint draft, and a draft's edits applied again to a later text;
-    `rows.ts` on a nested read with an archived item; and `findings.ts`
-    for a `guarantee-limit` at the top level and under an item. The
+    `rows.ts` on a nested read with an archived item; `findings.ts`
+    for a `guarantee-limit` at the top level and under an item; and the
+    usage client's result mapping for a `moved` answer, a `422`, and a
+    body that does not match. The
     browser test, `packages/service/src/portfolio-api/portfolio.browser.test.ts`,
     starts the service with the built console on a fixture process
     repository served over smart HTTP with push enabled, with accounts
@@ -2703,7 +2761,14 @@ proposed-design:
     and reads `alpha` at 70%
     with its new amount; and finds one new commit on the fixture remote
     whose `portfolio.yml` keeps the fixture's comment, and the read's
-    `commit` equal to it. The Board and Task page browser test checks the
+    `commit` equal to it. The fixture's store also holds a call of
+    `acct-a` under a thread no actor owns, on `beta`, and a task whose
+    actor runs on `alpha`. The test reads the thread in Unowned usage
+    with its amount and "Counts on beta"; moves it to `alpha` and reads
+    the toast, `alpha`'s lifetime cost up and `beta`'s down by the
+    amount, the card's used unchanged, and the row now counting on
+    `alpha`; then moves it to the task and reads the row gone and the
+    task page's actual including the amount. The Board and Task page browser test checks the
     estimate, actual, variance, and reserved of its settled task in
     dollars, such as `$0.0177`.
   environments-route: >-

@@ -12,6 +12,7 @@ terms:
   - call
   - late-attribution
   - state-visit
+  - usage-move
 description: >-
   Defines the tables the usage intake module holds in Manifold's store
   database. `docs/specifications/usage-tables.sql` is the machine-readable
@@ -20,8 +21,15 @@ description: >-
   creates is named `usage_<name>`. Its steps are applied by the store's
   `migrate("usage", steps)`; the module never runs DDL itself. This file
   is the schema all steps produce together. Step 1 creates every table,
-  index, and trigger here but those of `usage_late_attributions`, and
-  step 2 creates `usage_late_attributions`, its index, and its triggers.
+  index, and trigger here but those of `usage_reattributions` and the
+  view. Step 2 creates the late attributions table, which holds one row
+  per posting with the actor, item, visit, and time its session's
+  mapping gave, with its index and triggers. Step 3 creates
+  `usage_reattributions`, its indexes, its triggers, and the view
+  `usage_attributed_postings`, copies each late attribution row into
+  `usage_reattributions` in `seq` order as a row of cause `mapping`
+  with its posting, actor, item, visit, and time, and drops the late
+  attributions table.
   Steps are append-only: an applied step never changes, a change to the
   tables is a new step, and this file is rewritten to the schema all
   steps produce.
@@ -70,17 +78,29 @@ description: >-
   or `no-window`, or `posted` with its `account`, its `amount` in the
   account's unit, its `ledger_key`, and `posted_at`. A pending posting
   changes only to `posted`, to pending with another reason and account,
-  or, while its `actor` is its session's ledger actor, to the
-  attribution its session's mapping gives; a posted one never changes.
+  or, while its `actor` is a ledger actor of unowned usage, to the
+  attribution its session's mapping or its thread's ownership gives; a
+  posted one never changes.
 
-  Late attributions. `usage_late_attributions` holds, for a posted
-  posting whose session's mapping arrived after it posted under the
-  session's ledger actor, the `actor`, `item`, and `visit` that mapping
-  gives, and the time it was recorded. `seq` is the posting's. The
-  ledger keeps the posting's actual under the posting's own `actor` and
-  `item`; the module's actor usage read counts its amount for the late
-  attribution's actor instead. A trigger aborts every `UPDATE` and
-  `DELETE`.
+  Reattributions. `usage_reattributions` holds every reattribution of
+  a posted posting, in `seq` order: its `posting`, its `cause`, and the
+  `actor`, `item`, and `visit` it gives, with the time it was recorded.
+  A `mapping` row is the late attribution its session's mapping gives,
+  an `ownership` row the late attribution its thread's ownership gives,
+  and a `move` row an operator's usage move, whose `ledger_key` names
+  the ledger's reattribution operation; only a `move` row has one. A
+  row is written only while the posting's attribution names a ledger
+  actor of unowned usage, `thread:…` or `session:…`. A trigger aborts
+  every `UPDATE` and `DELETE`.
+
+  Attributed postings. The view `usage_attributed_postings` gives every
+  posting with `attributed_actor`, `attributed_item`, and
+  `attributed_visit`, those of its latest reattribution or its own;
+  `held_actor` and `held_item`, those of its latest `move` row or its
+  own, under which the ledger holds its actual; and `moves`, the number
+  of its `move` rows. The ledger keeps a posting's actual under its held
+  actor and item; the module's actor usage read counts its amount for
+  its attributed actor.
 
   Source errors. `usage_source_errors` holds the latest source error
   record of each code for each source of an environment.
@@ -93,6 +113,13 @@ validation-criteria: >-
   with the rows this file produces on a second empty database, with each
   run of whitespace in `sql` read as one space; they are equal. An
   `UPDATE` or `DELETE` on `usage_declarations` fails with its append-only
-  message, and so does one on `usage_late_attributions`. A posted
+  message, and so does one on `usage_reattributions`. A
+  `move` reattribution without a ledger key and a `mapping` one with
+  one each fail a CHECK constraint. The view answers, for a posting with
+  a `move` row followed by a `mapping` row, the `mapping` row's
+  attribution and the `move` row's actor and item as held. A database
+  at step 2 holding late attributions, migrated by step 3, holds each as
+  a `mapping` reattribution of its posting with the same actor, item,
+  visit, and time, in the same order. A posted
   posting without a ledger key, a pending posting without a reason, and an unaccounted posting with an account each fail
   a CHECK constraint.

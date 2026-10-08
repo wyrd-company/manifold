@@ -11,6 +11,7 @@ relationships:
     - bindings-declaration
     - service-assembly
     - declarations-api
+    - usage-api
 terms:
   - portfolio-item
   - allocation
@@ -23,6 +24,7 @@ terms:
   - window
   - reservation
   - actual
+  - usage-move
 description: >-
   Defines the portfolio endpoint of Manifold's API: the portfolio read,
   which answers the portfolio items with their allocations, the accounts
@@ -115,6 +117,11 @@ description: >-
   holds on the item and every item under it, in every window. An archived
   item has no allocation rows in force, so its `guarantee` and `amount`
   are 0 and `declared` is false.
+
+  An item's `actual` and `lifetime` count each call where the ledger
+  holds it: on the item it posted on, or, after a usage move of
+  `usage-api`, on the item it was moved to, in the window of its use. A
+  usage move changes no account's `window` or `used`.
 
   An `unallocated` entry holds `account`; `percent`, 100 less the
   guarantees of the parent's children for the account, archived children

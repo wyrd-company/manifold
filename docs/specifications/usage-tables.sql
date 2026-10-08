@@ -116,26 +116,54 @@ CREATE INDEX usage_postings_pending ON usage_postings (seq) WHERE status = 'pend
 
 CREATE INDEX usage_postings_by_actor ON usage_postings (actor, visit);
 
--- The late attribution of a posted posting: the actor, item, and visit
--- its session's mapping gives when the mapping arrives after the posting
--- posted under the session's ledger actor. The ledger keeps the posting's
--- actual where it posted; the actor usage read counts it for this actor.
-CREATE TABLE usage_late_attributions (
-  seq INTEGER PRIMARY KEY REFERENCES usage_postings (seq),
+-- The reattributions of a posted posting, in `seq` order: each attributes
+-- it again to the actor, item, and visit its cause gives. `mapping` and
+-- `ownership` are late attributions, which leave the posting's ledger
+-- entry where it posted; `move` is a usage move, whose ledger key names
+-- the ledger's reattribution operation that carried it.
+CREATE TABLE usage_reattributions (
+  seq INTEGER PRIMARY KEY,
+  posting INTEGER NOT NULL REFERENCES usage_postings (seq),
+  cause TEXT NOT NULL CHECK (cause IN ('mapping', 'ownership', 'move')),
   actor TEXT NOT NULL CHECK (length(actor) > 0),
   item TEXT NOT NULL CHECK (length(item) > 0),
   visit INTEGER,
-  attributed_at INTEGER NOT NULL
+  ledger_key TEXT UNIQUE,
+  recorded_at INTEGER NOT NULL,
+  CHECK ((cause = 'move') = (ledger_key IS NOT NULL))
 ) STRICT;
 
-CREATE INDEX usage_late_attributions_by_actor ON usage_late_attributions (actor);
+CREATE INDEX usage_reattributions_by_posting ON usage_reattributions (posting, seq);
 
-CREATE TRIGGER usage_late_attributions_no_update
-  BEFORE UPDATE ON usage_late_attributions
-  BEGIN SELECT RAISE(ABORT, 'usage_late_attributions is append-only'); END;
-CREATE TRIGGER usage_late_attributions_no_delete
-  BEFORE DELETE ON usage_late_attributions
-  BEGIN SELECT RAISE(ABORT, 'usage_late_attributions is append-only'); END;
+CREATE INDEX usage_reattributions_by_actor ON usage_reattributions (actor);
+
+CREATE TRIGGER usage_reattributions_no_update
+  BEFORE UPDATE ON usage_reattributions
+  BEGIN SELECT RAISE(ABORT, 'usage_reattributions is append-only'); END;
+CREATE TRIGGER usage_reattributions_no_delete
+  BEFORE DELETE ON usage_reattributions
+  BEGIN SELECT RAISE(ABORT, 'usage_reattributions is append-only'); END;
+
+-- Each posting with its attribution, from its latest reattribution or its
+-- own, and where the ledger holds it, from its latest move or its own.
+CREATE VIEW usage_attributed_postings AS
+SELECT
+  p.*,
+  CASE WHEN a.seq IS NULL THEN p.actor ELSE a.actor END AS attributed_actor,
+  CASE WHEN a.seq IS NULL THEN p.item ELSE a.item END AS attributed_item,
+  CASE WHEN a.seq IS NULL THEN p.visit ELSE a.visit END AS attributed_visit,
+  CASE WHEN m.seq IS NULL THEN p.actor ELSE m.actor END AS held_actor,
+  CASE WHEN m.seq IS NULL THEN p.item ELSE m.item END AS held_item,
+  (SELECT count(*) FROM usage_reattributions c
+    WHERE c.posting = p.seq AND c.cause = 'move') AS moves
+FROM usage_postings p
+LEFT JOIN usage_reattributions a ON a.seq = (
+  SELECT max(r.seq) FROM usage_reattributions r WHERE r.posting = p.seq
+)
+LEFT JOIN usage_reattributions m ON m.seq = (
+  SELECT max(r.seq) FROM usage_reattributions r
+  WHERE r.posting = p.seq AND r.cause = 'move'
+);
 
 -- The latest source error record of each code for each source.
 CREATE TABLE usage_source_errors (

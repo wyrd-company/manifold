@@ -20,6 +20,9 @@ relationships:
     - usage-record
     - host-cli-usage
     - tasks-api
+    - usage-api
+    - portfolio-api
+    - move-operator-usage-through-the-ledger
 terms:
   - actual
   - call
@@ -28,6 +31,8 @@ terms:
   - reservation
   - settlement
   - state-visit
+  - unowned-usage
+  - usage-move
   - usage-unit
   - variance
   - window
@@ -70,6 +75,14 @@ background:
       that read another T3 Code home, or ran before T3 Code recorded the
       session, sends calls with no mapping, and a later push that skips
       the unchanged sources sends no mapping for them.
+    - >-
+      A thread's ownership can reach the service after its calls: a push
+      can run between the moment a thread starts and the save in which
+      its actor lists it.
+    - >-
+      An operator runs threads outside Manifold. Their calls belong to no
+      actor, and only the operator knows which item or task they were
+      for.
 design-challenges:
   exactly-once: >-
     A record crosses a process boundary that either side can leave at any
@@ -86,6 +99,11 @@ design-challenges:
     once, so capacity stays right, but the ledger never moves an actual,
     so the task the mapping names must gain the call without a second
     charge.
+  re-attribution: >-
+    A posted call can be attributed again by its mapping, by its thread's
+    ownership, and by the operator, in any order, and each must count it
+    for one actor and on one item, against the account and window it
+    spent.
 proposed-design:
   high-level-overview: >-
     `manifold-host usage push` runs one decode on the environment and sends
@@ -101,9 +119,13 @@ proposed-design:
     An actor's save hook keeps the first two and settles the actor when it
     ends. A call that lacks an account, a price, or a ledger window waits
     as a pending posting and posts when the missing fact arrives. A call
-    whose mapping arrives after it is attributed then, by a late
-    attribution that the module's actor usage read counts. The
-    push protocol is `usage-push`, the declarations are
+    whose mapping, or whose thread's ownership, arrives after it is
+    attributed then, by a late attribution that the module's actor usage
+    read counts. The operator moves the unowned usage of threads opened
+    outside Manifold to an item or a task through `POST /api/usage/moves`,
+    and the ledger carries each moved call to its new item in the window
+    it spent. The push protocol is `usage-push`, the operator's reads and
+    moves are `usage-api`, the declarations are
     `accounts-declaration` and `price-table`, the tables are
     `usage-tables`, the command is `host-cli-usage`, and the evidence for
     the session-to-thread mapping is the `t3code-session-mapping` spike.
@@ -211,7 +233,13 @@ proposed-design:
     `push`, which commits before the listener answers 200 with the
     counts. A failure inside `push` rolls its transaction back and
     reports the error through the service log and answers 500. Nothing
-    past the listener validates the request again.
+    past the listener validates the request again. The same listener
+    serves `GET /api/usage/unowned` and `POST /api/usage/moves`, whose
+    answers `usage-api` defines: the first answers `unowned()`, and the
+    second reads a body of at most 64 KiB, checks it with
+    `isUsageMoveRequest`, the shared guard of the request schema in
+    `usage-api.openapi.yml`, and answers `move`. The operator's console
+    calls both.
   push-transaction: >-
     `push` runs in one `connection.transaction`. It records each mapping
     first, then gives each mapping of the request its late attribution,
@@ -248,19 +276,42 @@ proposed-design:
     `other` when the T3 Code environment source holds no project for the
     thread, under the ledger actor `thread:<environment>:<thread id>`. A
     call whose session has no mapping posts on `other` under the ledger
-    actor `session:<environment>:<provider>:<provider session id>`. The
-    attribution is fixed when the posting is made, except that the
-    session's mapping, when it arrives later, attributes the posting
-    again as `late-attribution` states. The ledger actors of unowned
-    usage take actuals only and are never settled, so an operator can
-    later move their usage to an item or a task.
+    actor `session:<environment>:<provider>:<provider session id>`. These
+    two kinds of ledger actor are the ledger actors of unowned usage. The
+    attribution is fixed when the posting is made. A posted posting is
+    attributed again only by a reattribution, as `reattributions` states:
+    the session's mapping that arrives later, the thread's ownership that
+    arrives later, or the operator's move. The ledger actors of unowned
+    usage take actuals and reattributions only and are never settled.
+  reattributions: >-
+    A reattribution is one row that attributes a posted posting again,
+    with its cause, `mapping`, `ownership`, or `move`, and the actor,
+    item, and visit it gives. A posting's rows are never changed and are
+    ordered by their own sequence. The posting's attribution is that of
+    its latest reattribution, or its own when it has none; it says whose
+    usage the call is. Where the ledger holds the posting is the actor
+    and item of its latest `move` reattribution, or its own actor and item
+    when it has none; it says on which item balances count the call. A
+    reattribution of cause `mapping` or `ownership` is a late
+    attribution: it changes whose usage the call is and leaves where the
+    ledger holds it. A reattribution of cause `move` is a usage move: it
+    changes both, and the ledger records the change of actor and item as
+    a reattribution operation, as `usage-moves` states. No reattribution
+    changes the posting's account, amount, or `used_at`, so the window
+    the call counts in and the account's capacity stay as posted. A
+    posting is attributed again only while its attribution names a
+    ledger actor of unowned usage, so a call attributed to an actor's id
+    stays that actor's. A pending posting takes no reattribution: it has
+    counted against nothing, so it takes the new actor, item, and visit
+    in place and posts under them.
   late-attribution: >-
     After `push` records the mappings of a request, it takes, for each
     mapping, the session's mapping the service holds, which is the
     request's unless an earlier one conflicts, and finds the postings of
-    that session made without a mapping: those under the ledger actor
-    `session:<environment>:<provider>:<provider session id>` that have no
-    late attribution, in `seq` order. It attributes each by `attribution`
+    that session made without a mapping: those whose attribution is the
+    ledger actor
+    `session:<environment>:<provider>:<provider session id>`, in `seq`
+    order. It attributes each by `attribution`
     with that mapping, the thread's actor and its visits, and the thread's
     T3code project, as they stand in the transaction: the same reads a
     new posting makes. A pending posting has no ledger entry, so it takes
@@ -269,46 +320,123 @@ proposed-design:
     provider instance, and when it posts, the ledger holds it under the
     task's actor and item, where it consumes the actor's hold as any
     actual does. A posted posting keeps its ledger entry, its account,
-    its amount, and its window, since the ledger moves no actual. Its new
-    actor, item, and visit are recorded as its late attribution, one row
-    per posting that is never changed. So what a posted call counts
-    against before its mapping arrives does not change: the account and
-    window of its actual, which capacity reads, and the item `other`,
-    which balances read. Its late attribution changes only whose usage
-    the call is, which `actor-usage` reads. A pending call has counted
-    against nothing, so it is charged once, when it first posts, under
-    the mapping's attribution. A mapping replayed or sent again finds
-    no posting left under the session's ledger actor without a late
-    attribution, and writes nothing. A mapping for a session with no held
-    calls finds none. Postings made after the mapping is held are
-    attributed by it when they are made, and need none.
+    its amount, and its window, and where the ledger holds it. Its new
+    actor, item, and visit are recorded as a reattribution of cause
+    `mapping`. So what a posted call counts against before its mapping
+    arrives does not change: the account and window of its actual, which
+    capacity reads, and the item the ledger holds it on, which balances
+    read. Its late attribution changes only whose usage the call is,
+    which `actor-usage` reads. A pending call has counted against
+    nothing, so it is charged once, when it first posts, under the
+    mapping's attribution. A mapping replayed or sent again finds no
+    posting whose attribution is still the session's ledger actor, and
+    writes nothing. A mapping for a session with no held calls finds
+    none. Postings made after the mapping is held are attributed by it
+    when they are made, and need none.
   actor-usage: >-
     `actorUsage(actor)` answers in the shape of `ledger.actorUsage`, and
-    starts from it. It adds to the actual of each account the amounts of
-    the posted postings whose late attribution names the actor, subtracts
-    the amounts of the posted postings whose ledger actor is the actor
-    and that have a late attribution, and sets each variance to the
-    actual less the estimate. An account the actor gains only through
-    late attributions appears with estimate 0 and outstanding 0, after
-    the ledger's accounts, in account name order. The estimate, the
-    outstanding reservation, and `settled` are the ledger's: a late
-    attribution consumes no hold, so a running actor's hold stays
-    outstanding on its item until the actor settles, as the ledger holds
-    it. The same read serves a running and a settled actor, and the
-    ledger actors of unowned usage. The tasks read model's `actorUsage`
-    is this read, so `GET /api/tasks/{actorId}` shows the task's usage
-    with its late calls. The read writes nothing.
+    starts from it. The ledger already counts each usage move under the
+    actor it moved the call to. For each posted posting whose attribution
+    names another actor than the one the ledger holds it under, it adds
+    the posting's amount to the actual of its account for the actor its
+    attribution names, and subtracts it for the actor the ledger holds it
+    under; then it sets each variance to the actual less the estimate. An
+    account the actor gains only through late attributions appears with
+    estimate 0 and outstanding 0, after the ledger's accounts, in account
+    name order. The estimate, the outstanding reservation, and `settled`
+    are the ledger's: neither a late attribution nor a usage move
+    consumes a hold, so a running actor's hold stays outstanding on its
+    item until the actor settles, as the ledger holds it. The same read
+    serves a running and a settled actor, and the ledger actors of
+    unowned usage. The tasks read model's `actorUsage` is this read, so
+    `GET /api/tasks/{actorId}` shows the task's usage with its late and
+    moved calls. The read writes nothing.
   thread-ownership: >-
     The module's save hook runs inside every snapshot save, as the actor
     host's save hooks do. It reads `context.manifold` from the snapshot,
     narrowing each member to a string, or to a list of strings for
     `threads`, and ignoring a member of another type. It writes the
-    actor's row with its environment and portfolio item. For each thread
-    in `threads`, when the actor has an environment, it inserts the
-    ownership of that environment and thread unless a row for them
-    exists, so the first actor to list a thread owns it. A mapping
-    recorded for a thread and an ownership recorded for it may arrive in
-    either order; attribution reads both when a posting is made.
+    actor's row with its environment and portfolio item, then its state
+    visit as `state-visits` states. For each thread in `threads`, when
+    the actor has an environment, it inserts the ownership of that
+    environment and thread unless a row for them exists, so the first
+    actor to list a thread owns it. A mapping recorded for a thread and
+    an ownership recorded for it may arrive in either order; attribution
+    reads both when a posting is made.
+  ownership-attribution: >-
+    When the save hook inserts an ownership, it attributes the postings
+    whose attribution is the thread's ledger actor
+    `thread:<environment>:<thread id>`, in `seq` order, to the actor by
+    `attribution`, with the actor's item from the row the save just
+    wrote, the thread's T3code project, and the actor's visits, as they
+    stand in the save's transaction. A pending posting takes the actor,
+    item, and visit in place and is resolved again as `posting` states,
+    so it posts under the actor and consumes its hold. A posted posting
+    gets a reattribution of cause `ownership`. The postings include those
+    the thread's ledger actor holds from a late attribution of cause
+    `mapping` and those an operator moved to an item while they stayed
+    the thread's, and none an operator moved to a task. The writes run
+    in the save's transaction, so the ownership and its attributions
+    commit together or not at all. A save that finds the ownership
+    already held inserts nothing and attributes nothing. Whether the
+    actor is running or has ended, its actual and variance count the
+    calls through `actor-usage`.
+  usage-moves: >-
+    `move({ from, to })` moves the unowned usage of one ledger actor
+    `from`, `thread:…` or `session:…`, to a portfolio item, `to: { item
+    }`, or to an actor, `to: { actor }`. It runs in one
+    `connection.transaction`. The target is an actor and an item: for an
+    item, the ledger actor `from` itself and that item, so the usage
+    stays the thread's or the session's and counts on the item; for an
+    actor, the actor and its item from the module's actor row, else
+    `other`. An actor id that is a ledger actor of unowned usage, or that
+    the module holds no row for, is refused with `unknown-actor` before
+    any write. The move takes, in `seq` order, the posted postings whose
+    attribution is `from`, and skips each the ledger already holds under
+    the target's actor and item. For each, it calls `ledger.reattribute`
+    with key `usage-move:<posting seq>:<n>`, where `n` counts the
+    posting's `move` reattributions from 1, the posting's account,
+    amount, and `used_at`, `from` the actor and item the ledger holds it
+    under, and `to` the target. Then it records a reattribution of cause
+    `move` with the target's actor and item, the visit the call's time
+    falls in among the actor's visits for an actor target and none for an
+    item target, and the ledger key. A ledger `invalid-input` error for
+    the target item, an item the portfolio does not hold or has
+    archived, rolls the whole move back and is answered as
+    `invalid-target`. Any other ledger error fails the move. The move
+    answers how many postings it moved and the amount per account. A
+    pending posting is not moved: it has counted against nothing, and
+    once it posts it is unowned usage that a later move takes. A move
+    that finds nothing to move writes nothing and answers 0. After a
+    move that moved a posting, the service tells the gates their input
+    changed, as it does after an actual. An actor target may be running
+    or settled: the ledger takes a reattribution onto a settled actor as
+    it takes an actual.
+  balances: >-
+    Balances read a moved call where the ledger holds it. The ledger's
+    reattribution operation writes the call's amount as two entries in
+    the window that holds its `used_at`, negative on the item it left and
+    positive on the item it moved to, and every balance read counts them
+    with the actuals. So a moved call leaves its old item's `actual`,
+    `available`, `reservable`, and `lifetime` and counts in its new
+    item's, in the window it spent; the account's window, its `used`, and
+    its capacity do not change, since the two entries cancel in the
+    window. A late-attributed call, by its mapping or by its thread's
+    ownership, counts on the item it posted on. Item balances follow the
+    operator's moves, and whose usage a call is follows every
+    reattribution.
+  unowned-usage: >-
+    `unowned()` answers the unowned usage: every ledger actor of unowned
+    usage that some posted posting's attribution names or some pending
+    posting is under. For each it gives the ledger actor, its kind,
+    `thread` or `session`, its environment, its thread id or its provider
+    and provider session id, for a thread the T3code project and the
+    title the T3 Code environment source holds for it, the time of its
+    latest call, how many of its postings are pending, and its posted
+    usage grouped by the item the ledger holds each posting on and its
+    account: the amount and the number of postings. Ledger actors are
+    ordered by their latest call, newest first; groups by item, then
+    account. The read writes nothing.
   state-visits: >-
     A state visit is one run of an actor's saves with the same state
     value. The save hook compares the canonical JSON of the snapshot's
@@ -409,13 +537,20 @@ proposed-design:
     ledger, the portfolio, and the T3 Code environment source through the
     structural members it uses, as the ledger takes `LedgerConnection`.
     `index.ts` holds the public surface. `usage.ts` holds `openUsage`,
-    `listener.ts` the endpoint, `push.ts` the push transaction and its
-    late attribution, `actor-usage.ts` the actor usage read,
+    `listener.ts` the endpoints, `push.ts` the push transaction and its
+    late attribution, `moves.ts` the move transaction, `unowned.ts` the
+    unowned usage read, `actor-usage.ts` the actor usage read,
     `attribution.ts` and `pricing.ts` pure functions, `hooks.ts` the save
-    hook, and `migrations.ts` the steps. Step 1 creates every table of
-    `docs/specifications/usage-tables.sql` but `usage_late_attributions`,
-    and step 2 creates `usage_late_attributions`, its index, and its
-    triggers, so the steps together produce that file's schema.
+    hook and its ownership attribution, and `migrations.ts` the steps.
+    Step 1 creates the declarations, sessions, actors, threads, visits,
+    calls, postings, and source errors tables with their indexes and
+    triggers. Step 2 creates the late attributions table, one row per
+    posting, with its index and triggers. Step 3 creates
+    `usage_reattributions`, its indexes, its triggers, and the view
+    `usage_attributed_postings`, copies each late attribution row into it
+    as a reattribution of cause `mapping` in `seq` order, and drops the
+    late attributions table. The steps together produce the schema of
+    `docs/specifications/usage-tables.sql`.
 
     ```ts
     /** Migration steps for owner `usage`, applied by the store's migrate. */
@@ -437,9 +572,10 @@ proposed-design:
 
     export function openUsage(options: {
       connection: LedgerConnection;
-      ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage">;
+      ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage" | "reattribute">;
       portfolio: Pick<Portfolio, "t3codeProject">;
       threadProject(environment: string, threadId: string): string | undefined;
+      threadTitle(environment: string, threadId: string): string | undefined;
       environments: ReadonlySet<string>;
       now?: () => number; // defaults to Date.now
     }): Usage;
@@ -453,7 +589,13 @@ proposed-design:
       accounts(): UsageDeclaration["accounts"];
       /** The ledger's actor usage, with the actor's late attributions counted. */
       actorUsage(actor: string): LedgerActorUsage;
+      move(request: UsageMoveRequest): UsageMoveResult;
+      unowned(): UsageUnownedResponse;
     }
+
+    export type UsageMoveResult =
+      | UsageMoveResponse
+      | { status: "refused"; error: "unknown-actor" | "invalid-target"; message: string };
 
     export type UsageApplyResult =
       | { status: "applied"; commit: string }
@@ -475,7 +617,17 @@ proposed-design:
     `threadProject` reads the T3code project id the T3 Code environment
     source holds for a thread; the T3 Code environment source exports it
     from its `index.ts` as `readThreadProject(connection, environment,
-    threadId)`, a read of `t3_thread.project_id`.
+    threadId)`, a read of `t3_thread.project_id`. `threadTitle` reads the
+    thread's title the same way, exported as `readThreadTitle(connection,
+    environment, threadId)`, a read of `$.title` in `t3_thread.thread`.
+    `UsageMoveRequest` is the body of `POST /api/usage/moves`,
+    `UsageMoveResponse` its 200 body with `status: "moved"`, and
+    `UsageUnownedResponse` the 200 body of `GET /api/usage/unowned`, as
+    `usage-api` defines them; `packages/shared/src/usage-api.ts` exports
+    their types, the paths, and the guards the console reads with, under
+    the subpath `@wyrd-company/manifold-shared/usage-api`. The service's
+    usage wiring part passes the ledger's `reattribute` wrapped as it
+    wraps `postActual`, so a move tells the gates their input changed.
 
     The host module is `packages/host-cli/src/usage-push/`. Its
     `index.ts` exports `runUsagePush(args, io)`, which `runUsageCommand`
@@ -513,23 +665,35 @@ proposed-design:
     writes once. The save hook run twice for one save inserts no second
     visit and no second ownership, and `ledger.settle` retires nothing the
     second time. `retryPending` twice posts each pending posting at most
-    once, by its ledger key. A late attribution is one row per posting,
-    and a posting that has one, or that took its attribution in place
-    while pending, is no longer under its session's ledger actor without
-    one, so a session's postings are attributed once whichever of the
-    posting and the mapping arrives first, and the ledger receives no
-    second actual. A store that holds calls under a session's ledger
-    actor while it already holds the session's mapping is attributed
-    when that mapping arrives again, which a host with no mapping
-    acknowledgements sends on its first run. A crash inside any of these
-    rolls its
+    once, by its ledger key. Every reattribution takes only postings
+    whose attribution still names the ledger actor it attributes from,
+    and changes that attribution in the same transaction, so a posting
+    that has one, or that took its attribution in place while pending,
+    is not found again: a session's postings are attributed once
+    whichever of the posting and the mapping arrives first, and the
+    ledger receives no second actual. A store that holds calls under a
+    session's ledger actor while it already holds the session's mapping
+    is attributed when that mapping arrives again, which a host with no
+    mapping acknowledgements sends on its first run. An ownership and its
+    attributions commit in the save's transaction, so a crash leaves both
+    or neither, and the next save that lists the thread inserts the
+    ownership and attributes the postings then; a save that finds the
+    ownership held attributes nothing. A move and each of its ledger
+    reattributions commit together, so a crash after the first posting's
+    rows are written and before the commit leaves none of them; the same
+    move sent again moves each posting once, and a third time finds
+    nothing left whose attribution is `from` that the ledger does not
+    already hold under the target, and answers 0. A ledger
+    reattribution is keyed by its posting and the posting's move number,
+    so it is written once. A crash inside any of these rolls its
     transaction back whole.
   tests: |-
     Service tests live in `packages/service/src/usage/usage.test.ts` and
     drive `openUsage`, its listener on an HTTP server the test opens, and
     a `Ledger` on the same database file, which each test opens in a
     temporary directory. Values are generic: environment `env-one`,
-    account `acct`, items `alpha` and `beta`, actor `actor-1`, threads
+    account `acct`, items `alpha` and `beta`, and `gamma` archived,
+    actors `actor-1` on `alpha` and `actor-2`, threads
     `thread-1` and `thread-2`, sessions `session-1` to `session-3`,
     T3code project `t3-project-1` bound to `beta`, model `model-a` priced
     at 2 USD per million input tokens and 8 per million output tokens,
@@ -619,6 +783,77 @@ proposed-design:
       in `t3-project-1`, gives a held call a late attribution to
       `thread:env-one:thread-2` on `beta`.
 
+    - Late ownership, posted: `actor-1` reserves 10 on `alpha`; a call on
+      `session-1` mapped to `thread-1`, which no actor owns yet, in
+      `t3-project-1`, priced 15, posts on `beta` under
+      `thread:env-one:thread-1`; a save of `actor-1` listing `thread-1`
+      gives it a reattribution of cause `ownership` in the visit its
+      timestamp falls in. `actorUsage("actor-1")` reads estimate 10,
+      actual 15, variance 5, and outstanding 10; the thread's ledger
+      actor reads actual 0; `beta`'s balance and the window's actual are
+      what they were before the save. The same save again writes
+      nothing.
+
+    - Late ownership, pending: a call on `model-b` under
+      `thread:env-one:thread-1` waits `unpriced`; the save of `actor-1`
+      listing `thread-1` gives it `actor-1` and `alpha` in place; after a
+      revision prices `model-b`, it posts to `actor-1` on `alpha`, where
+      the ledger's own `actorUsage("actor-1")` holds it and it consumes
+      the hold.
+
+    - Late ownership, settled: as the posted case, with `thread-1` first
+      listed in a save with status `done`; the ownership, its
+      attribution, and the settlement commit together, and the actual and
+      variance include the call with `settled` true.
+
+    - Late ownership after late mapping: a call on unmapped `session-3`
+      posts on `other`; its mapping to `thread-1`, which no actor owns,
+      gives it a reattribution of cause `mapping` to
+      `thread:env-one:thread-1` on `beta`; the save of `actor-1` listing
+      `thread-1` gives it one of cause `ownership`. `actor-1`'s actual
+      counts it once, the session's and the thread's ledger actors read
+      0, and `other` keeps it in its balance.
+
+    - Move to an item: a call on `session-2` mapped to `thread-2`, which
+      no actor owns, priced 15, posts on `beta`; a move of
+      `thread:env-one:thread-2` to `alpha` answers 1 moved and 15 on
+      `acct`; the ledger's balance of `alpha` has actual 15 more and
+      `beta`'s 15 less in the call's window, the account's `used` is
+      unchanged, and `lifetime` moves with it. `unowned()` lists the
+      thread's ledger actor with 15 on `alpha`. The same move again
+      answers 0 and writes nothing.
+
+    - Move to a task: `actor-1` reserves 10 on `alpha`; the call of the
+      previous case, still on `beta`, moves to `actor-1`, which answers 1
+      moved; `actorUsage("actor-1")` reads actual 15, variance 5, and
+      outstanding 10; `alpha` holds the call; `unowned()` no longer lists
+      the thread. A later save of `actor-2` listing `thread-2` attributes
+      nothing. With `actor-1` settled before the move, the move reads the
+      same with `settled` true.
+
+    - Move refused: a move to `gamma`, to an item the portfolio does not
+      hold, to `actor-3`, which the module holds no row for, or to
+      `session:env-one:codex:session-3` is refused and writes nothing; a
+      pending posting under the ledger actor stays there.
+
+    - Move then mapping: unmapped `session-3`'s call, moved to `alpha`
+      while unmapped, stays the session's on `alpha`; its mapping to
+      `thread-1`, owned by `actor-1`, gives it a reattribution of cause
+      `mapping` to `actor-1`; `alpha` keeps it, and `actor-1`'s actual
+      counts it.
+
+    - Reads: on one store, the usage module, the portfolio module and its
+      ledger, the tasks read model with `actorUsage` from the usage
+      module and the tracked issue and snapshot stand-ins of the tasks
+      tests, and the portfolio read, with the tasks, portfolio, and usage
+      listeners mounted on one HTTP host. After a late ownership and
+      after a move of another thread's usage to the task, `GET
+      /api/tasks/{actorId}` answers the actual and variance that include
+      both, for a running actor and again after it settles; `GET
+      /api/portfolio` answers the moved call in the target item's
+      `actual` and `lifetime` and not in its old item's, the late-owned
+      call on the item it posted on, and the account's `used` as before.
+
     - Task read: on one store, the usage module, a `Ledger`, and the tasks
       read model with `actorUsage` from the usage module and the tracked
       issue and snapshot stand-ins of the tasks tests. Calls pushed with
@@ -636,6 +871,10 @@ proposed-design:
 
     - Endpoint: an invalid record answers 400 and writes nothing; an
       unknown environment answers 422; a body above 8 MiB answers 413.
+      A move body that does not validate answers 400, a refused move
+      answers 422 with its error, a move body above 64 KiB answers 413,
+      and `GET /api/usage/unowned` answers a body that validates against
+      `usage-api.openapi.yml`.
 
     - Hook convergence: the same save twice leaves one visit, one
       ownership, and one settlement.
@@ -654,6 +893,25 @@ proposed-design:
     after a batch is acknowledged and before its push state is written,
     and runs it again. Every call key is posted once, and the actuals
     equal those of one uninterrupted push.
+
+    The reattribution recovery test lives in
+    `packages/service/src/usage/reattribution-recovery.test.ts`. Its
+    fixture service process opens the store with a connection whose
+    `prepare` the fixture wraps: after the first statement that inserts
+    into `usage_reattributions` runs, it writes a line and blocks the
+    process inside the open transaction. The fixture mounts the usage
+    listener and a fixture-only route that calls `usage.saveHook` with a
+    snapshot the test sends. The test pushes two calls of `thread-2` with
+    their mapping, then posts a move of `thread:env-one:thread-2` to
+    `alpha`; on the line it kills the fixture with `SIGKILL`, restarts it
+    on the same file with no wrapper, and finds no reattribution and no
+    ledger reattribution operation. The same move answers 2 moved, the
+    ledger holds one reattribution operation per posting, and a third
+    answers 0. It then pushes two calls of `thread-1` with their mapping,
+    sends a save of `actor-1` listing `thread-1` through the wrapped
+    fixture, kills it on the line, restarts it, and finds no ownership
+    of `thread-1` and no reattribution of its postings; the same save
+    again attributes each posting once, and a third attributes nothing.
 
     Host tests in `packages/host-cli/src/usage-push/` drive
     `runUsagePush` against a test HTTP server and a T3 Code database the

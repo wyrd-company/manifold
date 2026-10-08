@@ -1,0 +1,10 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - usage-intake
+    - usage-api
+title: Unowned usage
+description: >-
+  The posted calls attributed to a thread that no actor owns, or to a provider session whose thread the service does not know.

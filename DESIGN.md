@@ -575,6 +575,36 @@ project". The confirm button is solid error.
 item. A new item starts at 0%. The item's id, made from the name, shows
 under the Name field in muted mono and never changes.
 
+#### Unowned usage
+
+Under the table and the archived list, an "Unowned usage" section lists
+the usage of threads no task owns: threads an operator opened outside
+Manifold, and sessions whose thread is unknown. A muted line under the
+heading reads "Usage from threads no task owns. Move it to the item or
+task it was for."
+
+- Columns: Thread (the thread's title, or "Untitled thread", with a muted
+  mono line of the environment and thread id; "Unmapped session" with the
+  environment, provider, and session id for a session), Counts on (the
+  items whose usage includes it), Amount (for the selected account, with
+  "N calls" muted under it and a muted "N pending" badge while calls wait
+  for a price, an account, or a window), Last used ("about 2 hours ago"),
+  and a "Move" button (outline, small).
+- The first 20 rows show, newest first; "Show all (N)" shows the rest.
+  With nothing to list, the section shows only the muted line "No unowned
+  usage."
+
+"Move" opens a 480px "Move usage" dialog that names the thread and its
+amount per account. A radio group picks "To a portfolio item", with a
+select of the live items indented under their parents, Others included,
+or "To a task", with a searchable list of the bound Projects' tasks as
+"repository#number title", grouped by Project. "Move" (primary) is
+disabled until a target is chosen. A move keeps each call's account,
+amount, and window, so the budget cards do not change; the item's usage
+and lifetime cost, or the task's actual, take the calls at once. A
+success toast reads "Moved N calls to <target>". A refusal shows its
+message in an error alert above the footer and keeps the dialog open.
+
 ### Task page
 
 One task: a GitHub issue and everything Manifold knows about it. It opens from

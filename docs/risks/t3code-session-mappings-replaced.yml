@@ -8,6 +8,7 @@ title: A thread's provider session is replaced before a usage push reads its map
 relationships:
   related-to:
     - usage-intake
+    - usage-api
     - t3code-session-mapping
     - task-usage-unattributable
 
@@ -22,12 +23,10 @@ description: >-
   the task. They still count against their account and window, so
   capacity stays right; only the task's actual and variance miss them. The
   window opens at a session's first call and closes at the first push
-  that runs while T3 Code still holds that session's mapping. A related
-  gap: a call posted after its mapping arrives but before the thread's
-  actor saves its ownership of the thread posts under
-  the ledger actor `thread:<environment>:<thread id>` on the item of the
-  thread's T3code project, not to the task, and a later ownership does not
-  move it.
+  that runs while T3 Code still holds that session's mapping. The
+  session's calls stay unowned usage under the ledger actor
+  `session:<environment>:<provider>:<provider session id>` until an
+  operator moves them.
 
 categories:
   - technical
@@ -42,6 +41,6 @@ status: open
 # Acceptance: a push on a timer, as the operator setup guide shows every ten
 # minutes, narrows the window to one push interval, and the late attribution
 # of a mapping that arrives after its calls covers every session whose
-# mapping T3 Code still holds. The ownership gap is accepted on the same
-# terms: its calls count against their account and window, on the item of
-# the thread's T3code project rather than the task's.
+# mapping T3 Code still holds. The calls of a session whose mapping was
+# replaced show on the Portfolio screen as unowned usage, and the operator
+# moves them to their task or item there.

@@ -3,6 +3,11 @@ relationships:
   related-to:
     - portfolio
     - gates
+    - usage-intake
+  # GAP-EDGE: the technical-design schema declares no edge to a decision
+  # record; `references` is the best fit.
+  references:
+    - move-operator-usage-through-the-ledger
 terms:
   - actual
   - allocation
@@ -16,15 +21,16 @@ terms:
   - reservation
   - settlement
   - unallocated-remainder
+  - usage-move
   - variance
   - weight
   - window
 objective: >-
   Build the portfolio ledger as one module behind one interface in
   `packages/service`, so that a gate can read what a portfolio item could
-  reserve now, usage and reservations post as they happen, settlement and
-  move keep every balance right, and every write converges when it runs
-  twice or after a crash.
+  reserve now, usage and reservations post as they happen, settlement,
+  move, and reattribution keep every balance right, and every write
+  converges when it runs twice or after a crash.
 background:
   current-design: >-
     The portfolio design states the ledger, the sharing rule, available
@@ -146,6 +152,14 @@ proposed-design:
         to: string;
         waiting: readonly string[];
       }): LedgerMoveResult;
+      reattribute(request: {
+        key: string;
+        account: string;
+        amount: number;
+        usedAt: number;
+        from: { actor: string; item: string };
+        to: { actor: string; item: string };
+      }): LedgerWriteResult;
       settle(request: { actor: string }): LedgerSettleResult;
       balance(query: { item: string; account: string; waiting: readonly string[] }): LedgerBalance;
       actorUsage(actor: string): LedgerActorUsage;
@@ -178,7 +192,7 @@ proposed-design:
     export type LedgerBalance = {
       window: string | null; // the account's current window; null before its first credit
       allocation: number; // the item's guarantee amount in the window
-      actual: number; // actuals in the window, item and its sub-items
+      actual: number; // actuals and reattributions in the window, item and its sub-items
       outstanding: number; // outstanding reservations, item and its sub-items
       available: number; // allocation - actual - outstanding; may be negative
       reservable: number; // the sharing rule's answer: what the item could reserve now
@@ -187,7 +201,7 @@ proposed-design:
     export type LedgerTotals = {
       window: LedgerWindow | null; // the account's current window at now(); null before its first credit
       used: number; // actuals in that window plus outstanding reservations, on every item
-      items: { item: string; lifetime: number }[]; // actuals in every window, per item, item alone
+      items: { item: string; lifetime: number }[]; // actuals and reattributions in every window, per item, item alone
     };
 
     export type LedgerActorUsage = {
@@ -276,13 +290,19 @@ proposed-design:
     hold that exists when it is posted, so usage posted before a hold
     arrives never consumes it. The net reservation, the sum of `reserve`,
     `move`, and `settle` entries, is never less than the outstanding
-    reservation. This makes available balance
+    reservation. A `reattribute` entry counts in the window that holds
+    its `usedAt`, as an actual does, and leaves the outstanding
+    reservation as it is. The usage of an actor or an item in a window,
+    which every read and the sharing rule count as its actual, is the
+    sum of its `actual` and `reattribute` entries in that window; its
+    lifetime is that sum over every window. This makes available balance
     allocation less usage counted as it arrives: a reservation holds its full
     amount until posted usage consumes it, usage beyond it reduces the
     balance further, and once every actor has settled the balance is
     allocation less settled actuals.
   idempotency: >-
-    `credit`, `reserve`, `postActual`, and `move` carry a caller key. The
+    `credit`, `reserve`, `postActual`, `move`, and `reattribute` carry a
+    caller key. The
     first call inserts a `ledger_operations` row with the key, the kind, and
     the canonical JSON of the request (keys sorted, `waiting` sorted), then
     its entries. A later call with the same key and an equal request writes
@@ -329,6 +349,24 @@ proposed-design:
     Posted actuals stay on `from`. Later actuals are posted to `to` by the
     caller. `from` equal to `to`, or `to` not in the portfolio or archived,
     throws `invalid-input`.
+  reattribute: >-
+    Carries a posted actual's amount from one actor and item to another
+    in the window that holds `usedAt`: one `reattribute` entry of
+    `-amount` for `from` and one of `+amount` for `to`, under one
+    operation. The account's usage in the window, the sum over every
+    item, does not change, so neither does its capacity, its `used`, or
+    any other window. The `from` item loses the amount from its actual
+    and lifetime and the `to` item gains it, so balances and the sharing
+    rule read the amount on `to` and its ancestors. The `from` actor's
+    actual loses the amount and the `to` actor's gains it; the estimate
+    and the outstanding reservation of each stay, since a reattribution
+    consumes no hold. The `to` actor may be settled: like an actual, a
+    reattribution onto a settled actor counts at once. The ledger does
+    not check that `from` holds the amount; the caller reattributes only
+    an actual it posted, from where the ledger holds it. It throws
+    `invalid-input` for an amount below 1, a `to` item the portfolio does
+    not hold or has archived, and `from` equal to `to`, and `no-window`
+    for a `usedAt` before the account's first window.
   settle: >-
     Inserts the actor into `ledger_settlements` unless it is there, then,
     for each item and account where the actor's net reservation is above 0,
@@ -354,7 +392,7 @@ proposed-design:
   actor-usage-read: >-
     `actorUsage` returns, per account the actor has entries in, the
     estimate (sum of its `reserve` entries), the actual (sum of its `actual`
-    entries in every window and item), the variance (actual less estimate),
+    and `reattribute` entries in every window and item), the variance (actual less estimate),
     and the outstanding reservation summed over items; and whether the actor
     is settled.
   totals-read: >-
@@ -363,8 +401,9 @@ proposed-design:
     outstanding reservation on any item, live, archived, or not held by
     the portfolio, which is the capacity less the account's unspent
     capacity of `sharing-rule`, and, for each item the ledger holds an
-    `actual` entry for, `lifetime`, the sum of that item's own actuals in
-    every window, ordered by item id. Before the account's first credit,
+    `actual` or `reattribute` entry for, `lifetime`, the sum of that
+    item's own `actual` and `reattribute` entries in every window,
+    ordered by item id. Before the account's first credit,
     `window` is null and `used` counts outstanding reservations only. It
     writes nothing.
   sharing-rule: |-
@@ -433,8 +472,8 @@ proposed-design:
     ceiling, `R` is 0 up to rounding and the rule is a fixed split.
   convergence: >-
     Every write runs in one transaction, so a crash leaves it wholly written
-    or not at all. Running a write twice: credit, reserve, actual, and an
-    accepted move replay by key and write nothing; a refused move writes
+    or not at all. Running a write twice: credit, reserve, actual,
+    reattribute, and an accepted move replay by key and write nothing; a refused move writes
     nothing and asks again; settle finds nothing left to retire. Construction
     and `setPortfolio` write nothing. Migration convergence belongs to the
     store's `migrate`.
@@ -449,6 +488,13 @@ proposed-design:
     `index.ts` exports the public surface. `ledger.ts` holds `createLedger`
     and its SQL statements. `migrations.ts` holds `ledgerMigrationSteps`, an
     array of SQL strings whose step 1 is the script of
+    `docs/specifications/portfolio-ledger-tables.sql` as first written, and
+    whose step 2 rebuilds `ledger_operations` and `ledger_entries` with the
+    `reattribute` kind: for each table it renames the table aside, creates
+    it under its own name with the new constraints, copies every row with
+    its `seq` or key, drops the renamed table, whose indexes and triggers
+    go with it, and creates the table's indexes and triggers again. The
+    steps together produce the schema of
     `docs/specifications/portfolio-ledger-tables.sql`. `sharing-rule.ts` and
     `balance.ts` hold the pure computations. `parseLedgerPortfolio`,
     `LedgerError`, `LedgerErrorCode`, `LedgerPortfolio`, and
@@ -575,6 +621,29 @@ proposed-design:
       `totals` at 1500 answers `w2` with capacity 100, `used` 25, and
       lifetimes 15 for `alpha` and 4 for `beta`; after `setPortfolio`
       drops `beta`, `used` is still 25.
+
+    - Reattribute: `alpha` and `beta` at 50%; `actor-1` posts 20 on
+      `alpha` in `w1` and `actor-2` reserves 10 on `beta`; a
+      reattribution of 20 from `actor-1` on `alpha` to `actor-2` on `beta`
+      leaves `alpha` actual 0 and `beta` actual 20 and outstanding 10, the
+      totals' `used` at 30 as before, lifetimes 0 for `alpha` and 20 for
+      `beta`, `actor-1` actual 0, and `actor-2` estimate 10, actual 20,
+      variance 10, and outstanding 10; `beta` reservable is what it would
+      be had the 20 posted there. The same key replays and writes nothing;
+      the same key with another amount throws `idempotency-conflict`.
+
+    - Reattribute across windows: an actual of 20 on `alpha` with
+      `usedAt` in `w1`, reattributed to `beta` after a credit opens `w2`,
+      moves 20 in `w1` and leaves `w2`'s balances unchanged.
+
+    - Reattribute refused: to an archived item, to an item the portfolio
+      does not hold, with `from` equal to `to`, or with amount 0 throws
+      `invalid-input` and writes nothing; onto a settled actor it counts
+      in that actor's actual.
+
+    - Migration: a database at step 1 holding entries of every kind is
+      migrated by step 2; every row keeps its `seq` and values, and the
+      balances, totals, and actor usage read the same as before it.
 
     - Durability: a second `Ledger` on the same file returns the same
       balances and actor usage.

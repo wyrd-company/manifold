@@ -98,7 +98,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **intake** the decision that gives a newly discovered task its blueprint and portfolio item.
 - **invocation** the identity of an invoked implementation: its actor id, its invoke id, and the entry id of the state entry that invoked it.
 - **issue** a way to track tasks related to a repository on GitHub
-- **late attribution** the actor, portfolio item, and state visit a call is counted for when the thread of its provider session reaches the service after the call posted; the ledger keeps the call's actual where it posted.
+- **late attribution** the actor, portfolio item, and state visit a call is counted for when the thread of its provider session, or the actor that owns that thread, reaches the service after the call posted; the ledger keeps the call's actual where it posted.
 - **lifecycle field** the single-select field of a bound Project that shows where each task is, declared with its option names in the process repository's task metadata declaration.
 - **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, or an event payload assigned into context.
 - **message** text a task sends to one thread, which reaches the thread's agent only once an actor that follows the thread takes it as an event, and which the agent reads once with `get-messages`.
@@ -138,6 +138,8 @@ We need to be on the same page with terminology. When communicating, use this la
 - **trap** a configuration of a task actor holding a gate's token from which no run that keeps the token reaches the gate's return point.
 - **turn** a single, complete cycle of work executed by an agent in response to a user prompt
 - **unallocated remainder** the part of a parent's limit that no child's allocation guarantees, which its children borrow up to their ceiling.
+- **unowned usage** the posted calls attributed to a thread that no actor owns, or to a provider session whose thread the service does not know.
+- **usage move** an operator's re-attribution of a posted call from unowned usage to a portfolio item or an actor, which the ledger carries to the new item in the window the call spent, keeping its account and amount.
 - **usage unit** a session, subagent, or child thread whose calls one provider session file records.
 - **variance** actual less estimate for one task.
 - **webhook delivery** one signed HTTP request from a GitHub webhook, identified by its GUID across hooks and redeliveries.

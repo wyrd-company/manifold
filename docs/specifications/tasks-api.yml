@@ -9,6 +9,7 @@ relationships:
     - github-event-source
     - bindings-declaration
     - actors-api
+    - usage-api
 terms:
   - binding
   - github-mirror
@@ -21,6 +22,7 @@ terms:
   - actual
   - variance
   - late-attribution
+  - usage-move
 description: |-
   Defines the tasks read endpoints of Manifold's API: `GET /api/tasks`,
   which lists the tasks of every bound Project with their lifecycle status,
@@ -120,8 +122,9 @@ description: |-
     usage read for the actor id, which is the ledger's with the actor's
     late attributions counted. Each account entry is `{ account,
     estimate, actual, variance, reserved, unit }`: the sum of the actor's
-    reservations, its posted actuals with the calls whose mapping arrived
-    after they posted, actual less estimate, and its outstanding
+    reservations, its posted actuals with the calls whose mapping or
+    thread ownership arrived after they posted and the calls an operator
+    moved to it, actual less estimate, and its outstanding
     reservation, each in the account's native unit, and `unit`, that unit as the
     accounts declaration in force declares it, absent for an account it
     does not declare. An actor with no

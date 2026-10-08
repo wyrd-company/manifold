@@ -6,12 +6,13 @@
 -- steps produce. The store applies the steps with `migrate("ledger", steps)`
 -- and records the version in `schema_migration`; the ledger runs no DDL.
 
--- One row per idempotent write: credit, reserve, actual, and move.
+-- One row per idempotent write: credit, reserve, actual, move, and
+-- reattribute.
 -- `request` is the canonical JSON of the request (keys sorted), so a replay
 -- with the same key is compared to the first request field by field.
 CREATE TABLE ledger_operations (
   key TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('credit', 'reserve', 'actual', 'move')),
+  kind TEXT NOT NULL CHECK (kind IN ('credit', 'reserve', 'actual', 'move', 'reattribute')),
   request TEXT NOT NULL,
   at INTEGER NOT NULL
 ) STRICT;
@@ -42,10 +43,16 @@ CREATE TABLE ledger_settlements (
 --   settle   retires an actor's net reservation on an item. No window.
 --   move     carries an outstanding reservation from one item to another,
 --            as a pair of rows with the same operation and opposite signs.
+--   reattribute
+--            carries a posted actual from one actor and item to another in
+--            the window of its use, as a pair of rows with the same
+--            operation and opposite signs.
 -- `amount` is an integer in the account's native unit.
 CREATE TABLE ledger_entries (
   seq INTEGER PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('credit', 'actual', 'reserve', 'settle', 'move')),
+  kind TEXT NOT NULL CHECK (
+    kind IN ('credit', 'actual', 'reserve', 'settle', 'move', 'reattribute')
+  ),
   operation TEXT,
   account TEXT NOT NULL,
   window_key TEXT,
@@ -54,17 +61,18 @@ CREATE TABLE ledger_entries (
   amount INTEGER NOT NULL,
   at INTEGER NOT NULL,
   CHECK ((kind = 'settle') = (operation IS NULL)),
-  CHECK ((kind IN ('credit', 'actual')) = (window_key IS NOT NULL)),
+  CHECK ((kind IN ('credit', 'actual', 'reattribute')) = (window_key IS NOT NULL)),
   CHECK ((kind = 'credit') = (item IS NULL)),
   CHECK ((kind = 'credit') = (actor IS NULL)),
   CHECK (kind <> 'credit' OR amount > 0),
   CHECK (kind <> 'actual' OR amount >= 0),
   CHECK (kind <> 'reserve' OR amount > 0),
   CHECK (kind <> 'settle' OR amount < 0),
-  CHECK (kind <> 'move' OR amount <> 0)
+  CHECK (kind <> 'move' OR amount <> 0),
+  CHECK (kind <> 'reattribute' OR amount <> 0)
 ) STRICT;
 
--- Window sums: credits and actuals of one account window.
+-- Window sums: credits, actuals, and reattributions of one account window.
 CREATE INDEX ledger_entries_by_window
   ON ledger_entries (account, window_key, kind);
 

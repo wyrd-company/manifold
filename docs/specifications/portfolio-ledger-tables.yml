@@ -13,18 +13,21 @@ description: >-
   creates is named `ledger_<name>`. The ledger owns these four tables and no
   other. Its steps are applied by the store's `migrate("ledger", steps)`,
   which records the ledger's version in the shared `schema_migration` table;
-  the ledger never runs DDL itself. Step 1 is this file's script. Steps are
-  append-only: a change to these tables is a new step, and this file is
-  rewritten to the schema all steps produce.
+  the ledger never runs DDL itself. Step 1 creates the four tables with
+  every kind but `reattribute`, and step 2 rebuilds `ledger_operations`
+  and `ledger_entries` with it, keeping every row. Steps are append-only:
+  a change to these tables is a new step, and this file is rewritten to
+  the schema all steps produce.
 
   Append-only. No row of a ledger table is updated or deleted. A trigger on
-  each table aborts every `UPDATE` and `DELETE`. Settlement and move are
-  written as entries whose signed amounts cancel earlier entries.
+  each table aborts every `UPDATE` and `DELETE`. Settlement, move, and
+  reattribution are written as entries whose signed amounts cancel
+  earlier entries.
 
   Operations. `ledger_operations` holds one row per idempotent write, keyed by
   the caller's idempotency key, with the kind of write and the canonical JSON
-  of its request. Every entry a credit, reserve, actual, or move writes names
-  its operation. A settle entry names none; settlement is keyed by actor in
+  of its request. Every entry a credit, reserve, actual, move, or
+  reattribute writes names its operation. A settle entry names none; settlement is keyed by actor in
   `ledger_settlements`.
 
   Windows. `ledger_windows` holds one row per account window with its open
@@ -33,8 +36,11 @@ description: >-
   after `t`. No two windows of one account open at the same time.
 
   Entries. `ledger_entries` holds signed integer amounts in the account's
-  native unit. Credits and actuals carry the window they count in; credits
-  carry no item and no actor. Reserve, settle, and move entries carry no
+  native unit. Credits, actuals, and reattributions carry the window they
+  count in; credits carry no item and no actor. A reattribution is a pair
+  of rows with the same operation, window, and account and opposite
+  signs, which carries a posted actual from one actor and item to
+  another. Reserve, settle, and move entries carry no
   window: an outstanding reservation counts against the account's current
   window, whichever window it was written in. The CHECK constraints tie each
   kind to its sign and to which of item, actor, window, and operation it
@@ -42,11 +48,11 @@ description: >-
 
   Derived quantities. For an actor, item, and account, the net reservation is
   the sum of its `reserve`, `settle`, and `move` amounts, and the posted usage
-  is the sum of its `actual` amounts in every window. The outstanding
+  is the sum of its `actual` and `reattribute` amounts in every window. The outstanding
   reservation folds its entries in `seq` order from 0: a `reserve`, `move`,
   or `settle` entry sets it to the greater of 0 and itself plus the amount,
   and an `actual` entry sets it to the greater of 0 and itself less the
-  amount. An actual consumes only the hold that exists when it is posted.
+  amount; a `reattribute` entry leaves it. An actual consumes only the hold that exists when it is posted.
   The capacity of an account window is the sum of its `credit`
   amounts. The estimate of an actor for an account is the sum of its
   `reserve` amounts only; a move and a settlement leave it unchanged.
@@ -61,6 +67,7 @@ validation-criteria: >-
   An `UPDATE` or `DELETE` on any of the four tables fails with the
   table's append-only message. An entry that breaks a kind's rule, such as a
   credit naming an actor, a reserve carrying a window, or a non-negative
-  settle, fails its CHECK constraint. The ledger's tests open their own
+  settle, a reattribute without a window, or a zero reattribute, fails
+  its CHECK constraint. The ledger's tests open their own
   database file and run every operation through the ledger's public
   interface against these tables.
