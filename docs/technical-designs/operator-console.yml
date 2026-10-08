@@ -3005,11 +3005,18 @@ proposed-design:
     `usage-record` (`claude`, `codex`, `cursor`, `grok`, `opencode`); Used
     by, one checkbox per environment of the source's `environments`, then
     each environment an entry of the account names that service
-    configuration does not, marked "Not configured", each checked
-    environment with an "Instance" input in mono, empty for none; an
-    environment for which `usedBy` names an account for the selected
-    provider and the typed instance is disabled with "Used by <account>"
-    while unchecked; the amount, labelled "Budget per window" for an API
+    configuration does not, marked "Not configured"; a checked environment
+    holds one "Instance" input in mono per usage entry it has, empty for
+    the entry with no instance, with "Add instance" to add another input
+    and a remove button on each input while it holds more than one, so
+    every entry the form can hold, several instances in one environment
+    included, shows and saves as it is; checking an environment adds one
+    empty input, and unchecking it removes its inputs. An input whose
+    environment, the selected provider, and its instance `usedBy` names
+    for another account shows "Used by <account>" in error color under
+    it, and Save is disabled while one does; an unchecked environment
+    whose entry with no instance another account holds for the selected
+    provider shows "Used by <account>" muted beside it. The amount, labelled "Budget per window" for an API
     budget and "Usage limit per window" for a subscription, a number input
     in dollars with step 0.01 and minimum 0.000001; Window, a select of
     "Monthly" (`months: 1`), "Weekly" (`days: 7`), "Daily" (`days: 1`),
@@ -3036,8 +3043,8 @@ proposed-design:
       readonly kind: "api" | "subscription";
       readonly name: string;
       readonly provider: UsageProvider;
-      /** The checked environments, each with its instance, "" for none. */
-      readonly usage: readonly { readonly environment: string; readonly instance: string }[];
+      /** The checked environments in the dialog's order, each with its instances in order, "" for no instance. */
+      readonly usage: readonly { readonly environment: string; readonly instances: readonly string[] }[];
       readonly amount: string; // as typed
       readonly window:
         | { readonly preset: "monthly" | "weekly" | "daily" }
@@ -3052,13 +3059,21 @@ proposed-design:
     ): AccountEdit | { readonly invalid: "amount" | "window" | "reset" };
     ```
 
-    `editFor` gives `add` for a new account and `set` for an existing one,
-    naming only the members whose value differs from the row: `capacity`
-    whole when the amount, the window, or the reset instant differs, so an
-    unchanged reset keeps its declared text, offset included; and `usage`
-    when the checked environments or instances differ, written as one
-    entry per checked environment in the dialog's order, with `instance`
-    when one is typed. A reset is written as the instant in UTC with `Z`
+    `formFor` groups an account's entries by environment, in the order
+    each environment first appears, with its instances in entry order, so
+    the form holds every entry of an account whose entries name one
+    provider. `editFor` gives `add` for a new account and `set` for an
+    existing one, naming only the members whose value differs from the
+    row: `capacity` whole when the amount, the window, or the reset
+    instant differs, so an unchanged reset keeps its declared text, offset
+    included; and `usage` when the set of entries the form gives, each
+    environment, provider, and instance, differs from the row's set, so a
+    change of Provider alone gives `usage` and a reordering alone gives
+    none. `usage` is written as one entry per instance input, by
+    environment in the dialog's order and by input in its order, with the
+    selected provider, and with `instance` when one is typed. When the
+    row's entries name more than one provider, `editFor` never gives
+    `usage`. A reset is written as the instant in UTC with `Z`
     and no fractional seconds. An amount, a count, or a reset that does
     not parse as a number or a time is `invalid`, and its input says so
     with no lint request; every other check is the lint's.
@@ -3223,6 +3238,15 @@ proposed-design:
     `name-missing`, and a text that does not parse; `formFor` and
     `editFor` for a new account, a custom window, a reset with a numeric
     offset left unchanged and changed, an instance, and each `invalid`;
+    an account whose entries are `env-one`, `codex`, `first` and
+    `env-one`, `codex`, `second`, where `formFor` gives `env-one` with
+    both instances, a capacity-only edit gives no `usage` and its applied
+    text keeps both entries unchanged, and checking `env-two` with a new
+    amount gives `capacity` and `usage` holding both `env-one` entries and
+    the `env-two` entry; a Provider-only change from `codex` to `claude`
+    gives `usage` with every entry on `claude` and no `capacity`, and a
+    Provider change with a new amount gives both; an account whose entries
+    name two providers giving no `usage` whatever the form holds;
     `accountRows` and `usedBy` with an instance, an archived account, and
     an account with two providers; and the finding marks for each
     location. The browser test,

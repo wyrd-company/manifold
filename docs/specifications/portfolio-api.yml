@@ -146,6 +146,11 @@ description: >-
   top level and the item's guarantee amount under an item. With no window,
   every `amount` is 0.
 
+  For an archived account, `window` is the ledger's window that covers
+  `at` when one was credited before the archive, and absent otherwise,
+  since none is credited after it; each allocation's `reservable` is 0,
+  and its `available` is at most 0.
+
   The read credits the current window of each declared account that is
   not archived through the capacity module's balance read before it
   reads, as a gate's balance

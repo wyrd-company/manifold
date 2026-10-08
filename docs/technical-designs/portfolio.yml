@@ -202,8 +202,14 @@ proposed-design:
     allocation as the warning `account-undeclared`. An account the
     declaration archives is credited nothing in the same way, and `ensure`
     answers `undeclared` for it; the lint reports each allocation of it as
-    the warning `account-archived`. A window credited before the archive
-    keeps its credit.
+    the warning `account-archived`. Archive is a boundary for new
+    reservations only: a window credited before the archive keeps its
+    credit, and the reservations, actuals, and settlements already in the
+    ledger stay as they are, but the capacity module refuses every new
+    reservation on the account and reads nothing reservable for it, as
+    `capacity-module` states, so its unspent credit funds no new work.
+    Removing `archived` lifts the boundary, and the credit of the current
+    window is reservable again.
   capacity-module: |-
     The capacity module is `packages/service/src/capacity/`. It holds no
     state of its own on disk: windows and credits are the ledger's, and the
@@ -213,7 +219,7 @@ proposed-design:
     ```ts
     export type CapacityAccount = {
       kind: "api" | "subscription";
-      archived?: boolean; // true: credited no window
+      archived?: boolean; // true: credited no window, refused new reservations
       capacity: {
         amount: number; // in the account's unit, as declared
         reset: string; // RFC 3339 date-time
@@ -274,10 +280,19 @@ proposed-design:
 
     - `reserve` runs `ensure` with the request's account and `now()`, then
       the ledger's `reserve`, so the credit and the reservation commit or
-      roll back together, alone or inside a gate's grant.
+      roll back together, alone or inside a gate's grant. For an account
+      `accounts()` holds with `archived: true` it writes nothing and
+      throws `LedgerError` with code `account-archived` and details `{
+      account }`, which a gate's grant meets as any other `LedgerError`:
+      the grant rolls back and the evaluation records a `reservation`
+      failure.
 
     - `balance` runs `ensure` with the request's account and `now()`, then
       the ledger's `balance`, so the read sees the window the credit wrote.
+      For an archived account it answers the ledger's balance with
+      `reservable` 0 and `available` the lesser of the ledger's and 0, so
+      `actual` and `outstanding` stay the ledger's and a comparator sees
+      nothing to reserve.
 
     - `postActual` reads the windows around `usedAt` with `windowAt`, and
       calls the ledger's `postActual` when a window covers it. Otherwise it
@@ -402,6 +417,18 @@ proposed-design:
 
     - Undeclared: a balance read for an account `accounts.yml` does not
       name credits nothing and reads 0.
+
+    - Archived: `alpha` reserves 100,000 on `acct` at 10 minutes, which
+      credits the window from 0 to 1 hour, and a call priced 50,000 posts
+      to it. A revision that archives `acct` is applied. A reserve of
+      `beta` at 20 minutes throws `account-archived` and writes no
+      operation; a balance read of `beta` reads `reservable` 0 and
+      credits nothing; `alpha`'s balance keeps its actual and its
+      outstanding 100,000, and its settlement retires the reservation. A
+      balance read at 1 hour 10 minutes credits no window. The service
+      restarted on the same file answers the same. A revision that
+      removes `archived` is applied, and a reserve of `beta` at 30
+      minutes succeeds in the window from 0 to 1 hour.
 
     - Convergence: `ensure` twice for one time writes one credit; a credit
       whose key the ledger holds replays.

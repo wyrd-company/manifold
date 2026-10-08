@@ -91,10 +91,13 @@ description: |-
   Archived. `archived: true` archives the account. An archived account
   stays declared, so the ledger's credits, reservations, and actuals keep
   its name and its unit, and no other account can take the name. It is not
-  in force for new work: its usage entries charge no call, and Manifold
-  credits it no window, as it credits an undeclared account none, so a
-  reservation on it finds no capacity. Its entries stay in the file, as
-  the usage it had. Removing `archived`, or setting it to `false`,
+  in force for new work: its usage entries charge no call, Manifold
+  credits it no window, as it credits an undeclared account none, and
+  Manifold refuses every new reservation on it and reads nothing
+  reservable for it, so the unspent credit of a window credited before
+  the archive funds no new work. What the ledger already holds for it,
+  credits, reservations, actuals, and their settlement, stays as it is.
+  Its entries stay in the file, as the usage it had. Removing `archived`, or setting it to `false`,
   restores the account. The operator console archives an account and
   never removes one, so its past usage keeps its source.
 
@@ -173,7 +176,8 @@ description: |-
   does not declare is the warning `account-undeclared` in `portfolio.yml`,
   and one it archives is the warning `account-archived`, which
   `lintAllocatedAccounts` reports as `portfolio-declaration` states. The
-  service credits such an account nothing, so its balances read 0.
+  service credits such an account nothing and reserves nothing on it, so
+  nothing is reservable for it.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/accounts-declaration.schema.yml` is a valid JSON

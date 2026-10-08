@@ -138,8 +138,8 @@ description: >-
   offending allocation gives one warning, in document order.
 
   A warning does not refuse the declaration. The service accepts a
-  declaration with either warning, and the account's balances read 0
-  until `accounts.yml` declares it and does not archive it.
+  declaration with either warning, and nothing is reservable for the
+  account until `accounts.yml` declares it and does not archive it.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/portfolio-declaration.schema.yml` is a valid JSON

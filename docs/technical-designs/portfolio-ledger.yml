@@ -483,7 +483,9 @@ proposed-design:
     `actor-settled`, `no-window`, or `window-conflict`, a message that names
     the offending value, and `details` with the values named. Input checks
     run at the interface before any statement; nothing inside the module
-    validates again.
+    validates again. The shared `LedgerErrorCode` also holds
+    `account-archived`, which only the capacity module's ledger throws, for
+    a reservation on an archived account, as `portfolio` states.
   module-layout: >-
     `index.ts` exports the public surface. `ledger.ts` holds `createLedger`
     and its SQL statements. `migrations.ts` holds `ledgerMigrationSteps`, an

@@ -1087,12 +1087,15 @@ Add account and Edit account are one 520px dialog:
 - Kind: API budget or Subscription (fixed once the account exists).
 - Name (fixed once the account exists, since usage and allocations name
   the account by it) and Provider.
-- Used by: environments as checkboxes, each with an "Instance" input in
-  mono while it is checked, for an environment that runs more than one
-  account of the provider. An environment another account already uses
-  for this provider and instance is disabled with "Used by" and that
-  account's name. An account whose usage names more than one provider
-  shows Used by read only, with "Edit its usage in accounts.yml."
+- Used by: environments as checkboxes. A checked environment has one
+  "Instance" input in mono, empty for none, and "Add instance" for an
+  environment that runs more than one account of the provider. An
+  instance another account already uses for this provider shows "Used
+  by" and that account's name in error color, and Save is disabled; an
+  unchecked environment another account uses with no instance shows
+  "Used by" and that account's name muted. An account whose usage names
+  more than one provider shows Used by read only, with "Edit its usage in
+  accounts.yml."
 - API budget: "Budget per window", "Window" (Monthly, Weekly, Daily, or
   Every N hours, days, or months), and "Resets on", a date and time.
 - Subscription: "Usage limit per window", the operator's estimate of the
