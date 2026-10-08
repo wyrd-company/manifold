@@ -92,9 +92,8 @@ test("history and usage join each waiting visit across migration, including late
       });
     push(call("before", Date.parse(before.enteredAt)));
     const saved = await service.revisions.save({
-      path: "blueprints/parcel.yml",
+      files: [{ path: "blueprints/parcel.yml", text: stringify(target) }],
       base: fixture.commit,
-      text: stringify(target),
       message: "Split parcel depot",
       saveId: "c".repeat(32),
     });
