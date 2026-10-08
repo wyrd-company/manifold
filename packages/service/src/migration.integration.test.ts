@@ -5,13 +5,40 @@
 import { expect, test } from "vite-plus/test";
 import { stringify } from "yaml";
 import { startService } from "./service/index.ts";
-import { migrationServiceFixture, changed } from "./migrations/test-fixtures/service.ts";
+import { migrationServiceFixture, changed, parcel } from "./migrations/test-fixtures/service.ts";
 test("intake starts a parcel actor and a blueprint API save migrates its waiting context", async () => {
-  const fixture = await migrationServiceFixture();
+  const invoke = {
+    id: "question",
+    src: "escalate",
+    input: {
+      question: "Which depot receives the parcel?",
+      choices: [{ id: "north", label: "North" }],
+    },
+  };
+  const actors = { escalate: { input: true, output: true } };
+  const original = {
+    ...parcel,
+    schemas: { ...parcel.schemas, actors },
+    machine: {
+      ...parcel.machine,
+      states: { ...parcel.machine.states, waiting: { ...parcel.machine.states.waiting, invoke } },
+    },
+  };
+  const target = {
+    ...changed,
+    schemas: { ...changed.schemas, actors },
+    machine: {
+      ...changed.machine,
+      states: { ...changed.machine.states, waiting: { ...changed.machine.states.waiting, invoke } },
+    },
+  };
+  const fixture = await migrationServiceFixture(original);
   const service = await startService({ configurationFile: fixture.file, log: () => {} });
   try {
     await expect.poll(() => service.store.loadSnapshot("task:I_A")?.snapshot.value).toBe("waiting");
     const previous = service.store.loadSnapshot("task:I_A")!;
+    const question = service.escalations.list({ status: "open" });
+    expect(question).toHaveLength(1);
     const address = service.http.address();
     const response = await fetch(`http://${address.host}:${address.port}/api/blueprints/save`, {
       method: "POST",
@@ -19,7 +46,7 @@ test("intake starts a parcel actor and a blueprint API save migrates its waiting
       body: JSON.stringify({
         path: "blueprints/parcel.yml",
         base: fixture.commit,
-        text: stringify(changed),
+        text: stringify(target),
         message: "Split parcel depot",
         saveId: "a".repeat(32),
       }),
@@ -29,6 +56,7 @@ test("intake starts a parcel actor and a blueprint API save migrates its waiting
       .poll(() => service.store.loadSnapshot("task:I_A")!.machine)
       .not.toBe(previous.machine);
     const migrated = service.store.loadSnapshot("task:I_A")!;
+    expect(service.escalations.list({ status: "open" })).toEqual(question);
     expect(migrated.snapshot).toMatchObject({
       value: "waiting",
       context: { zone: "north" },
