@@ -24,6 +24,7 @@ export const usage = wiringPart({
       connection: usageConnection,
       ledger: {
         actorUsage: portfolio.ledger.actorUsage,
+        reattribute: portfolio.ledger.reattribute,
         postActual: (request) => {
           const result = portfolio.ledger.postActual(request);
           gates.current()?.gates.inputChanged();
@@ -38,6 +39,13 @@ export const usage = wiringPart({
       portfolio,
       threadProject: (environment, threadId) =>
         readThreadProject(usageConnection, environment, threadId),
+      threadTitle: (environment, threadId) => {
+        const row = usageConnection.database
+          .prepare("SELECT thread FROM t3_thread WHERE environment=? AND thread_id=?")
+          .get(environment, threadId) as { thread: string } | undefined;
+        return row ? (JSON.parse(row.thread) as { title?: string }).title : undefined;
+      },
+      inputChanged: () => gates.current()?.gates.inputChanged(),
       environments: new Set(Object.keys(configuration.environments)),
       onError: (error) =>
         log({

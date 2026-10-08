@@ -1,7 +1,10 @@
 // ---
 // relationships:
-//   implements: usage-push
+//   implements: [usage-push, usage-api]
 // ---
+import { isUsageMoveRequest } from "@wyrd-company/manifold-shared/usage-api";
+import { UsageMoveError } from "./moves.ts";
+import type { Usage } from "./types.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
@@ -18,24 +21,35 @@ export function usageListener(
   environments: ReadonlySet<string>,
   push: (request: UsagePushRequest) => UsagePushResult,
   onError: (error: unknown) => void,
+  operator: Pick<Usage, "move" | "unowned">,
 ): (request: IncomingMessage, response: ServerResponse) => void {
   return (request, response) => {
     const answer = (status: number, body: unknown) => {
-      response.writeHead(status, { "content-type": "application/json" });
+      response.writeHead(status, {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      });
       response.end(JSON.stringify(body));
     };
     const failure = (status: number, error: string, message: string) =>
       answer(status, { error, message });
     const run = async () => {
-      if (request.url?.split("?")[0] !== "/api/usage/push") {
-        failure(404, "invalid-request", "Unknown usage path.");
+      const path = request.url?.split("?")[0];
+      if (!["/api/usage/push", "/api/usage/unowned", "/api/usage/moves"].includes(path ?? "")) {
+        failure(404, "not-found", "Unknown usage path.");
         return;
       }
-      if (request.method !== "POST") {
-        response.setHeader("allow", "POST");
-        failure(405, "invalid-request", "Expected POST.");
+      const method = path === "/api/usage/unowned" ? "GET" : "POST";
+      if (request.method !== method) {
+        response.setHeader("allow", method);
+        failure(405, "method-not-allowed", `Expected ${method}.`);
         return;
       }
+      if (path === "/api/usage/unowned") {
+        answer(200, { unowned: operator.unowned() });
+        return;
+      }
+      const limit = path === "/api/usage/moves" ? 64 * 1024 : 8 * 1024 * 1024;
       if (
         request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json"
       ) {
@@ -47,8 +61,8 @@ export function usageListener(
       for await (const chunk of request) {
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
         size += bytes.length;
-        if (size > 8 * 1024 * 1024) {
-          failure(413, "too-large", "Usage body exceeds 8 MiB.");
+        if (size > limit) {
+          failure(413, "too-large", "Usage body is too large.");
           return;
         }
         chunks.push(bytes);
@@ -58,6 +72,22 @@ export function usageListener(
         value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       } catch {
         failure(400, "invalid-request", "Body is not JSON.");
+        return;
+      }
+      if (path === "/api/usage/moves") {
+        if (!isUsageMoveRequest(value)) {
+          failure(400, "invalid-request", "Invalid usage move.");
+          return;
+        }
+        try {
+          answer(200, operator.move(value));
+        } catch (error) {
+          if (error instanceof UsageMoveError) {
+            failure(422, error.code, error.message);
+            return;
+          }
+          throw error;
+        }
         return;
       }
       if (!validate(value)) {

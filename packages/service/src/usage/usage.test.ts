@@ -10,6 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { openStore } from "../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../ledger/index.ts";
 import { openUsage, usageMigrationSteps } from "./index.ts";
+import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
 import type { UsageCall } from "@wyrd-company/manifold-shared";
 import { createServer } from "node:http";
 const cleanups: (() => void)[] = [];
@@ -42,6 +43,14 @@ const accounts =
   "accounts:\n  acct:\n    unit: usd\n    kind: api\n    capacity: { amount: 1, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }\n    usage: [{ environment: env-one, provider: codex }]";
 const prices =
   "unit: usd\nmodels:\n  model-a: { standard: { input: 2, output: 8 } }\n  model-c: { standard: { input: 0.2, output: 0.2 } }";
+function currentPortfolio() {
+  const lint = lintPortfolioDeclaration({
+    portfolio: "items: { alpha: {}, beta: {}, gamma: { archived: true } }",
+    bindings: undefined,
+  });
+  if (!lint.ok) throw new Error("Invalid fixture portfolio");
+  return { commit: "portfolio-1", declaration: lint.declaration };
+}
 async function setup(credited = true) {
   const dir = mkdtempSync(join(tmpdir(), "usage-test-"));
   const path = join(dir, "store.sqlite");
@@ -54,6 +63,8 @@ async function setup(credited = true) {
     items: [
       { id: "alpha", parent: null },
       { id: "beta", parent: null },
+      { id: "gamma", parent: null, archived: true },
+      { id: "other", parent: null },
     ],
     allocations: [
       { item: "alpha", account: "acct", guarantee: 50 },
@@ -72,10 +83,12 @@ async function setup(credited = true) {
       amount: 100000000,
     });
   if (credited) credit();
+  let inputChanges = 0;
   const options = {
     connection,
     ledger,
     portfolio: {
+      current: currentPortfolio,
       t3codeProject: () => ({
         item: "beta" as const,
         via: "binding" as const,
@@ -85,6 +98,9 @@ async function setup(credited = true) {
     },
     threadProject: () => "project-1",
     environments: new Set(["env-one"]),
+    inputChanged: () => {
+      inputChanges++;
+    },
     now: () => now,
   };
   let usage = openUsage(options);
@@ -121,6 +137,9 @@ async function setup(credited = true) {
   return {
     store,
     connection,
+    get inputChanges() {
+      return inputChanges;
+    },
     get ledger() {
       return ledger;
     },
@@ -478,6 +497,7 @@ it("rolls back the entire request when a ledger write fails, and contains listen
     connection: s.connection,
     onError: (error) => errors.push(error),
     ledger: {
+      reattribute: s.ledger.reattribute,
       actorUsage: s.ledger.actorUsage,
       settle: s.ledger.settle,
       postActual: (request) => {
@@ -486,7 +506,10 @@ it("rolls back the entire request when a ledger write fails, and contains listen
         return { replayed: false };
       },
     },
-    portfolio: { t3codeProject: () => ({ item: "other", via: "unbound" }) },
+    portfolio: {
+      current: currentPortfolio,
+      t3codeProject: () => ({ item: "other", via: "unbound" }),
+    },
     threadProject: () => undefined,
     environments: new Set(["env-one"]),
   });
@@ -526,6 +549,7 @@ it("falls back to other with missing project and ignores malformed identity memb
     connection: s.connection,
     ledger: s.ledger,
     portfolio: {
+      current: currentPortfolio,
       t3codeProject: () => ({
         item: "beta",
         via: "binding",
@@ -564,13 +588,17 @@ it("a failed settlement rolls back ownership and visits with the actor save", as
   const usage = openUsage({
     connection: s.connection,
     ledger: {
+      reattribute: s.ledger.reattribute,
       actorUsage: s.ledger.actorUsage,
       postActual: s.ledger.postActual,
       settle: () => {
         throw Error("settlement failed");
       },
     },
-    portfolio: { t3codeProject: () => ({ item: "other", via: "unbound" }) },
+    portfolio: {
+      current: currentPortfolio,
+      t3codeProject: () => ({ item: "other", via: "unbound" }),
+    },
     threadProject: () => undefined,
     environments: new Set(["env-one"]),
   });
@@ -609,13 +637,17 @@ it("the save hook itself rolls back when settlement fails", async () => {
   const usage = openUsage({
     connection: s.connection,
     ledger: {
+      reattribute: s.ledger.reattribute,
       actorUsage: s.ledger.actorUsage,
       postActual: s.ledger.postActual,
       settle: () => {
         throw Error("settlement failed");
       },
     },
-    portfolio: { t3codeProject: () => ({ item: "other", via: "unbound" }) },
+    portfolio: {
+      current: currentPortfolio,
+      t3codeProject: () => ({ item: "other", via: "unbound" }),
+    },
     threadProject: () => undefined,
     environments: new Set(["env-one"]),
   });
@@ -808,7 +840,10 @@ it("rolls back late attribution and mapping when a later call fails, then replay
         throw Error("write failure");
       },
     },
-    portfolio: { t3codeProject: () => ({ item: "other", via: "unbound" }) },
+    portfolio: {
+      current: currentPortfolio,
+      t3codeProject: () => ({ item: "other", via: "unbound" }),
+    },
     threadProject: () => undefined,
     environments: new Set(["env-one"]),
   });
@@ -852,12 +887,12 @@ it("repairs pre-upgrade posted growths using the stored mapping despite a confli
   expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(20);
   expect(s.usage.actorUsage("thread:env-one:thread-2").accounts).toEqual([]);
   expect(
-    s.connection.database.prepare("SELECT visit FROM usage_late_attributions ORDER BY seq").all(),
+    s.connection.database.prepare("SELECT visit FROM usage_reattributions ORDER BY seq").all(),
   ).toMatchObject([{ visit: 1 }, { visit: 2 }]);
-  expect(() =>
-    s.connection.database.exec("UPDATE usage_late_attributions SET item='beta'"),
-  ).toThrow("append-only");
-  expect(() => s.connection.database.exec("DELETE FROM usage_late_attributions")).toThrow(
+  expect(() => s.connection.database.exec("UPDATE usage_reattributions SET item='beta'")).toThrow(
+    "append-only",
+  );
+  expect(() => s.connection.database.exec("DELETE FROM usage_reattributions")).toThrow(
     "append-only",
   );
   s.usage.push(request);
@@ -888,4 +923,462 @@ it("keeps ledger account order and appends late-only accounts in name order", as
     { account: "alpha-acct", estimate: 0, actual: 10, variance: 10, outstanding: 0 },
     { account: "zeta", estimate: 0, actual: 10, variance: 10, outstanding: 0 },
   ]);
+});
+
+it.each(["active", "done"])(
+  "late ownership counts posted calls for a %s actor, including after a mapping or item move",
+  async (status) => {
+    const s = await setup();
+    s.push([call()], false);
+    s.push([]);
+    expect(s.usage.unowned()[0]).toMatchObject({
+      actor: "thread:env-one:thread-1",
+      usage: [{ item: "other", amount: 6000000 }],
+    });
+    s.usage.move({ from: "thread:env-one:thread-1", to: { item: "beta" } });
+    s.save(status);
+    s.save(status);
+    expect(s.usage.actorUsage("actor-1")).toMatchObject({
+      settled: status === "done",
+      accounts: [{ actual: 6000000, variance: 6000000 }],
+    });
+    expect(s.usage.actorUsage("session:env-one:codex:session-1").accounts[0]?.actual).toBe(0);
+    expect(s.usage.actorUsage("thread:env-one:thread-1").accounts[0]?.actual).toBe(0);
+    expect(s.usage.unowned()).toEqual([]);
+    expect(s.ledger.balance({ item: "beta", account: "acct", waiting: [] }).actual).toBe(6000000);
+    expect(
+      s.connection.database.prepare("SELECT cause FROM usage_reattributions ORDER BY seq").all(),
+    ).toEqual([{ cause: "mapping" }, { cause: "move" }, { cause: "ownership" }]);
+  },
+);
+
+it("moves mixed zero and positive postings through items and a settled actor without consuming its hold", async () => {
+  const s = await setup();
+  for (let i = 1; i <= 5; i++)
+    s.push([{ ...call("growing", i, 0), model: "model-c", granularity: "session-total" }]);
+  const from = "thread:env-one:thread-1";
+  expect(s.usage.move({ from, to: { item: "alpha" } })).toMatchObject({
+    moved: 5,
+    accounts: [{ account: "acct", amount: 1 }],
+  });
+  expect(s.usage.unowned()[0]?.usage).toEqual([
+    { item: "alpha", account: "acct", amount: 1, calls: 5 },
+  ]);
+  expect(s.inputChanges).toBe(1);
+  expect(s.usage.move({ from, to: { item: "alpha" } }).moved).toBe(0);
+  expect(s.inputChanges).toBe(1);
+  s.usage.saveHook({
+    actorId: "actor-2",
+    snapshot: {
+      status: "active" as const,
+      value: "working",
+      context: { manifold: { portfolioItem: "beta" } },
+    },
+  });
+  s.ledger.reserve({ key: "hold", actor: "actor-2", item: "beta", account: "acct", amount: 10 });
+  expect(s.usage.move({ from, to: { actor: "actor-2" } }).moved).toBe(5);
+  expect(s.usage.actorUsage("actor-2").accounts[0]).toMatchObject({
+    actual: 1,
+    variance: -9,
+    outstanding: 10,
+  });
+  s.usage.saveHook({
+    actorId: "actor-2",
+    snapshot: {
+      status: "done",
+      value: "finished",
+      context: { manifold: { portfolioItem: "beta" } },
+    },
+  });
+  s.push([call("later", 1, 0)]);
+  expect(s.usage.move({ from, to: { actor: "actor-2" } }).moved).toBe(1);
+  s.save();
+  expect(s.usage.actorUsage("actor-1").accounts).toEqual([]);
+  expect(s.usage.actorUsage("actor-2").settled).toBe(true);
+  expect(s.usage.unowned()).toEqual([]);
+  expect(
+    s.connection.database
+      .prepare("SELECT count(*) n FROM ledger_operations WHERE kind='reattribute'")
+      .get(),
+  ).toEqual({ n: 3 });
+});
+
+it("refuses missing and archived targets even for zero-only usage and leaves pending postings alone", async () => {
+  const s = await setup();
+  s.push([
+    { ...call("zero", 1, 0), model: "model-c" },
+    { ...call("pending"), model: "missing" },
+  ]);
+  const from = "thread:env-one:thread-1";
+  for (const to of [{ item: "missing" }, { actor: "unknown" }, { actor: from }])
+    expect(() => s.usage.move({ from, to })).toThrow();
+  expect(s.usage.move({ from, to: { item: "alpha" } })).toMatchObject({
+    moved: 1,
+    accounts: [{ amount: 0 }],
+  });
+  expect(s.usage.unowned()[0]).toMatchObject({
+    pending: 1,
+    usage: [{ item: "alpha", amount: 0, calls: 1 }],
+  });
+});
+
+it.each([false, true])(
+  "mounted usage, task and portfolio reads include ownership and moves (settled=%s)",
+  async (settled) => {
+    const s = await setup();
+    const { consoleHost } = await import("../console/test-fixtures/host.ts");
+    const { openTasks } = await import("../tasks/index.ts");
+    const { mountPortfolioApi } = await import("../portfolio-api/index.ts");
+    const { isUsageUnownedResponse } = await import("@wyrd-company/manifold-shared/usage-api");
+    const host = await consoleHost();
+    cleanups.push(() => {
+      void host.close();
+    });
+    const actorId = "task:parcel";
+    const snapshot = {
+      actorId,
+      machine: `${"b".repeat(40)}:blueprints/delivery.yml`,
+      snapshot: {
+        status: "active" as const,
+        value: "working",
+        context: {
+          manifold: { environment: "env-one", portfolioItem: "alpha", threads: ["thread-1"] },
+        },
+      },
+    };
+    s.store.saveSnapshot(snapshot);
+    const project = { binding: "sample", owner: "example", number: 1, item: "alpha" };
+    const issue = {
+      nodeId: "parcel",
+      repository: "example/delivery",
+      number: 2,
+      state: "open" as const,
+      title: "Deliver parcel",
+    };
+    const tasks = openTasks({
+      store: s.store,
+      held: () => false,
+      boundProjects: () => [project],
+      github: {
+        trackedIssueIds: () => ["parcel"],
+        trackedIssue: () => ({ issue, items: [{ project, archived: false, fields: {} }] }),
+      },
+      actorUsage: s.usage.actorUsage,
+      listEscalations: () => [],
+      thread: () => undefined,
+      tokenHolder: () => undefined,
+    });
+    host.host.mount("/api/tasks", tasks.requestListener);
+    host.host.mount("/api/usage", s.usage.listener);
+    mountPortfolioApi(host.host, {
+      portfolio: { current: currentPortfolio, ledger: s.ledger },
+      accounts: s.usage.accounts,
+      processRepository: {
+        revisionAt: async (commit) => ({
+          commit,
+          list: async () => [],
+          read: async () => "items: { alpha: {}, beta: {} }",
+        }),
+      },
+      store: s.store,
+      now: () => 200,
+      log: () => {},
+    });
+    s.ledger.reserve({ key: "r1", actor: actorId, item: "alpha", account: "acct", amount: 10 });
+    s.push([call("owned-later", 1, 1)]);
+    s.usage.saveHook({
+      actorId,
+      snapshot: { ...snapshot.snapshot, status: settled ? "done" : "active" },
+    });
+    s.usage.push({
+      environment: "env-one",
+      threads: [{ provider: "codex", providerSessionId: "session-2", threadId: "thread-2" }],
+      records: [{ ...call("moved", 1, 1), providerSessionId: "session-2" }],
+    });
+    const post = (value: unknown) =>
+      fetch(host.url + "/api/usage/moves", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(value),
+      });
+    const before = (await (await fetch(host.url + "/api/portfolio")).json()) as {
+      accounts: { window: { used: number } }[];
+    };
+    expect(
+      await (await post({ from: "thread:env-one:thread-2", to: { actor: actorId } })).json(),
+    ).toMatchObject({ status: "moved", moved: 1, accounts: [{ amount: 10 }] });
+    expect(
+      await (await post({ from: "thread:env-one:thread-2", to: { actor: actorId } })).json(),
+    ).toMatchObject({ moved: 0 });
+    expect(await (await fetch(host.url + "/api/tasks/task%3Aparcel")).json()).toMatchObject({
+      task: {
+        usage: {
+          settled,
+          accounts: [{ estimate: 10, actual: 20, variance: 10, reserved: settled ? 0 : 10 }],
+        },
+      },
+    });
+    expect(await (await fetch(host.url + "/api/portfolio")).json()).toMatchObject({
+      accounts: [{ window: { used: before.accounts[0]!.window.used } }],
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          id: "alpha",
+          allocations: expect.arrayContaining([
+            expect.objectContaining({ actual: 10, lifetime: 10 }),
+          ]),
+        }),
+      ]),
+    });
+    // Use partial comparisons so the response's unrelated portfolio fields stay free to evolve.
+    const portfolio = (await (await fetch(host.url + "/api/portfolio")).json()) as {
+      items: { id: string; allocations: { actual: number; lifetime: number }[] }[];
+    };
+    expect(portfolio.items.find((i) => i.id === "beta")?.allocations[0]).toMatchObject({
+      actual: 10,
+      lifetime: 10,
+    });
+    expect(
+      isUsageUnownedResponse(await (await fetch(host.url + "/api/usage/unowned")).json()),
+    ).toBe(true);
+    for (const to of [{ item: "gamma" }, { actor: "unknown" }])
+      expect((await post({ from: "thread:env-one:thread-2", to })).status).toBe(422);
+    for (const value of [
+      { from: "task:parcel", to: { item: "alpha" } },
+      { from: "thread:env-one:thread-2", to: { item: "alpha", actor: actorId } },
+      { from: "thread:env-one:thread-2", to: {} },
+    ])
+      expect((await post(value)).status).toBe(400);
+    expect(
+      (
+        await fetch(host.url + "/api/usage/moves", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: " ".repeat(65537),
+        })
+      ).status,
+    ).toBe(413);
+    expect(
+      (await fetch(host.url + "/api/usage/unowned", { method: "POST" })).headers.get("allow"),
+    ).toBe("GET");
+  },
+);
+
+it("usage step 3 preserves populated late mappings and every posting", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(usageMigrationSteps[0]!);
+    db.exec(usageMigrationSteps[1]!);
+    db.prepare("INSERT INTO usage_calls VALUES (?,?,?,?,?,?)").run(
+      "env-one",
+      "call-1",
+      "{}",
+      "{}",
+      1,
+      0,
+    );
+    db.prepare(
+      "INSERT INTO usage_postings (seq,environment,call_key,revision,used_at,provider,speed,base_tokens,tokens,actor,item,account,amount,status,ledger_key,posted_at) VALUES (7,'env-one','call-1',1,100,'codex','standard','{}','{}','session:env-one:codex:one','other','acct',10,'posted','usage-1',200)",
+    ).run();
+    db.prepare("INSERT INTO usage_late_attributions VALUES (7,'actor-1','alpha',2,300)").run();
+    const before = db.prepare("SELECT * FROM usage_postings").all();
+    db.exec(usageMigrationSteps[2]!);
+    expect(db.prepare("SELECT * FROM usage_postings").all()).toEqual(before);
+    expect(db.prepare("SELECT * FROM usage_reattributions").get()).toEqual({
+      seq: 1,
+      posting: 7,
+      cause: "mapping",
+      actor: "actor-1",
+      item: "alpha",
+      visit: 2,
+      ledger_key: null,
+      recorded_at: 300,
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT attributed_actor,attributed_item,attributed_visit,held_actor,held_item,moves FROM usage_attributed_postings",
+        )
+        .get(),
+    ).toEqual({
+      attributed_actor: "actor-1",
+      attributed_item: "alpha",
+      attributed_visit: 2,
+      held_actor: "session:env-one:codex:one",
+      held_item: "other",
+      moves: 0,
+    });
+    expect(() => db.exec("UPDATE usage_reattributions SET item='beta'")).toThrow("append-only");
+    expect(() => db.exec("DELETE FROM usage_reattributions")).toThrow("append-only");
+  } finally {
+    db.close();
+  }
+});
+
+it("pending ownership posts under its owner and consumes its hold only once", async () => {
+  const s = await setup(false);
+  s.push([call("pending-owner", 1, 1)]);
+  s.credit();
+  s.ledger.reserve({ key: "r1", actor: "actor-1", item: "alpha", account: "acct", amount: 10 });
+  s.save();
+  s.save();
+  expect(s.usage.actorUsage("actor-1").accounts[0]).toMatchObject({ actual: 10, outstanding: 0 });
+  expect(s.usage.unowned()).toEqual([]);
+});
+
+it("moves an unmapped session then maps it without undoing its held item, and converges across repeated item moves", async () => {
+  const s = await setup();
+  s.save();
+  s.push([call("unmapped", 1, 1)], false);
+  const from = "session:env-one:codex:session-1";
+  for (const item of ["alpha", "beta", "alpha"])
+    expect(s.usage.move({ from, to: { item } }).moved).toBe(1);
+  s.push([]);
+  expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(10);
+  expect(s.ledger.balance({ item: "alpha", account: "acct", waiting: [] }).actual).toBe(10);
+  expect(s.usage.unowned()).toEqual([]);
+});
+
+it("refuses an archived item before writing zero-only moves and retains the first thread owner", async () => {
+  const s = await setup();
+  s.push([{ ...call("zero-only", 1, 0), model: "model-c" }]);
+  expect(() => s.usage.move({ from: "thread:env-one:thread-1", to: { item: "gamma" } })).toThrow(
+    "not archived",
+  );
+  expect(
+    s.connection.database.prepare("SELECT count(*) n FROM usage_reattributions").get(),
+  ).toEqual({ n: 0 });
+  s.save();
+  s.usage.saveHook({
+    actorId: "actor-2",
+    snapshot: {
+      status: "active",
+      value: "working",
+      context: {
+        manifold: { environment: "env-one", portfolioItem: "beta", threads: ["thread-1"] },
+      },
+    },
+  });
+  s.push([call("owned", 1, 1)]);
+  expect(s.usage.actorUsage("actor-1").accounts[0]?.actual).toBe(10);
+  expect(s.usage.actorUsage("actor-2").accounts).toEqual([]);
+});
+
+it("refuses unowned actor ids even when an actor row exists for them", async () => {
+  const s = await setup();
+  const actor = "thread:env-one:thread-1";
+  s.usage.saveHook({
+    actorId: actor,
+    snapshot: {
+      status: "active",
+      value: "working",
+      context: { manifold: { portfolioItem: "alpha" } },
+    },
+  });
+  s.push([call("zero", 1, 0)]);
+  expect(() => s.usage.move({ from: actor, to: { actor } })).toThrow("not started");
+});
+
+it("move and unowned listener failures are contained and roll the entire move back", async () => {
+  const s = await setup();
+  s.push([call("one", 1, 1), call("two", 1, 1)]);
+  const errors: unknown[] = [];
+  let writes = 0;
+  const broken = openUsage({
+    connection: s.connection,
+    ledger: {
+      ...s.ledger,
+      reattribute: (request) => {
+        const result = s.ledger.reattribute(request);
+        if (++writes === 2) throw Error("write failure");
+        return result;
+      },
+    },
+    portfolio: {
+      current: currentPortfolio,
+      t3codeProject: () => ({ item: "other", via: "unbound" }),
+    },
+    threadProject: () => {
+      throw Error("read failure");
+    },
+    environments: new Set(["env-one"]),
+    onError: (error) => errors.push(error),
+  });
+  const server = createServer(broken.listener);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  cleanups.push(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw Error("Missing fixture address");
+  const url = `http://127.0.0.1:${address.port}`;
+  expect(
+    (
+      await fetch(url + "/api/usage/moves", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ from: "thread:env-one:thread-1", to: { item: "alpha" } }),
+      })
+    ).status,
+  ).toBe(500);
+  expect(
+    s.connection.database.prepare("SELECT count(*) n FROM usage_reattributions").get(),
+  ).toEqual({ n: 0 });
+  expect(
+    s.connection.database
+      .prepare("SELECT count(*) n FROM ledger_operations WHERE kind='reattribute'")
+      .get(),
+  ).toEqual({ n: 0 });
+  expect((await fetch(url + "/api/usage/unowned")).status).toBe(500);
+  expect(errors).toHaveLength(2);
+});
+
+it.each([false, true])(
+  "mapping replay writes nothing and never takes usage moved to a task (moved=%s)",
+  async (moved) => {
+    const s = await setup();
+    s.usage.saveHook({
+      actorId: "actor-2",
+      snapshot: {
+        status: "active",
+        value: "working",
+        context: { manifold: { portfolioItem: "alpha" } },
+      },
+    });
+    s.push([call("unmapped", 1, 1)], false);
+    if (moved) s.usage.move({ from: "session:env-one:codex:session-1", to: { actor: "actor-2" } });
+    s.push([]);
+    const before = s.connection.database.prepare("SELECT * FROM usage_reattributions").all();
+    s.push([]);
+    expect(s.connection.database.prepare("SELECT * FROM usage_reattributions").all()).toEqual(
+      before,
+    );
+    if (moved) {
+      expect(s.usage.actorUsage("actor-2").accounts[0]?.actual).toBe(10);
+      expect(s.usage.actorUsage("thread:env-one:thread-1").accounts).toEqual([]);
+      expect(s.usage.unowned()).toEqual([]);
+      expect(before).toHaveLength(1);
+    } else expect(before).toHaveLength(1);
+  },
+);
+
+it("unowned reads break latest-call ties by actor id and order account and item groups", async () => {
+  const s = await setup();
+  for (const id of ["a", "z"])
+    s.usage.push({
+      environment: "env-one",
+      threads: [
+        { provider: "codex", providerSessionId: `session-${id}`, threadId: `thread-${id}` },
+      ],
+      records: [{ ...call(`call-${id}`, 1, 1), providerSessionId: `session-${id}` }],
+    });
+  expect(s.usage.unowned().map((e) => e.actor)).toEqual([
+    "thread:env-one:thread-a",
+    "thread:env-one:thread-z",
+  ]);
+  expect(s.usage.unowned()[0]).toMatchObject({
+    project: "project-1",
+    lastUsedAt: new Date(100).toISOString(),
+    usage: [{ account: "acct", item: "beta", calls: 1, amount: 10 }],
+  });
 });

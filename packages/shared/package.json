@@ -65,6 +65,10 @@
     "./environments-api": {
       "types": "./dist/environments-api.d.ts",
       "import": "./dist/environments-api.js"
+    },
+    "./usage-api": {
+      "types": "./dist/usage-api.d.ts",
+      "import": "./dist/usage-api.js"
     }
   },
   "scripts": {

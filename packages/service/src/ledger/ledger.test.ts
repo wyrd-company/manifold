@@ -822,3 +822,118 @@ it("totals include current actuals, all outstanding holds, historical and remove
   f.ledger.settle({ actor: "actor-1" });
   expect(f.ledger.totals({ account: "acct" }).used).toBe(9);
 });
+
+it("reattributes actuals without consuming holds, changing usage or rewriting past windows", () => {
+  const s = setup();
+  s.actual(20, "alpha", "thread:env-one:thread-1", 0);
+  s.reserve(10, "beta", "actor-2");
+  const request = {
+    key: "reattribute-1",
+    account: "acct",
+    amount: 20,
+    usedAt: 0,
+    from: { actor: "thread:env-one:thread-1", item: "alpha" },
+    to: { actor: "actor-2", item: "beta" },
+  };
+  expect(s.ledger.reattribute(request)).toEqual({ replayed: false });
+  expect(s.ledger.reattribute(request)).toEqual({ replayed: true });
+  expect(s.balance("alpha").actual).toBe(0);
+  expect(s.balance("beta")).toMatchObject({ actual: 20, outstanding: 10 });
+  expect(s.ledger.totals({ account: "acct" })).toMatchObject({
+    used: 30,
+    items: [
+      { item: "alpha", lifetime: 0 },
+      { item: "beta", lifetime: 20 },
+    ],
+  });
+  expect(s.ledger.actorUsage("actor-2").accounts[0]).toMatchObject({
+    actual: 20,
+    outstanding: 10,
+    variance: 10,
+  });
+  errorCode(() => s.ledger.reattribute({ ...request, amount: 21 }), "idempotency-conflict");
+  for (const altered of [
+    { amount: 0 },
+    { to: request.from },
+    { to: { actor: "actor-2", item: "unknown" } },
+  ])
+    errorCode(
+      () => s.ledger.reattribute({ ...request, key: "refused", ...altered }),
+      "invalid-input",
+    );
+  s.credit("credit-2", "w2", 1000);
+  s.time(1000);
+  s.ledger.settle({ actor: "actor-2" });
+  s.ledger.reattribute({
+    ...request,
+    key: "past",
+    from: request.to,
+    to: { actor: "actor-3", item: "alpha" },
+  });
+  expect(s.balance("alpha").actual).toBe(0);
+  expect(s.ledger.actorUsage("actor-2")).toMatchObject({
+    settled: true,
+    accounts: [{ actual: 0, outstanding: 0 }],
+  });
+});
+
+it("step 2 preserves every ledger row, index and append-only trigger", () => {
+  const s = setup();
+  // Recreate the exact predecessor, then populate every entry kind.
+  for (const row of s.database
+    .prepare("SELECT name FROM sqlite_master WHERE type='trigger'")
+    .all() as { name: string }[])
+    s.database.exec(`DROP TRIGGER ${row.name}`);
+  for (const table of [
+    "ledger_entries",
+    "ledger_operations",
+    "ledger_windows",
+    "ledger_settlements",
+  ])
+    s.database.exec(`DROP TABLE ${table}`);
+  s.database.exec(ledgerMigrationSteps[0]!);
+  s.credit();
+  s.reserve(30);
+  s.actual(10);
+  s.move();
+  s.ledger.settle({ actor: "actor-1" });
+  const tables = ["ledger_entries", "ledger_operations", "ledger_windows", "ledger_settlements"];
+  const rows = tables.map((t) => s.database.prepare(`SELECT * FROM ${t} ORDER BY 1`).all());
+  const objects = s.database
+    .prepare(
+      "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE type IN ('index','trigger') ORDER BY name",
+    )
+    .all();
+  const reads = [
+    s.balance("alpha"),
+    s.balance("beta"),
+    s.ledger.totals({ account: "acct" }),
+    s.ledger.actorUsage("actor-1"),
+  ];
+  expect(ledgerMigrationSteps).toHaveLength(2);
+  s.database.exec(ledgerMigrationSteps[1]!);
+  expect(tables.map((t) => s.database.prepare(`SELECT * FROM ${t} ORDER BY 1`).all())).toEqual(
+    rows,
+  );
+  expect(
+    s.database
+      .prepare(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE type IN ('index','trigger') ORDER BY name",
+      )
+      .all(),
+  ).toEqual(objects);
+  expect([
+    s.balance("alpha"),
+    s.balance("beta"),
+    s.ledger.totals({ account: "acct" }),
+    s.ledger.actorUsage("actor-1"),
+  ]).toEqual(reads);
+  for (const table of tables) {
+    expect(() =>
+      s.database.exec(
+        `UPDATE ${table} SET ${table === "ledger_entries" ? "amount=amount" : table === "ledger_windows" ? "opens_at=opens_at" : "at=at"}`,
+      ),
+    ).toThrow("append-only");
+    expect(() => s.database.exec(`DELETE FROM ${table}`)).toThrow("append-only");
+  }
+});

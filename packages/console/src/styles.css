@@ -1451,3 +1451,94 @@ select:focus-visible {
   white-space: nowrap;
   pointer-events: none;
 }
+
+/* Portfolio usage moves. */
+.unowned-usage {
+  margin-top: 32px;
+}
+.unowned-usage h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.unowned-usage-table {
+  overflow-x: auto;
+  margin-top: 16px;
+}
+.unowned-usage table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.unowned-usage th,
+.unowned-usage td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.unowned-usage th {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.unowned-usage small {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.usage-move-dialog {
+  max-width: calc(100vw - 32px);
+}
+.usage-move-target {
+  display: grid;
+  gap: 12px;
+  border: 0;
+  padding: 0;
+  margin: 20px 0;
+}
+.usage-move-target legend {
+  margin-bottom: 12px;
+}
+.usage-move-target label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.usage-move-target select,
+.usage-move-target > input {
+  width: 100%;
+  padding: 8px 12px;
+  color: var(--foreground);
+  background: var(--popover);
+  border: 1px solid var(--input);
+  border-radius: 6px;
+}
+.usage-move-amounts {
+  margin-top: 16px;
+}
+.usage-task-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--popover);
+  color: var(--foreground);
+}
+.usage-task-positioner {
+  z-index: 100;
+}
+.usage-task-popup {
+  width: var(--anchor-width);
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--popover);
+  color: var(--foreground);
+  padding: 8px;
+}
+.usage-task-popup [role="option"],
+.usage-task-popup [role="group"] > .muted {
+  padding: 8px;
+}
+.usage-task-popup [data-highlighted] {
+  background: var(--accent);
+}

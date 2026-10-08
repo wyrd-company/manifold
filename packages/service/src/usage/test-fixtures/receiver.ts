@@ -5,6 +5,7 @@
 import { createHttpHost } from "../../http-host/index.ts";
 import { openStore } from "../../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../../ledger/index.ts";
+import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
 import { openUsage, usageMigrationSteps } from "../index.ts";
 const config = JSON.parse(process.argv[2]!) as { path: string; crash: string };
 const store = openStore({ path: config.path });
@@ -31,6 +32,7 @@ const pause = (message: string) => {
 const usage = openUsage({
   connection: store.connection,
   ledger: {
+    reattribute: ledger.reattribute,
     actorUsage: ledger.actorUsage,
     settle: ledger.settle,
     postActual: (request) => {
@@ -39,7 +41,17 @@ const usage = openUsage({
       return result;
     },
   },
-  portfolio: { t3codeProject: () => ({ item: "other", via: "unbound" }) },
+  portfolio: {
+    current: () => {
+      const lint = lintPortfolioDeclaration({
+        portfolio: "items: { alpha: {} }",
+        bindings: undefined,
+      });
+      if (!lint.ok) throw new Error("Invalid fixture portfolio");
+      return { commit: "portfolio-1", declaration: lint.declaration };
+    },
+    t3codeProject: () => ({ item: "other", via: "unbound" }),
+  },
   threadProject: () => undefined,
   environments: new Set(["env-one"]),
 });

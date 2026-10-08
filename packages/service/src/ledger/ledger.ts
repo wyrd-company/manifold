@@ -162,7 +162,7 @@ export function createLedger(options: {
     for (const entry of entries) {
       if (entry.window_key !== current.window_key) continue;
       if (entry.kind === "credit") capacity += BigInt(entry.amount);
-      if (entry.kind === "actual")
+      if (entry.kind === "actual" || entry.kind === "reattribute")
         actuals.set(entry.item!, (actuals.get(entry.item!) ?? 0n) + BigInt(entry.amount));
     }
     const outstanding = new Map<string, bigint>();
@@ -224,7 +224,7 @@ export function createLedger(options: {
       const lifetime = new Map<string, bigint>();
       let used = 0n;
       for (const entry of entries) {
-        if (entry.kind !== "actual") continue;
+        if (entry.kind !== "actual" && entry.kind !== "reattribute") continue;
         lifetime.set(entry.item!, (lifetime.get(entry.item!) ?? 0n) + BigInt(entry.amount));
         if (current && entry.window_key === current.window_key) used += BigInt(entry.amount);
       }
@@ -301,6 +301,24 @@ export function createLedger(options: {
         append("actual", key, account, current.window_key, item, actor, amount, at);
       });
     },
+    reattribute(request) {
+      const { key, account, amount, usedAt, from, to } = request;
+      text(key, "key");
+      text(account, "account");
+      integer(amount, "amount", 1);
+      integer(usedAt, "usedAt");
+      text(from.actor, "from.actor");
+      text(from.item, "from.item");
+      text(to.actor, "to.actor");
+      text(to.item, "to.item");
+      return write(key, "reattribute", request, (at) => {
+        knownItem(to.item, true);
+        if (from.actor === to.actor && from.item === to.item) invalid("to", to);
+        const current = requireWindow(account, usedAt);
+        append("reattribute", key, account, current.window_key, from.item, from.actor, -amount, at);
+        append("reattribute", key, account, current.window_key, to.item, to.actor, amount, at);
+      });
+    },
     move(request) {
       const { key, actor, account, from, to, waiting } = request;
       text(key, "key");
@@ -373,7 +391,8 @@ export function createLedger(options: {
       for (const entry of entries) {
         const row = accounts.get(entry.account) ?? { estimate: 0n, actual: 0n, outstanding: 0n };
         if (entry.kind === "reserve") row.estimate += BigInt(entry.amount);
-        if (entry.kind === "actual") row.actual += BigInt(entry.amount);
+        if (entry.kind === "actual" || entry.kind === "reattribute")
+          row.actual += BigInt(entry.amount);
         accounts.set(entry.account, row);
       }
       for (const hold of foldHolds(entries))

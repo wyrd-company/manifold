@@ -5,7 +5,7 @@
 import type { LedgerPortfolio } from "./portfolio.js";
 import { itemPath, portfolioData } from "./portfolio.js";
 export type Entry = {
-  kind: "credit" | "reserve" | "actual" | "move" | "settle";
+  kind: "credit" | "reserve" | "actual" | "move" | "settle" | "reattribute";
   account: string;
   window_key: string | null;
   item: string | null;
@@ -22,7 +22,7 @@ export type Hold = {
 export function foldHolds(entries: readonly Entry[]): Hold[] {
   const holds = new Map<string, Hold>();
   for (const entry of entries) {
-    if (entry.kind === "credit") continue;
+    if (entry.kind === "credit" || entry.kind === "reattribute") continue;
     const key = JSON.stringify([entry.actor, entry.account, entry.item]);
     const hold = holds.get(key) ?? {
       actor: entry.actor!,

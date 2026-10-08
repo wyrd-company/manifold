@@ -111,7 +111,7 @@ export function retryPostings(
     return result;
   });
 }
-function postingAttribution(
+export function postingAttribution(
   options: UsageOptions,
   environment: string,
   provider: string,
@@ -197,7 +197,7 @@ export function pushUsage(
       const sessionActor = `session:${request.environment}:${mapping.provider}:${mapping.providerSessionId}`;
       const postings = db
         .prepare(
-          "SELECT p.* FROM usage_postings p JOIN usage_calls c USING(environment,call_key) LEFT JOIN usage_late_attributions l ON l.seq=p.seq WHERE p.environment=? AND p.provider=? AND json_extract(c.record,'$.providerSessionId')=? AND p.actor=? AND l.seq IS NULL ORDER BY p.seq",
+          "SELECT p.* FROM usage_attributed_postings p JOIN usage_calls c USING(environment,call_key) WHERE p.environment=? AND p.provider=? AND json_extract(c.record,'$.providerSessionId')=? AND p.attributed_actor=? ORDER BY p.seq",
         )
         .all(
           request.environment,
@@ -222,13 +222,9 @@ export function pushUsage(
           );
           resolvePosting(options, declaration, now, { ...posting, ...attribution });
         } else {
-          db.prepare("INSERT INTO usage_late_attributions VALUES (?,?,?,?,?)").run(
-            posting.seq,
-            attribution.actor,
-            attribution.item,
-            attribution.visit,
-            now(),
-          );
+          db.prepare(
+            "INSERT INTO usage_reattributions (posting,cause,actor,item,visit,recorded_at) VALUES (?,'mapping',?,?,?,?)",
+          ).run(posting.seq, attribution.actor, attribution.item, attribution.visit, now());
         }
       }
     }

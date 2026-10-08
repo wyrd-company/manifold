@@ -9,9 +9,9 @@ export function actorUsage(options: UsageOptions, actor: string): LedgerActorUsa
   const usage = options.ledger.actorUsage(actor);
   const rows = options.connection.database
     .prepare(`
-    SELECT p.account, sum(CASE WHEN l.actor=? THEN p.amount ELSE 0 END) - sum(CASE WHEN p.actor=? THEN p.amount ELSE 0 END) AS delta
-    FROM usage_late_attributions l JOIN usage_postings p USING(seq)
-    WHERE p.status='posted' AND (l.actor=? OR p.actor=?) GROUP BY p.account ORDER BY p.account
+    SELECT account, sum(CASE WHEN attributed_actor=? THEN amount ELSE 0 END) - sum(CASE WHEN held_actor=? THEN amount ELSE 0 END) AS delta
+    FROM usage_attributed_postings
+    WHERE status='posted' AND attributed_actor<>held_actor AND (attributed_actor=? OR held_actor=?) GROUP BY account ORDER BY account
   `)
     .all(actor, actor, actor, actor) as { account: string; delta: number }[];
   const accounts = new Map(usage.accounts.map((row) => [row.account, row]));

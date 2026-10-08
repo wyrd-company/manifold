@@ -74,6 +74,14 @@ export interface Ledger {
     amount: number;
     usedAt: number;
   }): LedgerWriteResult;
+  reattribute(request: {
+    key: string;
+    account: string;
+    amount: number;
+    usedAt: number;
+    from: { actor: string; item: string };
+    to: { actor: string; item: string };
+  }): LedgerWriteResult;
   move(request: {
     key: string;
     actor: string;

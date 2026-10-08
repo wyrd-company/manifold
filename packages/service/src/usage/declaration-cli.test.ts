@@ -8,6 +8,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
 import { openUsage, usageMigrationSteps } from "./index.ts";
 import { openStore } from "../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../ledger/index.ts";
@@ -39,7 +40,17 @@ test.each(usageLintCases)(
           connection: store.connection,
           portfolio: parseLedgerPortfolio({ items: [], allocations: [] }),
         }),
-        portfolio: { t3codeProject: () => ({ item: "other", via: "unbound" }) },
+        portfolio: {
+          current: () => {
+            const lint = lintPortfolioDeclaration({
+              portfolio: "items: { alpha: {} }",
+              bindings: undefined,
+            });
+            if (!lint.ok) throw new Error("Invalid fixture portfolio");
+            return { commit: "portfolio-1", declaration: lint.declaration };
+          },
+          t3codeProject: () => ({ item: "other", via: "unbound" }),
+        },
         threadProject: () => undefined,
         environments: new Set(),
       });

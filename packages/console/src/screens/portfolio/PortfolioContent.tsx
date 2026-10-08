@@ -33,6 +33,7 @@ import {
 import type { PortfolioDraft } from "./draft.ts";
 import { applyEdits } from "./edits.ts";
 import type { PortfolioEdit } from "./edits.ts";
+import { UnownedUsage } from "./UnownedUsage.tsx";
 import { BudgetSourceCards } from "./BudgetSourceCards.tsx";
 import { PortfolioTable } from "./PortfolioTable.tsx";
 import { ProblemsList } from "./ProblemsList.tsx";
@@ -127,7 +128,11 @@ export function PortfolioContent() {
   }, [lintRequest, savedCommit]);
   const pending = !!draft && !draft.saved && lint?.text !== draft.text && !lintError;
   async function refresh() {
-    await Promise.all([query.refetch(), sourceQuery.refetch()]);
+    await Promise.all([
+      query.refetch(),
+      sourceQuery.refetch(),
+      client.invalidateQueries({ queryKey: ["usage", "unowned"] }),
+    ]);
   }
   function startDraft(): PortfolioDraft | undefined {
     return (
@@ -446,6 +451,7 @@ export function PortfolioContent() {
               setAutoSave(`Restore portfolio item ${id}`);
             }}
           />
+          {read ? <UnownedUsage read={read} account={selected} /> : null}
           {dialog ? (
             <EditItemDialog
               item={dialog.item}

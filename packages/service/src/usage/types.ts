@@ -2,6 +2,11 @@
 // relationships:
 //   implements: usage-intake
 // ---
+import type {
+  UsageMoveRequest,
+  UsageMoveResponse,
+  UnownedEntry,
+} from "@wyrd-company/manifold-shared/usage-api";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   UsageAccount,
@@ -34,6 +39,8 @@ export type UsageRetryResult = {
 };
 export interface Usage {
   readonly listener: (request: IncomingMessage, response: ServerResponse) => void;
+  unowned(): UnownedEntry[];
+  move(request: UsageMoveRequest): UsageMoveResponse;
   push(request: UsagePushRequest): UsagePushResult;
   saveHook(save: UsageActorSave): void;
   apply(revision: UsageRevision): Promise<UsageApplyResult>;
@@ -43,9 +50,11 @@ export interface Usage {
 }
 export type UsageOptions = {
   connection: LedgerConnection;
-  ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage">;
-  portfolio: Pick<Portfolio, "t3codeProject">;
+  ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage" | "reattribute">;
+  portfolio: Pick<Portfolio, "t3codeProject" | "current">;
   threadProject(environment: string, threadId: string): string | undefined;
+  threadTitle?(environment: string, threadId: string): string | undefined;
+  inputChanged?: () => void;
   environments: ReadonlySet<string>;
   now?: () => number;
   onError?: (error: unknown) => void;

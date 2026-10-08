@@ -53,6 +53,8 @@ const children = [
   "src/usage/declaration-cli.test.ts",
   "src/portfolio/declaration-cli.test.ts",
   "src/usage/recovery.test.ts",
+  "src/usage/reattribution-recovery.test.ts",
+  "src/usage/moves.browser.test.ts",
 ];
 
 export default defineConfig({
