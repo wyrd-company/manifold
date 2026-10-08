@@ -10,6 +10,7 @@ relationships:
     - service-assembly
     - service-configuration
 terms:
+  - prune-run
   - retention-window
   - inbox
   - actor-history
@@ -22,7 +23,7 @@ terms:
   - wiring-part
 objective: >-
   Keep Manifold's store file from growing with every routed event, every
-  ended actor, and every gate pass, so that a service runs for months on
+  ended actor, and every grant round, so that a service runs for months on
   one store file, by deleting rows older than the retention window the
   service configuration names for their kind, without breaking duplicate
   detection inside the window, delivery replay, a grant's replay inside
@@ -43,7 +44,7 @@ background:
   problems:
     - >-
       The inbox, the history tables, the source events, and the gate
-      evaluations grow with every event, every actor, and every gate pass
+      evaluations grow with every event, every actor, and every grant round
       for the life of the file.
     - >-
       A row of one module is kept for a row of another: an event's visit
@@ -70,8 +71,8 @@ design-challenges:
 proposed-design:
   high-level-overview: >-
     The retention module, `packages/service/src/retention/`, runs one prune
-    pass a fixed time after the service starts and then at a fixed
-    interval. A pass deletes three kinds of rows, each against its own
+    prune run a fixed time after the service starts and then at a fixed
+    interval. A prune run deletes three kinds of rows, each against its own
     retention window from the `retention` section of the service
     configuration, as `retention-configuration` specifies: the consumed
     inbox rows, event links, and commands of each ended actor, which share one window
@@ -116,16 +117,16 @@ proposed-design:
     }
 
     export interface Retention {
-      /** Runs one pass to its end; a pass already running is joined. */
+      /** Runs one prune run to its end; a prune run already running is joined. */
       prune(): Promise<PruneResult>;
-      /** Arms the first pass. */
+      /** Arms the first prune run. */
       start(): void;
-      /** Cancels the next pass and waits for a running pass to stop between batches. */
+      /** Cancels the next prune run and waits for a running prune run to stop between batches. */
       stop(): Promise<void>;
     }
 
     export interface PruneResult {
-      /** Ended actors whose events and commands this pass removed. */
+      /** Ended actors whose events and commands this prune run removed. */
       readonly actors: number;
       readonly inboxRows: number;
       readonly historyRows: number;
@@ -135,9 +136,9 @@ proposed-design:
     ```
   module-layout: >-
     `index.ts` re-exports the public names and nothing else.
-    `retention.ts` implements `openRetention`: the timer, the pass, and its
+    `retention.ts` implements `openRetention`: the timer, the prune run, and its
     batches. `protections.ts` holds the pure function from the open
-    escalations to the actors and gates a pass keeps. `cutoffs.ts` holds
+    escalations to the actors and gates a prune run keeps. `cutoffs.ts` holds
     the pure function from the configuration and the time to each kind's
     cutoff, or none for `forever`. `wiring.ts` exports the `retention`
     part. Tests live beside the module and import only `index.ts` and the
@@ -145,10 +146,10 @@ proposed-design:
     modules.
   windows: >-
     A retention window is a number of whole days, or `forever`. A row's
-    cutoff is the pass's start time less the window's days times
+    cutoff is the prune run's start time less the window's days times
     86,400,000 milliseconds, and a row is past its window when its time is
     before the cutoff. A window of `forever` deletes nothing of its kind.
-    The pass reads the time once, so every batch of one pass uses the same
+    The prune run reads the time once, so every batch of one prune run uses the same
     cutoffs.
 
     | Kind | Window | Time compared with the cutoff | Rows deleted |
@@ -161,7 +162,7 @@ proposed-design:
     actor's events and commands are pruned together once its end is past
     the window, and a running
     actor's inbox and history are never pruned, however old their rows
-    are. The pass reads the candidates with
+    are. The prune run reads the candidates with
     `store.prunableEnded({ endedBefore, after, limit })`, 100 at a time,
     in end order, and for each candidate the protections do not keep runs,
     in one `store.connection.transaction`, `store.pruneEnded(actorId)` and,
@@ -180,9 +181,9 @@ proposed-design:
     stay, since a row the actor never consumed is not part of the history
     the window covers.
   protections: >-
-    A pass keeps what an open escalation depends on, and the deletes keep
+    A prune run keeps what an open escalation depends on, and the deletes keep
     the rest by their own conditions. At the start of each batch, after
-    the yield before it, the pass reads `escalations.list({ status:
+    the yield before it, the prune run reads `escalations.list({ status:
     "open" })` and keeps every actor that an open escalation names, as the
     raiser of a blueprint escalation or as the `actorId` of a service
     escalation's subject, and every gate that a `comparator-failed` or
@@ -192,7 +193,7 @@ proposed-design:
     no escalation opens between the read and the batch's last delete. An
     escalation that opens during a yield is in the next batch's read. A
     kept actor's events and commands are not pruned in that batch, and a
-    kept gate's evaluations are not deleted by it; a later batch or pass
+    kept gate's evaluations are not deleted by it; a later batch or prune run
     that finds the escalation closed prunes them. Every dependency the
     store holds is kept as follows.
 
@@ -203,7 +204,7 @@ proposed-design:
     | An ended actor's usage by visit | the visits its postings name, with their entry times | visits are never deleted |
     | An outstanding token | its token row and the evaluation that granted it | token rows are never deleted; an evaluation an unreturned token names is not deleted |
     | An open reservation | the ledger's hold, keyed by its token id | the ledger and token rows are never deleted |
-    | An open escalation | the actor or the gate its subject names | the actors and gates the pass keeps |
+    | An open escalation | the actor or the gate its subject names | the actors and gates the prune run keeps |
     | A posted call's attribution | the posting's actor, item, and visit number | usage and ledger rows and history visits are never deleted |
 
     An ended actor holds no open reservation, since the save that ends it
@@ -226,7 +227,7 @@ proposed-design:
     agent source can publish a `handoff` again within the turn that made
     it, and a `message` again when an invoke that sent it is restarted.
   gate-evaluations: >-
-    The pass calls `pruneGateEvaluations(connection, { evaluatedBefore,
+    The prune run calls `pruneGateEvaluations(connection, { evaluatedBefore,
     keepGates, limit: 1000 })` until a batch deletes fewer than 1000 rows.
     It deletes evaluations past their window except those an unreturned
     token names and those of a kept gate. A returned token whose
@@ -245,52 +246,52 @@ proposed-design:
     acceptance. A gate evaluation past its window cannot be replayed, and
     the token it granted no longer names it.
   batches: >-
-    A pass works in batches. An actor batch is one read of up to 100
+    A prune run works in batches. An actor batch is one read of up to 100
     candidate actors, the protections read, and each candidate's
     transaction; a source event or gate evaluation batch is the
     protections read and one delete of at most 1000 rows. Each batch runs
-    in one turn of the event loop. After each batch the pass calls
-    `clock.yield`, so a delivery, a request, a gate pass, or a new
-    escalation runs between batches. A pass that `stop` reaches stops at
+    in one turn of the event loop. After each batch the prune run calls
+    `clock.yield`, so a delivery, a request, a grant round, or a new
+    escalation runs between batches. A prune run that `stop` reaches stops at
     the next yield and resolves with what it deleted.
   cadence: >-
-    `start` arms the first pass 5 minutes after it is called, so that the
-    resume drain, the sources, and the first gate passes run first. After
-    each pass ends, failed or not, the module arms the next pass 60
-    minutes later. `prune` called while a pass runs returns that pass's
-    promise. The pass is ordered: ended actors, then source events, then
-    gate evaluations. Windows are days long, so an hour between passes
+    `start` arms the first prune run 5 minutes after it is called, so that the
+    resume drain, the sources, and the first grant rounds run first. After
+    each prune run ends, failed or not, the module arms the next prune run 60
+    minutes later. `prune` called while a prune run runs returns that prune run's
+    promise. The prune run is ordered: ended actors, then source events, then
+    gate evaluations. Windows are days long, so an hour between prune runs
     keeps every kind within an hour of its window.
   logging: >-
-    A pass that deleted any row logs `retention-pruned` at level `info`
-    with the counts of `PruneResult` as its detail. A pass that throws
+    A prune run that deleted any row logs `retention-pruned` at level `info`
+    with the counts of `PruneResult` as its detail. A prune run that throws
     logs `retention-failed` at level `error` with the message, and the
-    next pass is armed as usual; a failed pass never stops the service.
+    next prune run is armed as usual; a failed prune run never stops the service.
   convergence: >-
     Each ended actor's prune is one transaction, so a crash leaves each
     actor wholly pruned or wholly kept. `pruneEnded` changes nothing for an
     actor already marked pruned, and `prunableEnded` does not list one, so
-    a second pass, or a pass after a crash, prunes only the actors the
+    a second prune run, or a prune run after a crash, prunes only the actors the
     first did not reach. Each source event and gate evaluation delete is
     one statement in its own transaction; a crash rolls back at most the
-    statement it interrupts, and the next pass deletes it again. A second
-    pass over the same rows with the same time deletes nothing more. A
-    pass after the windows grow deletes nothing until rows pass the new
-    cutoffs; a pass after they shrink deletes the rows past the shorter
+    statement it interrupts, and the next prune run deletes it again. A second
+    prune run over the same rows with the same time deletes nothing more. A
+    prune run after the windows grow deletes nothing until rows exceed the new
+    cutoffs; a prune run after they shrink deletes the rows past the shorter
     cutoffs. Rows already deleted are never restored.
   errors: >-
     `openRetention` trusts its configuration, which the service
     configuration loader has validated. A SQLite error inside a batch
-    rolls back that batch's transaction and ends the pass with
+    rolls back that batch's transaction and ends the prune run with
     `retention-failed`. `prune` after `stop` resolves with every count 0
     and deletes nothing.
   service-wiring: >-
     The `retention` part in `retention/wiring.ts` opens the module from the
     store, `history`, `escalations`, the configuration's `retention`
     section, and the log, and calls `start`. It is listed after the
-    `router` part's step `router-started`, so the first pass is armed only
+    `router` part's step `router-started`, so the first prune run is armed only
     once the router has resumed, and registers its `stop` in the `timers`
-    stop stage, so a running pass stops before the store closes. It adds
+    stop stage, so a running prune run stops before the store closes. It adds
     `retention` to `Service`.
   dependencies: >-
     No new third-party library.
@@ -305,14 +306,14 @@ proposed-design:
     source with its own window; gate evaluations before and after the
     cutoff, one named by an unreturned token, one by a returned token, and
     one of a gate with an open `comparator-failed` escalation. Behaviours
-    proved, each written red before green: a pass deletes exactly the rows
+    proved, each written red before green: a prune run deletes exactly the rows
     past their windows and keeps every protected row; a window of
     `forever` deletes nothing of its kind; an ended actor past its window
     answers the history with its summary, end, output, pending events, and
-    `prunedAt`, every visit it held before the pass, and no consumed
+    `prunedAt`, every visit it held before the prune run, and no consumed
     events or commands, stays in the completed actors list, and answers
-    the same usage by visit as before the pass; the running actor's history answers the
-    same before and after the pass; a source event inside its window
+    the same usage by visit as before the prune run; the running actor's history answers the
+    same before and after the prune run; a source event inside its window
     published again is a replay, and one past it is a first acceptance
     that reaches no actor holding its inbox row; a gate evaluation inside
     its window replays to its recorded selection, and a deleted one throws
@@ -322,20 +323,20 @@ proposed-design:
     clock's `yield` raises after the first batch, naming an ended actor past its window that a later actor
     batch would prune and a gate whose evaluations a later evaluation batch
     would delete, keeps that actor's events and commands and that gate's
-    evaluations for the rest of the pass, while the batches before it
-    stand, and a pass after the escalation closes prunes them; a second
-    pass deletes nothing; `stop` during a
-    pass resolves between batches; the first pass runs 5 minutes after
-    `start` and the next 60 minutes after it ends, and a failed pass logs
+    evaluations for the rest of the prune run, while the batches before it
+    stand, and a prune run after the escalation closes prunes them; a second
+    prune run deletes nothing; `stop` during a
+    prune run resolves between batches; the first prune run runs 5 minutes after
+    `start` and the next 60 minutes after it ends, and a failed prune run logs
     `retention-failed` and arms the next. A fault test, in a child Node
     process running the service on the populated store file, advances the
-    clock past every cutoff, runs a pass that sends itself `SIGKILL` from
+    clock past every cutoff, runs a prune run that sends itself `SIGKILL` from
     the `actor-pruned` probe after the first actor's prune commits, and
     the parent asserts the kill signal, starts the service again on the
-    same file, and runs passes to their end. It then finds that the first
+    same file, and runs prune runs to their end. It then finds that the first
     actor is pruned once, every other ended actor past its window is
     pruned, every pruned actor keeps every visit, delivery replay drains every pending row once, duplicate
     detection and gate replay hold for every row inside its window, the
-    running actor's history is unchanged, and a further pass deletes
+    running actor's history is unchanged, and a further prune run deletes
     nothing. Values are generic and never drawn from Manifold's own
     domain.

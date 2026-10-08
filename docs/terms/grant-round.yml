@@ -1,0 +1,9 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `related-to` is the best fit.
+  related-to:
+    - gate-runtime
+    - gates
+title: Grant round
+description: >-
+  One synchronous comparator loop for one gate, from the input change that starts it until the comparator returns `null` or an evaluation fails. Each grant changes the population, holders, and balances seen by the next evaluation.

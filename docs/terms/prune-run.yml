@@ -1,0 +1,8 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `related-to` is the best fit.
+  related-to:
+    - retention
+title: Prune run
+description: >-
+  One retention operation that removes eligible ended actors' events and commands, source events, and gate evaluations, in batches against cutoffs fixed at its start.

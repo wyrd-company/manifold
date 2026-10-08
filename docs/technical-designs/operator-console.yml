@@ -33,6 +33,7 @@ relationships:
     - usage-api
     - price-table
 terms:
+  - sharing-preview
   - pass
   - state-visit
 objective: >-

@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `related-to` is the best fit.
+  related-to:
+    - operator-console
+    - portfolio-ledger
+title: Sharing preview
+description: >-
+  The Portfolio screen's calculation of what an item can reserve halfway
+  through an idle account window with nothing spent, both alone and with
+  every declared item waiting. It uses the ledger's sharing rule on the
+  draft declaration and writes nothing.

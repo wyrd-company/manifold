@@ -34,7 +34,7 @@ function manual(now: () => number) {
     waiting: () => yields.length,
   };
 }
-test("cadence starts after five minutes, joins a pass, and rearms an hour after completion", async () => {
+test("cadence starts after five minutes, joins a prune run, and rearms an hour after completion", async () => {
   const w = await world();
   try {
     w.save("parcel");
@@ -55,13 +55,13 @@ test("cadence starts after five minutes, joins a pass, and rearms an hour after 
     r.start();
     expect(c.delay()).toBe(5 * 60 * 1000);
     c.wake();
-    const pass = r.prune();
-    expect(r.prune()).toBe(pass);
+    const pruneRun = r.prune();
+    expect(r.prune()).toBe(pruneRun);
     await Promise.resolve();
     expect(c.waiting()).toBe(1);
     expect(c.delay()).toBeUndefined();
     c.next();
-    expect((await pass).actors).toBe(1);
+    expect((await pruneRun).actors).toBe(1);
     expect(logs.map((l) => l.event)).toEqual(["retention-pruned"]);
     expect(c.delay()).toBe(60 * 60 * 1000);
     await r.stop();
@@ -93,7 +93,7 @@ test("stop waits for the next batch boundary and keeps later candidates", async 
       clock: c.clock,
       log: () => {},
     });
-    const pass = r.prune();
+    const pruneRun = r.prune();
     await Promise.resolve();
     const stop = r.stop();
     expect(w.history.read("parcel-100")?.prunedAt).toBeUndefined();
@@ -103,13 +103,13 @@ test("stop waits for the next batch boundary and keeps later candidates", async 
       c.next();
     }
     await stop;
-    expect((await pass).actors).toBe(100);
+    expect((await pruneRun).actors).toBe(100);
     expect(w.history.read("parcel-100")?.commands).toHaveLength(1);
   } finally {
     await w.close();
   }
 });
-test("a failed batch rolls back the actor and schedules the next pass", async () => {
+test("a failed batch rolls back the actor and schedules the next prune run", async () => {
   const w = await world();
   try {
     w.save("parcel");
@@ -171,7 +171,7 @@ test.each(["sources", "evaluations"] as const)(
         clock: c.clock,
         log: () => {},
       });
-      const pass = r.prune();
+      const pruneRun = r.prune();
       await Promise.resolve();
       const stop = r.stop();
       c.next();
@@ -180,7 +180,7 @@ test.each(["sources", "evaluations"] as const)(
         c.next();
       }
       await stop;
-      expect(await pass).toMatchObject(
+      expect(await pruneRun).toMatchObject(
         kind === "sources" ? { sourceEvents: 1000, gateEvaluations: 0 } : { gateEvaluations: 1000 },
       );
       const table = kind === "sources" ? "router_source_event" : "gates_evaluation";
@@ -193,7 +193,7 @@ test.each(["sources", "evaluations"] as const)(
   },
 );
 
-test("an automatically scheduled failed pass consumes its rejection and rearms", async () => {
+test("an automatically scheduled failed prune run consumes its rejection and rearms", async () => {
   const w = await world();
   try {
     w.save("parcel");

@@ -31,7 +31,7 @@ export const revisions = wiringPart({
         intake.current()?.intake.revisionLoaded();
         void migrations
           .current()
-          ?.migrations.pass()
+          ?.migrations.run()
           .catch((error) =>
             log({ level: "error", event: "migration-failed", message: String(error) }),
           );

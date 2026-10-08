@@ -47,7 +47,7 @@ export function openRetention({
     });
   }
   const next = () => new Promise<void>((resolve) => clock.yield(resolve));
-  async function pass() {
+  async function pruneRun() {
     const result = empty(),
       times = cutoffs(configuration, clock.now());
     const kept = () => protections(escalations.list({ status: "open" }));
@@ -115,7 +115,7 @@ export function openRetention({
       log({
         level: "info",
         event: "retention-pruned",
-        message: "Store retention pass completed",
+        message: "Store retention prune run completed",
         detail: result,
       });
     return result;
@@ -126,9 +126,9 @@ export function openRetention({
       if (stopped) return Promise.resolve(empty());
       cancel?.();
       cancel = undefined;
-      // Defer execution so callers can join even a pass with no batches.
+      // Defer execution so callers can join even a prune run with no batches.
       running = Promise.resolve()
-        .then(pass)
+        .then(pruneRun)
         .catch((error: unknown) => {
           log({
             level: "error",

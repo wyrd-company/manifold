@@ -917,7 +917,7 @@ test("default service resumes gates with real token lint, save hooks, and escala
   await resumed.github.stop();
   await resumed.t3code.stop();
   await resumed.revisions.follow();
-  // Drain host persistence and the gate passes those saves schedule.
+  // Drain host persistence and the grant rounds those saves schedule.
   for (let turn = 0; turn < 4; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
   const question = resumed.escalations
     .list({ status: "open" })

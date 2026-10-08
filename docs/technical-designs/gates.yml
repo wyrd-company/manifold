@@ -12,6 +12,8 @@ relationships:
     - blueprint-loader
     - token-lint
     - gate-runtime
+terms:
+  - grant-round
 objective: >-
   Let a process decide which tasks may proceed past a state, in what order,
   and with what budget, without a state machine above the task and without
@@ -25,7 +27,7 @@ background:
     - >-
       Dependency state and priority are facts a task can read for itself.
       Budget is not: two tasks reading the same balance in the same tick both
-      pass, and both go.
+      proceed, and both go.
 design-challenges:
   reads-versus-takes: >-
     Guards read. Reserving budget writes. A write contended between task
@@ -82,8 +84,8 @@ proposed-design:
     The gate runs the comparator after every grant until it returns none,
     and again on any event that changes an input: a task entering or leaving
     the state, a dependency change, a balance change, a token returned.
-    Events that arrive during a pass are queued and applied after the pass,
-    so a pass sees one consistent input. Each evaluation is recorded with its
+    Events that arrive during a grant round are queued and applied after the grant round,
+    so a grant round sees one consistent input. Each evaluation is recorded with its
     input, output, and seed, so any grant can be explained and replayed.
   token: >-
     A token belongs to one task actor and one gate. It is granted by the gate,
@@ -195,7 +197,7 @@ proposed-design:
   strategies-as-bodies: >-
     Greedy stop returns the top task or none. Greedy skip returns the first
     task whose reservation fits. All-or-none checks that a whole batch fits
-    before returning its first member, and relies on the pass seeing one
+    before returning its first member, and relies on the grant round seeing one
     consistent input. A lottery draws by weight from the seeded random and
     returns none when its own stop condition holds. One-at-a-time returns
     none while any holder exists. None of these is known to Manifold.

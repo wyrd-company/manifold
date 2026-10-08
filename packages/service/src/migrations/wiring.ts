@@ -27,7 +27,7 @@ export const migrations = wiringPart({
       log: members.log,
     });
     context.onStop("delivery", () => migrations.stop());
-    await migrations.pass();
+    await migrations.run();
     return { migrations };
   },
 });

@@ -370,7 +370,7 @@ proposed-design:
     postings pending, and the `retryPending` at start posts each once by its
     ledger key. A credit written in a gate's grant or in a push rolls back
     with it, and the next need credits it again. A follow-up that finds
-    nothing pending posts nothing, and a pass that `inputChanged` starts
+    nothing pending posts nothing, and a grant round that `inputChanged` starts
     over unchanged balances grants nothing it would not have granted.
   capacity-tests: |-
     Tests live in `packages/service/src/capacity/capacity.test.ts` and

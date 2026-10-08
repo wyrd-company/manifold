@@ -98,7 +98,7 @@ test("history and usage join each waiting visit across migration, including late
       saveId: "c".repeat(32),
     });
     if (saved.outcome === "conflict") throw new Error("Unexpected conflict");
-    await service.migrations.pass();
+    await service.migrations.run();
     const visits = service.history.read(actorId)!.visits.filter((v) => v.value === "waiting");
     expect(visits).toHaveLength(2);
     expect(visits[1]).toMatchObject({

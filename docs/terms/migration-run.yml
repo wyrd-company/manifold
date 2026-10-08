@@ -1,0 +1,8 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `related-to` is the best fit.
+  related-to:
+    - blueprint-migration
+title: Migration run
+description: >-
+  One job in the blueprint-migration module's serial queue that attempts every active actor behind the latest revision, in actor id order, and ends when those attempts finish.

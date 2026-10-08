@@ -91,6 +91,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **event match** a JSONata expression over an event that decides whether a transition takes it.
 - **event source** a shared origin of events that Manifold routes to actors.
 - **gate** an implementation on a blueprint state that decides which waiting tasks may leave it.
+- **grant round** one synchronous comparator loop for one gate, ending when the comparator returns `null` or an evaluation fails.
 - **GitHub mirror** the last state the GitHub event source read of each entity it follows, against which it compares current GitHub state.
 - **harness plugin** the MCP server the host CLI serves to each provider T3 Code runs, giving the agent the tools to hand off and escalate.
 - **hold** an operator's pause or disconnect of one T3 Code environment, kept in Manifold's store under the environment's name until the matching resume or reconnect. A pause holds the thread and turn commands actors invoke; a disconnect closes Manifold's connection and holds every command to the environment.
@@ -105,6 +106,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, a migration path's context, or an event payload assigned into context.
 - **message** text a task sends to one thread, which reaches the thread's agent only once an actor that follows the thread takes it as an event, and which the agent reads once with `get-messages`.
 - **migration** moving a running actor that waits on events from its blueprint version to a later version at the same path, in one save that keeps its state, identity, threads, token, reservation, inbox, and the deadlines the later version still declares.
+- **migration run** one job in the blueprint-migration queue that attempts every active actor behind the latest revision.
 - **migration path** an entry of a blueprint's `migrations`: a JSON Schema an earlier version's context satisfies and a mapping from that context to the blueprint's own context.
 - **notification destination** a name the process repository uses for where an escalation is sent, mapped in service configuration to an ntfy server, topic, security posture, and credential.
 - **pacing** a limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.
@@ -118,6 +120,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **provider** means the agent runtime or harness T3 Code talks to, such as Codex, Claude, Cursor, Grok, or OpenCode.
 - **redelivery** a webhook delivery GitHub sends again with its original GUID when the source asks for a failed delivery.
 - **reset** the instant at which an account's capacity starts again, closing one window and opening the next.
+- **prune run** one batched retention operation with cutoffs fixed at its start.
 - **reservation** an estimate held against a portfolio item's available balance from a task's release until settlement.
 - **retention window** how long Manifold's store keeps one kind of row it no longer needs, in whole days or `forever`, after which the service removes it: an ended actor's consumed events and commands, a source event's record, or a gate's comparator evaluation.
 - **revision** the process repository's declared files at one commit, read-only.
@@ -126,6 +129,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **session** the entire end-to-end conversation or workflow containing multiple agent turns
 - **settle** when no more activity is occuring on a thread
 - **settlement** retiring a reservation and posting the actual when a task actor ends.
+- **sharing preview** the Portfolio screen's calculation of what an item can reserve halfway through an idle account window with nothing spent, alone and with every item waiting.
 - **snapshot** the persisted state of an actor: its state value and context.
 - **state entry** one entry of an actor into a state, named by an entry id that a replay reproduces and a re-entry changes.
 - **state machine** a declarative stateful actor, built from a blueprint.

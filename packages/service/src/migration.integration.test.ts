@@ -167,7 +167,7 @@ test("a holder keeps its token, gate entry and reservation through the assembled
       files: [{ path: "blueprints/parcel.yml", text: stringify(document) }],
     });
     if (saved.outcome === "conflict") throw new Error("Unexpected conflict");
-    await service.migrations.pass();
+    await service.migrations.run();
     expect(service.store.loadSnapshot("task:I_A")!.machine).toBe(
       `${saved.commit}:blueprints/parcel.yml`,
     );

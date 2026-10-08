@@ -232,8 +232,8 @@ proposed-design:
     scope.
   thread: >-
     Evaluation runs synchronously on the calling thread, the service's main
-    thread. A gate's pass is then one synchronous run: no event is handled
-    between a comparator call and the grant it decides, and the pass sees one
+    thread. A gate's grant round is then one synchronous run: no event is handled
+    between a comparator call and the grant it decides, and the grant round sees one
     consistent input with no locking. The cost is that the event loop does
     not turn during an evaluation; a well-behaved comparator over 2,000 tasks
     takes about 5 ms, and a hostile one holds the thread for at most

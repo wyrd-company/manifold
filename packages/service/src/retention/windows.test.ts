@@ -206,7 +206,7 @@ test("forever keeps populated history, source events, and evaluations", async ()
   }
 });
 
-test("bounded source and evaluation batches use one pass cutoff and keep open reservations", async () => {
+test("bounded source and evaluation batches use one prune run cutoff and keep open reservations", async () => {
   const w = await world();
   try {
     for (let n = 0; n < 1001; n++) {

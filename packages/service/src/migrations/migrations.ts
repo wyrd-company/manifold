@@ -19,13 +19,13 @@ export interface MigrationsOptions {
   readonly escalations: Pick<Escalations, "raise" | "withdraw" | "list">;
   readonly log: (entry: ServiceLogEntry) => void;
 }
-export interface MigrationPass {
+export interface MigrationRun {
   readonly migrated: readonly string[];
   readonly deferred: readonly string[];
   readonly failed: readonly StoredMigrationFailure[];
 }
 export interface Migrations {
-  pass(): Promise<MigrationPass>;
+  run(): Promise<MigrationRun>;
   migrationFailed(escalation: Escalation): (() => void) | undefined;
   stop(): Promise<void>;
 }
@@ -222,7 +222,7 @@ export function openMigrations(options: MigrationsOptions): Migrations {
     }
   });
   return {
-    pass() {
+    run() {
       if (stopped) throw new TypeError("Migrations are stopped");
       return enqueue(async () => {
         const result = empty();

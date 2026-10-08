@@ -156,13 +156,13 @@ export function createGates(options: GatesOptions): Gates {
       if (!tables.entry(gate, member.actorId))
         tables.enter(gate, member.actorId, null, member.savedAt);
   }
-  function pass(gate: string) {
+  function grantRound(gate: string) {
     const loaded = comparators.get(gate);
     if (!loaded) return;
     options.store.connection.transaction(() => bootstrap(gate));
     const at = now(),
       critical = criticalPaths(options.trackedIssue);
-    // A probe or schedule callback can stop the module during a pass.
+    // A probe or schedule callback can stop the module during a grant round.
     // eslint-disable-next-line no-unmodified-loop-condition
     while (!stopped) {
       const input = gateInput(options, tables, views, gate, at, critical);
@@ -258,7 +258,7 @@ export function createGates(options: GatesOptions): Gates {
           .catch((error) =>
             options.onError?.({ gate, version: declaration.version, message: String(error) }),
           );
-      } else pass(gate);
+      } else grantRound(gate);
     }
   }
   const hooks = saveHook(options, tables, views, mark);

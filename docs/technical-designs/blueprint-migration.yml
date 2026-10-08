@@ -18,6 +18,8 @@ relationships:
     - escalation-contract
     - store-database-schema
     - migrate-running-actors-automatically
+terms:
+  - migration-run
 objective: >-
   Move a running actor to the latest version of its blueprint's path when
   a migration starts for it, so that a process that evolves can take its
@@ -113,15 +115,15 @@ proposed-design:
     }
 
     export interface Migrations {
-      /** Attempts every active actor that is behind; resolves when every attempt of the pass has ended. */
-      pass(): Promise<MigrationPass>;
+      /** Attempts every active actor that is behind; resolves when every attempt of the migration run has ended. */
+      run(): Promise<MigrationRun>;
       /** The `migration-failed` handler; the function it returns runs after the handling commits. */
       migrationFailed(escalation: Escalation): (() => void) | undefined;
-      /** Resolves when the queue is empty; later calls to `pass` and later saves start nothing. */
+      /** Resolves when the queue is empty; later calls to `run` and later saves start nothing. */
       stop(): Promise<void>;
     }
 
-    export interface MigrationPass {
+    export interface MigrationRun {
       readonly migrated: readonly string[];
       readonly deferred: readonly string[];
       readonly failed: readonly StoredMigrationFailure[];
@@ -134,7 +136,7 @@ proposed-design:
     `escalation-contract`.
   module-layout: >-
     `index.ts` re-exports the public names and nothing else.
-    `migrations.ts` implements `openMigrations`: the queue, the pass, the
+    `migrations.ts` implements `openMigrations`: the queue, the migration run, the
     save listener, failure records, and the handler. `later.ts` holds the
     pure function `laterVersion(from, to, facts)` and the escalation's
     question text. `wiring.ts` is the module's wiring part. Tests live
@@ -142,9 +144,9 @@ proposed-design:
     host's, and the loader's `index.ts`.
   trigger: >-
     Migration is automatic with no opt-out, as
-    `migrate-running-actors-automatically` records. Passes run after each
+    `migrate-running-actors-automatically` records. Migration runs run after each
     applied revision and at start, and an actor that is behind is
-    attempted after each of its saves, as `pass` and `saves` state. An
+    attempted after each of its saves, as `migration-run` and `saves` state. An
     author who wants running actors to finish on the old text saves the
     new text at another path.
   later-version: >-
@@ -184,8 +186,8 @@ proposed-design:
     then attempts. A version that is `missing` at the actor's target for a
     child blueprint the target invokes is the same failure, raised by the
     host.
-  pass: >-
-    The module keeps one serial queue. `pass()` adds one job: it reads
+  migration-run: >-
+    The module keeps one serial queue. `run()` adds one job: it reads
     `store.activeSnapshots()`, and for each actor in actor id order whose
     version is behind, unless the actor's stored failure record names the
     same `from` and `to` keys, it awaits `actorHost.migrate(actorId,
@@ -194,9 +196,9 @@ proposed-design:
     `deferred` outcome adds the actor to the deferred set and is logged
     `migration-deferred` once per actor and target with its reason. A
     `failed` outcome is recorded. A `current` or `ended` outcome does
-    nothing. Under the automatic trigger, passes run after each revision
+    nothing. Under the automatic trigger, migration runs run after each revision
     the follower applies, through its `applied` callback, and once when
-    the module's wiring part starts, which awaits that pass.
+    the module's wiring part starts, which awaits that migration run.
   saves: >-
     `openMigrations` registers a listener with `actorHost.onSaved`, which
     the host calls after each committed save, including terminal saves. It
@@ -222,7 +224,7 @@ proposed-design:
     escalation of the same subject, so every actor that fails toward one
     target shares one open escalation. A store write that throws while
     recording is logged `migration-failed` at `error` with its message,
-    and records nothing; the next pass or save attempts the actor again.
+    and records nothing; the next migration run or save attempts the actor again.
   escalation: >-
     The module's `migrationFailed` handler takes an answer to a
     `migration-failed` escalation inside the transaction that records its
@@ -232,13 +234,13 @@ proposed-design:
     current target of its path, so a retry after a later revision takes
     the later version. A retry that fails again records the failure anew
     and raises the next occurrence. For `dismiss` it writes nothing: the
-    records stay, so no pass or save attempts the same pair again, and
+    records stay, so no migration run or save attempts the same pair again, and
     the next revision's target is a new pair. After a `migrated` outcome
     whose actor had a record, the module withdraws the escalation of that
     record's `to` when `store.migrationFailures` of it is then empty.
     A failure replaced by a new target retires the old target's escalation
     when its last failure row is gone. After a committed save, including
-    a terminal save on the original version, and at the end of a pass,
+    a terminal save on the original version, and at the end of a migration run,
     the module withdraws every open migration-failed escalation whose
     target has no failure rows.
   outcomes: |-
@@ -264,22 +266,22 @@ proposed-design:
     inbox row, has a change not yet saved, or runs an invoked promise is
     attempted again after its next save, and is logged once per target.
   convergence: >-
-    A pass twice attempts each actor that is behind once per pass; an
-    actor the first pass migrated is current, and one it failed has a
-    record of the same pair, so the second pass skips it. A failure
+    A migration run twice attempts each actor that is behind once per migration run; an
+    actor the first migration run migrated is current, and one it failed has a
+    record of the same pair, so the second migration run skips it. A failure
     recorded twice for one pair is recorded and raised once. A crash
     before the migration's save commits leaves the stored snapshot on its
-    version and no record; the pass at the next start attempts it again.
+    version and no record; the migration run at the next start attempts it again.
     A crash after the save commits and before the router re-arms the
     deadline timer and the subscription leaves the actor on the target
     version; the next start restores it there, arms its deadline rows,
     derives its subscription from the stored snapshot, and finds it
     current. A crash after a failure's record commits leaves the record
-    and its escalation; one before leaves neither, and the next pass
+    and its escalation; one before leaves neither, and the next migration run
     attempts again. A `retry` whose handling commits before its jobs run
-    has cleared the records, so the pass at the next start attempts the
+    has cleared the records, so the migration run at the next start attempts the
     actors. Withdrawing after a migration runs after the save; a crash
-    between leaves an open escalation that the next pass withdraws when
+    between leaves an open escalation that the next migration run withdraws when
     its target has no failure rows.
   service-wiring: >-
     `migrations/wiring.ts` is the module's wiring part, entry
@@ -289,14 +291,14 @@ proposed-design:
     the actor host, `revisions.latest`, the process repository's
     `isAncestor`, the bundles, the escalations module, and the log,
     registers `stop` at stage `delivery`, and, under the automatic
-    trigger, awaits the first pass. Under the automatic trigger the
-    revision follower's `applied` callback calls `pass()` on the module
+    trigger, awaits the first migration run. Under the automatic trigger the
+    revision follower's `applied` callback calls `run()` on the module
     through `context.later`, as it reaches intake, and the escalations
     part gives the `migration-failed` handler the same way.
   errors: >-
-    Failures are outcomes and records, never throws. `pass` rejects only
+    Failures are outcomes and records, never throws. `run` rejects only
     when `store.activeSnapshots` or `latest` throws. Misuse by service code
-    throws a `TypeError`: `pass` after `stop`.
+    throws a `TypeError`: `run` after `stop`.
   implementation-actor-kinds: >-
     `ImplementationRegistry.actorKinds` declares each invoked implementation
     as `promise` or `callback`. The loader keeps the declarations on each
@@ -321,7 +323,7 @@ proposed-design:
     whose third version adds a state; the store is populated with other
     actors before each test. Behaviours proved, each written red before
     green: an actor waiting on the first version migrates to the second
-    at a pass and takes its next event through a guard that reads the
+    at a migration run and takes its next event through a guard that reads the
     mapped `zone`, from the same state; an actor two versions behind
     migrates to the third in one step; an actor on a commit that is not an
     ancestor of the target, and one on a bundle recorded after the
@@ -335,12 +337,12 @@ proposed-design:
     whose file fails the lint each leave the stored snapshot byte-identical
     to before the attempt, the deadline, inbox, token, and reservation
     rows unchanged, and the actor taking its next event on its version,
-    with one failure record of its kind; a second pass and a later save
+    with one failure record of its kind; a second migration run and a later save
     record nothing more, raise no second escalation, and log nothing more;
     two actors failing toward one target share one open escalation; a
     `retry` after a fix in a later revision migrates both to it and the
     escalation's next attempt raises nothing; a `dismiss` leaves the
-    records and no pass attempts the pair; a holder whose migrated
+    records and no migration run attempts the pair; a holder whose migrated
     configuration is in the target's trap set fails with `token-trap` and
     keeps its token; a holder of a gate the target drops fails with
     `gate-missing`; a holder past its gated state whose target moves the

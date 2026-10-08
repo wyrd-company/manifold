@@ -427,7 +427,7 @@ findings:
       save, and consume update. Their grant order is asserted equal. Each
       comparator load gets a fresh wasm instance with WebAssembly.Memory capped
       at 1024 pages (64 MiB), runtime memory limit 32 MiB, stack 1 MiB, and the
-      sandbox spike's 100 ms interrupt deadline. A context lives for one pass;
+      sandbox spike's 100 ms interrupt deadline. A context lives for one grant round;
       the pure body reparses its input on every call and keeps no application
       state. Date and Math.random are blocked; this body uses no random. Module
       initialization and transpilation are reported separately and excluded

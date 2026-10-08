@@ -598,7 +598,7 @@ it("invalidates another gate after committed reservations without actor saves", 
   expect(evaluations.length).toBe(before + 1);
   expect(JSON.parse(String(evaluations.at(-1)?.["input"])).balances.left.acct).toBe(490);
 });
-it("reloads a spent sandbox only when the next input change requests a pass", async () => {
+it("reloads a spent sandbox only when the next input change requests a grant round", async () => {
   let loads = 0,
     failed = false;
   const f = await fixture(single, {

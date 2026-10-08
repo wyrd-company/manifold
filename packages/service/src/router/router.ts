@@ -61,11 +61,11 @@ export function startRouter({
     if (!resuming && immediate === undefined)
       immediate = setImmediate(() => {
         immediate = undefined;
-        drainPass();
+        drainCycle();
         if (!stopped) deadlines.arm();
       });
   }
-  function drainPass() {
+  function drainCycle() {
     const batch = [...scheduled];
     scheduled.clear();
     for (const actorId of batch) {
@@ -188,12 +188,12 @@ export function startRouter({
     for (const stored of snapshots) schedule(stored.actorId);
     while (scheduled.size) {
       if (stopped) break;
-      drainPass();
+      drainCycle();
     }
     afterDrain?.(router);
     while (scheduled.size) {
       if (stopped) break;
-      drainPass();
+      drainCycle();
     }
     resuming = false;
     for (const actorId of scheduled) schedule(actorId);

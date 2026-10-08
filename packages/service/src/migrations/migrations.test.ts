@@ -150,7 +150,7 @@ test("migrates a waiting actor once through its ordinary save, preserving entrie
   const f = await fixture();
   const before = f.store.loadSnapshot("parcel")!;
   const deadlines = f.store.connection.database.prepare("SELECT * FROM store_deadline").all();
-  expect(await f.migrations.pass()).toMatchObject({ migrated: ["parcel"] });
+  expect(await f.migrations.run()).toMatchObject({ migrated: ["parcel"] });
   expect(f.store.loadSnapshot("parcel")).toMatchObject({
     machine: `${b}:${path}`,
     snapshot: { value: "waiting", context: { zone: "north" }, entries: before.snapshot["entries"] },
@@ -158,7 +158,7 @@ test("migrates a waiting actor once through its ordinary save, preserving entrie
   expect(f.store.connection.database.prepare("SELECT * FROM store_deadline").all()).toEqual(
     deadlines,
   );
-  expect(await f.migrations.pass()).toEqual({ migrated: [], deferred: [], failed: [] });
+  expect(await f.migrations.run()).toEqual({ migrated: [], deferred: [], failed: [] });
   f.router.publish({
     source: "github",
     eventId: "scan",
@@ -173,9 +173,9 @@ test("records a refused mapping once while leaving the saved snapshot and deadli
     'context.depot = "north" ? $error("refused") : {"zone": context.depot}';
   const f = await fixture(document),
     before = f.store.loadSnapshot("parcel");
-  expect(await f.migrations.pass()).toMatchObject({ failed: [{ kind: "mapping-failed" }] });
+  expect(await f.migrations.run()).toMatchObject({ failed: [{ kind: "mapping-failed" }] });
   expect(f.store.loadSnapshot("parcel")).toEqual(before);
-  expect(await f.migrations.pass()).toEqual({ migrated: [], deferred: [], failed: [] });
+  expect(await f.migrations.run()).toEqual({ migrated: [], deferred: [], failed: [] });
   expect(f.raised).toHaveLength(1);
   expect(f.store.migrationFailure("parcel")).toMatchObject({
     from: `${a}:${path}`,
@@ -205,7 +205,7 @@ test("uses mapped context and the new event subscription, and keeps the actor id
   const identity = (f.store.loadSnapshot("parcel")!.snapshot["context"] as Record<string, unknown>)[
     "manifold"
   ];
-  await f.migrations.pass();
+  await f.migrations.run();
   expect(
     (f.store.loadSnapshot("parcel")!.snapshot["context"] as Record<string, unknown>)["manifold"],
   ).toEqual(identity);
@@ -234,8 +234,8 @@ test.each([
   const f = await fixture(document),
     before = f.store.loadSnapshot("parcel"),
     deadlines = f.store.connection.database.prepare("SELECT * FROM store_deadline").all();
-  await f.migrations.pass();
-  await f.migrations.pass();
+  await f.migrations.run();
+  await f.migrations.run();
   expect(f.store.migrationFailure("parcel")!.kind).toBe(kind);
   expect(f.store.loadSnapshot("parcel")).toEqual(before);
   expect(f.store.connection.database.prepare("SELECT * FROM store_deadline").all()).toEqual(
@@ -271,8 +271,8 @@ test.each([
 ])("refuses %s without changing the old snapshot", async (kind, document) => {
   const f = await fixture(document),
     before = f.store.loadSnapshot("parcel");
-  await f.migrations.pass();
-  await f.migrations.pass();
+  await f.migrations.run();
+  await f.migrations.run();
   expect(f.store.loadSnapshot("parcel")).toEqual(before);
   expect(f.store.migrationFailure("parcel"), JSON.stringify([...f.latest.failures])).toMatchObject({
     kind,
@@ -281,7 +281,7 @@ test.each([
 });
 test("does not migrate an actor on unrelated history", async () => {
   const f = await fixture(next(), { ancestor: false });
-  expect(await f.migrations.pass()).toEqual({ migrated: [], deferred: [], failed: [] });
+  expect(await f.migrations.run()).toEqual({ migrated: [], deferred: [], failed: [] });
   expect(f.store.loadSnapshot("parcel")!.machine).toBe(`${a}:${path}`);
 });
 test("defers pending events and migrates after their committed save", async () => {
@@ -392,7 +392,7 @@ test("defers active promises and migrates once their completion is saved", async
       },
     },
   );
-  expect(await f.migrations.pass()).toMatchObject({ deferred: ["parcel"] });
+  expect(await f.migrations.run()).toMatchObject({ deferred: ["parcel"] });
   resolve();
   await expect.poll(() => f.store.loadSnapshot("parcel")!.machine).toBe(`${b}:${path}`);
 });
@@ -401,7 +401,7 @@ test("a held gate missing in the target refuses migration", async () => {
     heldTokens: () => [{ gate: `${path}#waiting`, tokenId: "token-one" }],
   });
   const before = f.store.loadSnapshot("parcel");
-  expect(await f.migrations.pass()).toMatchObject({ failed: [{ kind: "gate-missing" }] });
+  expect(await f.migrations.run()).toMatchObject({ failed: [{ kind: "gate-missing" }] });
   expect(f.store.loadSnapshot("parcel")).toEqual(before);
 });
 
@@ -425,7 +425,7 @@ test.each(["state", "exit"])(
     );
     expect(f.latest.failures.size).toBe(0);
     const before = f.store.loadSnapshot("parcel");
-    expect(await f.migrations.pass()).toMatchObject({ failed: [{ kind: "token-return" }] });
+    expect(await f.migrations.run()).toMatchObject({ failed: [{ kind: "token-return" }] });
     expect(f.store.loadSnapshot("parcel")).toEqual(before);
   },
 );
@@ -434,7 +434,7 @@ test("retry clears the version failures and runs its jobs after the answer commi
   document.migrations[0]!.context.params.expression =
     'context.depot = "north" ? $error("refused") : {"zone": context.depot}';
   const f = await fixture(document);
-  await f.migrations.pass();
+  await f.migrations.run();
   const answer = {
     raiser: { type: "service", kind: "migration-failed", subject: { version: `${b}:${path}` } },
     answer: { value: { choice: "retry" } },
@@ -447,14 +447,14 @@ test("retry clears the version failures and runs its jobs after the answer commi
 });
 test("dismiss keeps the failed pair and stops repeated attempts", async () => {
   const f = await fixture({ ...next(), migrations: [] });
-  await f.migrations.pass();
+  await f.migrations.run();
   expect(
     f.migrations.migrationFailed({
       raiser: { type: "service", kind: "migration-failed", subject: { version: `${b}:${path}` } },
       answer: { value: { choice: "dismiss" } },
     } as unknown as import("../escalations/index.ts").Escalation),
   ).toBeUndefined();
-  await f.migrations.pass();
+  await f.migrations.run();
   f.router.persist("parcel");
   await settle();
   await f.migrations.stop();
@@ -484,7 +484,7 @@ test("maps an active child blueprint context with its own authored path", async 
     newFiles: { [childPath]: stringify(next()) },
   });
   const before = f.store.loadSnapshot("parcel")!.snapshot;
-  expect(await f.migrations.pass()).toMatchObject({ migrated: ["parcel"] });
+  expect(await f.migrations.run()).toMatchObject({ migrated: ["parcel"] });
   expect(f.store.loadSnapshot("parcel")!.snapshot).toMatchObject({
     context: { zone: "north" },
     children: { child: { snapshot: { context: { zone: "south" } } } },
@@ -510,7 +510,7 @@ test("a missing child version refuses the parent before saving", async () => {
     { original, oldFiles: { [childPath]: stringify(old) } },
   );
   const before = f.store.loadSnapshot("parcel");
-  expect(await f.migrations.pass()).toMatchObject({ failed: [{ kind: "version-invalid" }] });
+  expect(await f.migrations.run()).toMatchObject({ failed: [{ kind: "version-invalid" }] });
   expect(f.store.loadSnapshot("parcel")).toEqual(before);
 });
 test("a held token in the target trap set refuses migration", async () => {
@@ -532,7 +532,7 @@ test("a held token in the target trap set refuses migration", async () => {
   );
   expect(f.latest.failures.size).toBe(0);
   const before = f.store.loadSnapshot("parcel");
-  expect(await f.migrations.pass()).toMatchObject({ failed: [{ kind: "token-trap" }] });
+  expect(await f.migrations.run()).toMatchObject({ failed: [{ kind: "token-trap" }] });
   expect(f.store.loadSnapshot("parcel")).toEqual(before);
 });
 test("drops undeclared deadlines and arms new numeric delays without renumbering entries", async () => {
@@ -546,7 +546,7 @@ test("drops undeclared deadlines and arms new numeric delays without renumbering
   const f = await fixture({ ...next(), machine });
   const before = f.store.loadSnapshot("parcel")!.snapshot["entries"];
   const at = Date.now();
-  await f.migrations.pass();
+  await f.migrations.run();
   const deadlines = f.store.connection.database
     .prepare("SELECT * FROM store_deadline WHERE actor_id=?")
     .all("parcel");
@@ -585,7 +585,7 @@ test("two failures share a real escalation, and retry targets the current later 
   });
   cleanup.push(() => migrations.stop());
   f.host.start({ actorId: "parcel-two", blueprint: f.first.blueprint, input: {} });
-  await migrations.pass();
+  await migrations.run();
   const questions = escalations.list({ status: "open" });
   expect(questions).toHaveLength(1);
   expect(f.store.migrationFailures(`${b}:${path}`)).toHaveLength(2);
@@ -666,7 +666,7 @@ test.each([
     });
     cleanup.push(() => migrations.stop());
     const before = store.loadSnapshot("parcel");
-    const result = await migrations.pass();
+    const result = await migrations.run();
     if (!isLater) {
       expect(result).toEqual({ migrated: [], deferred: [], failed: [] });
       expect(store.loadSnapshot("parcel")).toEqual(before);
@@ -692,7 +692,7 @@ test("answers current and ended without saving, and rejects a target at another 
       version: { commit: b, path: "blueprints/other.yml" },
     }),
   ).rejects.toThrow(TypeError);
-  await f.migrations.pass();
+  await f.migrations.run();
   const before = f.store.loadSnapshot("parcel");
   expect(await f.host.migrate("parcel", f.latest.blueprints.get(path)!)).toEqual({
     status: "current",
@@ -740,7 +740,7 @@ test.each(["completed", "later"])(
   async (mode) => {
     const f = await fixture(refused());
     const r = await realEscalations(f);
-    await r.migrations.pass();
+    await r.migrations.run();
     expect(r.escalations.list({ status: "open" })).toHaveLength(1);
     if (mode === "completed") {
       f.router.publish({
@@ -755,7 +755,7 @@ test.each(["completed", "later"])(
       const c = "c".repeat(40);
       f.revisions.set(c, memoryRevision(c, { [path]: stringify(next()) }));
       r.select(await f.loader.loadRevision(f.revisions.get(c)!));
-      await r.migrations.pass();
+      await r.migrations.run();
       expect(f.store.loadSnapshot("parcel")!.machine).toBe(`${c}:${path}`);
     }
     expect(f.store.migrationFailure("parcel")).toBeUndefined();
@@ -784,7 +784,7 @@ test("replacing failures retires the old target question only after its last act
     input: { manifold: { issue: "parcel-two-node" } },
   });
   const r = await realEscalations(f);
-  await r.migrations.pass();
+  await r.migrations.run();
   expect(r.escalations.list({ status: "open" })).toHaveLength(1);
   const question = r.escalations.list({ status: "open" })[0]!;
   const c = "c".repeat(40);
@@ -816,10 +816,10 @@ test("replacing failures retires the old target question only after its last act
   ]);
 });
 
-test("a new pass retires the durable question left after its failure row was cleared", async () => {
+test("a new migration run retires the durable question left after its failure row was cleared", async () => {
   const f = await fixture(refused());
   const r = await realEscalations(f);
-  await r.migrations.pass();
+  await r.migrations.run();
   await r.migrations.stop();
   const previous = f.store.loadSnapshot("parcel")!;
   f.store.saveSnapshot({
@@ -838,6 +838,6 @@ test("a new pass retires the durable question left after its failure row was cle
     log: () => {},
   });
   cleanup.push(() => reopened.stop());
-  await reopened.pass();
+  await reopened.run();
   expect(r.escalations.list({ status: "open" })).toEqual([]);
 });
