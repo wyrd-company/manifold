@@ -6,6 +6,7 @@ relationships:
     - gates
     - portfolio
     - actor-history
+    - retention
   mitigates:
     - gate-durability-unproven
 objective: >-
@@ -80,6 +81,8 @@ proposed-design:
       findActorsInState(query: StateQuery): StoredSnapshot[];
       activeSnapshots(): StoredSnapshot[];
       endedSnapshots(): StoredSnapshot[];
+      prunableEnded(query: PrunableQuery): PrunableActor[];
+      pruneEnded(actorId: string): PruneOutcome;
 
       writeInbox(event: InboxEvent, actorIds: readonly string[]): InboxRow[];
       pendingInbox(actorId: string): InboxRow[];
@@ -141,7 +144,26 @@ proposed-design:
       readonly machine: string;
       readonly snapshot: PersistedSnapshot;
       readonly savedAt: number;
+      /** Present on an ended snapshot whose history retention has pruned. */
+      readonly historyPrunedAt?: number;
     }
+
+    export interface PrunableQuery {
+      /** Ended actors whose snapshot was saved before this time. */
+      readonly endedBefore: number;
+      /** The last actor of the previous page; absent for the first page. */
+      readonly after?: PrunableActor;
+      readonly limit: number;
+    }
+
+    export interface PrunableActor {
+      readonly actorId: string;
+      readonly savedAt: number;
+    }
+
+    export type PruneOutcome =
+      | { readonly status: "pruned"; readonly inboxRows: number }
+      | { readonly status: "unchanged" };
 
     export interface StoredErroredSnapshot extends StoredSnapshot {
       readonly eventId: string | undefined;
@@ -325,8 +347,8 @@ proposed-design:
     rows with `consumed_at` null, ordered by `sequence`. `actorInbox(actorId)`
     returns every row of the actor, consumed or pending, ordered by
     `sequence`, through the `(actor_id, event_id)` unique index; a consumed
-    row stays in the inbox, so the history module reads an actor's events
-    from it. `markConsumed` sets
+    row stays in the inbox until retention prunes its actor, as `pruning`
+    states, so the history module reads an actor's events from it. `markConsumed` sets
     `consumed_at` where it is null; marking a consumed or absent row changes
     nothing. A payload is stored with `JSON.stringify` and returned with
     `JSON.parse`.
@@ -400,6 +422,25 @@ proposed-design:
     `fired_at` is null, read through the `store_deadline_due` index, or
     `undefined` when no row is armed; the deadline loop arms its one timer
     from it.
+  pruning: >-
+    Retention removes an ended actor's history through two methods, as
+    `retention` states. `prunableEnded({ endedBefore, after, limit })`
+    returns at most `limit` actors whose snapshot status is `done` or
+    `stopped`, whose `history_pruned_at` is null, and whose `saved_at` is
+    before `endedBefore`, ordered by `saved_at` and then actor id, starting
+    after `after` when it is given, through the `store_snapshot_prunable`
+    index. `pruneEnded(actorId)`, in one transaction that joins the
+    caller's, reads the actor's snapshot row; when its status is `done` or
+    `stopped` and its `history_pruned_at` is null, it deletes the actor's
+    inbox rows whose `consumed_at` is set, sets `history_pruned_at` from
+    `now`, and returns `pruned` with the number of rows deleted; otherwise
+    it changes nothing and returns `unchanged`. It never deletes a pending
+    row, an active actor's row, the snapshot, or its deadlines.
+    `loadSnapshot`, `endedSnapshots`, and `findActorsInState` return
+    `historyPrunedAt` for a pruned snapshot. A deleted consumed row frees
+    its actor and event id: a later `writeInbox` of the same event id for
+    that actor would insert a row, and none comes, since an ended actor
+    has no subscription and no module writes to it.
   migration-failures: >-
     `store_migration_failure` holds at most one row per actor: the last
     migration of that actor that failed, as `blueprint-migration` states.
@@ -428,7 +469,8 @@ proposed-design:
     `writeInbox` twice holds one row per actor and event and returns nothing
     the second time. `markConsumed` twice keeps the first consumed time.
     `deliver` on a consumed row is a no-op. `fireDeadline` twice writes one
-    inbox row and keeps the first fired time. `recordMigrationFailure`
+    inbox row and keeps the first fired time. `pruneEnded` twice deletes once and answers `unchanged` the second
+    time. `recordMigrationFailure`
     twice for one pair writes once and answers `unchanged` the second
     time; `clearMigrationFailures` twice deletes nothing more. A crash inside any of these rolls back its transaction, and
     a crash between a delivery's `send` and its commit leaves the row
@@ -506,4 +548,10 @@ proposed-design:
     by the pre-fold steps is refused with the owner name and an instruction
     to create a new store, with its file unchanged. SQLite schema tables
     prove that each owner's one step creates the same tables, columns,
-    indexes, views, and triggers as the pre-fold steps.
+    indexes, views, and triggers as the pre-fold steps. Pruning tests: `prunableEnded` lists exactly the ended,
+    unpruned actors saved before the time, in `saved_at` and actor id
+    order, page by page; `pruneEnded` of an ended actor deletes its
+    consumed rows, keeps its pending rows and its snapshot, sets
+    `historyPrunedAt`, and answers `unchanged` the second time; of an
+    active actor it changes nothing; and a `pruneEnded` inside a
+    `transaction` whose work then throws leaves every row.

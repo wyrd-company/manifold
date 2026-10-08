@@ -6,6 +6,7 @@ relationships:
     - store
   references:
     - durable-event-delivery
+    - retention
 description: >-
   Defines the tables the store owns in Manifold's SQLite database file.
   `docs/specifications/store-database-schema.sql` is the machine-readable
@@ -25,6 +26,10 @@ description: >-
   Snapshots. `store_snapshot` holds one row per actor with the last snapshot
   whose status is `active`, `done`, or `stopped`. `machine` names the
   blueprint the actor runs. `snapshot` is the persisted snapshot as JSON.
+  `history_pruned_at` is null until retention removes the history of an
+  ended actor, and then holds when it did; an active snapshot never has
+  one. The `store_snapshot_prunable` index lists the ended snapshots whose
+  history is not yet pruned, in the order they ended.
   `store_snapshot_state` holds one row per state node active in that
   snapshot, named by its state path: the keys from the root of the state
   value to the node, joined with `.`. A state value `{ open: { lifecycle:
@@ -43,7 +48,8 @@ description: >-
   is the insertion order and is never reused. `(actor_id, event_id)` is
   unique, so a second write of the same event to the same actor holds one
   row. `payload` is the event as JSON. A row is pending while `consumed_at` is
-  null.
+  null. A consumed row stays until retention prunes its ended actor; a
+  pending row is never deleted.
 
   Deadlines. `store_deadline` holds one armed deadline per actor, state path,
   and event name. `deadline_id` identifies one arm and is never reused, so a

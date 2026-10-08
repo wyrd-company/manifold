@@ -11,3 +11,6 @@ CREATE TABLE router_source_event (
   accepted_at INTEGER NOT NULL,
   PRIMARY KEY (source, event_id)
 ) STRICT, WITHOUT ROWID;
+
+-- Each source's events in the order they were accepted, read by retention.
+CREATE INDEX router_source_event_by_time ON router_source_event (source, accepted_at);

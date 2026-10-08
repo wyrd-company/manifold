@@ -289,6 +289,7 @@ proposed-design:
       readonly github: GitHubSource;
       readonly t3code: T3CodeSource;
       readonly migrations: Migrations;
+      readonly retention: Retention;
       readonly http: ServiceHttp;
       /** Stops the service; every call returns the first call's promise. */
       stop(): Promise<void>;
@@ -467,6 +468,7 @@ proposed-design:
     | step `actor-host-opened` | | | | |
     | `router` | `router/wiring.ts` | `startRouter` with the store, the actor host, the gates' `afterDrain`, and an `onHeld` that logs `actor-held` and raises a `held-actor` escalation. `startRouter` restores and drains every stored actor and returns. | `router` | `delivery` |
     | step `router-started` | | | | |
+    | `retention` | `retention/wiring.ts` | `openRetention` as `retention` states, with the store, `history`, the escalations module, the `retention` section, and the log, then its `start`, which arms the first prune pass. | `retention` | `timers` |
     | `escalations-delivery` | `escalations/wiring.ts` | The escalations module's `start`. | | |
     | `agent-tools-delivery` | `agent-tools/wiring.ts` | The agent tools module's `start`. | | |
     | step `escalations-started` | | | | |
@@ -563,7 +565,7 @@ proposed-design:
     | `pulls` | `revisions-idle` | `revisions` | The follower's queue holds every pull a source started, including one the GitHub source called and did not await; it drains before intake, the router, and the store stop. |
     | `intake` | `intake-stopped` | `intake` | Intake outlives every caller: the sources, the follower, and the escalations module. |
     | `delivery` | `router-stopped` | `migrations`, `router` | The migrations module's queue drains before the router stops; no module publishes after this. |
-    | `timers` | | `gates`, `portfolio` | The gates' and the capacity's timers stop once nothing they wake can deliver. |
+    | `timers` | | `retention`, `gates`, `portfolio` | The gates' and the capacity's timers stop once nothing they wake can deliver, and a running prune pass stops between batches before the store closes. |
     | `store` | `store-closed` | `store` | Last. |
   revision-follower: >-
     The follower is the only caller of the process repository's `pull`. It

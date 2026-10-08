@@ -55,6 +55,9 @@ properties:
   agentTools:
     $ref: https://manifold.wyrd.company/schemas/agent-tools-configuration
     default: {}
+  retention:
+    $ref: https://manifold.wyrd.company/schemas/retention-configuration
+    default: {}
 $defs:
   declared-name:
     description: >-

@@ -42,6 +42,8 @@ description: |-
     `blueprint-lint-configuration`.
   - `agentTools`, optional, default `{}`, specified by
     `agent-tools-configuration`.
+  - `retention`, optional, default `{}`, specified by
+    `retention-configuration`.
 
   An optional section that is absent takes `{}` and then the defaults of
   its own properties, so the loaded configuration has every section and

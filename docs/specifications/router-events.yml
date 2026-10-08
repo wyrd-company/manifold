@@ -7,6 +7,7 @@ relationships:
     - store
     - agent-tools
     - environment-events
+    - retention
 description: |-
   Defines the event-source seam: how an event source hands an event to the
   router, the topic grammar, how a topic and an event type reach an actor,
@@ -82,7 +83,9 @@ description: |-
   subscriptions it reached at that moment. A later publish of the same
   source and id is a replay, writes nothing, and reaches no actor, even when
   an actor that subscribes to its topic has appeared since. An event that
-  reached no actor is accepted and recorded all the same.
+  reached no actor is accepted and recorded all the same. The record is
+  kept for its source's retention window, as `retention` states; a publish
+  after the record is deleted is a first acceptance.
 
   Outcome. `publish` returns a publish outcome. `accepted` carries `replay`,
   true when the source event was accepted before, and the inbox rows the

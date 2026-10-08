@@ -69,7 +69,11 @@ description: >-
   changes only to `posted`, to pending with another reason and account,
   or, while its `actor` is a ledger actor of unowned usage, to the
   attribution its session's mapping or its thread's ownership gives; a
-  posted one never changes.
+  posted one never changes. A posting's `visit` stays after retention
+  removes its actor's history, as `retention` states; no posting is
+  deleted. The `usage_postings_by_account` index holds each posting that
+  names an account, by account and `used_at`, and serves each account's
+  latest call.
 
   Reattributions. `usage_reattributions` holds every reattribution of
   a posted posting, in `seq` order: its `posting`, its `cause`, and the
@@ -110,4 +114,6 @@ validation-criteria: >-
   a `move` row followed by a `mapping` row, the `mapping` row's
   attribution and the `move` row's actor and item as held. A posted
   posting without a ledger key, a pending posting without a reason, and an unaccounted posting with an account each fail
-  a CHECK constraint.
+  a CHECK constraint. `EXPLAIN QUERY PLAN` of the latest-call read that
+  `usage-intake` states names only `SEARCH` steps on
+  `usage_postings_by_account`, and no `SCAN` of `usage_postings`.

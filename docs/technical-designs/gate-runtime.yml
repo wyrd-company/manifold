@@ -11,6 +11,7 @@ relationships:
     - blueprint-loader
     - github-event-source
     - blueprint-migration
+    - retention
   mitigates:
     - gate-durability-unproven
 terms:
@@ -414,13 +415,15 @@ proposed-design:
     the version it names through the loader's revision of that commit, and
     evaluates the recorded input with the recorded seed. It returns the
     recorded and the replayed result. A comparator is pure and a version is
-    immutable, so a recorded grant replays to the same selection.
+    immutable, so a recorded grant replays to the same selection. An
+    evaluation that retention has deleted cannot be replayed: its id no
+    longer exists, and `replay` throws as `errors` states.
   public-interface: |-
     `packages/service/src/gates/index.ts` exports exactly these names.
 
     ```ts
     import type { ComparatorSandbox, ComparatorEvaluation } from "../comparator-sandbox/index.ts";
-    import type { PersistedSnapshot, Store } from "../store/index.ts";
+    import type { PersistedSnapshot, Store, StoreConnection } from "../store/index.ts";
     import type { Router } from "../router/index.ts";
     import type { BlueprintDocument } from "@wyrd-company/manifold-shared";
 
@@ -428,6 +431,17 @@ proposed-design:
 
     /** Migration steps for owner `gates`, applied by the store's migrate. */
     export const gatesMigrationSteps: readonly string[];
+
+    /** Deletes up to `limit` evaluations past the cutoff; returns how many. */
+    export function pruneGateEvaluations(
+      connection: StoreConnection,
+      request: {
+        readonly evaluatedBefore: number;
+        /** Gate keys whose evaluations are kept. */
+        readonly keepGates: ReadonlySet<string>;
+        readonly limit: number;
+      },
+    ): number;
 
     export interface GatesOptions {
       readonly store: Store;
@@ -591,7 +605,23 @@ proposed-design:
     The evaluation table grows by one row per evaluation, with the input
     JSON in it. A pass runs only on a change to its gate's input, so the
     rate follows the rate of entries, exits, returns, and balance changes.
-    Rows are kept for the life of the file, as consumed inbox rows are.
+    Rows are kept until their evaluation time is past the gate evaluation
+    window, as `pruning` states.
+  pruning: >-
+    Retention deletes evaluations through `pruneGateEvaluations`, as
+    `retention` states. In one transaction it deletes, in evaluation id
+    order, at most `limit` rows whose `evaluated_at` is before
+    `evaluatedBefore`, whose gate is not in `keepGates`, and that no
+    unreturned token names, read through the `gates_evaluation_by_time`
+    and `gates_token_by_evaluation` indexes, and returns how many it
+    deleted. The foreign key sets `evaluation_id` to null on each
+    returned token whose evaluation it deletes, so a returned token keeps
+    its row, its actor, its reservations' key, and its return, and no
+    longer names an evaluation. A held token's evaluation is never
+    deleted, and the token table's constraint fails the delete if one is
+    tried. It reads no actor, no snapshot, and no other module's table.
+    Called again with the same cutoff after it deleted fewer than `limit`
+    rows, it deletes nothing.
   tests: >-
     Tests import only the `index.ts` files named in the module layout, run
     against a real file in a temporary directory, and start from a populated
@@ -673,5 +703,11 @@ proposed-design:
     `comparator-failed`, one open `comparator-failed` escalation for the
     gate. A holder's save with a later version key, the same entry ids,
     and an empty `entered` keeps its entry row and its token; `heldTokens` lists a holder's unreturned
-    tokens and drops a returned one. Values are generic and never
-    drawn from Manifold's own domain.
+    tokens and drops a returned one. `pruneGateEvaluations` deletes exactly
+    the evaluations before the cutoff that no held token names and whose
+    gate is not kept, at most `limit` per call; a returned token whose
+    evaluation it deletes keeps its row with no evaluation, and `replay`
+    of that evaluation throws a `TypeError`; an evaluation inside the
+    window replays to its recorded selection; and a second call deletes
+    nothing. Values are generic and never drawn from Manifold's own
+    domain.

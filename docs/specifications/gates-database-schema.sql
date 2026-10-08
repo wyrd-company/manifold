@@ -49,22 +49,27 @@ CREATE TABLE gates_evaluation (
 
 CREATE INDEX gates_evaluation_by_gate ON gates_evaluation (gate, evaluation_id);
 
+-- Evaluations in the order they ran, read by retention.
+CREATE INDEX gates_evaluation_by_time ON gates_evaluation (evaluated_at, evaluation_id);
+
 -- One row per granted token. A token is held while `returned_at` is null,
--- whether its inbox row is consumed or pending.
+-- whether its inbox row is consumed or pending. `evaluation_id` is null
+-- once retention has deleted the evaluation of a returned token.
 CREATE TABLE gates_token (
   token_id TEXT PRIMARY KEY CHECK (token_id = 'token:' || entry_id),
   gate TEXT NOT NULL CHECK (length(gate) > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
   entry_id INTEGER NOT NULL,
   state_entry_id TEXT CHECK (state_entry_id IS NULL OR length(state_entry_id) > 0),
-  evaluation_id INTEGER NOT NULL REFERENCES gates_evaluation (evaluation_id),
+  evaluation_id INTEGER REFERENCES gates_evaluation (evaluation_id) ON DELETE SET NULL,
   granted_at INTEGER NOT NULL,
   trapped INTEGER NOT NULL DEFAULT 0 CHECK (trapped IN (0, 1)),
   returned_at INTEGER,
   return_reason TEXT CHECK (return_reason IN ('return-point', 'ended', 'escalation')),
   return_state TEXT,
   CHECK ((returned_at IS NULL) = (return_reason IS NULL)),
-  CHECK ((returned_at IS NULL) = (return_state IS NULL))
+  CHECK ((returned_at IS NULL) = (return_state IS NULL)),
+  CHECK (evaluation_id IS NOT NULL OR returned_at IS NOT NULL)
 ) STRICT;
 
 -- At most one held token per gate and actor.
@@ -72,3 +77,6 @@ CREATE UNIQUE INDEX gates_token_held ON gates_token (gate, actor_id) WHERE retur
 
 -- Unreturned tokens of one actor, read by every save of that actor.
 CREATE INDEX gates_token_by_actor ON gates_token (actor_id) WHERE returned_at IS NULL;
+
+-- The token an evaluation granted, read when retention deletes the evaluation.
+CREATE INDEX gates_token_by_evaluation ON gates_token (evaluation_id) WHERE evaluation_id IS NOT NULL;

@@ -6,6 +6,7 @@ relationships:
     - actor-history
   references:
     - store-database-schema
+    - retention
 terms:
   - actor-history
   - state-visit
@@ -67,8 +68,10 @@ description: >-
   exited first. Only `sequence` and `accepted_at` are ever set after the
   insert, together and only from null.
 
-  Retention. No row is deleted. Every row stays for the life of the store
-  file.
+  Retention. The rows of an ended actor are deleted together, events
+  before visits, when retention removes its history, in the transaction
+  in which the store marks the actor's snapshot pruned. The rows of an
+  active actor are never deleted.
 format: sql-ddl
 validation-criteria: >-
   `docs/specifications/history-database-schema.sql` runs without error on

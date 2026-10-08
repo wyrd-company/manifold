@@ -13,6 +13,7 @@ relationships:
     - default-process
     - accounts-declaration
     - task-metadata-declaration
+    - retention-configuration
 ---
 
 # Operator setup
@@ -355,6 +356,25 @@ WantedBy=multi-user.target
 
 Run it as the operator account that owns the deployment files. Check
 `journalctl -u manifold.service` for `started`. Manifold ships no service manager.
+
+### Store retention
+
+The `retention` section of `service.yml` sets how long the store keeps rows
+it no longer needs, in days, or `forever`:
+
+- `historyDays`: after an actor ends, its consumed events and its history.
+  Past it, the Actor page shows the actor's summary and end, and no timeline
+  or sequence.
+- `sourceEventDays`: a record of each accepted source event, by event source,
+  with `default` for every source not named. Past it, a repeated delivery of
+  that event is accepted as new.
+- `gateEvaluationDays`: each gate comparator evaluation. Past it, the grant
+  cannot be replayed.
+
+The service removes rows past their window about every hour, starting five
+minutes after it starts, and logs `retention-pruned` with the counts. A
+running actor's history, pending events, held tokens, and open escalations
+are always kept. A removed row is not restored when a window grows.
 
 ## 11. Push usage from each environment
 

@@ -1,0 +1,61 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose windows these are.
+  realizes:
+    - retention
+  references:
+    - service-configuration
+    - router-events
+terms:
+  - retention-window
+  - inbox
+  - actor-history
+  - event-source
+description: >-
+  Defines the `retention` section of the service configuration: the
+  retention window of each kind of row the service prunes from its store.
+  `docs/specifications/retention-configuration.schema.yml` is the
+  machine-readable definition of the section's value.
+
+  A retention window is a whole number of days from 1 to 36500, or
+  `forever`. A row is past its window when its time is more than the
+  window's days of 86,400,000 milliseconds before the start of the prune
+  pass that reads it. `forever` removes nothing of its kind.
+
+  `historyDays` is the window of an ended actor's history, counted from
+  the actor's end. Past it, retention removes the actor's consumed inbox
+  rows, with their payloads, and its visits, event links, and commands;
+  the actor's summary, end, output, and pending events stay, and its
+  history answers `prunedAt`. A running actor's history is never removed.
+  Default 90.
+
+  `sourceEventDays` maps an event source's name to the window of that
+  source's records of accepted source events, counted from the first
+  acceptance; `default` is the window of every source the map does not
+  name. Past it, a later publish of the same source event is a first
+  acceptance instead of a replay. A key is `default` or a source name as
+  `router-events` defines it; `deadline` names no source. Default
+  `{ default: 30 }`.
+
+  `gateEvaluationDays` is the window of a gate's comparator evaluations,
+  counted from the evaluation. Past it, retention removes the evaluation,
+  unless a held token names it or an open escalation names its gate; a
+  removed evaluation cannot be replayed, and a returned token that named
+  it no longer does. Default 30.
+
+  The section and its properties are optional; an absent value takes its
+  default. The service reads the section when it starts and passes it to
+  `openRetention`. A change takes effect at the next start: a longer
+  window keeps rows a shorter one would have removed from then on, and
+  restores nothing already removed.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/retention-configuration.schema.yml` is a valid JSON
+  Schema 2020-12 document, and its defaults equal `retentionDefaults`
+  exported by `packages/service`. The service rejects a configuration
+  whose `retention` value the schema rejects, naming the property: a
+  window of 0, of 36501, of a fraction, or of a string other than
+  `forever`; a `sourceEventDays` key that is not a source name; and the
+  key `deadline`. An absent section loads as `{ historyDays: 90,
+  sourceEventDays: { default: 30 }, gateEvaluationDays: 30 }`.

@@ -10,6 +10,7 @@ relationships:
     - accounts-declaration
     - tasks-api
     - price-table
+    - retention
 terms:
   - actual
   - call
@@ -70,7 +71,9 @@ description: |-
     date and time with milliseconds; `tokens` and `accounts` are as above over the postings
     counted in that visit, `accounts` with `{ account, actual }` only. A
     visit with no counted posting is not listed. A counted posting that
-    names no visit counts in the totals and in no visit.
+    names no visit, or names a visit that retention has removed with the
+    ended actor's history, counts in the totals and in no visit, and its
+    call keeps the `visit` it names.
   - `calls`: one entry per counted posting, ordered by `usedAt`, then by
     the posting's sequence, `{ usedAt, thread, visit, total, account,
     actual }`. `usedAt` is the call's time as the posting holds it, an

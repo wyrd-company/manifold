@@ -8,6 +8,7 @@ relationships:
     - durable-event-delivery
     - t3code-environment-source
     - actor-history
+    - retention
   mitigates:
     - task-usage-unattributable
   # GAP-EDGE: the technical-design schema declares no edge to a spike or a
@@ -495,6 +496,16 @@ proposed-design:
     call attributed before a later save starts a visit keeps the visit it
     was given. A visit holds every active state of the actor at once,
     parallel regions included.
+  retention: >-
+    Retention never deletes a usage row or a ledger row, so every
+    posting keeps its actor, item, and visit number, and every balance
+    and actual stays, as `retention` states. Once retention has removed
+    an ended actor's history, its visits are gone: a call of that actor
+    that reaches the service afterwards, or a late attribution or usage
+    move onto it, finds no visit and takes none, and keeps the actor and
+    item. `actorVisitUsage` counts a posting whose visit the actor's
+    history no longer holds in the totals and in no visit, as a posting
+    with no visit is counted, and its call keeps its `visit` number.
   settlement: >-
     When a save's snapshot status is `done` or `stopped`, the save hook
     sets the actor's end time when it is unset and calls
@@ -679,10 +690,16 @@ proposed-design:
     time, and `visitAt` the visit a call's time falls in.
     Service assembly gives the tasks read model `usage.actorUsage` as its
     `actorUsage`, in place of the ledger's.
-    `lastUsedAt` reads `MAX(used_at)` of `usage_postings` grouped by
-    `account`, posted and pending postings alike, so an account's latest
-    call shows whether or not it has a price or a window; a posting with
-    no account counts for none. `pricing` counts the models of the
+    `lastUsedAt` answers the greatest `used_at` of `usage_postings` for
+    each account, posted and pending postings alike, so an account's
+    latest call shows whether or not it has a price or a window; a
+    posting with no account counts for none. It reads only the
+    `usage_postings_by_account` index, as a skip scan: a recursive common
+    table expression finds each next account with `MIN(account)` above
+    the one before, and a correlated `MAX(used_at)` for each account
+    seeks its last entry, so the read costs one index seek per account
+    and per account boundary, whatever the number of postings. A plain
+    `GROUP BY account` over the same index reads every entry. `pricing` counts the models of the
     declaration's `prices` and groups the pending `unpriced` postings by
     provider and model through the partial index on pending postings.
     Both only read, and the Accounts tab of the console reads them through
@@ -853,7 +870,10 @@ proposed-design:
 
     - Account reads: after calls on `acct` at two times, one on `model-b`,
       `lastUsedAt()` answers the later time for `acct` and no entry for an
-      account with no posting, and `pricing()` answers `model-b` with one
+      account with no posting, and over a store of many postings on
+      several accounts its `EXPLAIN QUERY PLAN` names only `SEARCH`
+      steps on `usage_postings_by_account` and no `SCAN` of
+      `usage_postings`, and `pricing()` answers `model-b` with one
       posting and the count of the declaration's own prices.
 
     - Late mapping, pending: with `accounts.yml` declaring `acct` only for

@@ -9,6 +9,7 @@ relationships:
     - history-database-schema
     - t3code-thread-events
     - actor-usage-api
+    - retention
 terms:
   - actor-history
   - state-visit
@@ -111,6 +112,10 @@ description: >-
     endedAt, output }`: `status` `done` or `stopped`, `endedAt` the
     summary's `savedAt`, and `output` the snapshot's `output` when it has
     one.
+  - `prunedAt`: absent until retention removes the history of the ended
+    actor, as `retention` states, and then the time it did, as an ISO 8601
+    UTC time with milliseconds. A pruned actor's `visits` and `commands`
+    are empty and its `events` hold only the events it never took.
 
   An actor that ended before the history tables existed answers its
   summary, its end, and its events, each consumed event with no `visit`;
@@ -141,6 +146,7 @@ validation-criteria: >-
   `t3code-project-create` accepted and one rejected, a
   `thread-create`, a `turn-start` and its `t3.turn.started`, a
   `turn-start` whose answer never arrived, a pending event, and its end, and checks each member stated above; it also reads
+  an ended actor whose history retention has pruned, with `prunedAt`, and
   an actor whose snapshot and inbox rows were written before the history
   tables, and an actor id holding `/` given percent-encoded. The same tests check
   the `404` for an unknown id, an errored-only actor, and another

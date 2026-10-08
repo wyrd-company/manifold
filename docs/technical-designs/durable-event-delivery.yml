@@ -9,6 +9,7 @@ relationships:
     - escalations
     - agent-threads
     - agent-tools
+    - retention
 objective: >-
   Deliver events from shared sources to state machine actors so that no
   event is lost across a service interruption, a resumed actor continues
@@ -137,10 +138,25 @@ proposed-design:
     `router_source_event` is the router's one table, in the store's file
     through `store.connection`, migrated with `migrate("router", steps)` and
     specified in `router-database-schema`. It holds one row per accepted
-    source event: source, event id, and accepted time. Rows are kept for the
-    life of the file, as consumed inbox rows are, so a source event is
-    accepted once however late it is replayed. Fired deadlines do not pass
-    through it: `fireDeadline` writes at most one inbox row per arm.
+    source event: source, event id, and accepted time. A row is kept until
+    its accepted time is past its source's retention window, as `retention`
+    states, so a source event is accepted once however late it is replayed
+    inside the window. A source event published again after its row is
+    deleted is a first acceptance: it reaches the actors subscribed then,
+    and each actor that still holds its inbox row takes nothing, by the
+    inbox's unique key. Fired deadlines do not pass through it:
+    `fireDeadline` writes at most one inbox row per arm.
+  source-event-pruning: >-
+    The router's `index.ts` exports two functions over the store's
+    connection, which need no running router. `sourceEventSources(connection)`
+    lists every source that holds a row, read through the
+    `router_source_event_by_time` index. `pruneSourceEvents(connection, {
+    source, acceptedBefore, limit })` deletes, in one transaction, at most
+    `limit` rows of that source whose `accepted_at` is before
+    `acceptedBefore`, oldest first, through the same index, and returns how
+    many it deleted. It reads no inbox row: an actor's own duplicate check
+    is its inbox row, which retention deletes only with an ended actor's
+    history, and an ended actor is subscribed to nothing.
   inbox: >-
     A row per target actor per event: event id, actor id, topic, payload,
     received time, consumed time. Written by `publish` before any target
@@ -240,7 +256,8 @@ proposed-design:
     the thread change's own identity, a turn id or a request id within its
     environment, server, and thread, the token id. The
     inbox holds one row per actor and namespaced event id, consumed rows
-    included, so a source event delivered twice reaches an actor once. A
+    included, so a source event delivered twice reaches an actor once,
+    for as long as retention keeps the actor's rows. A
     delivery replayed after a crash runs against the snapshot saved before
     the event, so the actor takes it as the first time. A source that learns
     of one change through two paths, a webhook and a sweep, gives both the
@@ -292,6 +309,7 @@ proposed-design:
       JsonValue,
       PersistedSnapshot,
       Store,
+      StoreConnection,
       StoredSnapshot,
     } from "../store/index.ts";
 
@@ -385,6 +403,15 @@ proposed-design:
       readonly path: string;
       readonly message: string;
     }
+
+    /** Every source that holds a source event row, in name order. */
+    export function sourceEventSources(connection: StoreConnection): string[];
+
+    /** Deletes up to `limit` source event rows past the cutoff; returns how many. */
+    export function pruneSourceEvents(
+      connection: StoreConnection,
+      request: { readonly source: string; readonly acceptedBefore: number; readonly limit: number },
+    ): number;
     ```
   module-layout: >-
     `index.ts` re-exports the public names and nothing else. `validate.ts`
@@ -420,7 +447,9 @@ proposed-design:
     on the same file, with a stop or a crash between, drains nothing the
     second time that the first delivered. `persist` and `attach` twice save
     the same snapshot and keep the same deadline ids. `stop` twice does
-    nothing more.
+    nothing more. `pruneSourceEvents` twice with one cutoff deletes nothing
+    the second time once a call deleted fewer than `limit` rows; a crash
+    inside it rolls back its one statement.
   errors: >-
     An event that fails validation is a `rejected` outcome with an issue per
     failing path, never a throw, so a source handles it as data: it logs the
@@ -538,4 +567,11 @@ proposed-design:
     deadline due while the router was stopped fires once after
     `startRouter`, and not again after a second restart; a deadline whose
     state was left before its fire time never fires; a fire time beyond the
-    longest timer delay is reached through clamped wakes.
+    longest timer delay is reached through clamped wakes. Pruning tests:
+    `sourceEventSources` lists each source once; `pruneSourceEvents`
+    deletes only the named source's rows before the cutoff, oldest first
+    and at most `limit`, and a second call deletes nothing; a source event
+    inside the window published again is a replay; one whose row was
+    deleted is accepted again, writes a row to an actor subscribed after
+    its first acceptance, and writes none to an actor that holds its inbox
+    row.

@@ -16,8 +16,12 @@ CREATE TABLE store_snapshot (
   machine TEXT NOT NULL CHECK (length(machine) > 0),
   status TEXT NOT NULL CHECK (status IN ('active', 'done', 'stopped')),
   snapshot TEXT NOT NULL CHECK (json_valid(snapshot)),
-  saved_at INTEGER NOT NULL
+  saved_at INTEGER NOT NULL,
+  history_pruned_at INTEGER CHECK (history_pruned_at IS NULL OR status <> 'active')
 ) STRICT;
+
+CREATE INDEX store_snapshot_prunable ON store_snapshot (saved_at, actor_id)
+  WHERE status <> 'active' AND history_pruned_at IS NULL;
 
 CREATE TABLE store_snapshot_state (
   actor_id TEXT NOT NULL REFERENCES store_snapshot (actor_id) ON DELETE CASCADE,

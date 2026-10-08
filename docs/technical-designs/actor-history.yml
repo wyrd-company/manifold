@@ -7,15 +7,17 @@ relationships:
     - agent-threads
     - usage-intake
     - service-assembly
+    - retention
 terms:
   - actor-history
   - state-visit
   - inbox
   - snapshot
   - invocation
+  - retention-window
 objective: >-
   Keep the actor history of every actor the store has run, ended ones
-  included, and answer it through the actors API, so that an operator can
+  included until their retention window passes, and answer it through the actors API, so that an operator can
   see which event an actor took a transition on and with what payload, and
   so that the console can draw an actor's timeline and sequence diagram and
   list completed actors, and so that the usage module attributes each
@@ -127,6 +129,8 @@ proposed-design:
        * since the Unix epoch; undefined when the actor has no visit.
        */
       visitAt(actorId: string, at: number): number | undefined;
+      /** Deletes an ended actor's history rows; joins the caller's transaction. */
+      prune(actorId: string): number;
     }
     ```
 
@@ -149,7 +153,7 @@ proposed-design:
 
     | Member | Source | New rows |
     | --- | --- | --- |
-    | `actor`, `end` | the store's `store_snapshot` row: the actor summary, and for a `done` or `stopped` snapshot its status, `savedAt`, and `output` | none |
+    | `actor`, `end`, `prunedAt` | the store's `store_snapshot` row: the actor summary, for a `done` or `stopped` snapshot its status, `savedAt`, and `output`, and its `historyPrunedAt` once retention has pruned it | none |
     | `visits` | `history_visit`, written by the save hook | one per state visit |
     | `events` | the store's inbox rows of the actor, consumed and pending, joined to `history_event` for the visit that took each | one link per consumed event, no payload |
     | `commands` | `history_command`, written by the probes before each command is sent and when the server accepts it; a turn's id from the actor's `t3.turn.started` inbox row | one per command sent |
@@ -296,8 +300,25 @@ proposed-design:
     actor's inbox rows with `store.actorInbox`, its visits ordered by
     number, its event links, and its commands ordered by `sent_at` and
     command id, and assembles the body with the pure function in
-    `read.ts`. Each read is a sequence of synchronous statements on the
+    `read.ts`, with `prunedAt` from the snapshot's `historyPrunedAt` when
+    it has one. Each read is a sequence of synchronous statements on the
     one connection, which no write interleaves. The read writes nothing.
+  pruning: >-
+    Retention removes the history of an ended actor whose end is past the
+    history window, as `retention` states. In the transaction in which
+    the store deletes the actor's consumed inbox rows and marks its
+    snapshot pruned, `prune(actorId)` deletes the actor's `history_event`
+    rows, then its `history_visit` rows, then its `history_command` rows,
+    each by the actor id that leads its key or index, and returns how
+    many rows it deleted. It drops any pending command write the module
+    holds for the actor. It trusts the caller to name an ended actor:
+    retention calls it only after the store's `pruneEnded` answers
+    `pruned`. Called twice it deletes nothing the second time. After it,
+    the actor answers its summary, its end and output, its pending
+    events with no `visit`, empty `visits` and `commands`, and
+    `prunedAt`. The calls usage attributed to the actor keep their visit
+    numbers, as `usage-intake` states. The history of an active actor is
+    never pruned.
   completed-actors: >-
     `GET /api/actors?status=completed` lists every actor whose stored
     snapshot's status is `done` or `stopped`, read with
@@ -317,7 +338,8 @@ proposed-design:
     `packages/shared/src/actors-api.ts` holds the API's types and guards
     for the console and the service: `ActorSummary` gains `status`;
     `ActorHistory`, `StateVisit`, `ReceivedEvent`, `ActorCommand`,
-    and `ActorEnd` are the history's members, `ActorCommand` a union on
+    and `ActorEnd` are the history's members, beside its optional
+    `prunedAt`; `ActorCommand` a union on
     `kind` whose `project-create` member holds `projectId` and no
     `threadId`, and whose `thread-create` and `turn-start` members hold
     `threadId` and no `projectId`; `isActorsResponse` checks
@@ -364,6 +386,8 @@ proposed-design:
     ended actor holds 7 visits (1,485 logical column bytes), 3 event links
     (156 bytes), and 2 commands (318 bytes): 1,959 added bytes per actor.
     Its existing inbox holds 3 rows (979 bytes), reused without copying.
+    These rows and the actor's consumed inbox rows stay until the
+    actor's end passes the history window, as `pruning` states.
     Logical bytes are UTF-8 text lengths plus the lengths of decimal
     integer representations, with null contributing zero; SQLite page,
     index, and WAL overhead is not included.
@@ -382,6 +406,8 @@ proposed-design:
     A pending write applied by two saves, of which the first rolled back,
     leaves the row it describes once. The migration twice runs nothing
     more. `visits` and `visitAt` only read.
+    `prune` twice for one actor deletes its rows once, and a
+    prune that rolls back with the store's mark leaves every row.
   errors: >-
     A save hook that throws rolls back the save, as `actor-host` states;
     the hook throws only what SQLite throws, including a pending command
@@ -446,7 +472,11 @@ proposed-design:
     and the actor stays in the invoking state, and once writes succeed
     the next save writes the row and the actor advances, reading exactly
     one command; after a restart that loses a pending write before any
-    later save, the restarted promise writes the row once; `read` of an unknown id is undefined; an
+    later save, the restarted promise writes the row once; `read` of an unknown id is undefined; `prune` of an ended actor,
+    in a transaction with the store's `pruneEnded`, deletes exactly its
+    visits, links, and commands and no other actor's, and its read then
+    answers its summary, end, pending events, `prunedAt`, and empty
+    visits and commands; an
     actor ended before the migration, built by writing its snapshot and
     inbox rows before the history tables exist, reads its summary, end,
     and events with `visit` null, and no visits or commands. Fault tests,

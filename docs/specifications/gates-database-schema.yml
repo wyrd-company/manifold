@@ -8,6 +8,7 @@ relationships:
     - store-database-schema
     - portfolio-ledger-tables
     - comparator-contract
+    - retention
 terms:
   - gate
   - token
@@ -53,12 +54,19 @@ description: |-
   failure's kind and message. A failure's kind is one of the comparator
   sandbox's kinds, or `reservation` for a selection whose reservation the
   ledger refused. `duration_ms` is the evaluation's duration as the sandbox
-  measured it. A row is never updated or deleted.
+  measured it. A row is never updated. Retention deletes a row once its
+  evaluation time is past the gate evaluation window, unless a held token
+  names it or an open escalation names its gate, as `retention` states;
+  the `gates_evaluation_by_time` index serves that delete.
 
   Tokens. `gates_token` holds one row per granted token: the token id, which
   is `token:` followed by the decimal entry id the token was granted to, the
   gate, the actor, the entry id and its host entry id, the evaluation that
-  selected it, and the grant time. A token is held while `returned_at` is
+  selected it, and the grant time. Deleting an evaluation sets
+  `evaluation_id` to null on the returned token that names it, through the
+  `gates_token_by_evaluation` index; a held token always names its
+  evaluation, so deleting the evaluation of a held token fails its
+  constraint. A token row is never deleted. A token is held while `returned_at` is
   null, whether its inbox row is consumed or pending, so holders are
   counted from this table alone.
   A return sets `returned_at`, `return_reason`, and `return_state` once:
@@ -80,5 +88,7 @@ validation-criteria: >-
   `gates_` with the rows this file produces on a second empty database, with
   each run of whitespace in `sql` read as one space; they are equal. After
   migration, `schema_migration` holds the row `('gates', 1)`. A second held token of one gate
-  for one actor, and a token whose id does not match its entry id, each fail
-  their constraint.
+  for one actor, a token whose id does not match its entry id, and the
+  delete of an evaluation a held token names, each fail their constraint;
+  the delete of an evaluation a returned token names sets the token's
+  `evaluation_id` to null.
