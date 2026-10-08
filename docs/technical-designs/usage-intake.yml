@@ -474,7 +474,8 @@ proposed-design:
     A posting resolves its account, then its amount, then posts. The
     account is the one the accounts declaration in force gives the call's
     environment, provider, and provider instance, the instance read from
-    the call's mapping. With no account, the posting is pending with
+    the call's mapping; the usage entries of an archived account give
+    none. With no account, the posting is pending with
     reason `unaccounted`. The amount is the difference of two cumulative
     amounts by the `price-table` rule, in the account's unit, for the
     call's model and speed, at the price in force when the posting posts:
@@ -532,7 +533,9 @@ proposed-design:
     and checked against `price-table.schema.yml` by a test. Its unit is
     `usd`. A new LiteLLM commit is a change to that commit and the
     regenerated constant, kept current by the same upkeep that keeps
-    `@codeburn/core` current, and it ships with a release. An operator
+    `@codeburn/core` current, and it ships with a release. The script
+    also writes the commit as the constant `bundledPriceTableCommit`
+    beside the table, which the console's Pricing card names. An operator
     prices a model sooner, or at a negotiated price, by adding its entry
     to `prices.yml`, which applies at the next pull with no release.
     A price that changes applies to postings made after it is in force;
@@ -552,7 +555,8 @@ proposed-design:
     `listener.ts` the endpoints, `push.ts` the push transaction and its
     late attribution, `moves.ts` the move transaction, `unowned.ts` the
     unowned usage read, `actor-usage.ts` the actor usage read,
-    `attribution.ts` and `pricing.ts` pure functions, `hooks.ts` the save
+    `attribution.ts` and `pricing.ts` pure functions, `reads.ts`
+    `lastUsedAt` and `pricing`, `hooks.ts` the save
     hook and its ownership attribution, and `migrations.ts` the steps.
     Step 1 creates the declarations, sessions, actors, threads, visits,
     calls, postings, and source errors tables with their indexes and
@@ -603,11 +607,22 @@ proposed-design:
       actorUsage(actor: string): LedgerActorUsage;
       move(request: UsageMoveRequest): UsageMoveResult;
       unowned(): UsageUnownedResponse;
+      /** Per account, the greatest `usedAt` of a posting charged to it, in epoch milliseconds. */
+      lastUsedAt(): Readonly<Record<string, number>>;
+      /** What prices the calls: the declaration's own prices, and the models waiting for one. */
+      pricing(): UsagePricing;
     }
 
     export type UsageMoveResult =
       | UsageMoveResponse
       | { status: "refused"; error: "unknown-actor" | "invalid-target"; message: string };
+
+    export type UsagePricing = {
+      /** The number of model entries in `prices.yml` in force. */
+      overrides: number;
+      /** Each provider and model with postings pending `unpriced`, by provider then model. */
+      unpriced: readonly { provider: UsageProvider; model: string | null; postings: number }[];
+    };
 
     export type UsageApplyResult =
       | { status: "applied"; commit: string }
@@ -626,6 +641,14 @@ proposed-design:
     and the service registers `usage.saveHook` with the actor host.
     Service assembly gives the tasks read model `usage.actorUsage` as its
     `actorUsage`, in place of the ledger's.
+    `lastUsedAt` reads `MAX(used_at)` of `usage_postings` grouped by
+    `account`, posted and pending postings alike, so an account's latest
+    call shows whether or not it has a price or a window; a posting with
+    no account counts for none. `pricing` counts the models of the
+    declaration's `prices` and groups the pending `unpriced` postings by
+    provider and model through the partial index on pending postings.
+    Both only read, and the Accounts tab of the console reads them through
+    the portfolio endpoint.
     `threadProject` reads the T3code project id the T3 Code environment
     source holds for a thread; the T3 Code environment source exports it
     from its `index.ts` as `readThreadProject(connection, environment,
@@ -774,6 +797,16 @@ proposed-design:
       session's ledger actor reads actual 0. The account window's actual
       and `other`'s balance are what they were before the mapping
       arrived. The same mapping pushed again changes nothing.
+
+    - Archived: with `acct` archived and its entry naming `env-one` and
+      `codex`, a call from `env-one` and `codex` is pending `unaccounted`;
+      after a revision declares `acct-new` with the same entry, it posts
+      to `acct-new`.
+
+    - Account reads: after calls on `acct` at two times, one on `model-b`,
+      `lastUsedAt()` answers the later time for `acct` and no entry for an
+      account with no posting, and `pricing()` answers `model-b` with one
+      posting and the count of the declaration's own prices.
 
     - Late mapping, pending: with `accounts.yml` declaring `acct` only for
       the provider instance `instance-1`, a call on `session-1` with no

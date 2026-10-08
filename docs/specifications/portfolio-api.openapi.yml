@@ -10,8 +10,8 @@ info:
   version: 0.1.0
   description: >-
     The portfolio endpoint of Manifold's API: the portfolio read with
-    allocations, accounts, windows, balances, and the warnings of the
-    declaration in force.
+    allocations, accounts, windows, balances, pricing, and the warnings of
+    the declaration in force.
 security: []
 paths:
   /api/portfolio:
@@ -99,7 +99,7 @@ components:
     PortfolioResponse:
       type: object
       additionalProperties: false
-      required: [commit, at, accounts, items, unallocated, warnings]
+      required: [commit, at, accounts, items, unallocated, pricing, warnings]
       properties:
         commit:
           description: The commit of the declaration in force; null before the first accepted declaration.
@@ -121,6 +121,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Unallocated"
+        pricing:
+          $ref: "#/components/schemas/Pricing"
         warnings:
           type: array
           items:
@@ -135,6 +137,12 @@ components:
         declared:
           type: boolean
           description: Whether the accounts declaration in force declares the account.
+        archived:
+          type: boolean
+          description: True for an account the accounts declaration in force archives.
+        lastUsedAt:
+          $ref: "#/components/schemas/Instant"
+          description: The time of the latest call the service holds that charged the account.
         unit:
           enum: [usd]
         kind:
@@ -168,6 +176,39 @@ components:
                   minimum: 1
         window:
           $ref: "#/components/schemas/Window"
+    Pricing:
+      type: object
+      additionalProperties: false
+      required: [bundledCommit, bundledModels, overrides, unpriced]
+      properties:
+        bundledCommit:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+          description: The LiteLLM commit the bundled price table was generated from.
+        bundledModels:
+          type: integer
+          minimum: 0
+        overrides:
+          type: integer
+          minimum: 0
+          description: The number of model entries of `prices.yml` in force.
+        unpriced:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [provider, model, postings]
+            properties:
+              provider:
+                enum: [claude, codex, cursor, grok, opencode]
+              model:
+                oneOf:
+                  - type: string
+                    minLength: 1
+                  - type: "null"
+              postings:
+                type: integer
+                minimum: 1
     Window:
       type: object
       additionalProperties: false

@@ -125,9 +125,9 @@ proposed-design:
     covers the read, and each item's balance per account, from the
     ledger's `balance` with no other item waiting, its `totals`, and its
     `windowAt`. An account that an allocation names and the accounts
-    declaration does not is listed as undeclared, with balances of 0, and
-    the read carries the `account-undeclared` warnings of the declaration
-    in force. The read credits each declared account's current window as
+    declaration does not declare, or archives, is listed with balances of
+    0, and the read carries the `account-undeclared` and
+    `account-archived` warnings of the declaration in force. The read credits each declared account's current window as
     a gate's balance read does, and changes nothing else. The operator
     edits `portfolio.yml` from the Portfolio screen, which reads, lints,
     and saves it through the `portfolio.yml` path of `declarations-api`,
@@ -199,7 +199,11 @@ proposed-design:
     credited. An account that the accounts declaration does not name, such
     as one `portfolio.yml` allocates and `accounts.yml` leaves out, is
     credited nothing, and its balances read 0; the lint reports each such
-    allocation as the warning `account-undeclared`.
+    allocation as the warning `account-undeclared`. An account the
+    declaration archives is credited nothing in the same way, and `ensure`
+    answers `undeclared` for it; the lint reports each allocation of it as
+    the warning `account-archived`. A window credited before the archive
+    keeps its credit.
   capacity-module: |-
     The capacity module is `packages/service/src/capacity/`. It holds no
     state of its own on disk: windows and credits are the ledger's, and the
@@ -209,6 +213,7 @@ proposed-design:
     ```ts
     export type CapacityAccount = {
       kind: "api" | "subscription";
+      archived?: boolean; // true: credited no window
       capacity: {
         amount: number; // in the account's unit, as declared
         reset: string; // RFC 3339 date-time
@@ -622,8 +627,8 @@ proposed-design:
     them in the host CLI.
   allocated-accounts: |-
     `lintAllocatedAccounts` in `packages/shared` is the one check that an
-    account `portfolio.yml` allocates is one `accounts.yml` declares, as
-    `portfolio-declaration` states. The service's `apply`, the host CLI
+    account `portfolio.yml` allocates is one `accounts.yml` declares and
+    does not archive, as `portfolio-declaration` states. The service's `apply`, the host CLI
     command `manifold-host portfolio lint`, and the host CLI command
     `manifold-host usage lint` each call it with the two files of the same
     revision or checkout, so each reports the same warnings. Any other
@@ -639,11 +644,17 @@ proposed-design:
     export type PortfolioWarning = {
       file: "portfolio";
       location: string; // RFC 6901 JSON Pointer of the allocation, `.../allocations/<account>`
-      kind: "account-undeclared";
+      kind: "account-undeclared" | "account-archived";
       severity: "warning";
       message: string;
       details: { item: string; account: string };
     };
+
+    /** Keeps, renames, or drops each warning of an `accounts`-less lint for the accounts given. */
+    export function classifyAllocatedAccounts(
+      warnings: readonly PortfolioWarning[],
+      accounts: Readonly<Record<string, { readonly archived?: boolean }>>,
+    ): readonly PortfolioWarning[];
     ```
 
     It parses and validates each file as its own lint does, and returns no
@@ -651,8 +662,16 @@ proposed-design:
     the file. It walks the `items` mappings of the portfolio document in
     document order, Other keys and archived items included, and gives one
     warning for each allocation whose account name is not a key of the
-    declared `accounts`. An Other's item id is `other` or `<parent>/other`.
-    It is a pure function of the two texts.
+    declared `accounts`, `account-undeclared`, or names an account with
+    `archived: true`, `account-archived`. An Other's item id is `other` or
+    `<parent>/other`. It is a pure function of the two texts. Called with
+    `accounts` undefined it warns `account-undeclared` on every allocation;
+    `classifyAllocatedAccounts` then gives, for a set of accounts, the
+    warnings `lintAllocatedAccounts` gives with those accounts: it keeps a
+    warning whose account the set does not hold, makes one whose account
+    is archived an `account-archived` warning with that kind's message, and
+    drops the rest. `lintAllocatedAccounts` is the two in turn, so a reader
+    that caches the first per portfolio commit gives the same warnings.
 
     The check warns and does not refuse, as the decision
     `warn-of-undeclared-accounts` states. The service and the usage

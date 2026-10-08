@@ -8,6 +8,8 @@ relationships:
     - portfolio-ledger
     - portfolio-declaration
     - accounts-declaration
+    - price-table
+    - usage-intake
     - bindings-declaration
     - service-assembly
     - declarations-api
@@ -28,8 +30,9 @@ terms:
 description: >-
   Defines the portfolio endpoint of Manifold's API: the portfolio read,
   which answers the portfolio items with their allocations, the accounts
-  with their capacity and current window, each item's available balance
-  per account, and the warnings of the declaration in force.
+  with their capacity, current window, and latest call, each item's
+  available balance per account, how calls are priced, and the warnings
+  of the declaration in force.
   `docs/specifications/portfolio-api.openapi.yml` is the machine-readable
   definition. The Portfolio screen of the operator console reads it, and
   any automation may. The text of `portfolio.yml` is read, linted, and
@@ -57,14 +60,17 @@ description: >-
   - `at`: the instant the service read the balances at, from the
     service's clock.
 
-  - `accounts`: every account `accounts.yml` declares in the accounts
-    declaration in force, in declaration order, then every account an
-    allocation row of the portfolio declaration in force names and the
-    accounts declaration does not, sorted by code point. Each holds its
-    `name`; `declared`; and, for a declared account, its `unit`, its
+  - `accounts`: every account `accounts.yml` declares and does not
+    archive in the accounts declaration in force, in declaration order,
+    then every account an allocation row of the portfolio declaration in
+    force names and the accounts declaration does not declare or archives,
+    sorted by code point. Each holds its `name`; `declared`; `archived`,
+    true for an archived account; for a declared account, its `unit`, its
     `kind`, and its `capacity` with `amount` converted to the ledger's
     integer as `accounts-declaration` converts it, `reset` as declared,
-    and `every` as declared. `window` is the account's ledger window that
+    and `every` as declared; and `lastUsedAt`, the time of the latest call
+    the service holds that charged the account, its usage intake's
+    `lastUsedAt`, absent when none did. `window` is the account's ledger window that
     covers `at`: its `key`, `opensAt`, `closesAt`, `capacity`, the sum of
     its credits, and `used`, every actual in the window plus every
     outstanding reservation, on any item, live, archived, or not held by
@@ -84,11 +90,21 @@ description: >-
   - `unallocated`: the top level's unallocated remainder, one entry per
     account in `accounts`.
 
+  - `pricing`: how the service prices calls. `bundledCommit` is the
+    LiteLLM commit the bundled price table was generated from,
+    `bundledPriceTableCommit`; `bundledModels` the number of its model
+    entries; `overrides` the number of model entries of `prices.yml` in
+    force; and `unpriced` each provider and model with postings waiting
+    for a price, with `provider`, `model` (`null` for a call that named no
+    model), and `postings`, the number waiting, ordered by provider, then
+    model with `null` first.
+
   - `warnings`: the warnings of the declarations in force: the
     `lintAllocatedAccounts` warnings of `portfolio.yml` at the commit of
     the portfolio declaration in force, for each allocation whose account
-    the accounts declaration in force does not declare, such as
-    `account-undeclared` at the allocation's account name. A revision
+    the accounts declaration in force does not declare,
+    `account-undeclared`, or archives, `account-archived`, at the
+    allocation's account name. A revision
     that changes only `accounts.yml` changes them. Each holds
     `file`, `kind`, `location`, the RFC 6901 JSON Pointer in the file's
     document, `severity`, `message`, and `details`, as the lint gives
@@ -130,8 +146,9 @@ description: >-
   top level and the item's guarantee amount under an item. With no window,
   every `amount` is 0.
 
-  The read credits each declared account's current window through the
-  capacity module's balance read before it reads, as a gate's balance
+  The read credits the current window of each declared account that is
+  not archived through the capacity module's balance read before it
+  reads, as a gate's balance
   read does, so the balances are those of the window that covers `at`.
   It writes nothing else. A read that throws answers `500`.
 format: openapi
@@ -140,20 +157,27 @@ validation-criteria: >-
   document. Tests in `packages/service` serve a fixture process repository,
   start the service on it with a fixture clock, and request the endpoint
   without authentication through the service's HTTP host. The fixture
-  declares accounts `acct-a` (`usd`, `api`) and `acct-b` (`usd`,
-  `subscription`), items `alpha` holding `beta` and `gamma`, and `delta`
+  declares accounts `acct-a` (`usd`, `api`), `acct-b` (`usd`,
+  `subscription`), and `acct-d` archived, items `alpha` holding `beta` and `gamma`, and `delta`
   archived, and an allocation for `acct-c`, which `accounts.yml` does not
   declare. They check that each body validates against its response
   schema; that the read lists `acct-a`, `acct-b`, then `acct-c` with
-  `declared` false and no window, and holds the `account-undeclared`
-  warning at the allocation's account name; that the first read credits
+  `declared` false and no window, leaves out `acct-d`, and holds the
+  `account-undeclared` warning at the allocation's account name; that a
+  revision that allocates to `acct-d` lists it after `acct-c` with
+  `archived` true and no window, holds the `account-archived` warning at
+  that allocation, and credits it no window; that the first read credits
   the current window of each declared account once and a second read
   credits nothing; that after a reservation and actuals on `beta` for
   `acct-a`, `beta` and `alpha` answer the actual, outstanding, available,
   and reservable the ledger's `balance` answers, `lifetime` counts an
   actual in an earlier window, and the account's `used` equals the
   window's actuals plus outstanding reservations, an actual on `delta`
-  and one on an item the declaration no longer holds included; that
+  and one on an item the declaration no longer holds included, and its
+  `lastUsedAt` is the later actual's call time while `acct-b` has none;
+  that `pricing` names the fixture's bundled commit and model count, the
+  fixture's one `prices.yml` model, and a pending `unpriced` posting's
+  model; that
   `alpha/other` follows `gamma` and the top-level `other` comes last; that
   `unallocated` at the top level and under `alpha` hold the remainder's
   percentage and amount; that `activeTasks` counts an active snapshot on

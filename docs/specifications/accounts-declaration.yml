@@ -18,7 +18,8 @@ terms:
 description: |-
   Defines `accounts.yml`, the file at the root of the process repository
   that declares the accounts usage is charged to: each account's unit, its
-  kind, its capacity per window, and the usage that charges it.
+  kind, its capacity per window, the usage that charges it, and whether it
+  is archived.
   `docs/specifications/accounts-declaration.schema.yml` is the
   machine-readable definition of its document. An absent file and an empty
   document declare no accounts.
@@ -87,6 +88,16 @@ description: |-
   it charges the account of the entry with its environment and provider
   and no instance. A call matched by no entry has no account.
 
+  Archived. `archived: true` archives the account. An archived account
+  stays declared, so the ledger's credits, reservations, and actuals keep
+  its name and its unit, and no other account can take the name. It is not
+  in force for new work: its usage entries charge no call, and Manifold
+  credits it no window, as it credits an undeclared account none, so a
+  reservation on it finds no capacity. Its entries stay in the file, as
+  the usage it had. Removing `archived`, or setting it to `false`,
+  restores the account. The operator console archives an account and
+  never removes one, so its past usage keeps its source.
+
   ```yaml
   accounts:
     acct:
@@ -114,6 +125,18 @@ description: |-
         - environment: env-one
           provider: claude
           instance: claude-alt
+    acct-old:
+      unit: usd
+      kind: api
+      archived: true
+      capacity:
+        amount: 100
+        reset: 2025-01-01T00:00:00Z
+        every:
+          months: 1
+      usage:
+        - environment: env-one
+          provider: codex
   ```
 
   Findings. `lintUsageDeclaration` in `packages/shared` lints this file
@@ -129,10 +152,12 @@ description: |-
     message is the validator's. No other finding is reported for the
     file.
 
-  - `duplicate-usage`: a usage entry names the same environment,
-    provider, and instance, or the same environment and provider with no
-    instance, as an earlier entry in any account. The location is the
-    later entry.
+  - `duplicate-usage`: a usage entry of an account that is not archived
+    names the same environment, provider, and instance, or the same
+    environment and provider with no instance, as an earlier entry of an
+    account that is not archived. The location is the later entry. The
+    entries of an archived account are not compared, so a new account can
+    take the usage of an archived one.
 
   - `invalid-capacity`: a capacity the schema admits and the rules above
     refuse: an `amount` that converts to less than 1 or more than
@@ -146,8 +171,9 @@ description: |-
 
   Allocated accounts. An account `portfolio.yml` allocates and this file
   does not declare is the warning `account-undeclared` in `portfolio.yml`,
-  which `lintAllocatedAccounts` reports as `portfolio-declaration` states.
-  The service credits such an account nothing, so its balances read 0.
+  and one it archives is the warning `account-archived`, which
+  `lintAllocatedAccounts` reports as `portfolio-declaration` states. The
+  service credits such an account nothing, so its balances read 0.
 format: json-schema
 validation-criteria: >-
   `docs/specifications/accounts-declaration.schema.yml` is a valid JSON
@@ -161,7 +187,10 @@ validation-criteria: >-
   `0001-01-01T00:00:00Z` and of `9999-12-31T23:59:59.999Z` passing, a
   `reset` of `0001-01-01T00:00:00+01:00` as an `invalid-capacity` finding
   at its `reset`, and the account a call resolves to with and without an
-  instance entry.
+  instance entry, an entry of an archived account charging no call, and
+  an archived account's entry that a later account repeats giving no
+  `duplicate-usage` finding while the same entries of two accounts that
+  are not archived give one.
   Tests of the window series show, for each length, the window that holds
   an instant before, at, and after `reset`, a `months` series across a
   year end and a 28th, a `reset` with a numeric offset, and, with each

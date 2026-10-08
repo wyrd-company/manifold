@@ -74,7 +74,8 @@ description: >-
   as `accounts.yml` or `prices.yml`, the location the finding's RFC 6901
   JSON Pointer, and the kind and message the finding's. Findings of
   `accounts.yml` come first, then those of `prices.yml`, each in the
-  lint's order. The `account-undeclared` warnings come last, in the same
+  lint's order. The `account-undeclared` and `account-archived` warnings
+  come last, in the same
   form with the file `portfolio.yml`, each line ending with ` (warning)`,
   in the lint's order, so they equal the lines `manifold-host portfolio
   lint` prints for them. The command prints nothing and exits 0 when

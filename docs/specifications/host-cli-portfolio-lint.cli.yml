@@ -32,8 +32,9 @@ commands:
                 One line per finding on standard output,
                 `<file>:<location> <kind> <message>`, with the file
                 `portfolio.yml` or `bindings.yml`, then one line per
-                `account-undeclared` warning in the same form with the file
-                `portfolio.yml`, ending with ` (warning)`; nothing when
+                `account-undeclared` or `account-archived` warning in the
+                same form with the file `portfolio.yml`, ending with
+                ` (warning)`; nothing when
                 there is no finding and no warning.
               machine-readable: true
           exit-codes:

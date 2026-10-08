@@ -10,8 +10,8 @@ info:
   version: 0.1.0
   description: >-
     The declarations endpoints of Manifold's API: read, lint, and save of
-    `bindings.yml`, `task-metadata.yml`, and `portfolio.yml`, the edit of
-    one task field, the read of the bindings, and the save of one binding
+    `bindings.yml`, `task-metadata.yml`, `portfolio.yml`, and
+    `accounts.yml`, the edit of one task field, the read of the bindings, and the save of one binding
     as a structured edit.
 security: []
 paths:
@@ -253,7 +253,7 @@ components:
       type: string
       pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
     DeclarationPath:
-      enum: [bindings.yml, task-metadata.yml, portfolio.yml]
+      enum: [bindings.yml, task-metadata.yml, portfolio.yml, accounts.yml]
     DeclaredName:
       type: string
       maxLength: 64
@@ -279,12 +279,12 @@ components:
       description: >-
         The declaration lint's finding, with `range` when it is in the
         linted text and has a place there, and with `file` only in an
-        answer for `portfolio.yml`. Members beyond those listed are the
-        lint's finding details.
+        answer for `portfolio.yml` or `accounts.yml`. Members beyond
+        those listed are the lint's finding details.
       required: [kind, location, message]
       properties:
         file:
-          enum: [portfolio, bindings]
+          enum: [portfolio, bindings, accounts, prices]
         kind:
           type: string
         location:
@@ -438,6 +438,11 @@ components:
               type: boolean
             text:
               type: string
+            environments:
+              description: For `accounts.yml`, the environment names of service configuration in its order.
+              type: array
+              items:
+                $ref: "#/components/schemas/DeclaredName"
       unevaluatedProperties: false
     LintRequest:
       type: object

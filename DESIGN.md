@@ -497,7 +497,9 @@ the actor page.
   a note when an early reset was detected. An account that an allocation
   names and `accounts.yml` does not declare has a "Not declared" warning
   badge in place of its kind, a muted line "Declare it in accounts.yml",
-  and no meter.
+  and no meter. An archived account that an allocation names has an
+  "Archived" warning badge in place of its kind, a muted line "Restore it
+  in Settings, Accounts", and no meter.
 - Account row, under the cards when there is more than one account:
   "Allocations for" and an account select. Allocation, Lifetime cost, the
   "Unallocated" row, the edits, and the dialog are for the selected
@@ -1053,33 +1055,58 @@ changes, with "Review impact".
 
 #### Accounts and budget sources
 
-Accounts and what the operator sets on each.
+Accounts and what the operator sets on each, as `accounts.yml` declares
+them.
 
-- Section header: "Accounts and budget sources", a one-line description, and
-  "Add account" (primary).
-- Columns: Account (name and provider), Used by (the environments, one per
-  line in mono), Budget (an API account's monthly amount and reset day; a
-  subscription's plan and window count), Current use (the window closest to
-  its limit, named, with its percentage, a meter, and a granted-reset badge
-  under it when there is one), Last report (a success dot when recent, an
-  idle dot when not), and an Edit icon button.
-- A Pricing card: how subscription cost is estimated, when the price table
-  was updated, how many models it has, a warning count of models in use
-  with no price ("their actors are flagged") with "View actors", and "Refresh".
+- Section header: "Accounts and budget sources", a one-line description, a
+  ghost "Refresh" icon button, and "Add account" (primary).
+- Columns: Account (name, and its providers under it in muted text), Used
+  by (the environments, one per line in mono, with the provider instance
+  after a `·` when the account names one), Budget (the amount per window
+  with the window's name, "API budget" or "Subscription estimate" muted
+  under it, and "Resets in about …"), Current use (the window's name, its
+  percentage, and a meter, warning at 85% or more; "No window yet" when
+  none is open), Last report (a success dot when the latest call charged
+  to the account is less than 24 hours old, an idle dot when it is older,
+  and its age, "3 hours ago"; "No report yet" with an idle dot when no
+  call has charged it), and an Edit icon button.
+- "Show archived (N)" under the table when an account is archived: each
+  archived account with its name, its kind, and "Restore".
+- A Pricing card: how cost is estimated ("Each call is priced at its
+  model's API price, for subscriptions too."), the bundled price table as
+  "LiteLLM at <short commit>" with its model count, and how many models
+  `prices.yml` prices. When calls wait for a price, a warning line "N
+  models in use have no price" lists each provider and model with its
+  waiting calls, and "Price them in prices.yml."
+- A subscription shows the capacity the operator declares. Its plan,
+  detected windows, model caps, and granted resets are what its provider
+  reports, which Manifold does not read.
 
 Add account and Edit account are one 520px dialog:
 
 - Kind: API budget or Subscription (fixed once the account exists).
-- Name and Provider.
-- Used by: environments as checkboxes. An environment another account
-  already uses for this provider is disabled with "Used by" and that
-  account's name.
-- API budget: Monthly budget and "Resets on".
-- Subscription: Plan, the usage windows and model caps as detected (read
-  only), and granted resets with their expiry. A new subscription says its
-  windows appear after the first usage report.
-- Edit has "Archive account" at the bottom left (error text, outline).
-  Accounts are archived, never deleted, so past usage keeps its source.
+- Name (fixed once the account exists, since usage and allocations name
+  the account by it) and Provider.
+- Used by: environments as checkboxes, each with an "Instance" input in
+  mono while it is checked, for an environment that runs more than one
+  account of the provider. An environment another account already uses
+  for this provider and instance is disabled with "Used by" and that
+  account's name. An account whose usage names more than one provider
+  shows Used by read only, with "Edit its usage in accounts.yml."
+- API budget: "Budget per window", "Window" (Monthly, Weekly, Daily, or
+  Every N hours, days, or months), and "Resets on", a date and time.
+- Subscription: "Usage limit per window", the operator's estimate of the
+  provider's limit at API prices, "Window", and "Resets at", a reset the
+  provider showed.
+- Each finding marks the input it locates, with its message under it; the
+  rest list in a Problems box above the footer. Save is disabled while
+  there is a finding. A warning, such as a portfolio item that allocates
+  to an account the edit archives, lists in warning color and does not
+  disable Save.
+- Edit has "Archive account" at the bottom left (error text, outline). It
+  asks first in a 400px alert dialog that names each portfolio item that
+  allocates to the account. Accounts are archived, never deleted, so past
+  usage keeps its source.
 
 ### Environments
 

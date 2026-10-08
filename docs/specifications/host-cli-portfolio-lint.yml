@@ -32,7 +32,8 @@ description: >-
   with the file as `portfolio.yml` or `bindings.yml`, the location the
   finding's RFC 6901 JSON Pointer, and the kind and message the finding's.
   Findings of `portfolio.yml` come first, then those of `bindings.yml`,
-  each in the lint's order. The `account-undeclared` warnings come last,
+  each in the lint's order. The `account-undeclared` and
+  `account-archived` warnings come last,
   in the same form with the file `portfolio.yml`, each line ending with
   ` (warning)`, in the lint's order. The command prints nothing and exits
   0 when there is no finding and no warning, exits 0 when there are only

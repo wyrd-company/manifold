@@ -10,6 +10,7 @@ relationships:
     - portfolio-declaration
     - task-metadata-declaration
     - accounts-declaration
+    - price-table
     - blueprints-api
     - t3code-environment-source
     - lint-console-edits-on-the-service
@@ -21,7 +22,8 @@ terms:
 description: >-
   Defines the declarations endpoints of Manifold's API: the read, lint, and
   save of the process repository files the operator console changes,
-  `bindings.yml`, `task-metadata.yml`, and `portfolio.yml`; the edit of
+  `bindings.yml`, `task-metadata.yml`, `portfolio.yml`, and
+  `accounts.yml`; the edit of
   one task field in a task metadata text; the read of the bindings with
   what a binding may name; and the save of one binding as a structured
   edit.
@@ -36,9 +38,10 @@ description: >-
   take answers `405` with `Allow` naming the one it takes.
 
   **Declaration paths.** A declaration path is `bindings.yml`,
-  `task-metadata.yml`, or `portfolio.yml`, the files at the root of the
-  process repository that `bindings-declaration`,
-  `task-metadata-declaration`, and `portfolio-declaration` define. No
+  `task-metadata.yml`, `portfolio.yml`, or `accounts.yml`, the files at
+  the root of the process repository that `bindings-declaration`,
+  `task-metadata-declaration`, `portfolio-declaration`, and
+  `accounts-declaration` define. No
   other path is read, linted, or saved through these endpoints. A request
   that names another path answers `400`.
 
@@ -46,8 +49,8 @@ description: >-
   file's specification defines it, with `range` when the finding is in
   the linted text and has a place there, by the rule `blueprints-api`
   states for a finding located by a JSON Pointer or by a line and column.
-  A finding keeps its `file` only in an answer for `portfolio.yml`. A
-  text lints with the same functions and the same companion files as the
+  A finding keeps its `file` only in an answer for `portfolio.yml` or
+  `accounts.yml`. A text lints with the same functions and the same companion files as the
   service's revision follower and the host CLI:
 
   - `task-metadata.yml` lints with `lintTaskMetadataDeclaration`, with
@@ -67,6 +70,15 @@ description: >-
     revision whose bindings fail. Its warnings are those of
     `lintAllocatedAccounts`, with `accounts.yml` at the latest applied
     revision, as `accounts-declaration` defines them.
+  - `accounts.yml` lints with `lintUsageDeclaration`, with `prices.yml`
+    at the latest applied revision as `prices`, as `manifold-host usage
+    lint` lints a checkout. The answer keeps the findings of both files,
+    each with its `file`, `accounts` or `prices`, since the service
+    refuses a usage declaration whose prices fail. Its warnings are those
+    of `lintAllocatedAccounts` with `portfolio.yml` at the latest applied
+    revision and the linted text as `accounts`, each with its `file`,
+    `portfolio`, so a text that archives or leaves out an account
+    `portfolio.yml` allocates shows the allocations that name it.
 
   `findings` holds every finding, and `warnings` the warnings; a warning
   does not refuse a save. `bindings.yml` and `task-metadata.yml` have no
@@ -119,9 +131,11 @@ description: >-
   with `path`; `commit`, the commit of the latest applied revision, which
   is the base for a save of this path; `exists`, whether the revision
   holds the file; `text`, the file's text, or the empty string when it
-  holds none; `findings`; `warnings`; and for `task-metadata.yml`,
-  `fields` and `storageKinds` when the text parses and `impact` when it
-  has no finding. Before the first applied revision it answers `503`.
+  holds none; `findings`; `warnings`; for `task-metadata.yml`, `fields`
+  and `storageKinds` when the text parses and `impact` when it has no
+  finding; and for `accounts.yml`, `environments`, the environment names
+  of service configuration in its order, which a usage entry names.
+  Before the first applied revision it answers `503`.
 
   **Lint.** `POST /api/declarations/lint` takes `{ path, text }` and
   answers `200` with `findings`, `warnings`, and for `task-metadata.yml`,
@@ -263,7 +277,15 @@ validation-criteria: >-
   binding names the `bindings` finding with its `file` and the
   allocated-account warnings of a fixture `accounts.yml`; that a
   `portfolio.yml` save with a `bindings` finding answers `422`, and one
-  with only warnings saves; that `impact` counts a fixture planner's creates,
+  with only warnings saves; that `source` of `accounts.yml` answers the
+  configured environment names and of an absent file `exists` false; that
+  `lint` of `accounts.yml` answers a `duplicate-usage` finding with its
+  `file` and range, a `prices` finding of a broken fixture `prices.yml`
+  with its `file`, and, for a text that archives an account the fixture
+  `portfolio.yml` allocates, the `account-archived` warning with the
+  `file` `portfolio`; that an `accounts.yml` save that adds an account
+  answers `saved` with `loaded` true and `GET /api/portfolio` then lists
+  the account as declared; that `impact` counts a fixture planner's creates,
   changes, and removes per bound Project and lists an unobserved Project
   with no counts, and each field row's `onGitHub` from the fixture
   planner; that each field edit keeps a comment above another field,

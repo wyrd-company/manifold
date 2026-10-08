@@ -40,6 +40,11 @@ $defs:
           `subscription` for an account with a usage limit that resets.
         type: string
         enum: [api, subscription]
+      archived:
+        description: >-
+          True archives the account: it stays declared, charges no call,
+          and is credited no window.
+        type: boolean
       capacity:
         $ref: "#/$defs/capacity"
       usage:
