@@ -75,9 +75,10 @@ proposed-design:
     request, moves Node's major with its type declarations, holds
     TypeScript below 7, never touches `engines`, reads the runner images
     and Task version that the GitHub Actions manager misses, waits one day
-    for a release, and flags as abandoned any package with no release in
-    one year. The slow-cadence list below names every runtime dependency
-    that threshold flags, plus libraries that trail the project they are
+    for a timestamped release, exempts runner releases with no timestamp,
+    and flags as abandoned any package with no release in one year. The
+    slow-cadence list below names every runtime dependency that threshold
+    flags, plus libraries that trail the project they are
     cut from, each with its fallback. Renovate's configuration validator
     accepts the file, and a Renovate `--platform=local` dry run of the
     workspace detects every manifest the coverage section names.
@@ -138,8 +139,8 @@ proposed-design:
     Support. (5) Every other major update is its own pull request, one per
     package or per monorepo as `config:recommended` groups monorepos.
     Renovate has no schedule and no automerge: a pull request opens when
-    its release is old enough, and an operator merges it once `task check`
-    passes.
+    its release meets the release-age rule, and an operator merges it
+    once `task check` passes.
   holds: >-
     `typescript` has `allowedVersions` `<7`. The service's comparator
     sandbox and the host CLI's comparator lint call the TypeScript
@@ -153,8 +154,15 @@ proposed-design:
     dependency dashboard and is rebased as the branch moves.
   release-age: >-
     `minimumReleaseAge` is `1 day`, pnpm's `minimum-release-age`. A
-    release younger than that is a pending update on the dashboard and
-    no branch. A release that a manifest needs sooner is added to
+    timestamped release younger than that is a pending update on the
+    dashboard and no branch. A package rule matching the `github-runners`
+    datasource sets `minimumReleaseAgeBehaviour` to `timestamp-optional`,
+    so that runner images with no release timestamp can be offered. This
+    exempts only releases with no timestamp; a timestamped runner release
+    still waits one day. Other dependencies keep `timestamp-required`.
+    A regex-managed dependency whose lookup reports a pending release
+    solely for a missing timestamp receives the same scoped exemption.
+    A release that a manifest needs sooner is added to
     `minimumReleaseAgeExclude` in `pnpm-workspace.yaml` by the change that
     needs it, and Renovate's value moves with pnpm's.
   abandonment-threshold: >-

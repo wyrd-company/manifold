@@ -10,6 +10,10 @@
   abandonmentThreshold: "1 year",
   packageRules: [
     {
+      matchDatasources: ["github-runners"],
+      minimumReleaseAgeBehaviour: "timestamp-optional",
+    },
+    {
       matchUpdateTypes: ["minor", "patch", "pin", "digest"],
       groupName: "minor and patch updates",
     },
