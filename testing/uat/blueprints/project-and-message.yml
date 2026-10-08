@@ -1,0 +1,45 @@
+# ---
+# relationships:
+#   verifies: [agent-threads, agent-tools, actor-history]
+# ---
+description: Create a sample workspace and send a parcel update to another task.
+machine:
+  initial: creating
+  context:
+    recipientIssue: example-issue-node-id
+    workspaceRoot: /tmp/sample-uat-workspace
+  states:
+    creating:
+      invoke:
+        id: create-project
+        src: t3code-project-create
+        input:
+          type: expression.map
+          params:
+            expression: '{ "title": "Sample workspace", "workspaceRoot": context.workspaceRoot, "createWorkspaceRoot": true }'
+        onDone: sending
+    sending:
+      invoke:
+        id: send-update
+        src: send-message
+        input:
+          type: expression.map
+          params:
+            expression: '{ "to": { "issue": context.recipientIssue }, "text": "The parcel label changed." }'
+        onDone: sent
+    sent:
+      type: final
+schemas:
+  input: true
+  output: true
+  context:
+    type: object
+    properties:
+      recipientIssue: { type: string }
+      workspaceRoot: { type: string }
+    required: [recipientIssue, workspaceRoot]
+    additionalProperties: false
+  events: {}
+  actors:
+    t3code-project-create: { input: true, output: true }
+    send-message: { input: true, output: true }

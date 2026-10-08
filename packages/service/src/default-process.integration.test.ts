@@ -96,32 +96,14 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
   intake.nodes[1].content.config.rules[0].blueprint =
     'task.issue.nodeId = "I_B" ? "blueprints/notice.yml" : "blueprints/task.yml"';
   files.set("decision-models/intake.yml", stringify(intake));
-  files.set(
-    "blueprints/notice.yml",
-    stringify({
-      machine: {
-        initial: "sending",
-        context: {},
-        states: {
-          sending: {
-            invoke: {
-              src: "send-message",
-              input: { to: { issue: "I_A" }, text: "The parcel label changed." },
-              onDone: "sent",
-            },
-          },
-          sent: { type: "final" },
-        },
-      },
-      schemas: {
-        input: true,
-        output: true,
-        context: true,
-        events: {},
-        actors: { "send-message": { input: true, output: true } },
-      },
-    }),
+  const helper = parse(
+    await readFile(
+      new URL("../../../testing/uat/blueprints/project-and-message.yml", import.meta.url),
+      "utf8",
+    ),
   );
+  helper.machine.context.recipientIssue = "I_A";
+  files.set("blueprints/notice.yml", stringify(helper));
   const bindings = parse(files.get("bindings.yml")!);
   Object.assign(bindings.githubProjects["work-board"], {
     owner: "sample",
@@ -190,6 +172,8 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
     force: true,
   });
   const logs: unknown[] = [];
+  const startedAt = performance.now();
+  const timeline: { at: number; stage: string }[] = [];
   const faults: { boundary: string; eventId?: string; commandId?: string }[] = [];
   async function start() {
     const fault = crash;
@@ -202,7 +186,10 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
     let stderr = "";
     worker.on("message", (message) => {
       const value = message as { type: string; entry: unknown };
-      if (value.type === "log") logs.push(value.entry);
+      if (value.type === "log") {
+        logs.push(value.entry);
+        timeline.push({ at: performance.now() - startedAt, stage: JSON.stringify(value.entry) });
+      }
       if (value.type === "fault")
         faults.push(message as { boundary: string; eventId?: string; commandId?: string });
     });
@@ -237,7 +224,7 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ environment: "workstation", tool, arguments: args, meta }),
     });
-  async function add(issue = "I_A", item = "item-one") {
+  async function add(issue = "I_A", item = "item-one", expectedStatus = 202) {
     f.api.addItem(item, issue);
     f.api.items.get(item)!.fieldValues.nodes.push({
       __typename: "ProjectV2ItemFieldNumberValue",
@@ -258,6 +245,7 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
       },
       "delivery-" + item,
     );
+    timeline.push({ at: performance.now() - startedAt, stage: "webhook-post" });
     expect(
       (
         await fetch(running.url + "/webhooks/github", {
@@ -266,7 +254,7 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
           body: delivery.body,
         })
       ).status,
-    ).toBe(202);
+    ).toBe(expectedStatus);
   }
   async function waiting() {
     try {
@@ -350,13 +338,32 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
       }
       running = await start();
     },
-    async restart() {
+    async requestWorker(action: string, arguments_: Record<string, unknown> = {}) {
+      const id = crypto.randomUUID();
+      const answer = new Promise<Record<string, unknown>>((resolve) => {
+        const listener = (raw: unknown) => {
+          const message = raw as { id: string; answer: Record<string, unknown> };
+          if (message.id === id) {
+            running.worker.off("message", listener);
+            resolve(message.answer);
+          }
+        };
+        running.worker.on("message", listener);
+      });
+      running.worker.send({ id, action, arguments: arguments_ });
+      return answer;
+    },
+    async restart(beforeStart?: () => Promise<void>) {
       running.worker.kill("SIGKILL");
       expect(await running.exited).toBeNull();
       expect(running.worker.signalCode).toBe("SIGKILL");
+      await beforeStart?.();
       running = await start();
     },
     faults,
+    timeline,
+    elapsed: () => performance.now() - startedAt,
+    logs,
     snapshot,
     state,
     add,
@@ -421,12 +428,43 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
     environments: [expect.objectContaining({ name: "workstation", paused: true })],
   });
   await f.add();
-  await expect
-    .poll(async () => (await get("/api/environments")).environments[0])
-    .toMatchObject({
-      paused: true,
-      scheduledThreads: 1,
-    });
+  try {
+    await expect
+      .poll(async () => {
+        const environment = (await get("/api/environments")).environments[0];
+        f.timeline.push({
+          at: f.elapsed(),
+          stage: JSON.stringify({ environment, snapshot: f.snapshot() }),
+        });
+        return environment;
+      })
+      .toMatchObject({ paused: true, scheduledThreads: 1 });
+  } catch (error) {
+    console.log(
+      "STARTER_SCHEDULE_MISS " +
+        JSON.stringify({
+          timeline: f.timeline,
+          logs: f.logs,
+          snapshot: f.snapshot(),
+          evaluations: f.store.connection.database.prepare("SELECT * FROM gates_evaluation").all(),
+          notifications: f.notifications,
+        }),
+    );
+    throw error;
+  }
+  console.log(
+    "STARTER_SCHEDULE " +
+      JSON.stringify({
+        elapsedMs:
+          f.timeline.at(-1)!.at - f.timeline.find((entry) => entry.stage === "webhook-post")!.at,
+        snapshot: f.snapshot()?.value,
+        evaluations: f.store.connection.database
+          .prepare(
+            "SELECT outcome, duration_ms, failure_kind, failure_message FROM gates_evaluation",
+          )
+          .all(),
+      }),
+  );
   expect(f.t3.commands).toEqual([]);
   expect(f.t3.threads.size).toBe(0);
   await post("/api/environments/workstation/resume", {});
@@ -488,8 +526,50 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
     ).length,
   ).toBeGreaterThanOrEqual(2);
   expect(f.moves()).toEqual(["In Progress"]);
+  const boardReads = [];
+  for (const size of [1, 32]) {
+    const answer = await f.requestWorker("board", { size });
+    expect(answer).toMatchObject({ status: 200, issues: size, mirrorReads: 1 });
+    boardReads.push(answer);
+  }
+  console.log("BOARD_MIRROR_READS " + JSON.stringify(boardReads));
   // Save a repository replacement for the bundled blueprint while the actor waits.
   const beforeMigration = f.store.loadSnapshot("task:I_A")!;
+  const { isActorHistoryResponse } = await import("@wyrd-company/manifold-shared/actors-api");
+  const { isActorUsageResponse } = await import("@wyrd-company/manifold-shared/actor-usage-api");
+  const waitingHistory = await get("/api/actors/task%3AI_A/history");
+  if (!isActorHistoryResponse(waitingHistory)) throw new Error("Invalid actor history");
+  const oldVisit = waitingHistory.history.visits.at(-1)!;
+  async function pushVisitCall(key: string, enteredAt: string) {
+    return post("/api/usage/push", {
+      environment: "workstation",
+      threads: [{ provider: "codex", providerSessionId: "waiting-session", threadId: thread.id }],
+      records: [
+        {
+          type: "call",
+          key,
+          provider: "codex",
+          providerSessionId: "waiting-session",
+          unit: { id: "waiting-session", kind: "session" },
+          timestamp: enteredAt,
+          model: "sample-model",
+          speed: "standard",
+          granularity: "call",
+          estimated: false,
+          tokens: {
+            input: 1,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            cacheWriteOneHour: 0,
+            reasoning: 0,
+            webSearchRequests: 0,
+          },
+        },
+      ],
+    });
+  }
+  await pushVisitCall("before-migration", oldVisit.enteredAt);
   const next = parse(shippedBundle.files.get("blueprints/task.yml")!);
   next.machine.context.labelFormat = "revised";
   next.schemas.context.required.push("labelFormat");
@@ -526,9 +606,66 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   });
   expect(grantedToken()).toEqual(token);
   expect(thread.messages).toHaveLength(1);
+  const migratedHistory = await get("/api/actors/task%3AI_A/history");
+  if (!isActorHistoryResponse(migratedHistory)) throw new Error("Invalid actor history");
+  const newVisit = migratedHistory.history.visits.at(-1)!;
+  expect(newVisit.value).toEqual(oldVisit.value);
+  expect(newVisit.visit).toBe(oldVisit.visit + 1);
+  expect(newVisit.blueprint?.commit).toBe(blueprintSaved.commit);
+  await pushVisitCall("after-migration", newVisit.enteredAt);
+  const visitUsage = await get("/api/usage/actors/task%3AI_A");
+  if (!isActorUsageResponse(visitUsage)) throw new Error("Invalid actor usage");
+  expect(
+    visitUsage.visits.map((visit) => [visit.visit, visit.enteredAt, visit.tokens.total]),
+  ).toEqual([oldVisit, newVisit].map((visit) => [visit.visit, visit.enteredAt, 1]));
+  expect(visitUsage.calls.map((call) => call.visit)).toEqual([oldVisit.visit, newVisit.visit]);
+  // Populate UAT rows while the child service is stopped, then prune with the assembled service.
+  await f.restart(async () => {
+    await promisify(execFile)(process.execPath, [
+      new URL("../../../testing/uat/seed-retention.mjs", import.meta.url).pathname,
+      "--store",
+      join(f.directory, "data/state.sqlite"),
+      "--service-stopped",
+    ]);
+  });
+  await f.waiting();
+  const activeHistory = await get("/api/actors/task%3AI_A/history");
+  expect(await f.requestWorker("prune")).toMatchObject({
+    actors: 1,
+    inboxRows: 1,
+    historyRows: 2,
+    sourceEvents: 1,
+    gateEvaluations: 1,
+  });
+  expect(await get("/api/actors/task%3AI_A/history")).toEqual(activeHistory);
+  await f.restart();
+  await f.waiting();
+  await f.add("I_A", "item-one", 200); // The original signed delivery is replayed with its original GUID.
+  expect(await get("/api/actors/task%3AI_A/history")).toEqual(activeHistory);
+  expect(await get("/api/usage/actors/task%3AI_A")).toEqual(visitUsage);
+  expect(await pushVisitCall("after-migration", newVisit.enteredAt)).toMatchObject({
+    calls: { accepted: 0 },
+  });
+  expect(thread.messages).toHaveLength(1);
+  expect(f.t3.commands).toHaveLength(2);
   // A second issue invokes send-message; the recipient's actor saves its routed event.
   await f.add("I_B", "item-two");
   await expect.poll(() => f.store.loadSnapshot("task:I_B")?.snapshot.status).toBe("done");
+  const createdHistory = await get("/api/actors/task%3AI_B/history");
+  if (!isActorHistoryResponse(createdHistory)) throw new Error("Invalid actor history");
+  const projectCommand = f.t3.commands.find((command) => command.type === "project.create")!;
+  expect(createdHistory.history.commands).toEqual([
+    expect.objectContaining({
+      kind: "project-create",
+      commandId: projectCommand.commandId,
+      invokeId: "create-project",
+      entryId: expect.any(String),
+      environment: "workstation",
+      projectId: projectCommand.type === "project.create" ? projectCommand.projectId : "",
+      acceptedAt: expect.any(String),
+    }),
+  ]);
+  expect(createdHistory.history.commands[0]).not.toHaveProperty("threadId");
   const plugin = spawn(childArtifacts().host, [
     "mcp",
     "--service",
@@ -616,7 +753,6 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
         .all("task:I_A"),
     )
     .toEqual([]);
-  const { isActorHistoryResponse } = await import("@wyrd-company/manifold-shared/actors-api");
   const ended = await get("/api/actors/task%3AI_A/history");
   expect(isActorHistoryResponse(ended)).toBe(true);
   if (!isActorHistoryResponse(ended)) throw new Error("Invalid actor history");
@@ -696,7 +832,7 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   });
   expect(f.portfolio.ledger.actorUsage("task:I_A")).toMatchObject({
     settled: true,
-    accounts: [{ account: "agents", estimate: 10, actual: 8, variance: -2, outstanding: 0 }],
+    accounts: [{ account: "agents", estimate: 10, actual: 10, variance: 0, outstanding: 0 }],
   });
   expect(grantedToken()).toEqual(token);
   const response = await fetch(f.url + "/api/tasks/" + encodeURIComponent("task:I_A"));
@@ -710,7 +846,7 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
       threads: [{ threadId: thread.id }],
       usage: {
         settled: true,
-        accounts: [{ account: "agents", estimate: 10, actual: 8, variance: -2, reserved: 0 }],
+        accounts: [{ account: "agents", estimate: 10, actual: 10, variance: 0, reserved: 0 }],
       },
     },
   });
@@ -748,7 +884,7 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   expect(isTaskResponse(movedTask)).toBe(true);
   expect(movedTask).toMatchObject({
     task: {
-      usage: { settled: true, accounts: [{ estimate: 10, actual: 16, variance: 6, reserved: 0 }] },
+      usage: { settled: true, accounts: [{ estimate: 10, actual: 18, variance: 8, reserved: 0 }] },
     },
   });
   expect(await get("/api/usage/unowned")).toEqual({ unowned: [] });
@@ -760,6 +896,7 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   expect(f.t3.commands.map((command) => command.type)).toEqual([
     "thread.create",
     "thread.turn.start",
+    "project.create",
   ]);
   expect(f.moves()).toEqual(["In Progress", "Done"]);
   expect(f.t3.threads.size).toBe(1);
@@ -816,7 +953,34 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   });
   expect(await get("/api/actors/task%3AI_A/history")).toEqual(ended);
   expect(await get("/api/tasks/task%3AI_A")).toMatchObject({
-    task: { usage: { settled: true, accounts: [{ actual: 16, variance: 6 }] } },
+    task: { usage: { settled: true, accounts: [{ actual: 18, variance: 8 }] } },
+  });
+  const archive = await post("/api/declarations/archive-item", {
+    item: "work",
+    projects: [{ binding: "work-board", choice: "archive" }],
+    base: saved.commit,
+    message: "Archive sample portfolio",
+    saveId: "3".repeat(32),
+  });
+  expect(archive).toMatchObject({ outcome: "saved", commit: expect.any(String) });
+  expect(await get("/api/portfolio")).toMatchObject({
+    commit: archive.commit,
+    items: expect.arrayContaining([
+      expect.objectContaining({ id: "work", archived: true, projects: { github: [], t3code: [] } }),
+    ]),
+  });
+  expect(
+    parse((await get("/api/declarations/source?path=portfolio.yml")).text).items.work.archived,
+  ).toBe(true);
+  expect(
+    parse((await get("/api/declarations/source?path=bindings.yml")).text).githubProjects[
+      "work-board"
+    ].archived,
+  ).toBe(true);
+  await f.restart();
+  expect(await get("/api/portfolio")).toMatchObject({
+    commit: archive.commit,
+    items: expect.arrayContaining([expect.objectContaining({ id: "work", archived: true })]),
   });
   f.worker.send("stop");
   expect(await f.exited).toBe(0);
@@ -1117,3 +1281,13 @@ it.each(["event", "command"] as const)(
     });
   },
 );
+
+it("lints the UAT project-and-message blueprint with the compiled host CLI", async () => {
+  const result = await promisify(execFile)(childArtifacts().host, [
+    "blueprint",
+    "lint",
+    new URL("../../../testing/uat/blueprints/project-and-message.yml", import.meta.url).pathname,
+  ]);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("");
+});
