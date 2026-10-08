@@ -3602,8 +3602,8 @@ proposed-design:
     85% or more, and "of N accounts" where N is its `count`; with no
     closest account the value is "—" and the line is "No window yet", or
     "No accounts are declared" when `count` is 0. Environments is the
-    count of listed environments whose status is `connected` over all
-    listed, and its detail counts those whose status is `paused`.
+    count of listed environments whose `connection` is `connected` over all
+    listed, and its detail counts those whose `paused` is true.
   active-actors-table: >-
     `ActiveActorsTable` shows the first 10 rows of `activeActorRows`, in
     the actors read's order, savedAt newest first. Task is the issue title
@@ -3630,9 +3630,7 @@ proposed-design:
     N scheduled threads" as the detail, with no time, since the seam holds
     no pause time. The link is the item's `target`: "Open task" to the Task
     page, where the escalation is answered; "Open blueprint" to the
-    blueprint editor of the gate's blueprint path; "Open actors" to Actors,
-    which the Rebase step points at the Actors screen's actor page when
-    that page has merged;
+    blueprint editor of the gate's blueprint path; "Open actor" to the actor's page;
     "Open board" to Board; "Open environments" to Environments. Overview
     answers no escalation and changes no environment.
   item-budgets: >-
@@ -3697,7 +3695,8 @@ proposed-design:
     export type AttentionTarget =
       | { readonly to: "task"; readonly actorId: string }
       | { readonly to: "blueprint"; readonly path: string }
-      | { readonly to: "actors" | "board" | "environments" };
+      | { readonly to: "actor"; readonly actorId: string }
+      | { readonly to: "board" | "environments" };
     export type AttentionItem =
       | { readonly kind: "escalation"; readonly escalation: Escalation; readonly target: AttentionTarget }
       | { readonly kind: "held-actor"; readonly actorId: string; readonly title?: string;
@@ -3712,8 +3711,8 @@ proposed-design:
     }): readonly AttentionItem[];
     ```
 
-    `EnvironmentSummary` is the environment entry of the environment
-    control seam. A read whose latest result is `failed`, or that has not
+    `EnvironmentSummary` is exported by
+    `@wyrd-company/manifold-shared/environments-api`. A read whose latest result is `failed`, or that has not
     answered, is `undefined`, and contributes nothing.
 
     `closestToLimit` considers each declared account with a `window` whose
@@ -3749,14 +3748,14 @@ proposed-design:
     id, with no open `held-actor` escalation naming it, since that
     escalation already stands for it; ordered by the actors read's
     `savedAt`, oldest first, then by actor id, and those the actors read
-    does not list last by actor id. Last the environments whose status is
-    `paused`, in the read's order. Escalations come first because each
+    does not list last by actor id. Last the environments whose `paused`
+    is true, in the read's order. Escalations come first because each
     waits on a person and carries the choices that end it; a held actor
     with no open escalation was dismissed and waits on no one; a pause is
     the operator's own act. An escalation's target is the Task page when
     the actor id it names, `raiser.actorId` for a blueprint raiser or
     `subject.actorId` for `held-actor` and `agent-question`, is a task of
-    the tasks read, else Actors; for `intake-failed`, the Task page of
+    the tasks read, else the actor's page; for `intake-failed`, the Task page of
     `task:<subject.issue>` when the tasks read lists it, else Board; for
     `comparator-failed` and `stranded-token`, the blueprint editor of the
     path before `#` in `subject.gate`. A held actor's target is its Task
@@ -3771,15 +3770,10 @@ proposed-design:
     adds `EscalationsResponse`, `{ escalations }`, and its guard
     `isEscalationsResponse`, which a shared test checks against
     `#/$defs/escalation-list` of `escalation-contract` with fixtures that
-    pass and fail. The environments read is the console client and shared
-    guard of the environment control seam, which the Environments screen
-    owns. Until that screen merges, `src/screens/overview/environments.ts`
-    is a structural stand-in that holds the seam's shape, `{ environments:
-    [{ name, host, status, activeThreads, scheduledThreads }] }` with
-    `status` one of `connected`, `connecting`, `disconnected`, and `paused`,
-    and `activeThreads` `null` when not known, with a guard and a client
-    mapped as `fetchEscalations` is. The rebase replaces it with the
-    seam's client and deletes the file.
+    pass and fail. The environments read is `fetchEnvironments()` of
+    `src/api/environments.ts`, the Environments screen's client, checked
+    with the guards of `@wyrd-company/manifold-shared/environments-api`;
+    Overview reads its `environments` and ignores `configurationFile`.
   overview-convergence: >-
     Overview writes nothing: no endpoint it reads changes state except the
     portfolio read's credit of an account's current window, which converges
@@ -3807,27 +3801,28 @@ proposed-design:
     `needsAttention` (the three groups in order, escalations by raise time
     and id, a held actor with an open `held-actor` escalation shown once as
     the escalation, a held actor on two Projects shown once, environments
-    that are not paused absent, each target, and each read undefined); and
+    that are not paused absent, a paused connected environment and a
+    paused disconnected environment both present, each target, and each
+    read undefined); the Environments tile counts the paused connected
+    environment as connected and paused, and the paused disconnected
+    environment as paused only; and
     the escalations result mapping. In `packages/shared`, the guard of
     `EscalationsResponse` against `escalation-list`. The browser test,
     `packages/service/src/console/overview.browser.test.ts`, starts the
     production HTTP host with the built console and mounts the actors,
     tasks, escalations, and portfolio endpoints over one store, ledger, and
-    escalations module, and the environments endpoint. The fixtures hold
+    escalations module, and the real environments module. The fixtures hold
     three active actors: a task whose blueprint raised an open escalation,
     a task actor the router holds whose `held-actor` escalation was
     dismissed, and a child actor that is not a task; a thread with a `url`
     on the first task; two declared accounts, one whose window is 85% used,
     and items `alpha` and `beta`, with `alpha`'s usage 85% of its guarantee
     amount, and `beta` below 85% with a sub-item `beta-one` at 85% of its
-    own guarantee amount; and two environments, one connected and one paused. Until the
-    environment control seam merges, the environments endpoint is a
-    stand-in listener at `/api/environments` answering the fixture; the
-    rebase replaces it with the seam's module and pauses the second
-    environment through `POST /api/environments/{name}/pause`. The test
+    own guarantee amount; and two connected environments. It pauses the second through
+    `POST /api/environments/{name}/pause`, which keeps it connected. The test
     opens `/console/`, and reads: Active actors 3 with "1 held"; Needs
     attention 3, "1 escalation · 1 held · 1 paused"; Closest to limit 85%
-    with the account name and a warning meter; Environments "1 of 2
+    with the account name and a warning meter; Environments "2 of 2
     connected" with "1 paused"; the held row's "Held"; the first row's
     "Open thread" `href`; the needs-attention titles in order, with "Open
     task" on the escalation opening its Task page; `alpha`'s row with
@@ -3838,13 +3833,14 @@ proposed-design:
     endpoint and reads the Environments tile "—", the alert in Needs attention
     above its escalation and held actor, and every other part drawn. A
     third case opens `/console/` with every endpoint answering, reads
-    Environments "1 of 2 connected" and Needs attention 3, then has the
+    Environments "2 of 2 connected" and Needs attention 3, then has the
     environments endpoint answer `500`, presses "Refresh", and reads the
     Environments tile "—", Needs attention 2 with "1 escalation · 1 held",
     no paused item, the environments alert with "Try again", and the
     other tiles, the table, and Budget unchanged; with the endpoint
-    answering again, "Try again" restores "1 of 2 connected" and Needs
-    attention 3. Fixture
+    answering again, "Try again" restores "2 of 2 connected" and Needs
+    attention 3. A fourth case raises a non-task actor escalation and
+    follows "Open actor" to its actor page. Fixture
     values are generic and never drawn from Manifold's own domain.
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It

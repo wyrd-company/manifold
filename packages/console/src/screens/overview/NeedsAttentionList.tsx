@@ -24,10 +24,10 @@ function AttentionLink({ target }: { target: AttentionTarget }) {
           Open blueprint
         </Link>
       );
-    case "actors":
+    case "actor":
       return (
-        <Link className={className} to="/actors">
-          Open actors
+        <Link className={className} to="/actors/$actorId" params={{ actorId: target.actorId }}>
+          Open actor
         </Link>
       );
     case "board":

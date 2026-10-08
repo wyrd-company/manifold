@@ -60,6 +60,7 @@ const item = (
 });
 const actor = (actorId: string, savedAt = "2026-01-01T00:00:00.000Z"): ActorSummary => ({
   actorId,
+  status: "active",
   savedAt,
   states: ["waiting"],
   machine: "sample",
@@ -131,6 +132,7 @@ test("closest declared account uses greatest share, stable ties, positive window
 });
 test("budgets retain every depth, exclude archived subtrees and independently warn at 85 percent", () => {
   const read: PortfolioResponse = {
+    pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
     commit: null,
     at: "2026-01-01T00:00:00.000Z",
     accounts: [account("sample", 85)],
@@ -213,16 +215,24 @@ test("attention groups escalations, unique held actors and pauses; ignores close
     environments: [
       {
         name: "north",
-        host: "https://example.test",
+        host: "example.test",
+        url: "https://example.test",
+        connection: "connected" as const,
+        paused: false,
+        disconnected: false,
         status: "connected" as const,
         activeThreads: 0,
         scheduledThreads: 0,
       },
       {
         name: "south",
-        host: "https://example.test",
+        host: "example.test",
+        url: "https://example.test",
+        connection: "connected" as const,
+        paused: true,
+        disconnected: false,
         status: "paused" as const,
-        activeThreads: null,
+        activeThreads: 0,
         scheduledThreads: 2,
       },
     ],
@@ -250,7 +260,10 @@ test("escalation targets follow each raiser and held tasks link to task pages", 
       { type: "blueprint", actorId: "task:a", invokeId: "ask", entryId: "e" },
       { to: "task", actorId: "task:a" },
     ],
-    [{ type: "blueprint", actorId: "child", invokeId: "ask", entryId: "e" }, { to: "actors" }],
+    [
+      { type: "blueprint", actorId: "child", invokeId: "ask", entryId: "e" },
+      { to: "actor", actorId: "child" },
+    ],
     ...(["held-actor", "agent-question"] as const).map(
       (kind) =>
         [
@@ -288,6 +301,7 @@ test("escalation targets follow each raiser and held tasks link to task pages", 
 test("item budgets include outstanding reservations in the share", () => {
   const allocated = item("alpha", null, 40);
   const read: PortfolioResponse = {
+    pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
     commit: null,
     at: new Date(0).toISOString(),
     accounts: [account("sample", 85)],
@@ -307,4 +321,36 @@ test("thread selection uses the last URL in each category", () => {
       { ...last, archived: true },
     ])?.threadId,
   ).toBe("last");
+});
+
+test("paused connected and paused disconnected environments both need attention", () => {
+  const environments = [
+    {
+      name: "north",
+      host: "example.test",
+      url: "https://example.test/north",
+      status: "paused" as const,
+      connection: "connected" as const,
+      paused: true,
+      disconnected: false,
+      activeThreads: 0,
+      scheduledThreads: 0,
+    },
+    {
+      name: "south",
+      host: "example.test",
+      url: "https://example.test/south",
+      status: "disconnected" as const,
+      connection: "disconnected" as const,
+      paused: true,
+      disconnected: true,
+      activeThreads: null,
+      scheduledThreads: 2,
+    },
+  ];
+  expect(
+    needsAttention({ environments }).map((item) =>
+      item.kind === "paused-environment" ? item.environment.name : "",
+    ),
+  ).toEqual(["north", "south"]);
 });

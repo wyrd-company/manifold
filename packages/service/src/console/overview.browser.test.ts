@@ -27,7 +27,7 @@ test("built Overview joins live reads, shows nested budgets and refreshes attent
       "warning",
     );
     await tile("Closest to limit").getByText("acct-a · Weekly", { exact: true }).waitFor();
-    await tile("Environments").getByText("1 of 2 connected", { exact: true }).waitFor();
+    await tile("Environments").getByText("2 of 2 connected", { exact: true }).waitFor();
     await tile("Environments").getByText("1 paused", { exact: true }).waitFor();
     const table = page.getByRole("region", { name: "Active actors table" });
     await table.getByText("Held", { exact: true }).waitFor();
@@ -79,7 +79,7 @@ test.each([true, false])(
       const environments = page.getByRole("region", { name: "Environments", exact: true });
       const attention = page.getByRole("region", { name: "Needs attention list" });
       if (!initiallyFailed) {
-        await environments.getByText("1 of 2 connected").waitFor();
+        await environments.getByText("2 of 2 connected").waitFor();
         await attention.getByText("south is paused").waitFor();
         f.failEnvironments(true);
         await page.getByRole("button", { name: "Refresh overview" }).click();
@@ -109,7 +109,7 @@ test.each([true, false])(
         .waitFor();
       f.failEnvironments(false);
       await attention.getByRole("button", { name: "Try again" }).click();
-      await environments.getByText("1 of 2 connected").waitFor();
+      await environments.getByText("2 of 2 connected").waitFor();
       await page
         .getByRole("region", { name: "Needs attention", exact: true })
         .getByText("3", { exact: true })
@@ -120,3 +120,24 @@ test.each([true, false])(
     }
   },
 );
+
+test("non-task attention opens the merged actor page", async () => {
+  const f = await overviewWorld(),
+    browser = await chromium.launch({ headless: true });
+  try {
+    f.askActor();
+    const page = await browser.newPage();
+    page.setDefaultTimeout(3000);
+    await page.goto(f.url + "/console/");
+    const link = page
+      .getByRole("region", { name: "Needs attention list" })
+      .getByRole("link", { name: "Open actor", exact: true });
+    await link.waitFor();
+    expect(await link.getAttribute("href")).toBe("/console/actors/child");
+    await link.click();
+    await page.getByRole("heading", { name: /^child/ }).waitFor();
+  } finally {
+    await browser.close();
+    await f.close();
+  }
+});

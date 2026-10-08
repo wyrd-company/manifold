@@ -5,11 +5,12 @@
 import type { ActorSummary } from "@wyrd-company/manifold-shared/actors-api";
 import type { BoundProject } from "@wyrd-company/manifold-shared/tasks-api";
 import type { Escalation } from "@wyrd-company/manifold-shared/escalations-api";
-import type { EnvironmentSummary } from "./environments.ts";
+import type { EnvironmentSummary } from "@wyrd-company/manifold-shared/environments-api";
 export type AttentionTarget =
   | { readonly to: "task"; readonly actorId: string }
   | { readonly to: "blueprint"; readonly path: string }
-  | { readonly to: "actors" | "board" | "environments" };
+  | { readonly to: "actor"; readonly actorId: string }
+  | { readonly to: "board" | "environments" };
 export type AttentionItem =
   | {
       readonly kind: "escalation";
@@ -53,7 +54,11 @@ export function needsAttention(reads: {
         : intake
           ? `task:${e.raiser.subject["issue"]}`
           : e.raiser.subject["actorId"]!;
-    return tasks.has(actorId) ? { to: "task", actorId } : { to: intake ? "board" : "actors" };
+    return tasks.has(actorId)
+      ? { to: "task", actorId }
+      : intake
+        ? { to: "board" }
+        : { to: "actor", actorId };
   };
   const represented = new Set(
     escalations
@@ -84,7 +89,7 @@ export function needsAttention(reads: {
       target: { to: "task" as const, actorId: task.actorId },
     })),
     ...(reads.environments ?? [])
-      .filter((environment) => environment.status === "paused")
+      .filter((environment) => environment.paused === true)
       .map((environment) => ({
         kind: "paused-environment" as const,
         environment,

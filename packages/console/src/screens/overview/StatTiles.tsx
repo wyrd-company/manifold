@@ -10,7 +10,7 @@ import { windowLabel } from "../portfolio/rows.ts";
 import { closestToLimit } from "./budget.ts";
 import type { ActiveActorRow } from "./active-actors.ts";
 import type { AttentionItem } from "./attention.ts";
-import type { EnvironmentSummary } from "./environments.ts";
+import type { EnvironmentSummary } from "@wyrd-company/manifold-shared/environments-api";
 function Tile({
   label,
   value,
@@ -41,7 +41,7 @@ export function StatTiles({
 }) {
   const held = rows?.filter((row) => row.status === "held").length ?? 0;
   const closest = portfolio ? closestToLimit(portfolio.accounts) : undefined;
-  const paused = environments?.filter((e) => e.status === "paused").length ?? 0;
+  const paused = environments?.filter((e) => e.paused === true).length ?? 0;
   const kinds = (
     [
       ["escalation", "escalation"],
@@ -90,7 +90,7 @@ export function StatTiles({
         label="Environments"
         value={
           environments
-            ? `${environments.filter((e) => e.status === "connected").length} of ${environments.length} connected`
+            ? `${environments.filter((e) => e.connection === "connected").length} of ${environments.length} connected`
             : "—"
         }
       >

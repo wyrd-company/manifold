@@ -12,6 +12,8 @@ import { mountPortfolioApi } from "../../portfolio-api/index.ts";
 import { mountEscalations } from "../../escalations/index.ts";
 import { mountConsole } from "../index.ts";
 import { consoleHost } from "./host.ts";
+import { openHistory } from "../../history/index.ts";
+import { openEnvironments } from "../../environments/index.ts";
 export async function overviewWorld() {
   const f = boardWorld(true);
   const server = await consoleHost();
@@ -129,10 +131,15 @@ export async function overviewWorld() {
     amount: 2250000,
     usedAt: now,
   });
-  mountConsole(server.host, { store: f.store });
+  mountConsole(server.host, {
+    store: f.store,
+    history: openHistory({ store: f.store, log: () => {} }),
+  });
   server.host.mount("/api/tasks", tasks.requestListener);
   mountEscalations(server.host, f.module);
   mountPortfolioApi(server.host, {
+    lastUsedAt: () => ({}),
+    pricing: () => ({ overrides: 0, unpriced: [] }),
     portfolio: { current: () => ({ commit: null, declaration: declaration.declaration }), ledger },
     accounts: () =>
       Object.fromEntries(
@@ -153,33 +160,61 @@ export async function overviewWorld() {
     },
   });
   let environmentsFailed = false;
-  // Structural stand-in replaced with the environment module at Rebase.
-  server.host.mount("/api/environments", (_request, response) => {
-    response.writeHead(environmentsFailed ? 500 : 200, { "Content-Type": "application/json" });
-    response.end(
-      JSON.stringify({
-        environments: [
-          {
-            name: "north",
-            host: "https://example.test/north",
-            status: "connected",
-            activeThreads: 1,
-            scheduledThreads: 0,
-          },
-          {
-            name: "south",
-            host: "https://example.test/south",
-            status: "paused",
-            activeThreads: null,
-            scheduledThreads: 2,
-          },
-        ],
-      }),
-    );
+  const environments = openEnvironments({
+    store: f.store,
+    router,
+    configurationFile: "service.yml",
+    environments: Object.fromEntries(
+      ["north", "south"].map((name) => [
+        name,
+        {
+          url: `https://example.test/${name}`,
+          credential: "sample",
+          reconnect: { initialMs: 1000, factor: 2, maxMs: 30000, jitter: 0.2 },
+          heartbeat: { intervalMs: 5000, missedPongLimit: 3 },
+          openTimeoutMs: 10000,
+        },
+      ]),
+    ),
+    status: () =>
+      ["north", "south"].map((environment) => ({
+        environment,
+        state: "following",
+        followedThreads: 1,
+        activeThreads: 1,
+        openSubscriptions: 1,
+      })),
+    restart: () => {},
+    scheduled: (name) => (name === "south" ? 2 : 0),
   });
+  server.host.mount("/api/environments", (request, response) => {
+    if (environmentsFailed) {
+      response.writeHead(500, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: {
+            kind: "action-failed",
+            message: "Cannot read environments. Check the connection and try again.",
+          },
+        }),
+      );
+      return;
+    }
+    environments.requestListener(request, response);
+  });
+  const paused = await fetch(`${server.url}/api/environments/south/pause`, { method: "POST" });
+  if (paused.status !== 200) throw Error("Fixture pause failed");
   return {
     url: server.url,
     ask: f.ask,
+    askActor: () =>
+      f.module.raise({
+        kind: "held-actor",
+        subject: { actorId: "child" },
+        title: "Parcel check",
+        question: "Try again?",
+        choices: [{ id: "dismiss", label: "Dismiss" }],
+      }),
     failEnvironments: (failed: boolean) => {
       environmentsFailed = failed;
     },

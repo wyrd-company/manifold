@@ -10,7 +10,7 @@ import { fetchTasks, fetchTask } from "../api/tasks.ts";
 import { fetchPortfolio } from "../api/portfolio.ts";
 import { fetchEscalations } from "../api/escalations.ts";
 import { Button } from "../ui/button.tsx";
-import { fetchEnvironments } from "./overview/environments.ts";
+import { fetchEnvironments } from "../api/environments.ts";
 import { activeActorRows } from "./overview/active-actors.ts";
 import { needsAttention } from "./overview/attention.ts";
 import { ReadAlerts } from "./overview/ReadAlerts.tsx";
@@ -25,7 +25,7 @@ const policy = {
   retry: false,
 } as const;
 export function OverviewContent() {
-  const actorsQuery = useQuery({ queryKey: ["actors"], queryFn: fetchActors, ...policy });
+  const actorsQuery = useQuery({ queryKey: ["actors"], queryFn: () => fetchActors(), ...policy });
   const tasksQuery = useQuery({ queryKey: ["tasks"], queryFn: fetchTasks, ...policy });
   const portfolioQuery = useQuery({ queryKey: ["portfolio"], queryFn: fetchPortfolio, ...policy });
   const escalationsQuery = useQuery({
@@ -44,7 +44,7 @@ export function OverviewContent() {
   const escalations =
     escalationsQuery.data?.kind === "ok" ? escalationsQuery.data.escalations : undefined;
   const environments =
-    environmentsQuery.data?.kind === "ok" ? environmentsQuery.data.environments : undefined;
+    environmentsQuery.data?.kind === "ok" ? environmentsQuery.data.body.environments : undefined;
   const rows = actors ? activeActorRows(actors, tasks, escalations) : undefined;
   const taskRows = (rows ?? []).slice(0, 10).filter((row) => row.task);
   const taskQueries = useQueries({
