@@ -8,7 +8,7 @@ import { RefreshCw } from "lucide-react";
 import { fetchEnvironments } from "../../api/environments.ts";
 import { Button } from "../../ui/button.tsx";
 import { navigation } from "../../shell/navigation.ts";
-import { PageTitle, EmptyState } from "../EmptyContent.tsx";
+import { EmptyState } from "../EmptyContent.tsx";
 import { EnvironmentsTable } from "./EnvironmentsTable.tsx";
 import { HostInstructions } from "./HostInstructions.tsx";
 import { environmentsCaption } from "./rows.ts";
@@ -29,7 +29,6 @@ export function EnvironmentsContent() {
   return (
     <div className="environments-screen">
       <div className="environments-heading">
-        <PageTitle title="Environments" description={entry.description} />
         <Button
           variant="ghost"
           size="icon"

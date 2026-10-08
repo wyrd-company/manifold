@@ -130,6 +130,14 @@ test("built Environments shows the error and unknown active count when one serve
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     await page.goto(`http://${host}:${port}/console/environments`);
+    expect(await page.getByRole("heading", { name: "Environments", exact: true }).count()).toBe(1);
+    const headingBox = await page
+      .getByRole("heading", { name: "Environments", exact: true })
+      .boundingBox();
+    const refreshBox = await page
+      .getByRole("button", { name: "Refresh Environments", exact: true })
+      .boundingBox();
+    expect(Math.abs(headingBox!.y - refreshBox!.y)).toBeLessThan(24);
     const station = page.getByRole("row").filter({ hasText: "station" });
     await station.getByText("Error", { exact: true }).waitFor();
     expect(await station.locator("td").nth(2).textContent()).toBe("—");
