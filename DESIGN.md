@@ -360,16 +360,42 @@ Project, and the GitHub screen is "GitHub Projects".
 The shell reference screen. From top to bottom:
 
 - Title row: "Overview" and a one-line description. No primary action.
-- Four stat tiles: active actors, items that need attention, the budget source
-  account closest to its limit (with a meter and the account count), and
-  environments connected.
-- Active actors table: task title with reference and blueprint, portfolio item,
-  current state with the actor's status, elapsed time, and a link to the
-  thread.
-- Needs attention list: escalations, failed actors, and paused environments.
-  Each item has an icon, a title, one line of detail, and one link.
-- API budget this month: one meter per portfolio item. At 85% or more the
-  fill changes to warning and a "Near limit" badge appears.
+- A toolbar row under it with a ghost "Refresh" icon button, right-aligned.
+- Four stat tiles in one row, two per row below 960px of content width. A
+  tile is a card with a 12px muted label, a 24px tabular value, and one
+  12px detail line. The tiles are not links. A tile whose read failed
+  shows "—" and "Not available" muted.
+  - **Active actors**: the count; the detail is "N held" in
+    `error-foreground`, or "None held" muted.
+  - **Needs attention**: the count of the list below; the detail counts
+    each kind, "1 escalation · 1 held · 1 paused", or "Nothing waits on you".
+  - **Closest to limit**: the budget source account's share as the value,
+    then the account name and its window label ("acct-a · Weekly"), a meter
+    (warning at 85% or more), and "of N accounts" muted.
+  - **Environments**: "C of T connected"; the detail is "P paused" in
+    `warning-foreground`, or "None paused" muted.
+- Active actors table, at most 10 rows. Columns: Task (the issue title over
+  its reference and the blueprint path in mono, or the actor id in mono for
+  an actor that is not a task), Portfolio item, Current state (a status dot
+  and label, "Running" with a success dot or "Held" with an error dot, over
+  each state path in mono), Updated (the time since the actor's last save,
+  "5m"), and Thread ("Open thread", or a muted dash). The caption is "N
+  active actors", with "View all" linking to Actors when there are more
+  than 10.
+- Needs attention and Budget share one row, half each, at 960px of content
+  width or more, and stack below it.
+- Needs attention list: escalations, held actors, and paused environments.
+  Each item is one row: a 16px icon (info for an escalation, error for a
+  held actor, warning for a paused environment), a title, one muted line of
+  detail, the time it has waited in muted 12px text, and one outline link
+  button. With no item, the empty state "Nothing needs attention",
+  "Escalations, held actors, and paused environments appear here."
+- Budget: one row per top-level portfolio item. Each row has the item title,
+  the account and window ("acct-a · Weekly") in muted text, a meter, and
+  "<used> of <amount> · 85%" under it. At 85% or more the fill changes to
+  warning and a "Near limit" badge follows the meter. An item with no
+  guaranteed amount shows "No allocation" muted and no meter. The section
+  header links to Portfolio.
 
 ### Board
 

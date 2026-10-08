@@ -75,6 +75,12 @@ objective: >-
   its budget, its current window, and its latest call, and how calls are
   priced, and adds, edits, archives, and restores accounts in
   `accounts.yml`, linted as they change and saved as a commit.
+  It lands on Overview: the active actors and which are held, everything
+  that waits on the operator (open escalations, held actors, paused
+  environments) with a link to where each is resolved, the budget source
+  account closest to its limit, each top-level portfolio item's budget,
+  and how many environments are connected, every number from a read the
+  service already serves.
 background:
   current-design: >-
     `packages/console` holds a `package.json` and a README, and no framework.
@@ -214,8 +220,10 @@ proposed-design:
     `/api/declarations` with `mount`. The Environments screen reads and
     calls the endpoints of `environments-api`, which the environment
     control module, `packages/service/src/environments/`, mounts under
-    `/api/environments` with `mount`. Every other screen shows its title
-    row and an empty state. The console and API are served without
+    `/api/environments` with `mount`. Overview reads the actors, tasks,
+    portfolio, escalations, and environments endpoints and joins them in
+    the browser. Every other screen shows its title row and an empty
+    state. The console and API are served without
     authentication; access control belongs to the deployment.
   console-package: >-
     `packages/console` holds `index.html`, `vite.config.ts`, `src/`, and
@@ -279,7 +287,7 @@ proposed-design:
     stylesheet, sets the class from the kept choice before the first paint,
     so that a reload in dark theme does not flash light.
   empty-screens: >-
-    Overview and the Settings tab General show
+    The Settings tab General shows
     their title row and the empty state from `DESIGN.md`: a dashed border,
     the screen's icon, the title "Nothing here yet", and the line "This
     screen is not built in this version of Manifold." A later task
@@ -3556,6 +3564,265 @@ proposed-design:
     archived (1)", and `GET /api/portfolio` holds the `account-archived`
     warning at `alpha`'s allocation. Fixture values are generic and never
     drawn from Manifold's own domain.
+  overview-route: >-
+    Overview is the route `/console/`. `OverviewContent`, in
+    `src/screens/OverviewContent.tsx`, replaces the empty screen and draws
+    its parts from `src/screens/overview/`; the route, the navigation
+    entry, its label, and its description are unchanged, so the router is
+    not edited. The screen only reads. It reads, each through TanStack
+    Query with the policy of the Actors screen (read when the screen opens
+    and when the window regains focus, no retry):
+    `GET /api/actors` under `["actors"]`; `GET /api/tasks` under
+    `["tasks"]`; `GET /api/portfolio` under `["portfolio"]`; `GET
+    /api/escalations?status=open` under `["escalations", "open"]`; `GET
+    /api/environments` of the environment control seam under
+    `["environments"]`; and, for each task actor in the active actors
+    table, `GET /api/tasks/{actorId}` under `["task", actorId]`. The keys
+    are those the Actors, Board, Task page, and Portfolio screens use, so
+    each screen reads the same cache. The toolbar row's "Refresh" reads
+    every key again. No timer reads on a
+    schedule, and no timer redraws the elapsed times: they change when a
+    read settles.
+  overview-layout: >-
+    From top to bottom, as `DESIGN.md` lays out Overview: the toolbar row;
+    `StatTiles`; `ActiveActorsTable`; then `NeedsAttentionList` and
+    `ItemBudgets` in one row. Each part shows what its reads hold and
+    stands alone when another read fails: a part shows one error alert for
+    each of its reads that failed, with the read's message and "Try again",
+    which reads that key again, above what its other reads hold; a tile whose read failed shows "—" and "Not
+    available". A join whose second read failed shows what the first holds,
+    such as an actor row with its actor id in place of the issue title.
+  stat-tiles: >-
+    Active actors is the length of the actors read; its detail counts the
+    entries of `activeActorRows` whose status is `held`. Needs attention is
+    the length of `needsAttention`, and its detail counts each kind, naming
+    only the kinds present. Closest to limit is `closestToLimit` of the
+    portfolio read's accounts: its share with `formatPercent`, the account
+    name and `windowLabel`, a meter of the share capped at 100%, warning at
+    85% or more, and "of N accounts" where N is its `count`; with no
+    closest account the value is "—" and the line is "No window yet", or
+    "No accounts are declared" when `count` is 0. Environments is the
+    count of listed environments whose status is `connected` over all
+    listed, and its detail counts those whose status is `paused`.
+  active-actors-table: >-
+    `ActiveActorsTable` shows the first 10 rows of `activeActorRows`, in
+    the actors read's order, savedAt newest first. Task is the issue title
+    over `<repository>#<number>` and the blueprint path in mono, when the
+    actor is a task of the tasks read; else the actor id in mono over the
+    blueprint path, or the `machine` value when the summary has no
+    `blueprint`. Task links to the Task page for a task. Portfolio item is
+    the portfolio read's title for the actor's `portfolioItem`, else the id,
+    else a muted dash. Current state is the status dot and label, "Running"
+    or "Held", over each state path in mono. Updated is `elapsedLabel` of
+    the browser's clock when the actors read settled less `savedAt`. Thread is
+    "Open thread", opening `currentThread` of the task read's threads in a
+    new tab with `rel="noreferrer"`, or a muted dash for an actor that is
+    not a task, a task with no thread that has a `url`, or a task read
+    that has not answered. The caption is "N active actors", and, when N
+    is more than 10, "View all", a link to Actors. With no actor the table
+    is replaced by the empty state of the Actors screen.
+  needs-attention-list: >-
+    `NeedsAttentionList` shows every item of `needsAttention` in its
+    order. An escalation shows the escalation's `title`, the first line of
+    its `question` as the detail, and the time since `raisedAt`. A held
+    actor shows "<issue title or actor id> is held" and its state paths as
+    the detail. A paused environment shows "<name> is paused" and "<host> ·
+    N scheduled threads" as the detail, with no time, since the seam holds
+    no pause time. The link is the item's `target`: "Open task" to the Task
+    page, where the escalation is answered; "Open blueprint" to the
+    blueprint editor of the gate's blueprint path; "Open actors" to Actors;
+    "Open board" to Board; "Open environments" to Environments. Overview
+    answers no escalation and changes no environment.
+  item-budgets: >-
+    `ItemBudgets` shows one row per entry of `itemBudgets` of the portfolio
+    read: the item title, the account and `windowLabel`, a meter of the
+    share capped at 100%, warning with a "Near limit" badge after it at 85%
+    or more, and "<used> of <amount> · <share>" with `formatAmount` in the
+    account's unit and `formatPercent`. An entry with no account shows "No
+    allocation" muted and no meter. With no account listed, the rows are
+    replaced by Portfolio's info alert "No accounts are declared. Declare
+    them in accounts.yml."
+  overview-model: |-
+    The choices are pure functions in `src/screens/overview/`, each tested
+    through its export. They take the bodies the clients return and the
+    browser's clock, and trust them.
+
+    ```ts
+    import type { ActorSummary } from "@wyrd-company/manifold-shared/actors-api";
+    import type { BoundProject, TaskThread } from "@wyrd-company/manifold-shared/tasks-api";
+    import type { Escalation } from "@wyrd-company/manifold-shared/escalations-api";
+    import type {
+      PortfolioAccount,
+      PortfolioResponse,
+    } from "@wyrd-company/manifold-shared/portfolio-api";
+
+    // budget.ts
+    export interface Closest {
+      readonly closest?: { readonly account: PortfolioAccount; readonly share: number };
+      readonly count: number; // declared accounts
+    }
+    export function closestToLimit(accounts: readonly PortfolioAccount[]): Closest;
+    export interface ItemBudget {
+      readonly itemId: string;
+      readonly title: string;
+      readonly usage?: {
+        readonly account: PortfolioAccount;
+        readonly used: number; // actual plus outstanding
+        readonly amount: number;
+        readonly share: number;
+        readonly near: boolean; // share of 85 or more
+      };
+    }
+    export function itemBudgets(read: PortfolioResponse): readonly ItemBudget[];
+
+    // active-actors.ts
+    export interface ActiveActorRow {
+      readonly actor: ActorSummary;
+      readonly task?: { readonly title?: string; readonly reference: string };
+      readonly status: "running" | "held";
+    }
+    export function activeActorRows(
+      actors: readonly ActorSummary[],
+      tasks: readonly BoundProject[] | undefined,
+      escalations: readonly Escalation[] | undefined,
+    ): readonly ActiveActorRow[];
+    export function currentThread(threads: readonly TaskThread[]): TaskThread | undefined;
+    export function elapsedLabel(ms: number): string;
+
+    // attention.ts
+    export type AttentionTarget =
+      | { readonly to: "task"; readonly actorId: string }
+      | { readonly to: "blueprint"; readonly path: string }
+      | { readonly to: "actors" | "board" | "environments" };
+    export type AttentionItem =
+      | { readonly kind: "escalation"; readonly escalation: Escalation; readonly target: AttentionTarget }
+      | { readonly kind: "held-actor"; readonly actorId: string; readonly title?: string;
+          readonly states: readonly string[]; readonly target: AttentionTarget }
+      | { readonly kind: "paused-environment"; readonly environment: EnvironmentSummary;
+          readonly target: AttentionTarget };
+    export function needsAttention(reads: {
+      readonly escalations?: readonly Escalation[];
+      readonly tasks?: readonly BoundProject[];
+      readonly actors?: readonly ActorSummary[];
+      readonly environments?: readonly EnvironmentSummary[];
+    }): readonly AttentionItem[];
+    ```
+
+    `EnvironmentSummary` is the environment entry of the environment
+    control seam. A read that failed or has not answered is `undefined`,
+    and contributes nothing.
+
+    `closestToLimit` considers each declared account with a `window` whose
+    `capacity` is above 0; its share is `used` over `capacity` times 100,
+    and may exceed 100. The closest is the greatest share, and the first in
+    the read's order among equal shares. `count` is the number of declared
+    accounts.
+
+    `itemBudgets` takes the items whose `parent` is `null` and that are not
+    archived, in the read's order, an Other included. Its usage is the
+    first entry of Portfolio's `currentUsage(item)`, the allocation with
+    the greatest share of its guarantee amount, with the account from the
+    read's `accounts`; an item with no allocation whose amount is above 0
+    has no usage. `near` is a share of 85 or more, the threshold of
+    Portfolio's meters.
+
+    `activeActorRows` keeps the actors read's order. An actor is a task
+    when the tasks read lists its id; its title is the issue's `title`,
+    and its reference `<repository>#<number>`. Its status is `held` when a
+    task summary's `actor.status` is `held` or an open escalation with
+    raiser kind `held-actor` names it in `subject.actorId`, and `running`
+    otherwise. `currentThread` is the last thread with a `url` that is not
+    archived, else the last thread with a `url`. `elapsedLabel` is "<1m"
+    under a minute, then whole minutes under an hour ("5m"), whole hours
+    under 48 hours ("3h"), and whole days ("2d"), each rounded down.
+
+    `needsAttention` orders its items in three groups. First the open
+    escalations, oldest raised first, then by id. Then the held actors: each
+    task of the tasks read whose `actor.status` is `held`, once per actor
+    id, with no open `held-actor` escalation naming it, since that
+    escalation already stands for it; ordered by the actors read's
+    `savedAt`, oldest first, then by actor id, and those the actors read
+    does not list last by actor id. Last the environments whose status is
+    `paused`, in the read's order. Escalations come first because each
+    waits on a person and carries the choices that end it; a held actor
+    with no open escalation was dismissed and waits on no one; a pause is
+    the operator's own act. An escalation's target is the Task page when
+    the actor id it names, `raiser.actorId` for a blueprint raiser or
+    `subject.actorId` for `held-actor` and `agent-question`, is a task of
+    the tasks read, else Actors; for `intake-failed`, the Task page of
+    `task:<subject.issue>` when the tasks read lists it, else Board; for
+    `comparator-failed` and `stranded-token`, the blueprint editor of the
+    path before `#` in `subject.gate`. A held actor's target is its Task
+    page. A paused environment's target is Environments.
+  overview-clients: >-
+    `src/api/escalations.ts` exports `fetchEscalations(status)`, which
+    sends `GET /api/escalations?status=<status>` without authentication
+    headers and turns the answer into `ok` with the escalations for `200`,
+    or `failed` with a message for any other status, a network error, or a
+    body that does not validate. The mapping from a status and a body to a
+    result is a pure function. `@wyrd-company/manifold-shared/escalations-api`
+    adds `EscalationsResponse`, `{ escalations }`, and its guard
+    `isEscalationsResponse`, which a shared test checks against
+    `#/$defs/escalation-list` of `escalation-contract` with fixtures that
+    pass and fail. The environments read is the console client and shared
+    guard of the environment control seam, which the Environments screen
+    owns. Until that screen merges, `src/screens/overview/environments.ts`
+    is a structural stand-in that holds the seam's shape, `{ environments:
+    [{ name, host, status, activeThreads, scheduledThreads }] }` with
+    `status` one of `connected`, `connecting`, `disconnected`, and `paused`,
+    and `activeThreads` `null` when not known, with a guard and a client
+    mapped as `fetchEscalations` is. The rebase replaces it with the
+    seam's client and deletes the file.
+  overview-convergence: >-
+    Overview writes nothing: no endpoint it reads changes state except the
+    portfolio read's credit of an account's current window, which converges
+    as `portfolio-convergence` states, and it keeps nothing in browser
+    storage. A read that runs twice answers twice from the service as it
+    is, and a read that fails leaves the last good answer in the cache and
+    the alert on its part.
+  overview-tests: >-
+    Each behavior is red before green, and tests go through public
+    interfaces. In `packages/console`, unit tests cover `closestToLimit`
+    (the greatest share, the first of equal shares, a share over 100, an
+    undeclared account, an account with no window, a window of capacity 0,
+    no account, and `count`); `itemBudgets` (top-level items only, an
+    archived item absent, an Other, an item with no allocation amount, a
+    share of exactly 85 near and of 84.99 not); `activeActorRows` (a task
+    actor, an actor that is not a task, an actor held by its summary, an
+    actor held by an open `held-actor` escalation, and an undefined tasks
+    read); `currentThread`; `elapsedLabel` at each boundary;
+    `needsAttention` (the three groups in order, escalations by raise time
+    and id, a held actor with an open `held-actor` escalation shown once as
+    the escalation, a held actor on two Projects shown once, environments
+    that are not paused absent, each target, and each read undefined); and
+    the escalations result mapping. In `packages/shared`, the guard of
+    `EscalationsResponse` against `escalation-list`. The browser test,
+    `packages/service/src/console/overview.browser.test.ts`, starts the
+    production HTTP host with the built console and mounts the actors,
+    tasks, escalations, and portfolio endpoints over one store, ledger, and
+    escalations module, and the environments endpoint. The fixtures hold
+    three active actors: a task whose blueprint raised an open escalation,
+    a task actor the router holds whose `held-actor` escalation was
+    dismissed, and a child actor that is not a task; a thread with a `url`
+    on the first task; two declared accounts, one whose window is 85% used,
+    and items `alpha` and `beta`, with `alpha`'s usage 85% of its guarantee
+    amount; and two environments, one connected and one paused. Until the
+    environment control seam merges, the environments endpoint is a
+    stand-in listener at `/api/environments` answering the fixture; the
+    rebase replaces it with the seam's module and pauses the second
+    environment through `POST /api/environments/{name}/pause`. The test
+    opens `/console/`, and reads: Active actors 3 with "1 held"; Needs
+    attention 3, "1 escalation · 1 held · 1 paused"; Closest to limit 85%
+    with the account name and a warning meter; Environments "1 of 2
+    connected" with "1 paused"; the held row's "Held"; the first row's
+    "Open thread" `href`; the needs-attention titles in order, with "Open
+    task" on the escalation opening its Task page; `alpha`'s row with
+    "Near limit" and its amounts in dollars; and `beta`'s with no badge. It
+    then raises a second escalation, presses "Refresh", and reads Needs
+    attention 4. A second case answers `500` from the environments
+    endpoint and reads the Environments tile "—", the alert in Needs attention
+    above its escalation and held actor, and every other part drawn. Fixture
+    values are generic and never drawn from Manifold's own domain.
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It
     takes the request's path, which the HTTP host passes unchanged,
@@ -3840,7 +4107,8 @@ proposed-design:
     `packages/service/src/console/console.browser.test.ts`, starts the
     production HTTP host with the built console and a store holding fixture
     actors, launches headless Chromium with Playwright, and checks that
-    Overview shows the shell with every navigation entry; the theme toggle
+    Overview shows the shell with every navigation entry, and an alert in
+    each part whose endpoint the test does not mount; the theme toggle
     sets the dark class and a reload keeps it; the Actors screen lists
     every fixture actor with its blueprint, current state, and environment
     without credential entry; a reload of `/console/actors` shows the same;
