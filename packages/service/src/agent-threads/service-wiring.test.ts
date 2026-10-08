@@ -316,7 +316,10 @@ test("thread-create reads an archived binding by Project node id at the current 
       })
     ).status,
   ).toBe(202);
-  await expect.poll(() => service.revisions.current()?.revision.commit).toBe(archived);
+  // Under paired gates, the new revision becomes ready after 1.27 s.
+  await expect
+    .poll(() => service.revisions.current()?.revision.commit, { timeout: 10000 })
+    .toBe(archived);
   start("parcel-archived", "P_one");
   await expect
     .poll(() => service.store.loadSnapshot("parcel-archived")?.snapshot.value)

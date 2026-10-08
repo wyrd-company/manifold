@@ -264,9 +264,25 @@ test("redelivery asks once for a failed GUID and sweep produces no duplicate", a
     event: "issue_dependencies",
     payload: { blocked_issue: { node_id: "I_A" } },
   });
+  // The pending queue can be empty while a 30 s HTTP request is still active.
+  await expect
+    .poll(
+      () =>
+        s.clock.timers.size === 2 &&
+        [...s.clock.timers].every((timer) => timer.at - s.clock.now() >= 60000),
+    )
+    .toBe(true);
   s.clock.advance(60000);
   await expect.poll(() => s.fake.redeliveries).toEqual([1]);
   await s.idle();
+  // The pending queue can be empty while a 30 s HTTP request is still active.
+  await expect
+    .poll(
+      () =>
+        s.clock.timers.size === 2 &&
+        [...s.clock.timers].every((timer) => timer.at - s.clock.now() >= 60000),
+    )
+    .toBe(true);
   s.clock.advance(60000);
   await s.idle();
   s.source.requestSweep();

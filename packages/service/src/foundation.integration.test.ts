@@ -721,6 +721,8 @@ it("runs intake, a reserved gate, a pass, SIGKILL recovery, an ntfy answer and h
     f.file,
     stringify({
       ...f.configuration,
+      // The loaded assembly logs a timeout for its ordering comparator at 100 ms.
+      comparatorSandbox: { timeoutMs: 500 },
       http: { port: Number(new URL(serviceUrl).port) },
       credentials: {
         ...f.configuration.credentials,

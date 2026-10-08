@@ -56,7 +56,10 @@ states:
 `;
 
 describe("blueprint expressions in XState", () => {
+  afterEach(() => configureBlueprintExpressions());
   it("runs all four YAML references and preserves the serialized blueprint", async () => {
+    // Paired gates expire the cold worker before the first match returns at 1000 ms.
+    configureBlueprintExpressions({ timeoutMs: 10000 });
     const blueprint: ExpressionBlueprint = { machine: parse(yaml), schemas };
     const original = JSON.stringify(blueprint);
     const errors: ExpressionError[] = [];

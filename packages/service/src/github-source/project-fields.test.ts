@@ -207,7 +207,11 @@ test("a delete removes the field from the mirror and resolves undefined", async 
   expect(source.projectFields("P_one")?.fields.map((f) => f.name)).not.toContain("Priority");
 });
 test("typed field-write failures leave the mirror as it was", async () => {
-  const { source, fake } = await setup();
+  const { source, fake, clock } = await setup();
+  // An unfinished sweep can consume the one-shot HTTP refusal before the write.
+  await expect
+    .poll(() => [...clock.timers].map((timer) => timer.at - clock.now()).sort((a, b) => a - b))
+    .toEqual([60000, 900000]);
   const before = source.projectFields("P_one");
   fake.fail(502);
   await expect(

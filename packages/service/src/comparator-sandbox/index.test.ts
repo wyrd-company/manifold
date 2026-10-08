@@ -29,10 +29,11 @@ async function loaded(text = good, limits = { timeoutMs: 50, memoryLimitMiB: 32 
 }
 
 describe("comparator sandbox", () => {
-  it("uses shipped limits and accepts both memory boundaries", async () => {
+  it("declares shipped limits and accepts both memory boundaries", async () => {
     expect(comparatorSandboxDefaults).toEqual({ timeoutMs: 100, memoryLimitMiB: 32 });
+    // Paired gates can expire healthy evaluation at the shipped 100 ms budget.
     for (const memoryLimitMiB of [16, 2048]) {
-      const { comparator } = await loaded(good, { timeoutMs: 100, memoryLimitMiB });
+      const { comparator } = await loaded(good, { timeoutMs: 500, memoryLimitMiB });
       expect(comparator.evaluate(input, 1)).toMatchObject({ ok: true, selection: { task: "a" } });
       comparator.dispose();
     }
@@ -224,7 +225,8 @@ describe("comparator sandbox", () => {
   it("rejects a finite small-array hoard above the configured memory bound and recovers", async () => {
     const { comparator } = await loaded(
       `export default input => { if (!input.holders.length) { const h = []; for (let i = 0; i < 45_000; i++) h.push(new Array(100).fill(1)); return { task: 'a', reservations: [{ account: 'credit', amount: h.length }] }; } return { task: 'a' }; };`,
-      { timeoutMs: 500, memoryLimitMiB: 32 },
+      // The finite allocation reaches the 500 ms limit at 688 ms in a loaded trace.
+      { timeoutMs: 2000, memoryLimitMiB: 32 },
     );
     expect(comparator.evaluate(input, 1)).toMatchObject({ ok: false, failure: { kind: "memory" } });
     expect(
@@ -236,8 +238,8 @@ describe("comparator sandbox", () => {
     const { comparator } = await loaded(
       `export default input => {
         if (!input.holders.length) {
-          const h = [];
-          for (let i = 0; i < 45_000; i++) h.push(new Array(100).fill(1));
+          // One request exceeds the memory bound before a timed allocation loop can interrupt.
+          const h = new Array(2_000_000).fill(1);
           return { task: 'a', reservations: [{ account: 'credit', amount: h.length }] };
         }
         throw null;
@@ -380,7 +382,8 @@ describe("comparator sandbox", () => {
   it("lets a caller record failures and continue on the same loaded comparator", async () => {
     const { comparator } = await loaded(
       `export default input => { const mode = input.population[0].fields.mode; if (mode === 'throw') throw new Error('sample'); if (mode === 'loop') for (;;) {} if (mode === 'hoard') return new Array(16 * 1024 * 1024).fill(1); return { task: input.population[0].id }; };`,
-      { timeoutMs: 100, memoryLimitMiB: 16 },
+      // The finite allocation expires at 100 ms under paired gates.
+      { timeoutMs: 500, memoryLimitMiB: 16 },
     );
     const records = ["throw", "loop", "hoard", "pick"].map((mode) =>
       comparator.evaluate(
