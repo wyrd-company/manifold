@@ -5,6 +5,7 @@
 // Run from a source checkout with dependencies installed and the shared package built.
 // The operator must stop the service before running this development/UAT tool.
 import { existsSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
 import { openStore } from "../../packages/service/src/store/index.ts";
 import { openHistory } from "../../packages/service/src/history/index.ts";
@@ -54,7 +55,7 @@ const windows = {
   source: days("--source-days", 30),
   gates: days("--gate-days", 30),
 };
-const store = openStore({ path });
+const inspection = new DatabaseSync(path, { readOnly: true });
 try {
   for (const table of [
     "history_visit",
@@ -62,10 +63,13 @@ try {
     "router_source_event",
     "gates_evaluation",
   ])
-    if (
-      !store.connection.database.prepare("SELECT name FROM sqlite_schema WHERE name=?").get(table)
-    )
+    if (!inspection.prepare("SELECT name FROM sqlite_schema WHERE name=?").get(table))
       throw new Error("Initialize this store by starting and stopping the service first.");
+} finally {
+  inspection.close();
+}
+const store = openStore({ path });
+try {
   const marker = "uat-retention";
   const existing = store.loadSnapshot(`${marker}-expired`);
   if (existing) {

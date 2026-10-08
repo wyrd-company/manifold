@@ -16,7 +16,7 @@ import { routerSteps } from "../router/migrations.ts";
 import { gatesMigrationSteps } from "../gates/index.ts";
 import { openRetention } from "../retention/index.ts";
 
-test("UAT seed preserves existing rows and one pruning pass removes exactly expired rows", async () => {
+test("UAT seed preserves existing rows and one prune run removes exactly expired rows", async () => {
   const directory = await mkdtemp(join(tmpdir(), "uat-retention-"));
   const path = join(directory, "store.sqlite");
   const now = Date.parse("2026-01-01T00:00:00Z");
@@ -99,6 +99,37 @@ test("UAT seed preserves existing rows and one pruning pass removes exactly expi
     await retention.stop();
   } finally {
     store?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("UAT seed refuses an uninitialized store without changing its schema", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "uat-uninitialized-"));
+  const path = join(directory, "store.sqlite");
+  const { DatabaseSync } = await import("node:sqlite");
+  const database = new DatabaseSync(path);
+  try {
+    database.exec("CREATE TABLE sample (value TEXT); INSERT INTO sample VALUES ('kept')");
+    const before = database.prepare("SELECT * FROM sqlite_schema").all();
+    await assert.rejects(
+      execute(process.execPath, [
+        new URL("../../../../testing/uat/seed-retention.mjs", import.meta.url).pathname,
+        "--store",
+        path,
+        "--service-stopped",
+      ]),
+      /Initialize this store/,
+    );
+    assert.deepEqual(database.prepare("SELECT * FROM sqlite_schema").all(), before);
+    assert.deepEqual(
+      database
+        .prepare("SELECT * FROM sample")
+        .all()
+        .map((row) => row["value"]),
+      ["kept"],
+    );
+  } finally {
+    database.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
