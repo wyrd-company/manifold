@@ -970,7 +970,7 @@ proposed-design:
 
     - Reads: on one store, the usage module, the portfolio module and its
       ledger, the tasks read model with `actorUsage` from the usage
-      module and the tracked issue and snapshot stand-ins of the tasks
+      module and the tracked issue and snapshot fixtures of the tasks
       tests, and the portfolio read, with the tasks, portfolio, and usage
       listeners mounted on one HTTP host. After a late ownership and
       after a move of another thread's usage to the task, `GET
@@ -982,7 +982,7 @@ proposed-design:
 
     - Task read: on one store, the usage module, a `Ledger`, and the tasks
       read model with `actorUsage` from the usage module and the tracked
-      issue and snapshot stand-ins of the tasks tests. Calls pushed with
+      issue and snapshot fixtures of the tasks tests. Calls pushed with
       no mapping, then a request with only their mapping, are read
       through `GET /api/tasks/{actorId}` with the actual and variance
       that include them, for a running actor and again after it settles.

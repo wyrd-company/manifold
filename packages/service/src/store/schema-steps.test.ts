@@ -26,24 +26,6 @@ import { migrations as owner12Steps } from "../t3code-source/migrations.ts";
 import { taskMetadataMigrationSteps as owner13Steps } from "../task-metadata/migrations.ts";
 import { usageMigrationSteps as owner14Steps } from "../usage/migrations.ts";
 const predecessors = predecessorFixture.owners;
-// These owners' initial schemas include retention's approved additions.
-const retentionSchemas: Record<string, string> = {
-  store: "store-database-schema",
-  router: "router-database-schema",
-  gates: "gates-database-schema",
-  usage: "usage-tables",
-};
-function referenceSteps(owner: string, predecessor: readonly string[]) {
-  const asset = retentionSchemas[owner];
-  return asset
-    ? [
-        readFileSync(
-          new URL(`../../../../docs/specifications/${asset}.sql`, import.meta.url),
-          "utf8",
-        ),
-      ]
-    : predecessor;
-}
 const currentSteps = [
   owner0Steps,
   owner1Steps,
@@ -80,13 +62,15 @@ const schema = (db: DatabaseSync) =>
     }));
 
 const expectedSteps = (owner: string, steps: string[]) => {
-  const specification = ({
-    store: "store-database-schema",
-    router: "router-database-schema",
-    gates: "gates-database-schema",
-    history: "history-database-schema",
-    usage: "usage-tables",
-  } as Record<string, string>)[owner];
+  const specification = (
+    {
+      store: "store-database-schema",
+      router: "router-database-schema",
+      gates: "gates-database-schema",
+      history: "history-database-schema",
+      usage: "usage-tables",
+    } as Record<string, string>
+  )[owner];
   return specification
     ? [
         readFileSync(
