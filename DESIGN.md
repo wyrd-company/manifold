@@ -710,7 +710,8 @@ breadcrumb shows "Actors / #ref actor", and "Actors" in it returns to the list.
   to GitHub ("Move to Done · confirmed"), warning when unconfirmed; a
   person's change on the board is a dashed arrow from GitHub ("Status:
   Done · by a person"). The pass that is running is a note on the
-  thread's lifeline. Usage sits in a right-hand column on the row of the
+  thread's lifeline, and an event a running actor has not yet taken is
+  muted with "pending". Usage sits in a right-hand column on the row of the
   reply that closed each pass.
 - The views are read-only. Nothing on the page sends a command or
   changes a declaration.

@@ -349,17 +349,19 @@ proposed-design:
     `fetchActorHistory(actorId)`, and `fetchActorUsage(actorId)`.
     `fetchActors("active")` sends `GET /api/actors` and
     `fetchActors("completed")` sends `GET /api/actors?status=completed`;
-    each answers as `fetchActors` does. `fetchActorHistory` sends
-    `GET /api/actors/{actorId}/history` and `fetchActorUsage` sends
-    `GET /api/usage/actors/{actorId}`, each with the id percent-encoded as
-    one segment; each turns `200` into `ok` with the body, `404` into
-    `missing`, and anything else, a network error, or a body that fails
-    its guard into `failed` with a message. Each mapping from a status
-    and a body to a result is a pure function. Bodies are checked at this
-    boundary with `isActorsResponse` and the history guard of
-    `@wyrd-company/manifold-shared/actors-api`, and with
-    `isActorUsageResponse` of `@wyrd-company/manifold-shared/actor-usage-api`.
-    Reads go through TanStack Query under the keys `["actors", status]`,
+    each answers as `fetchActors` does. `fetchActorHistory` sends the
+    path `actorHistoryPath(actorId)` gives, `GET
+    /api/actors/{actorId}/history`, and `fetchActorUsage` sends `GET
+    /api/usage/actors/{actorId}`, each with the id percent-encoded as one
+    segment; each turns `200` into `ok` with the body's `history` or the
+    body, `404` into `missing`, and anything else, a network error, or a
+    body that fails its guard into `failed` with a message. Each mapping
+    from a status and a body to a result is a pure function. Bodies are
+    checked at this boundary with `isActorsResponse` and
+    `isActorHistoryResponse` of `@wyrd-company/manifold-shared/actors-api`,
+    and with `isActorUsageResponse` of
+    `@wyrd-company/manifold-shared/actor-usage-api`. Reads go through
+    TanStack Query under the keys `["actors", status]`,
     `["actor-history", actorId]`, `["actor-usage", actorId]`, and, for a
     `task:` id, the Task page's `["task", actorId]` with `fetchTask`, so
     the list, the Actor page, and the Task page share one read of each.
@@ -369,25 +371,28 @@ proposed-design:
     stale. No timer reads on a schedule, and nothing moves on screen
     between reads: "now" is the time of the screen's latest history read.
   actor-history-stand-in: >-
-    The console designs against the actor history seam as ruled: a
-    history answer holds `actorId`; `visits`, in order, each with its
-    state value, its blueprint `{ path, commit }`, `enteredAt`,
-    `exitedAt` (absent while the visit runs), and the type of the event
-    it exited on (absent while it runs); `events`, each with `eventId`,
-    `type`, `topic`, `receivedAt`, and `payload`; and `commands`, each
-    with `kind`, `threadId`, `turnId` (null for a command that names no
-    turn), and `at`. Until the history owner's shared types merge, the
-    console holds this shape and its guard in
-    `src/api/actor-history.ts`, and its tests serve recorded answers of
-    this shape. At the rebase onto the merged seam, the file is removed
-    and its readers import the owner's types and guard; field names
-    follow the owner's. Where the merged seam adds a member, the console
-    reads it in place of the fallback beside it here: the actor's status
-    in place of membership in the active list and the task read's
-    `held`; a visit's number in place of its place in `visits`; the id of
-    the event a visit exited on in place of the last event of its exit
-    type received at or before `exitedAt`; and the actor's summary in
-    place of the summary found in the active or completed list.
+    The console reads the actor history seam as its owner amended it: the
+    answer is `{ history }`, an `ActorHistory` with `actor`, the actor's
+    summary with its `status`, `active`, `done`, or `stopped`; `visits`,
+    in order, each a `StateVisit` with its `visit` number from 1, its
+    `value`, `states`, `machine`, `blueprint` when the machine is a
+    blueprint version key, `enteredAt`, and, once it has exited,
+    `exitedAt` and `exitEvent`, `{ type, eventId? }`; `events`, each a
+    `ReceivedEvent` with `eventId`, `type`, `topic`, `receivedAt`, the
+    `visit` that consumed it and `consumedAt` once consumed, and
+    `payload`, pending events included; `commands`, each an
+    `ActorCommand` with `commandId`, `kind` (`thread-create` or
+    `turn-start`), `environment`, `threadId`, `messageId` and `turnId`
+    when known, `invokeId`, `entryId`, and `acceptedAt`; and `end`,
+    `{ status, endedAt, output? }`, once the actor has ended. Until the
+    history owner merges, the console holds these types, its
+    `isActorHistoryResponse` guard, and `actorHistoryPath` in
+    `src/api/actor-history.ts` under the owner's names, and its tests
+    serve recorded answers of this shape; at the rebase onto the merged
+    seam, the file is removed and its readers import the same names from
+    `@wyrd-company/manifold-shared/actors-api`. The seam does not tell
+    whether the router holds an actor, so Failed is read from the task
+    read's `actor.status` `held`, for task actors only.
   actor-route: >-
     The Actor page is the route `actors/$actorId` under `/console/`, with
     the actor id percent-encoded in its segment, and the search
@@ -397,22 +402,31 @@ proposed-design:
     Actors as the current screen and the breadcrumb shows "Actors / <ref>
     actor", where `<ref>` is the issue reference, or the actor id when
     the actor has no issue. "Actors" in the breadcrumb and the "All
-    actors" back link return to the list. The Task page's Current actor
-    block links "Open actor" to this route.
+    actors" back link return to the list.
+  task-page-timeline: >-
+    The Task page's Current actor block reads the task actor's history
+    under `["actor-history", actorId]` and draws the actor timeline bar
+    with `TimelineBar`, from the rows of `actorTimeline` with the task
+    read's escalations and `held`, as the Actors list draws it, full
+    width; under the bar, each visit's state and duration in small muted
+    text, in the bar's order, wrapping as the width needs. "Open actor"
+    links to the actor's page. A task with no actor shows neither; a
+    history read that has not answered shows a muted ellipsis in place
+    of the bar, and one that failed shows nothing in its place, so the
+    rest of the block still shows. The task page's "Refresh task" marks
+    the history key stale with the task key.
   actor-page: >-
-    `ActorContent` reads the actor's history, its usage, the active list,
-    and, when the actor id is a `task:` id, its task. The actor's summary
-    is its entry in the active list, else in the completed list, which
-    the page then reads. The header holds the reference and title (the
-    task read's issue title when it has one), the status badge, and the
-    meta line: portfolio item, blueprint path and short commit,
-    environment, the accounts of the usage answer, and the start time,
-    the first visit's `enteredAt`. The status is Running for an actor in
-    the active list, Failed for one whose task read answers
-    `actor.status` `held`, and Completed for an ended one. On the right,
-    the Timeline / Sequence segmented control sets `view`, and "Open
-    thread" links to the last thread of the task read with a `url`; it is
-    absent when there is none. Four tiles follow: Tokens, the usage
+    `ActorContent` reads the actor's history, its usage, and, when the
+    actor id is a `task:` id, its task. The header holds the reference
+    and title (the task read's issue title when it has one), the status
+    badge, and the meta line from the history's `actor`: portfolio item,
+    blueprint path and short commit, environment, the accounts of the
+    usage answer, and the start time, the first visit's `enteredAt`. The
+    status is Failed when the task read answers `actor.status` `held`,
+    else Running for `active` and Completed for `done` and `stopped`. On
+    the right, the Timeline / Sequence segmented control sets `view`, and
+    "Open thread" links to the last thread of the task read with a `url`;
+    it is absent when there is none. Four tiles follow: Tokens, the usage
     answer's token total; Cost, each account's actual in its unit; Time,
     the actor's duration; and Passes, the number of passes. The view
     below is the Timeline or the Sequence. A history answer of `missing`
@@ -422,18 +436,17 @@ proposed-design:
     still show. The page reads and writes nothing else: it sends no
     command and changes no declaration.
   actor-model: |-
-    `src/screens/actors/actor-model.ts` holds the pure functions the list
-    and the page draw from, so every rule below is tested without a
-    browser.
+    `src/screens/actors/actor-model.ts` holds the pure functions the
+    list, the Actor page, and the Task page draw from, so every rule
+    below is tested without a browser.
 
     ```ts
     export interface ActorModelInput {
-      readonly actorId: string;
       readonly history: ActorHistory;
       readonly usage: ActorUsageResponse | undefined;
       /** Escalations of the actor's task, open and recent, when it has a task read. */
       readonly escalations: readonly Escalation[];
-      readonly running: boolean;
+      /** The task read's `held`, false for an actor with no task read. */
       readonly held: boolean;
       /** The time of the latest history read, in epoch milliseconds. */
       readonly now: number;
@@ -442,76 +455,86 @@ proposed-design:
     export function actorTimeline(input: ActorModelInput): ActorTimeline;
     export function actorSequence(input: ActorModelInput): ActorSequence;
     export function actorPasses(input: ActorModelInput): readonly Pass[];
-    export function leafStatePaths(value: unknown): readonly string[];
     ```
 
     Tokens. A token total is the `total` of a usage answer's `tokens`;
     the tooltip of a token total shows each class.
 
-    Visits. Each history visit gets a number, its place in `visits` from
-    1, which is the state visit number the usage answer's `visits`
-    carry, and its leaf state paths, the rule `actors-api` gives. A visit
-    runs from `enteredAt` to `exitedAt`, or to `now` when it has none
-    and the actor is running. A visit whose blueprint commit differs from
-    the previous visit's at the same path is a migration: its row and its
-    segment carry the new commit.
+    Visits. A visit is a history `StateVisit`, with its `visit` number
+    and `states`. It runs from `enteredAt` to `exitedAt`, or, when it has
+    none, to `now` while the actor is `active` and to `end.endedAt` once
+    it has ended. A visit whose `machine` differs from the previous
+    visit's while the previous visit has no `exitEvent` is a migration:
+    its row and its segment carry the new commit.
 
-    Passes. A pass starts at a `turn-start` command, or at an
-    `agent.escalation.answered` event with a non-null `turnId`, and
-    belongs to that command's or event's thread and turn. It is a "Start
-    thread" pass when a `thread-create` command for its thread comes
-    before it with no other pass on that thread between, and a "Continue
-    thread" pass otherwise. It is closed by the first `agent.handoff` of
-    its turn, or else by the first `t3.turn.settled` of its turn; a
-    settle that closes it is "idle" when its `state` is `completed`, else
-    its `state`. A pass with no closing event is running while the actor
-    runs, and ends unclosed when the actor has ended. Passes are numbered
-    from 1 in the order they start. A command whose `turnId` is null
-    takes the turn of the first `t3.turn.started` on its thread after it.
-    A pass's usage is the sum of the usage answer's visits from the visit
-    it started in to the visit its closing event arrived in, a time
-    falling in the visit with the greatest entry time not after it.
+    Usage per visit. History visits split on a change of state value or
+    of machine, and the usage module's visits on a change of state value
+    only, so their numbers differ after a migration. The usage answer's
+    visits are matched to history visits by runs: consecutive history
+    visits with one state value, its canonical JSON with keys sorted,
+    form a run, and the n-th run takes the usage of the n-th usage visit,
+    shown on the run's first visit. A usage visit with no run counts in
+    the total only.
+
+    Passes. A pass starts at a `turn-start` command, at its
+    `acceptedAt`, or at an `agent.escalation.answered` event with a
+    non-null `turnId`, and belongs to that command's or event's thread
+    and turn. It is a "Start thread" pass when a `thread-create` command
+    for its thread comes before it with no other pass on that thread
+    between, and a "Continue thread" pass otherwise. It is closed by the
+    first consumed `agent.handoff` of its turn, or else by the first
+    consumed `t3.turn.settled` of its turn; a settle that closes it is
+    "idle" when its `state` is `completed`, else its `state`. A command
+    with no `turnId` yet has a pass with no closing event. A pass with no
+    closing event is running while the actor is `active`, and ends
+    unclosed once it has ended. Passes are numbered from 1 in the order
+    they start. A pass's usage is the usage of the visits from the visit
+    it started in, the visit holding its `acceptedAt` or the answer's
+    consuming `visit`, to the `visit` that consumed its closing event.
 
     Timeline. `actorTimeline` answers the axis, from the first visit's
     entry to the last visit's end; the duration, the axis's length; one
-    row per visit with its number, its leaf paths, the pass that ran in
-    it, its start and end, its exit label, its tone, its usage, and its
+    row per visit with its number, its states, the pass that ran in it,
+    its start and end, its exit label, its tone, its usage, and its
     commit when it is a migration; and a total row with the token total
-    and each account's actual. The exit label is "running" for a running
-    visit, else the label of the event it exited on: "handoff" for
+    and each account's actual. The exit label is "running" for the open
+    visit of an active actor, nothing for the final visit of an ended
+    one, and otherwise the label of the event `exitEvent.eventId` names,
+    or of `exitEvent.type` when it names none: "handoff" for
     `agent.handoff`, the closing label of the pass a `t3.turn.settled`
-    closed, "answered: <choice or text>" for an escalation answer,
-    and for any exit of a visit in which an escalation of the task was
-    answered,
+    closed, "answered: <choice or text>" for an escalation answer and for
+    any exit of a visit in which an escalation of the task was answered,
     "<field>: <to>" for `github.project-item.field-changed`, "<id> done"
     and "<id> failed" for XState's `xstate.done.actor.<id>` and
     `xstate.error.actor.<id>`, and the event type in mono for any other.
     A visit's tone is error when it is the last visit of a held actor;
-    warning when it received `agent.escalated`, overlaps an escalation of
-    the task between its `raisedAt` and its `closedAt` (or now), or closed
-    a pass without a handoff; primary when it is the running visit,
-    waiting when a pass is running in it; and edge otherwise. The mini
-    bar draws the same rows as segments.
+    warning when it consumed `agent.escalated`, overlaps an escalation of
+    the task between its `raisedAt` and its `closedAt` (or now), or
+    consumed a settle that closed a pass without a handoff; primary when
+    it is the open visit of an active actor, waiting when a pass is
+    running in it; and edge otherwise. The mini bar draws the same rows
+    as segments.
 
     Sequence. `actorSequence` answers the lifelines, Manifold, one
     "T3 Code thread" lifeline per thread in the order the actor first
     named it, labelled with the thread id's first eight characters, and
-    GitHub; and the messages in time order, a command at its `at` and an
-    event at its `receivedAt`, each with its from and to lifelines, its
-    label, its style (`solid`, `dashed`, `self`, or `note`), its tone, and
-    the pass it opens or closes. A pass's start is one solid arrow from
-    Manifold to its thread, "Start thread" or "Continue thread", with the
-    `thread-create` command folded into it; an escalation answer's arrow
-    is "Continue thread · answer: <choice or text>". A command of another
-    kind is a solid arrow to its thread labelled with its kind. An event
-    whose topic's first segment is `t3` or `agent` is a dashed reply from
-    the thread its payload's `threadId` names: the closing label of a
-    pass for the event that closed it, which is warning when it is not
-    "handoff"; "escalated" in warning for `agent.escalated`; and the type
-    for any other, warning for `t3.session.failed`,
-    `t3.thread.archived`, and `t3.thread.deleted`. `t3.turn.started` is
-    not drawn, since the pass's arrow shows the start, nor is a
-    `t3.turn.settled` that follows its pass's handoff. A
+    GitHub; and the messages in time order, a command at its
+    `acceptedAt` and an event at its `consumedAt`, each with its from and
+    to lifelines, its label, its style (`solid`, `dashed`, `self`, or
+    `note`), its tone, and the pass it opens or closes. A pending event,
+    one with no `consumedAt`, is drawn only while the actor is `active`,
+    at its `receivedAt`, muted, with "pending". A pass's start is one
+    solid arrow from Manifold to its thread, "Start thread" or "Continue
+    thread", with the `thread-create` command folded into it; an
+    escalation answer's arrow is "Continue thread · answer: <choice or
+    text>". An event whose topic's first segment is `t3` or `agent` is a
+    dashed reply from the thread its payload's `threadId` names: the
+    closing label of a pass for the event that closed it, which is
+    warning when it is not "handoff"; "escalated" in warning for
+    `agent.escalated`; and the type for any other, warning for
+    `t3.session.failed`, `t3.thread.archived`, and `t3.thread.deleted`.
+    `t3.turn.started` is not drawn, since the pass's arrow shows the
+    start, nor is a `t3.turn.settled` that follows its pass's handoff. A
     `github.project-item.field-changed` whose `movedBy.actorId` is the
     actor is a card move: a solid arrow from Manifold to GitHub, "Move to
     <to>", with "confirmed", or "unconfirmed" in warning when
@@ -540,13 +563,14 @@ proposed-design:
   actors-layout: >-
     `src/screens/ActorsContent.tsx` is the list. `src/screens/actors/`
     holds `ActorContent.tsx`, `ActorTimeline.tsx`, `ActorSequence.tsx`,
-    `TimelineBar.tsx` (the mini bar, which the list and the timeline
-    rows share), `actor-model.ts`, and their tests. `src/router.tsx` adds
-    the Actors route's search and the `actors/$actorId` route.
-    `src/styles.css` adds the Actors section's classes, and
-    `TaskContent.tsx` adds the "Open actor" link. The service adds no
-    module: the history and completed routes are the history owner's,
-    and the usage read is the usage module's, as `usage-intake` states.
+    `TimelineBar.tsx` (the mini bar, which the list, the timeline rows,
+    and the Task page share), `actor-model.ts`, and their tests.
+    `src/router.tsx` adds the Actors route's search and the
+    `actors/$actorId` route. `src/styles.css` adds the Actors section's
+    classes, and `TaskContent.tsx` adds the timeline bar and the "Open
+    actor" link to its Current actor block. The service adds no module:
+    the history and completed routes are the history owner's, and the
+    usage read is the usage module's, as `usage-intake` states.
   tasks-api-client: >-
     `src/api/tasks.ts` exports `fetchTasks()`, `fetchTask(actorId)`, and
     `answerEscalation(id, answer)`. `fetchTasks` sends `GET /api/tasks`
@@ -3653,17 +3677,23 @@ proposed-design:
     whose first pass settles without a handoff, whose escalation is
     answered with a choice, and whose next pass continues the same thread
     to a handoff; a failed one, held in a visit after a turn settled with
-    `error`; and one that migrated, whose visit's blueprint commit changes
-    with no other member. For each it checks the rows, their exit labels,
+    `error`; and one that migrated, whose visit's machine changes while
+    the visit before has no exit event, so its history visits and its
+    usage visits number differently. For each it checks the rows, their exit labels,
     tones, passes, and usage, the total, the lifelines, every message's
     ends, label, style, and tone, the "Start thread" and "Continue
     thread" arrows, the confirmed card move and a person's field change
-    from GitHub, the migration's commit, and, for a running variant of
+    from GitHub, the migration's commit and the usage matched across it
+    by runs, a command with no `turnId` yet, a pending event drawn only
+    while the actor runs, and, for a running variant of
     the default actor, the running visit, the waiting tone, the "running"
     note, and the axis ending at `now`. Unit tests cover the result
     mappings of `fetchActors(status)`, `fetchActorHistory`, and
-    `fetchActorUsage`, the guard of the stand-in history, `filterActors`,
-    and the Actors route's search. The browser test,
+    `fetchActorUsage`, the stand-in `isActorHistoryResponse`, `filterActors`,
+    and the Actors route's search. The Board and Task page browser test
+    adds that the escalated task's page shows the timeline bar with each
+    visit's state and duration under it, and that "Open actor" opens its
+    Actor page. The browser test,
     `packages/service/src/console/actors.browser.test.ts`, starts the
     production HTTP host with the built console, the console mount with
     its actors, history, and completed routes, the usage listener, and the
@@ -3680,7 +3710,7 @@ proposed-design:
     with the pass's usage, and the card move with "confirmed"; reloads
     and still sees Sequence; returns with "All actors"; opens the running
     actor and sees Running, the "running" note, and "Open thread" with
-    the thread's link. Until the history owner merges, the test serves
+    the thread's link. Until the history owner merges, both browser tests serve
     recorded history answers at the history and completed paths from a
     fixture listener, and the rebase replaces it with the merged routes.
     Fixture values are generic and never drawn from Manifold's own
