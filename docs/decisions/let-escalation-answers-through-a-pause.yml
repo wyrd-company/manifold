@@ -1,0 +1,44 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - environment-control
+    - agent-threads
+    - agent-tools
+description: >-
+  A paused T3 Code environment starts no new thread or turn for a task
+  actor, and a turn already running continues. An escalation answer is
+  sent to its thread as a user message: T3 Code adds it to the running
+  turn when one runs, and starts a turn for it when none does. The agent
+  that asked waits for the answer to continue the work its task already
+  started. Something must decide whether a pause holds the answer back.
+considered-options:
+  "1": >-
+    Let answers through. The pause holds `thread-create` and `turn-start`,
+    the commands a blueprint sends to begin work, and the answer sender
+    sends to a paused environment as to any other.
+  "2": >-
+    Hold every answer. An answer to a paused environment waits until
+    resume, like `turn-start`.
+  "3": >-
+    Hold an answer only when its thread runs no turn, so that an answer
+    that would join the asking turn is sent and one that would start a
+    turn waits.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    A pause is for letting the work that runs finish while no new work
+    starts. An answer is part of work that runs: the agent asked inside a
+    turn of its task, and the answer is how that work goes on. Holding it,
+    option 2, stalls a task the pause was meant to let finish, and when
+    the person answers before the asking turn ends, it leaves the running
+    turn waiting on an answer the operator's pause holds. Option 3 rests
+    on whether a turn runs at the moment of sending, which the server
+    decides after the message arrives, so the answer could start a turn
+    the check said would join one. Under option 1 the operator who needs
+    an environment quiet disconnects it, which holds answers too.
+expected-outcomes:
+  positive:
+    - A task whose agent asked a question before the pause finishes its work during the pause.
+    - Pause and its meaning stay one rule, no new thread or turn from a blueprint, with no check of the thread's turn at sending.
+  negative:
+    - An answered question can start a turn on a paused environment, so a pause does not by itself leave the server idle.

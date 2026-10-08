@@ -342,9 +342,11 @@ proposed-design:
     message id from the escalation id and inserts the answer row in
     `agenttool_answer` with the environment, the thread, the message id,
     and the answer text, unless the row exists. It returns a function that
-    wakes the answer sender after the commit. The sender takes pending
-    answer rows one at a time in the order they were written and sends
-    each through the agent threads module's `startTurn`, which waits until
+    wakes the answer sender after the commit. The sender takes each
+    environment's pending answer rows one at a time in the order they were
+    written, with one environment's rows apart from another's, so an
+    answer that waits on a disconnected or unready environment holds back
+    no answer on another, and sends each through the agent threads module's `startTurn`, which waits until
     the environment source is ready, reads the thread's current modes, and
     sends `thread.turn.start` with the row's message id and text under the
     command id derived from that message id, retrying a lost connection on

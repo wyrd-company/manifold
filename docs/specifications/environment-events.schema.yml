@@ -1,0 +1,38 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: environment-events
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/environment-events
+title: Environment events
+description: >-
+  The operator events the environment control module publishes, one per
+  change of an environment's operator hold, as the `event` of a source
+  event with source `environment`.
+$ref: "#/$defs/environment-event"
+$defs:
+  environment-event:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - environment
+      - at
+    properties:
+      type:
+        enum:
+          - environment.paused
+          - environment.resumed
+          - environment.disconnected
+          - environment.reconnected
+      environment:
+        description: The environment's declared name in service configuration.
+        type: string
+        maxLength: 64
+        pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      at:
+        description: When the change was stored, in UTC with milliseconds.
+        type: string
+        format: date-time

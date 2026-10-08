@@ -1,0 +1,37 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - environment-control
+  references:
+    - store-database-schema
+    - environment-events
+description: >-
+  Defines the table the environment control module owns in Manifold's
+  SQLite database file.
+  `docs/specifications/environment-control-database-schema.sql` is the
+  machine-readable definition: the schema the module's migration produces.
+  The module receives the connection from the store and migrates its table
+  with `migrate("environment", steps)`, step 1; its owner is
+  `environment`, so every table it creates is named `environment_<name>`,
+  apart from the T3 Code source's `t3_environment`. Times are milliseconds
+  since the Unix epoch.
+
+  Holds. `environment_hold` holds one row per environment an operator
+  has acted on, keyed by its declared name. `paused` and `disconnected`
+  are the operator holds, 1 when on. `sequence` counts the changes of the
+  row's holds, 1 after the first, and names the event that published the
+  latest change; `changed_at` is when that change was stored. An
+  environment with no row holds nothing. A row is written only by an
+  action that changes a hold, in the transaction that publishes its event.
+  Rows are never deleted: a row whose environment is no longer configured
+  is ignored, and holds again if the name is configured again.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/environment-control-database-schema.sql` runs
+  without error on an empty SQLite database. Migrating a new store under
+  the owner `environment` gives the same table, columns, and constraints
+  as the file, and migrating it again changes nothing. A row with
+  `paused` or `disconnected` outside 0 and 1, or a `sequence` below 1, is
+  refused.

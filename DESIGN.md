@@ -277,12 +277,12 @@ shadow:
 Heights are 32px for page actions and 28px inside table rows. Text is 14px
 (13px in rows), weight 500. An icon sits before the label at 14–16px.
 
-- **Primary**: the one main action in a view ("Add environment").
+- **Primary**: the one main action in a view ("Add item").
 - **Outline**: row actions and secondary actions ("Pause", "Disconnect",
   "Cancel").
 - **Ghost**: icon-only controls in the header and dialog title. Each has an
   `aria-label`.
-- **Destructive outline**: actions that remove data ("Forget"). The label is
+- **Destructive outline**: actions that remove data ("Delete"). The label is
   error-colored; the fill stays neutral so that a list of rows does not become
   a wall of red.
 
@@ -1053,15 +1053,31 @@ Add account and Edit account are one 520px dialog:
 
 ### Environments
 
-- Title row: "Environments", description, and the primary "Add environment"
-  button.
-- Table columns: Host (mono), Status, Active threads, Scheduled threads,
-  Actions.
-- Row actions: Pause / Resume, Disconnect / Reconnect, Forget.
-- Active threads shows "—" for a disconnected environment, because the count
-  is not known.
-- "Add environment" opens a dialog with the server URL and the credential
-  the environment requires.
+- Title row: "Environments", its description, and a ghost "Refresh" icon
+  button. No primary action.
+- Table columns: Environment, Status, Active threads, Scheduled threads,
+  Actions. Environment is the name over the host, both mono, the host
+  muted.
+- Status uses the connection status: Connected, Connecting (the warning
+  dot that pings), Disconnected, or Error with the error as a muted second
+  line. A paused environment adds the warning badge "Paused" after the
+  label.
+- Active threads shows "—" for an environment that is not connected,
+  because the count is not known. Counts are right-aligned with tabular
+  numbers.
+- Row actions, outline: Pause / Resume and Disconnect / Reconnect, each
+  with its icon (`Pause`, `Play`, `Unplug`, `PlugZap`). No confirmation.
+  The pressed button shows a spinner while its request runs, and both
+  buttons of the row are disabled.
+- Caption: "3 environments · 2 connected · 1 paused".
+- Under the table, a card titled "Add or remove an environment" explains
+  that environments live in the service configuration on the host: the
+  steps to add and remove one, the configuration file's path in mono, and
+  a read-only YAML example with a ghost copy button. There is no "Add
+  environment" button and no "Forget" action, because the console does not
+  write service configuration.
+- With no environment, the table is replaced by the empty state "No
+  environments", and the card stays.
 
 ## Implementation
 

@@ -6,14 +6,17 @@ relationships:
     - durable-event-delivery
     - store
     - agent-tools
+    - environment-events
 description: |-
   Defines the event-source seam: how an event source hands an event to the
   router, the topic grammar, how a topic and an event type reach an actor,
   and what the router answers. `docs/specifications/router-events.schema.yml`
   is the machine-readable definition of the source event, the subscription,
   the publish outcome, and the event issue. Every event source, the GitHub
-  source, the T3 Code environment source, and the agent tools module's
-  `agent` source, publishes through this seam and no other.
+  source, the T3 Code environment source, the agent tools module's
+  `agent` source, and the environment control module's `environment`
+  source, as `environment-events` defines, publishes through this seam and
+  no other.
 
   The `agent` source publishes the events of an agent's thread under the
   thread's agent topic, `agent.environment.<environment>.thread.<thread>`,

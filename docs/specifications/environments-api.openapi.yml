@@ -1,0 +1,182 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: environments-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold environments API
+  version: 0.1.0
+  description: >-
+    The environments endpoints of Manifold's API: each configured T3 Code
+    environment with its connection and operator holds, and the operator
+    actions on one environment.
+security: []
+paths:
+  /api/environments:
+    get:
+      operationId: listEnvironments
+      summary: List every configured environment.
+      responses:
+        "200":
+          description: Every configured environment, in configuration order.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentsResponse"
+        "405":
+          description: A method other than GET.
+          headers:
+            Allow:
+              schema:
+                const: GET
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/environments/{name}/{action}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The environment's declared name.
+        schema:
+          type: string
+          minLength: 1
+      - name: action
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/EnvironmentAction"
+    post:
+      operationId: actOnEnvironment
+      summary: Apply an operator action to one environment.
+      responses:
+        "200":
+          description: >-
+            The environment after the action. An action whose hold was
+            already in the state it asks for changes nothing.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentSummary"
+        "404":
+          description: >-
+            An environment that is not configured, an action that is not
+            one of the four, or another path under the prefix.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          description: A method other than POST.
+          headers:
+            Allow:
+              schema:
+                const: POST
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: The action could not be stored; nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    EnvironmentsResponse:
+      type: object
+      additionalProperties: false
+      required: [configurationFile, environments]
+      properties:
+        configurationFile:
+          type: string
+          minLength: 1
+          description: The service configuration file that declares the environments.
+        environments:
+          type: array
+          items:
+            $ref: "#/components/schemas/EnvironmentSummary"
+    EnvironmentSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - host
+        - url
+        - status
+        - connection
+        - paused
+        - disconnected
+        - activeThreads
+        - scheduledThreads
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+        host:
+          type: string
+          minLength: 1
+          description: The host of the configured URL, with its port when the URL names one.
+        url:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [connected, connecting, disconnected, paused]
+        connection:
+          type: string
+          enum: [connected, connecting, disconnected]
+        paused:
+          type: boolean
+        disconnected:
+          type: boolean
+        error:
+          type: string
+          minLength: 1
+          description: The source's last error, while connecting after a failure or stopped.
+        activeThreads:
+          description: Followed threads with a running turn or session; null unless connected.
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: "null"
+        scheduledThreads:
+          type: integer
+          minimum: 0
+          description: Thread and turn commands waiting to be sent to the environment.
+    EnvironmentAction:
+      type: string
+      enum: [pause, resume, disconnect, reconnect]
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [kind, message]
+          properties:
+            kind:
+              type: string
+              enum:
+                - unknown-environment
+                - unknown-action
+                - not-found
+                - method-not-allowed
+                - action-failed
+            message:
+              type: string

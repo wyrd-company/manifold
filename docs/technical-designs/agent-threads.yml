@@ -7,6 +7,7 @@ relationships:
     - process-repository
     - agent-tools
     - actor-history
+    - environment-control
   mitigates:
     - t3code-command-receipts-undocumented
   # GAP-EDGE: the technical-design schema declares no edge to the
@@ -208,6 +209,31 @@ proposed-design:
     commands remain observations across its replacement. A thread the shell
     lists with no row is subscribed with no cursor and compared with the
     empty state, and a running or settled turn in it is published.
+  operator-holds: >-
+    The module reads the operator holds of `environment-control` through
+    the `holds` port of `t3code-environment-source`. A paused environment
+    takes no `thread-create` or `turn-start` command: each checks
+    `held(environment).paused` inside the source's write admission,
+    synchronously and immediately before it dispatches, and when the hold
+    is on it leaves the admission, waits on `changed`, and enters the send
+    again. The check and the dispatch run without yielding, so no command
+    is dispatched after a pause commits, and a command dispatched before
+    it is the server's to answer. The wait has no time limit and ends when
+    the pause is lifted or the invoke stops, since it waits on an operator
+    action; the command keeps the ids it derived, so one that waited
+    through a restart is sent once. `startTurn`, the path of an escalation
+    answer, does not check the pause, as
+    `let-escalation-answers-through-a-pause` records. A disconnected
+    environment takes no read and no command: the source is not ready
+    while the hold is on, so every call waits in `sourceReady`; the client
+    pool opens no client for the environment and fails a call that asks
+    for one as a lost connection, which the caller retries after the
+    source is ready; and a change that turns the hold on closes the
+    environment's client, so a command in flight fails as a lost
+    connection and is sent again with the same ids after reconnect.
+    `scheduled(environment)` counts the `thread-create`, `turn-start`, and
+    `startTurn` sends for the environment that have entered `dispatch` and
+    not yet left it, whatever they wait on.
   child-blueprints: >-
     A child state machine gets no routed events and no engine-owned
     identity. `thread-create` and `follow-thread` are for top-level task
@@ -292,7 +318,7 @@ proposed-design:
     import type { fromPromise } from "xstate";
     import type { Invocation, ActorHost } from "../actor-host/index.ts";
     import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
-    import type { EnvironmentsConfiguration } from "../t3code-source/index.ts";
+    import type { EnvironmentHolds, EnvironmentsConfiguration } from "../t3code-source/index.ts";
 
     export function openAgentThreads(options: AgentThreadsOptions): AgentThreads;
 
@@ -312,6 +338,8 @@ proposed-design:
       /** The environment source's write admission boundary. */
       readonly sourceWrite: <T>(environment: string, threadId: string, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>) => Promise<T>;
       readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
+      /** The operator holds of `environment-control`; none is held when absent. */
+      readonly holds?: EnvironmentHolds;
       /** Called before the first attempt to send an invoked command. */
       readonly sending?: (command: SendingCommand) => void;
       /** Called after the server answers an invoked command and before the promise resolves. */
@@ -349,6 +377,8 @@ proposed-design:
       runningThreads(environment: string, signal: AbortSignal): Promise<readonly string[]>;
       /** `turn-start`'s dispatch with a given message id and literal text. */
       startTurn(request: TurnRequest): Promise<AcceptedCommand>;
+      /** The thread and turn commands for the environment that wait to be answered. */
+      scheduled(environment: string): number;
       /** Stops waits and retries, closes every client; resolves when they are closed. */
       stop(): Promise<void>;
     }
@@ -486,7 +516,14 @@ proposed-design:
     sent again with the same ids; a token without `orchestration:operate`
     fails with `unauthorized`; a connection that drops after the server
     accepts and before it answers is retried and the server holds one
-    turn; and `follow-thread` taken twice follows once. The fault tests run
+    turn; and `follow-thread` taken twice follows once. With the
+    environment paused, `thread-create` and `turn-start` wait and send
+    nothing, count in `scheduled`, and each sends once when the pause is
+    lifted, while `startTurn` sends at once; a pause that commits while a
+    command is dispatched leaves that command sent once; with the
+    environment disconnected, the fake server sees no socket from the
+    module, a command waits, and it is sent once after reconnect,
+    including one in flight when the disconnect committed. The fault tests run
     the service in a child Node process, which kills itself with `SIGKILL`
     from the `probe` after the server answers and before the result is
     saved, and the test asserts the signal, starts it again on the same

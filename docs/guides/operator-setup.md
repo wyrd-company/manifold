@@ -293,8 +293,8 @@ chmod 600 credentials/workstation.token
 ```
 
 Set `environments.workstation.url` to the server URL reachable from the service
-host and its `credential` to `workstation-token`. Check the connection through
-the service's environment status. The default token lifetime is 30 days. Set a
+host and its `credential` to `workstation-token`. After the service starts,
+check the connection on the console's Environments screen. The default token lifetime is 30 days. Set a
 reminder to renew before expiry by repeating the exchange into the same file.
 The source rereads that file on each connection attempt. Pairing tokens expire
 in five minutes by default; exchange immediately. Tokens must belong to the

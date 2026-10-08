@@ -25,6 +25,8 @@ relationships:
     - portfolio-api
     - accounts-declaration
     - portfolio-declaration
+    - environments-api
+    - environment-events
 objective: >-
   Give the operator console one package that builds into static files, one
   place in the service that serves them and the API the console reads, and a
@@ -54,6 +56,9 @@ objective: >-
   reserve, every amount in its account's unit, and edits allocations and
   items as a draft of `portfolio.yml`, linted as it changes with the
   service's own lint and saved as a commit.
+  It shows each T3 Code environment's connection and thread counts on the
+  Environments screen, and pauses, resumes, disconnects, and reconnects
+  one there.
 background:
   current-design: >-
     `packages/console` holds a `package.json` and a README, and no framework.
@@ -190,7 +195,10 @@ proposed-design:
     `bindings.yml` and `task-metadata.yml` through the declarations
     endpoints of `declarations-api`, which the service module
     `packages/service/src/declarations-api/` mounts under
-    `/api/declarations` with `mount`. Every other screen shows its title
+    `/api/declarations` with `mount`. The Environments screen reads and
+    calls the endpoints of `environments-api`, which the environment
+    control module, `packages/service/src/environments/`, mounts under
+    `/api/environments` with `mount`. Every other screen shows its title
     row and an empty state. The console and API are served without
     authentication; access control belongs to the deployment.
   console-package: >-
@@ -255,7 +263,7 @@ proposed-design:
     stylesheet, sets the class from the kept choice before the first paint,
     so that a reload in dark theme does not flash light.
   empty-screens: >-
-    Overview, Environments, and the Settings tabs
+    Overview and the Settings tabs
     Accounts and budget sources and General show
     their title row and the empty state from `DESIGN.md`: a dashed border,
     the screen's icon, the title "Nothing here yet", and the line "This
@@ -2698,6 +2706,125 @@ proposed-design:
     `commit` equal to it. The Board and Task page browser test checks the
     estimate, actual, variance, and reserved of its settled task in
     dollars, such as `$0.0177`.
+  environments-route: >-
+    The Environments screen is the route `environments` under
+    `/console/`. `EnvironmentsContent`, in `src/screens/environments/`,
+    replaces the empty screen; the navigation entry, its label, and its
+    description are unchanged. The screen reads `GET /api/environments`
+    of `environments-api` under the key `["environments"]`. It reads again
+    when the window regains focus, when the screen opens, from the ghost
+    "Refresh" icon button in the title row, after each action settles, and
+    every 5 seconds while the screen is open and the window is visible,
+    with TanStack Query's `refetchInterval` and no read while the window
+    is hidden, since a connection changes on the service with no action in
+    the console.
+  environments-screen: >-
+    From top to bottom, as `DESIGN.md` lays out Environments: the title
+    row, with no primary action; the environments table; its caption; and
+    the "Add or remove an environment" card. A failed read shows an error
+    alert with the message and "Try again" in place of the table and its
+    caption; the card stays, since it needs nothing from the read but the
+    configuration file, which it then names as "the service configuration
+    file".
+  environments-table: >-
+    `EnvironmentsTable` shows one row per environment in the read's order,
+    with the columns, in percent widths: Environment (30), Status (24),
+    Active threads (12), Scheduled threads (12), and Actions (22). The
+    Environment cell holds the name over the host, both in mono, the host
+    in muted text with the URL as its title. The Status cell holds the
+    status of `DESIGN.md`: Connected for `connected`; Connecting, with
+    the warning dot that pings, for `connecting` without an error;
+    Error, with the error dot and the error as a muted second line, for
+    `connecting` with an error and for `disconnected` with an error; and
+    Disconnected for `disconnected` without one. A `paused` environment
+    adds the warning badge "Paused" after the label. Active threads shows
+    its count, or a muted "—" when it is `null`; Scheduled threads shows
+    its count. Counts are right-aligned with tabular numbers. With no
+    environment configured, the table is replaced by the empty state with
+    the Environments icon, "No environments", and "Add one to the service
+    configuration on the host."
+  environments-caption: >-
+    The caption under the table reads "<n> environments · <c> connected
+    · <p> paused", counting `connection` `connected` and `paused` true,
+    with "environment" for one.
+  environments-actions: >-
+    The Actions cell holds two outline row buttons, right-aligned: "Pause"
+    with the Lucide `Pause` icon while `paused` is false and "Resume" with
+    `Play` while it is true; and "Disconnect" with `Unplug` while
+    `connection` is not `disconnected` and "Reconnect" with `PlugZap`
+    while it is. Each sends `POST /api/environments/{name}/{action}` at
+    once, with no confirmation, since each is undone by its pair and loses
+    nothing. While a request is in flight both buttons of the row are
+    disabled and the pressed one shows a spinner in place of its icon. A
+    `200` writes the returned summary into the row under
+    `["environments"]` and marks the key stale; a failure shows the toast
+    "Could not <action> <name>: <message>" and leaves the row as the last
+    read showed it. Each button's `aria-label` names the action and the
+    environment, such as "Pause build-host".
+  environments-host-instructions: >-
+    `HostInstructions` is a card under the table titled "Add or remove an
+    environment", in place of an "Add environment" button and a "Forget"
+    row action: environments and their tokens are service configuration,
+    which is host-local and holds credentials, and the console writes
+    neither. Its text, in this order: "Environments are declared in the
+    service configuration on the service host, with the T3 Code token each
+    one uses. The console does not change service configuration."; "To
+    add one: write its token to a file on the service host, readable only
+    by the service, then add the environment under `environments` and its
+    credential under `credentials` in <configurationFile>, and restart
+    the service."; then a read-only YAML block of a generic environment,
+    as `t3code-environments-configuration` shows one, with a ghost copy
+    button labelled "Copy example"; then "To remove one: delete its entry
+    and restart the service. A task actor on a removed environment fails
+    its next thread or turn command." `<configurationFile>` is the read's
+    `configurationFile` in mono.
+  environments-client: >-
+    `src/api/environments.ts` exports `fetchEnvironments()` and
+    `actOnEnvironment(name, action)`. Each sends its request without
+    authentication headers and turns the answer into `ok` with the body,
+    or `failed` with the API's `error.message` or a generic message for a
+    network error or a body that does not match. The mapping from a
+    status and a body to a result is a pure function, and the body is
+    checked at this boundary with the guards of
+    `@wyrd-company/manifold-shared/environments-api`, a dependency-free
+    subpath export of the response types and guards, which the service's
+    listener also builds its answers against.
+  environments-module-layout: >-
+    `src/screens/environments/` holds `EnvironmentsContent.tsx`,
+    `EnvironmentsTable.tsx`, `EnvironmentStatus.tsx`,
+    `HostInstructions.tsx`, and `rows.ts`, the pure functions from a
+    summary to its status label, dot, detail line, counts, and the two
+    buttons' labels and actions, and from the list to the caption. The
+    route's component in `src/screens/EnvironmentsContent.tsx` re-exports
+    it, as the other built screens do.
+  environments-convergence: >-
+    An action sent twice, by a double click or a retry after a lost
+    answer, is applied once by the service, which answers both with the
+    environment as it is. A read that crosses an action shows one or the
+    other state, and the next read shows the action's. A reload keeps
+    nothing in the browser.
+  environments-tests: >-
+    Each behavior is red before green, and tests go through public
+    interfaces. In `packages/shared`, the guards of `./environments-api`
+    against the OpenAPI document with fixtures that pass and fail. In
+    `packages/console`, unit tests cover the result mapping and `rows.ts`
+    for every pair of connection and holds, with and without an error and
+    a `null` count, and the caption for none, one, and several. The
+    browser test,
+    `packages/service/src/environments/environments.browser.test.ts`,
+    starts the service with the built console and two environments,
+    `site-a` and `site-b`, each on its own fake T3 Code server, with a
+    task actor on `site-a` whose thread runs a turn. It opens Environments
+    and reads both rows Connected, `site-a` with one active thread, the
+    caption, and the configuration file in the card; pauses `site-a` and
+    sees "Paused" and "Resume", with `site-b` unchanged; disconnects
+    `site-b`, sees Disconnected, "—" active threads, and "Reconnect", and
+    finds no socket from the service on its fake server; reloads and sees
+    both holds kept; reconnects `site-b` and resumes `site-a` and sees
+    both Connected; and finds the four operator events in the store's
+    router records, in order, under their topics. A second case stops
+    `site-a`'s fake server and reads Connecting with its error once the
+    source retries.
   serving: >-
     The console listener serves `packages/console/dist` with `sirv`. It
     takes the request's path, which the HTTP host passes unchanged,

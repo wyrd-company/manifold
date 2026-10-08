@@ -1,0 +1,99 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `realizes` names the design this
+  # contract serves and `references` the contracts it reads.
+  realizes:
+    - environment-control
+  references:
+    - operator-console
+    - environment-events
+    - t3code-environments-configuration
+description: |-
+  Defines the environments endpoints of Manifold's API:
+  `GET /api/environments`, which lists each configured T3 Code environment
+  with its connection, its operator holds, and its thread counts; and
+  `POST /api/environments/{name}/{action}`, which applies an operator
+  action to one environment. `docs/specifications/environments-api.openapi.yml`
+  is the machine-readable definition. The Environments screen of the
+  operator console reads and calls them, and any automation may.
+
+  The endpoints are mounted with the HTTP host's `mount` at the prefix
+  `/api/environments` and are served without authentication. Access
+  control belongs to the deployment. Every answer carries
+  `Cache-Control: no-store` and `Content-Type: application/json`.
+
+  List. `GET /api/environments` answers `200` with
+  `{ configurationFile, environments }`. `configurationFile` is the path
+  of the service configuration file the service loaded, which declares
+  the environments. `environments` holds one environment summary per
+  environment of the configuration's `environments` section, in the
+  section's order; with none, it is empty. The query string is ignored.
+
+  Environment summary.
+
+  - `name`: the environment's declared name.
+  - `host`: the host of its configured `url`, with the port when the URL
+    names one, such as `127.0.0.1:3773`.
+  - `url`: its configured `url`.
+  - `status`: `disconnected` when `connection` is `disconnected`;
+    otherwise `paused` when `paused` is true; otherwise `connection`.
+  - `connection`: `connected` while the environment source follows the
+    environment; `connecting` while it connects or waits to retry a lost
+    or refused connection; `disconnected` while `disconnected` is true or
+    the source has stopped the environment for a defect.
+  - `paused`: whether the operator's pause holds the environment.
+  - `disconnected`: whether the operator's disconnect holds the
+    environment.
+  - `error`: the source's last error for the environment, present while
+    it is `connecting` after a failure or stopped, and absent otherwise.
+  - `activeThreads`: the count of threads the source follows on the
+    environment whose latest turn is running or whose session is
+    `starting` or `running`; `null` unless `connection` is `connected`.
+  - `scheduledThreads`: the count of thread and turn commands waiting to
+    be sent to the environment: each `thread-create`, `turn-start`, and
+    escalation answer that has entered its send and has no answer from the
+    server yet.
+
+  Actions. `POST /api/environments/{name}/{action}` applies `action` to
+  the environment `name`. `pause` turns the paused hold on and `resume`
+  turns it off; `disconnect` turns the disconnected hold on and
+  `reconnect` turns it off. `reconnect` also starts again an environment
+  the source has stopped. An action that changes a hold stores the change
+  in Manifold's store and publishes its operator event of
+  `environment-events` in one transaction, before it answers. An action
+  whose hold is already in the state it asks for changes nothing and
+  publishes nothing. Either way the answer is `200` with the
+  environment's summary after the action. The request body is ignored.
+  A `name` that is not a configured environment answers `404` with
+  `error` `{ kind: "unknown-environment", message }`; an `action` that is
+  not one of the four answers `404` with kind `unknown-action`; and an
+  action that could not be stored answers `500` with kind
+  `action-failed`, having changed nothing.
+
+  Paths and methods. `/api/environments` takes `GET`, and another method
+  answers `405` with `Allow: GET` and kind `method-not-allowed`.
+  `/api/environments/{name}/{action}` takes `POST`, and another method
+  answers `405` with `Allow: POST` and kind `method-not-allowed`. Any
+  other path under the prefix answers `404` with kind `not-found`. `name`
+  and `action` are single path segments, percent-decoded.
+
+  The console writes no service configuration through these endpoints:
+  adding or removing an environment is an edit of the configuration file
+  on the service host followed by a restart.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/environments-api.openapi.yml` is a valid OpenAPI
+  3.1 document. A test in `packages/service` starts the service with two
+  environments on fake T3 Code servers, one connected and one whose server
+  is down, and checks without authentication through the service's HTTP
+  host that the list validates against the response schema, holds both in
+  configuration order with their host, status, connection, and counts,
+  and gives `null` active threads for the one not connected. It applies
+  each action, checks each answer validates and gives the summary after
+  the action, applies `pause` twice and finds one stored change and one
+  published event, and checks the `404` kinds for an unknown name, an
+  unknown action, and another path, and each `405` with its `Allow`.
+  `@wyrd-company/manifold-shared/environments-api` guards accept every
+  example the OpenAPI document's schemas accept in a fixture set and
+  reject each that breaks them.

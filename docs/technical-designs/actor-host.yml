@@ -8,6 +8,7 @@ relationships:
     - escalations
     - gates
     - actor-history
+    - environment-control
 objective: >-
   Run every state machine actor the router delivers to, so that an actor
   resumes on the blueprint version it started on, hears the events of its
@@ -242,8 +243,10 @@ proposed-design:
     when the identity holds `environment`, `threadTopic(environment,
     thread)`, exported by the T3 Code source, and
     `agentThreadTopic(environment, thread)`, exported by the agent tools
-    module. `project`, `environment`,
-    `portfolioItem`, and `blueprintPath` add no topic of their own. Topics
+    module; and `environment.<environment>` when the identity holds
+    `environment`, as `environment-events` defines, so the actor hears the
+    operator's actions on its environment. `project`, `portfolioItem`, and
+    `blueprintPath` add no topic of their own. Topics
     are unique and sorted by code point. A value that is not a string, or a
     `threads` that is not an array of strings, adds no topic. The event
     types are the keys of the version's `schemas.events`; when the version
@@ -520,8 +523,8 @@ proposed-design:
     path and saves nothing; `start` twice saves one actor; the started
     actor's context holds `manifold` when its initial entry action runs;
     the subscription holds the issue topic and, per thread with an
-    environment, its thread topic and its agent topic, and no Project or
-    environment topic; a thread added through a registered action makes
+    environment, its thread topic and its agent topic, the environment's
+    topic when the identity holds an environment, and no Project topic; a thread added through a registered action makes
     the next event under either topic reach the actor, and lists the actor
     in `followers` and the thread in `followedThreads`; an actor that ends
     leaves both; an actor held at resume is listed in both; `issueThreads`

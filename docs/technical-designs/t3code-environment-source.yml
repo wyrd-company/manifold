@@ -12,6 +12,7 @@ relationships:
     - t3code-thread-events
     - t3code-environments-configuration
     - t3code-source-database-schema
+    - environment-control
 objective: >-
   Turn the activity of every thread on every configured T3 Code environment
   into thread changes published through the router, so that an actor hears
@@ -266,6 +267,21 @@ proposed-design:
     next backoff delay, and creates the client again, reading the credential
     file again, so a replaced token applies without a restart. The source
     adds no wait of its own beyond the configured values.
+  operator-holds: >-
+    The source reads the operator holds of `environment-control` through
+    the `holds` port its options give it. Each environment loop reads
+    `held(environment)` before each connection. While the disconnected
+    hold is on, the environment's state is `disconnected`: the loop opens
+    no client, its readiness is reset so that `ready` and `write` wait,
+    and it waits on `changed`. While the loop runs it also waits on
+    `changed`, and a change that turns the disconnected hold on ends the
+    connection as a stop does: the client closes, every open subscription
+    ends, and every cursor stays as it was stored. When the hold turns
+    off, the loop connects at once with no backoff delay, and resumes as
+    under resume: it compares the server's `environmentId`, and its
+    readiness resolves again after that comparison. The paused hold
+    changes nothing in the source, which keeps following a paused
+    environment. With no `holds`, nothing is held.
   credentials: >-
     The client's credential store for an environment reads the bearer access
     token from the `tokenFile` of the environment's `t3code-token`
@@ -282,7 +298,8 @@ proposed-design:
     skipped; the next item moves the cursor past it. A `rejected` publish,
     and an error the store or the router throws, stops the environment: its
     status becomes `stopped` with the error, its client closes, and it
-    stays stopped until the service restarts. No other environment changes.
+    stays stopped until the service restarts or `restart` starts it again,
+    which the operator's reconnect calls. No other environment changes.
   public-interface: |-
     `packages/service/src/t3code-source/index.ts` exports exactly these
     names.
@@ -291,6 +308,7 @@ proposed-design:
     import type { Logger } from "@wyrd-company/t3code-client";
     import type { Router } from "../router/index.ts";
     import type { Store } from "../store/index.ts";
+    import type { EnvironmentHolds } from "./types.ts";
 
     export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource;
 
@@ -303,6 +321,8 @@ proposed-design:
       readonly tokenFile: (credential: string) => string;
       /** Runs inside the transaction of the item that places a user message, before its changes are published. */
       readonly messagePlaced?: (placement: MessagePlacement) => void;
+      /** The operator holds; none is held when absent. */
+      readonly holds?: EnvironmentHolds;
       readonly logger?: Logger;
     }
 
@@ -329,6 +349,8 @@ proposed-design:
       environmentId(environment: string, signal?: AbortSignal): Promise<string>;
       /** The environment's T3code projects as its shell last listed them; undefined before the first list. */
       projects(environment: string): readonly T3CodeProjectView[] | undefined;
+      /** Starts again the loop of an environment whose state is `stopped`; does nothing for one that runs. */
+      restart(environment: string): void;
       /** Closes every client; resolves when every environment loop has ended. */
       stop(): Promise<void>;
     }
@@ -353,16 +375,36 @@ proposed-design:
 
     export interface EnvironmentStatus {
       readonly environment: string;
-      readonly state: "connecting" | "following" | "retrying" | "stopped";
+      readonly state: "connecting" | "following" | "retrying" | "disconnected" | "stopped";
       readonly error?: string;
       readonly followedThreads: number;
+      /** Followed threads whose latest turn is running or whose session is `starting` or `running`. */
+      readonly activeThreads: number;
       readonly openSubscriptions: number;
+    }
+
+    /** The operator holds on one environment, as `environment-control` stores them. */
+    export interface EnvironmentHold {
+      readonly paused: boolean;
+      readonly disconnected: boolean;
+    }
+
+    export interface EnvironmentHolds {
+      /** The holds on an environment; both off for one the operator has not acted on. */
+      held(environment: string): EnvironmentHold;
+      /** Resolves at the next change of the environment's holds; rejects when `signal` aborts. */
+      changed(environment: string, signal?: AbortSignal): Promise<void>;
     }
 
     /** `t3.environment.<environment>.thread.<encoded thread id>`. */
     export function threadTopic(environment: string, threadId: string): string;
 
-    export type { EnvironmentsConfiguration, ThreadChangeEvent } from "./types.ts";
+    export type {
+      EnvironmentHold,
+      EnvironmentHolds,
+      EnvironmentsConfiguration,
+      ThreadChangeEvent,
+    } from "./types.ts";
     ```
   thread-view: >-
     `thread(environment, threadId)` reads the thread's `t3_thread` row and
@@ -400,7 +442,9 @@ proposed-design:
     stored rows, and the open subscriptions. `environment.ts` runs one
     environment's loop: client, shell subscription, thread subscriptions,
     and transactions. `source.ts` implements `startT3CodeSource`.
-    `migrations.ts` holds the migration steps under the owner `tthree`. Tests
+    `migrations.ts` holds the migration steps under the owner `tthree`.
+    `types.ts` declares the `EnvironmentHolds` port that
+    `environment-control` implements. Tests
     import only `index.ts`, the router's `index.ts`, and the store's
     `index.ts`.
   convergence: >-
@@ -410,7 +454,10 @@ proposed-design:
     resumed subscription delivers the item again from the old cursor. A
     crash after the commit resumes from the new cursor. Starting the source
     twice on the same file opens the same subscriptions from the same
-    cursors. Resetting an environment whose `environmentId` changed deletes
+    cursors. A disconnect ends the connection with every cursor stored,
+    so a reconnect resumes from them as a restart does, and a disconnect
+    or reconnect taken twice changes the loop once. `restart` of an
+    environment that runs does nothing. Resetting an environment whose `environmentId` changed deletes
     its rows in one transaction, so a crash leaves either the old rows,
     which reset again, or none. `stop` twice does nothing more.
   dependencies: >-
@@ -469,7 +516,14 @@ proposed-design:
     first connection is held back and resolves after the origin commits,
     resolves at once afterwards, waits again in a run that starts after a
     kill before the first transaction committed, and rejects when the
-    environment stops first. The fault test runs the source in a child
+    environment stops first; with the disconnected hold on at start the
+    fake server sees no connection and `ready` waits, and turning it off
+    connects and resolves `ready`; turning it on while following closes
+    the socket, a turn the fake server settles meanwhile is published once
+    after the hold turns off, and `activeThreads` counts a thread with a
+    running turn and drops when it settles; the paused hold leaves the
+    source following; and `restart` starts a stopped environment again.
+    The fault test runs the source in a child
     Node process against the fake server, kills it with `SIGKILL` mid-stream
     and asserts the signal, starts it again on the same file, and checks the
     published changes against the changes the fake server's log implies: no
