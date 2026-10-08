@@ -1,0 +1,65 @@
+// ---
+// relationships:
+//   implements: dependency-currency
+// ---
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended", "helpers:pinGitHubActionDigests"],
+  rangeStrategy: "auto",
+  minimumReleaseAge: "1 day",
+  abandonmentThreshold: "1 year",
+  packageRules: [
+    {
+      matchUpdateTypes: ["minor", "patch", "pin", "digest"],
+      groupName: "minor and patch updates",
+    },
+    {
+      matchPackageNames: [
+        "@codeburn/core",
+        "@gorules/zen-engine",
+        "@wyrd-company/t3code-client",
+        "t3",
+        "quickjs-emscripten-core",
+        "@jitl/quickjs-wasmfile-release-sync",
+      ],
+      groupName: null,
+    },
+    {
+      matchPackageNames: ["quickjs-emscripten-core", "@jitl/quickjs-wasmfile-release-sync"],
+      groupName: "quickjs",
+    },
+    {
+      matchPackageNames: ["node", "@types/node"],
+      matchUpdateTypes: ["major"],
+      groupName: "Node.js major",
+    },
+    {
+      matchPackageNames: ["typescript"],
+      allowedVersions: "<7",
+    },
+    {
+      matchDepTypes: ["engines"],
+      enabled: false,
+    },
+  ],
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      matchStrings: [
+        "uses: go-task/setup-task@\\S+.*\\n\\s+with:\\n\\s+version: (?<currentValue>\\d+\\.\\d+\\.\\d+)",
+      ],
+      depNameTemplate: "go-task/task",
+      datasourceTemplate: "github-releases",
+      extractVersionTemplate: "^v(?<version>.*)$",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      matchStrings: ["ubuntu-(?<currentValue>\\d+\\.\\d+)(?:-arm)?[,\\]]"],
+      matchStringsStrategy: "any",
+      depNameTemplate: "ubuntu",
+      datasourceTemplate: "github-runners",
+    },
+  ],
+}
