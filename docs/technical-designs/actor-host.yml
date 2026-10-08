@@ -601,12 +601,15 @@ proposed-design:
     and the ledger's rows, keyed by the token and the entry id, which the
     migration keeps.
   on-saved: >-
-    The router calls the host's `saved` after each save it writes commits.
-    The host calls each listener registered with `onSaved` there, for an
-    `active` snapshot, after its own index update, in registration order.
-    A listener runs inside the router's call and must not call into the
-    router or the host; the migrations module's listener adds a job to its
-    queue for the next macrotask.
+    The router calls the host's `saved` after each save it writes commits,
+    including terminal saves; it omits error snapshots. The host calls
+    each listener registered with `onSaved` there, after its own index
+    update, in registration order. A listener runs inside the router's
+    call and must not call into the router or the host. The migrations
+    module's listener first withdraws empty `migration-failed` questions,
+    then, for an active actor whose saved version is behind its target and
+    whose pair has no failure record, adds a job to its queue for the next
+    macrotask.
   release: >-
     `release(actorId)` loads the version of the actor's stored snapshot
     through the loader, replacing a `missing` load the host kept, and then
