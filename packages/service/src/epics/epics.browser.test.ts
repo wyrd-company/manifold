@@ -5,6 +5,7 @@
 import { chromium } from "playwright";
 import { expect, test } from "vite-plus/test";
 import { epicWorld } from "./test-fixtures/world.ts";
+import { openHistory } from "../history/index.ts";
 import { mountConsole } from "../console/index.ts";
 import { consoleHost } from "../console/test-fixtures/host.ts";
 test("built Epics screen reads the mirror, focuses dependencies, and returns from a task with its selection", async () => {
@@ -12,7 +13,10 @@ test("built Epics screen reads the mirror, focuses dependencies, and returns fro
     server = await consoleHost(),
     browser = await chromium.launch({ headless: true });
   try {
-    mountConsole(server.host, { store: f.store });
+    mountConsole(server.host, {
+      store: f.store,
+      history: openHistory({ store: f.store, log: () => {} }),
+    });
     server.host.mount("/api/tasks", f.tasks.requestListener);
     server.host.mount("/api/epics", f.epics.requestListener);
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
@@ -105,7 +109,10 @@ test("Epics handles subtree links, missing roots, no sub-issues, cycle warnings,
     server = await consoleHost(),
     browser = await chromium.launch({ headless: true });
   try {
-    mountConsole(server.host, { store: f.store });
+    mountConsole(server.host, {
+      store: f.store,
+      history: openHistory({ store: f.store, log: () => {} }),
+    });
     server.host.mount("/api/tasks", f.tasks.requestListener);
     server.host.mount("/api/epics", f.epics.requestListener);
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
