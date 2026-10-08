@@ -684,7 +684,7 @@ proposed-design:
     by `http-host-configuration`, sets the listen address, default
     `127.0.0.1` port 7480. `store`, specified by `store-configuration`, sets the
     path of the store's database file and is required. `ServiceConfiguration`
-    gains `http: HttpHostConfiguration` and `store: StoreConfiguration`,
+    carries `http: HttpHostConfiguration` and `store: StoreConfiguration`,
     and `service-configuration`'s module exports both types.
 
     ```ts

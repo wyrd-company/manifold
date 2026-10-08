@@ -43,21 +43,13 @@ background:
     metadata schema, as `DESIGN.md` draws them.
   problems:
     - >-
-      A blueprint has no way to move its task's card, so the card on GitHub
-      does not show where the task is.
+      A card move accepted by GitHub before a crash is sent again when the
+      restored actor runs its invoke. The move must converge on its value
+      and retain attribution to the command that requested it.
     - >-
-      The process repository does not say which field is a Project's
-      lifecycle or which of its options a blueprint may set, so a typo in a
-      blueprint's status is found only when the move runs.
-    - >-
-      A move's write that GitHub took before a crash is sent again when the
-      restored actor runs its invoke again.
-    - >-
-      GitHub reports Manifold's own move as it reports a person's.
-    - >-
-      The operator creates a Project's fields and options by hand to match
-      the declaration, and a person who renames, removes, or adds one on
-      GitHub breaks card moves and the Board without anyone being told.
+      GitHub reports Manifold's writes and a person's edits through the
+      same event stream. Applied configuration and mirror state distinguish
+      owned writes, declaration changes, and drift.
 design-challenges:
   declaration: >-
     The declaration must say which field and which options each Project

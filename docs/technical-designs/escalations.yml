@@ -238,7 +238,7 @@ proposed-design:
     the answer's pending turn once, and it returns a function that wakes
     its sender.
   router-release: >-
-    The router gains `release(actorId)`, as `durable-event-delivery`
+    The router exports `release(actorId)`, as `durable-event-delivery`
     (held-actors) states. For a held actor it asks the host to restore the
     actor from its stored snapshot again; a restore that succeeds loads the
     actor and schedules it to drain its pending rows in order, and a

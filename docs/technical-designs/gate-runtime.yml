@@ -47,20 +47,12 @@ background:
     actor host, and escalations through their public interfaces.
   problems:
     - >-
-      The store's state query finds actors by one machine, and a machine is
-      one blueprint version, so a query for one version splits a gate's
-      population when a push adds a version.
+      A return state left by an eventless transition is absent from the
+      saved snapshot. Entry callbacks record that return for the save hook.
     - >-
-      A return state that an eventless transition leaves at once is never in
-      a saved snapshot, so a check of the saved snapshot alone misses a
-      return the token lint counts as reached.
-    - >-
-      The router schedules a drain only for rows it writes itself, and a
-      gate writes its token rows through the store.
-    - >-
-      The comparator contract names an age, dependency facts, a
-      critical-path length, and a portfolio item for each task, and a
-      snapshot holds none of these as a field.
+      Comparator inputs need age, dependency facts, critical-path length,
+      and portfolio balances beside each actor's snapshot. Grant rounds
+      gather those facts through module interfaces.
 design-challenges:
   one-round-one-input: >-
     Every evaluation of one grant round must see the population, the holders, and

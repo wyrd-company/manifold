@@ -250,7 +250,7 @@ proposed-design:
     Node script in `packages/service/scripts/` and is not part of
     `task check`, so `task check` stays free of a package build.
   ci: >-
-    `.github/workflows/check.yml` gains a `package` job with a matrix of
+    `.github/workflows/check.yml` has a `package` job with a matrix of
     `ubuntu-24.04` and `ubuntu-24.04-arm`. Each runs `pnpm install
     --frozen-lockfile`, `task package:service`, and `task package:smoke`
     for the runner's architecture, so each archive is built and started

@@ -666,7 +666,7 @@ proposed-design:
     `{ environment, threadId, messageId, placement: "joined" | "started" |
     "unknown", turnId: string | null }`.
 
-    The actor host gains three reads over every active actor, loaded or
+    The actor host exports three reads over every active actor, loaded or
     held, from its latest saved snapshot: `followers(environment,
     threadId)`, the ids of the actors whose identity holds the environment
     and lists the thread, in actor id order; `followedThreads(environment)`,
@@ -675,13 +675,13 @@ proposed-design:
     }` with the compiled validator of `schemas.events[type]` of the actor's
     version, `{ status: "undeclared" }` when that version does not declare
     the type, and `{ status: "unavailable" }` when the host cannot load the
-    version. It also gains `issueThreads(issue)`, every `{ actorId,
+    version. It also exports `issueThreads(issue)`, every `{ actorId,
     environment, threadId }` that an active actor whose identity holds the
     issue and an environment lists, in environment, thread, and actor id
-    order, read from the same index; and `ActorSave` gains `eventId`, the
+    order, read from the same index; and `ActorSave` carries `eventId`, the
     inbox event id whose delivery the save consumes, absent for a save
     outside a delivery.
-    The agent threads module gains `readThread(environment, threadId,
+    The agent threads module exports `readThread(environment, threadId,
     signal)`, the thread's session status, active turn id, and tool
     activities with their turn ids and call ids, read with
     `threads.detail`; `runningThreads(environment, signal)`, the threads
@@ -689,11 +689,11 @@ proposed-design:
     and `startTurn({ environment, threadId, messageId,
     text, signal })`, the dispatch path of `turn-start` with a given
     message id and literal text and no template. The environment source
-    gains `environmentId(environment, signal)`, which resolves after
+    exports `environmentId(environment, signal)`, which resolves after
     `ready` with the `environmentId` its connection confirmed, and the
     option `messagePlaced`, the hook `answer-placement` describes. The
-    escalations module's `ServiceEscalationKind` gains `agent-question`,
-    a service escalation request gains an optional `title` and
+    escalations module's `ServiceEscalationKind` includes `agent-question`,
+    a service escalation request carries an optional `title` and
     `freeText`, and `raise` joins a transaction its caller holds open.
   service-wiring: >-
     The module joins the service through its wiring parts in
