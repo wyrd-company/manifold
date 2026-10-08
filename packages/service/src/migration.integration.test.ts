@@ -37,6 +37,7 @@ test("intake starts a parcel actor and a blueprint API save migrates its waiting
   try {
     await expect.poll(() => service.store.loadSnapshot("task:I_A")?.snapshot.value).toBe("waiting");
     const previous = service.store.loadSnapshot("task:I_A")!;
+    const previousVisit = service.history.read("task:I_A")!.visits.at(-1)!;
     const question = service.escalations.list({ status: "open" });
     expect(question).toHaveLength(1);
     const address = service.http.address();
@@ -65,8 +66,22 @@ test("intake starts a parcel actor and a blueprint API save migrates its waiting
     expect((migrated.snapshot["context"] as Record<string, unknown>)["manifold"]).toEqual(
       (previous.snapshot["context"] as Record<string, unknown>)["manifold"],
     );
-    // Structural history seam: the rebase replaces this stored version assertion with ActorHistory.
-    expect(migrated.machine).toBe(`${service.revisions.latest()!.commit}:blueprints/parcel.yml`);
+    const targetMachine = `${service.revisions.latest()!.commit}:blueprints/parcel.yml`;
+    expect(migrated.machine).toBe(targetMachine);
+    expect(service.actorHost.subscription(migrated)).toEqual(
+      service.actorHost.subscription(previous),
+    );
+    const visits = service.history.read("task:I_A")!.visits;
+    expect(visits).toHaveLength(2);
+    expect(visits[0]).toEqual({ ...previousVisit, exitedAt: visits[1]!.enteredAt });
+    expect(visits[0]).not.toHaveProperty("exitEvent");
+    expect(visits[1]).toMatchObject({
+      visit: previousVisit.visit + 1,
+      value: "waiting",
+      machine: targetMachine,
+      blueprint: { path: "blueprints/parcel.yml", commit: service.revisions.latest()!.commit },
+    });
+    expect(visits[1]).not.toHaveProperty("exitedAt");
     service.router.publish({
       source: "github",
       eventId: "scanned-one",
@@ -126,6 +141,8 @@ test("a holder keeps its token, gate entry and reservation through the assembled
         { cause: error },
       );
     }
+    const previousVisit = service.history.read("task:I_A")!.visits.at(-1)!;
+    expect(previousVisit.value).toBe("waiting");
     const db = service.store.connection.database;
     const tokens = db.prepare("SELECT * FROM gates_token WHERE actor_id=?").all("task:I_A");
     const entries = db.prepare("SELECT * FROM gates_entry WHERE actor_id=?").all("task:I_A");
@@ -155,6 +172,14 @@ test("a holder keeps its token, gate entry and reservation through the assembled
     expect(service.store.loadSnapshot("task:I_A")!.machine).toBe(
       `${saved.commit}:blueprints/parcel.yml`,
     );
+    const visits = service.history.read("task:I_A")!.visits;
+    expect(visits.at(-2)).toEqual({ ...previousVisit, exitedAt: visits.at(-1)!.enteredAt });
+    expect(visits.at(-2)).not.toHaveProperty("exitEvent");
+    expect(visits.at(-1)).toMatchObject({
+      visit: previousVisit.visit + 1,
+      value: "waiting",
+      machine: `${saved.commit}:blueprints/parcel.yml`,
+    });
     expect(db.prepare("SELECT * FROM gates_token WHERE actor_id=?").all("task:I_A")).toEqual(
       tokens,
     );

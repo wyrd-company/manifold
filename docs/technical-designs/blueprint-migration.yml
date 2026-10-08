@@ -365,5 +365,7 @@ proposed-design:
     starts an actor through intake, saves a later version with a context
     change and its migration path through the blueprints API, and shows
     the actor continue from the same waiting state on the later version,
-    reading the mapped context, and its history showing one visit whose
-    blueprint commit changes with no event.
+    reading the mapped context, and its history ending the visit on the old
+    version with no exit event and starting a new visit on the later
+    version. The migration restores through a new actor-host record with
+    no `changedBy`.
