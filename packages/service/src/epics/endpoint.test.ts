@@ -94,10 +94,9 @@ test("read errors produce an empty 500 and log the request path", async () => {
   try {
     const epics = openEpics({
       github: {
-        trackedIssueIds: () => {
+        trackedIssues: () => {
           throw new Error("mirror unavailable");
         },
-        trackedIssue: () => undefined,
       },
       tasks: { list: () => ({ projects: [] }) },
       log: (entry) => logs.push(entry),

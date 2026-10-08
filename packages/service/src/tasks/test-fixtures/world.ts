@@ -174,8 +174,7 @@ export function boardWorld(usd = false, withActor = true) {
     held: () => false,
     boundProjects: () => projects,
     github: {
-      trackedIssueIds: () => mirror.trackedIssueIds(references),
-      trackedIssue: (id) => mirror.trackedIssue(id, references),
+      trackedIssues: () => mirror.trackedIssues(references),
     },
     actorUsage: ledger.actorUsage,
     accountUnit: () => (usd ? "usd" : undefined),

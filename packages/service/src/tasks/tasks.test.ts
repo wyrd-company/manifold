@@ -77,7 +77,7 @@ test("reads tasks through the HTTP host and uses current router holds, including
       store: f.store,
       held: (id) => Boolean(router.held(id)),
       boundProjects: () => [project],
-      github: { trackedIssueIds: () => [issue.nodeId], trackedIssue: () => tracked },
+      github: { trackedIssues: () => [tracked] },
       actorUsage: () => ({
         settled: true,
         accounts: [{ account: "sample", estimate: 10, actual: 12, variance: 2, outstanding: 0 }],
@@ -173,7 +173,7 @@ test("an errored delivery holds the actor until release restores it, while histo
       store: f.store,
       held: (id) => Boolean(router.held(id)),
       boundProjects: () => [project],
-      github: { trackedIssueIds: () => ["parcel"], trackedIssue: () => tracked },
+      github: { trackedIssues: () => [tracked] },
       actorUsage: () => ({ settled: false, accounts: [] }),
       listEscalations: () => [],
       thread: () => undefined,

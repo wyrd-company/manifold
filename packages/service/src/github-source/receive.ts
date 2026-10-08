@@ -95,6 +95,7 @@ export function startGitHubSource(options: GitHubSourceOptions): GitHubSource {
     requestSweep: runner.requestSweep,
     trackedIssue: (id) => mirror.trackedIssue(id, runner.bound),
     trackedIssueIds: () => mirror.trackedIssueIds(runner.bound),
+    trackedIssues: () => mirror.trackedIssues(runner.bound),
     stop: runner.stop,
   };
   return source;

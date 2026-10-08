@@ -1061,8 +1061,7 @@ it.each([false, true])(
       held: () => false,
       boundProjects: () => [project],
       github: {
-        trackedIssueIds: () => ["parcel"],
-        trackedIssue: () => ({ issue, items: [{ project, archived: false, fields: {} }] }),
+        trackedIssues: () => [{ issue, items: [{ project, archived: false, fields: {} }] }],
       },
       actorUsage: s.usage.actorUsage,
       listEscalations: () => [],

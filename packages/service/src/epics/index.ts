@@ -6,14 +6,12 @@ import { epicRoots, epicOf } from "./epics.ts";
 import type { Epics, EpicsOptions } from "./types.ts";
 export type { Epics, EpicsOptions, EpicsGitHub } from "./types.ts";
 export function openEpics(options: EpicsOptions): Epics {
-  const read = () =>
-    options.github.trackedIssueIds().flatMap((id) => {
-      const t = options.github.trackedIssue(id);
-      return t ? [t] : [];
-    });
   const epics: Epics = {
-    roots: () => epicRoots(read()),
-    get: (id) => epicOf(id, read(), options.tasks.list()),
+    roots: () => epicRoots(options.github.trackedIssues()),
+    get(id) {
+      const tracked = options.github.trackedIssues();
+      return epicOf(id, tracked, options.tasks.list(tracked));
+    },
     requestListener(request, response) {
       const path = new URL(request.url ?? "/", "http://localhost").pathname;
       if (request.method !== "GET") {

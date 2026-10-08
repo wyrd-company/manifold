@@ -29,8 +29,7 @@ export interface TasksTrackedIssue {
   }[];
 }
 export interface TasksGitHub {
-  trackedIssueIds(): readonly string[];
-  trackedIssue(id: string): TasksTrackedIssue | undefined;
+  trackedIssues(): readonly TasksTrackedIssue[];
 }
 export interface TasksActorUsage {
   readonly settled: boolean;
@@ -59,7 +58,7 @@ export interface TasksOptions {
   readonly log?: (entry: { level: "error"; path: string; error: string }) => void;
 }
 export interface Tasks {
-  list(): TasksResponse;
+  list(tracked?: readonly TasksTrackedIssue[]): TasksResponse;
   get(actorId: string): TaskResponse | undefined;
   readonly requestListener: RequestListener;
 }

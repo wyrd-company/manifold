@@ -8,6 +8,7 @@ import type {
   GitHubProject,
   GitHubIssue,
   TrackedIssue,
+  TrackedItem,
   ObservedField,
   ProjectField,
   ProjectFieldOption,
@@ -23,6 +24,65 @@ export interface Pending {
   requestedAt: number;
   generation: number;
   projectId: string | undefined;
+}
+function append<T>(groups: Map<string, T[]>, key: string, value: T) {
+  const group = groups.get(key);
+  if (group) group.push(value);
+  else groups.set(key, [value]);
+}
+export function trackedIssueIndex(state: MirrorState, bound: ReadonlyMap<string, GitHubProject>) {
+  const items = new Map<string, TrackedItem[]>();
+  const projects = new Map<string, Map<string, GitHubProject>>();
+  const fields = new Map<string, [string, ObservedField["value"]][]>();
+  const blockedBy = new Map<string, GitHubIssue[]>();
+  const blocking = new Map<string, GitHubIssue[]>();
+  const subIssues = new Map<string, GitHubIssue[]>();
+  const parents = new Map<string, GitHubIssue>();
+  for (const row of state.fields.values()) append(fields, row.itemId, [row.field.name, row.value]);
+  for (const row of state.items.values()) {
+    if (!row.present || !bound.has(row.projectId)) continue;
+    const project = bound.get(row.projectId)!;
+    let memberships = projects.get(row.item.contentNodeId);
+    if (!memberships) {
+      memberships = new Map();
+      projects.set(row.item.contentNodeId, memberships);
+    }
+    memberships.set(row.projectId, project);
+    if (row.item.contentType === "issue")
+      append(items, row.item.contentNodeId, {
+        project,
+        nodeId: row.item.nodeId,
+        archived: row.archived,
+        fields: Object.fromEntries(fields.get(row.item.nodeId) ?? []),
+      });
+  }
+  const lookup = (id: string) => state.issues.get(id)!.issue;
+  for (const row of state.dependencies.values()) {
+    if (!row.present) continue;
+    append(blockedBy, row.from, lookup(row.to));
+    append(blocking, row.to, lookup(row.from));
+  }
+  for (const row of state.subIssues.values()) {
+    if (!row.present) continue;
+    append(subIssues, row.from, lookup(row.to));
+    if (!parents.has(row.to)) parents.set(row.to, lookup(row.from));
+  }
+  const tracked = new Map<string, TrackedIssue>();
+  for (const id of [...state.issues.keys()].sort()) {
+    const row = state.issues.get(id)!;
+    const memberships = items.get(id);
+    if (!row.baselined || !row.present || !memberships) continue;
+    tracked.set(id, {
+      issue: row.issue,
+      items: memberships,
+      blockedBy: blockedBy.get(id) ?? [],
+      blocking: blocking.get(id) ?? [],
+      subIssues: subIssues.get(id) ?? [],
+      parent: parents.get(id),
+      projects: [...projects.get(id)!.values()],
+    });
+  }
+  return tracked;
 }
 export function createMirror(store: Store, now: () => number) {
   const db = store.connection.database;
@@ -353,57 +413,13 @@ export function createMirror(store: Store, now: () => number) {
         if (isTracked(state, bound, neighbor)) this.enqueue("issue", neighbor);
     },
     trackedIssueIds(bound: ReadonlyMap<string, GitHubProject>) {
-      const state = read();
-      return [...state.issues.values()]
-        .filter((row) => row.baselined && row.present && isTracked(state, bound, row.issue.nodeId))
-        .map((row) => row.issue.nodeId)
-        .sort();
+      return [...trackedIssueIndex(read(), bound).keys()];
     },
     trackedIssue(id: string, bound: ReadonlyMap<string, GitHubProject>): TrackedIssue | undefined {
-      const state = read();
-      const row = state.issues.get(id);
-      if (!row?.baselined || !row.present || !isTracked(state, bound, id)) return undefined;
-      const lookup = (node: string) => state.issues.get(node)!.issue;
-      return {
-        issue: row.issue,
-        items: [...state.items.values()]
-          .filter(
-            (r) =>
-              r.present &&
-              r.item.contentType === "issue" &&
-              r.item.contentNodeId === id &&
-              bound.has(r.projectId),
-          )
-          .map((r) => ({
-            project: bound.get(r.projectId)!,
-            nodeId: r.item.nodeId,
-            archived: r.archived,
-            fields: Object.fromEntries(
-              [...state.fields.values()]
-                .filter((f) => f.itemId === r.item.nodeId)
-                .map((f) => [f.field.name, f.value]),
-            ),
-          })),
-        blockedBy: [...state.dependencies.values()]
-          .filter((r) => r.present && r.from === id)
-          .map((r) => lookup(r.to)),
-        blocking: [...state.dependencies.values()]
-          .filter((r) => r.present && r.to === id)
-          .map((r) => lookup(r.from)),
-        subIssues: [...state.subIssues.values()]
-          .filter((r) => r.present && r.from === id)
-          .map((r) => lookup(r.to)),
-        parent: [...state.subIssues.values()]
-          .filter((r) => r.present && r.to === id)
-          .map((r) => lookup(r.from))[0],
-        projects: [
-          ...new Set(
-            [...state.items.values()]
-              .filter((r) => r.present && r.item.contentNodeId === id && bound.has(r.projectId))
-              .map((r) => r.projectId),
-          ),
-        ].map((p) => bound.get(p)!),
-      };
+      return trackedIssueIndex(read(), bound).get(id);
+    },
+    trackedIssues(bound: ReadonlyMap<string, GitHubProject>): readonly TrackedIssue[] {
+      return [...trackedIssueIndex(read(), bound).values()];
     },
     scanCursor(hook: number): number | undefined {
       return db.prepare("SELECT scanned_through FROM github_hook_scan WHERE hook_id=?").get(hook)?.[

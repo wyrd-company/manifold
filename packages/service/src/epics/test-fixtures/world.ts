@@ -78,8 +78,7 @@ export function epicWorld() {
     ]),
   );
   const github = {
-    trackedIssueIds: () => f.mirror.trackedIssueIds(references),
-    trackedIssue: (id: string) => f.mirror.trackedIssue(id, references),
+    trackedIssues: () => f.mirror.trackedIssues(references),
   };
   return { ...f, github, epics: openEpics({ github, tasks: f.tasks }) };
 }

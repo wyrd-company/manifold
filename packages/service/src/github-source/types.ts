@@ -66,6 +66,7 @@ export interface GitHubSource {
   requestSweep(): void;
   trackedIssue(nodeId: string): TrackedIssue | undefined;
   trackedIssueIds(): readonly string[];
+  trackedIssues(): readonly TrackedIssue[];
   stop(): Promise<void>;
 }
 export interface ProjectFields {

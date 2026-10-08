@@ -70,8 +70,7 @@ export async function overviewWorld() {
     held: (id) => !!router.held(id),
     boundProjects: () => f.projects,
     github: {
-      trackedIssueIds: () => f.mirror.trackedIssueIds(references),
-      trackedIssue: (id) => f.mirror.trackedIssue(id, references),
+      trackedIssues: () => f.mirror.trackedIssues(references),
     },
     actorUsage: f.ledger.actorUsage,
     accountUnit: () => "usd",

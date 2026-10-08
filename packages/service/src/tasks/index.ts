@@ -4,7 +4,7 @@
 // ---
 import { tasksApiPath } from "@wyrd-company/manifold-shared/tasks-api";
 import { boardProjects, taskDetail } from "./tasks.ts";
-import type { Tasks, TasksOptions } from "./types.ts";
+import type { Tasks, TasksOptions, TasksTrackedIssue } from "./types.ts";
 export type {
   Tasks,
   TasksOptions,
@@ -15,17 +15,14 @@ export type {
   TasksThreadView,
 } from "./types.ts";
 export function openTasks(options: TasksOptions): Tasks {
-  const reads = () => ({
+  const reads = (tracked = options.github.trackedIssues()) => ({
     projects: options.boundProjects(),
-    tracked: options.github.trackedIssueIds().flatMap((id) => {
-      const issue = options.github.trackedIssue(id);
-      return issue ? [issue] : [];
-    }),
+    tracked,
     escalations: options.listEscalations({}),
   });
   const tasks: Tasks = {
-    list() {
-      const { projects, tracked, escalations } = reads();
+    list(issues?: readonly TasksTrackedIssue[]) {
+      const { projects, tracked, escalations } = reads(issues);
       return boardProjects(
         projects,
         tracked,

@@ -206,8 +206,7 @@ export async function actorWorld() {
     held: () => false,
     boundProjects: () => f.projects,
     github: {
-      trackedIssueIds: () => f.mirror.trackedIssueIds(projects),
-      trackedIssue: (id) => f.mirror.trackedIssue(id, projects),
+      trackedIssues: () => f.mirror.trackedIssues(projects),
     },
     actorUsage: usage.actorUsage,
     accountUnit: () => "usd",

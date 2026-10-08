@@ -106,7 +106,7 @@ test("read failures log the path and return 500 without details", async () => {
       boundProjects: () => {
         throw new Error("store unavailable");
       },
-      github: { trackedIssueIds: () => [], trackedIssue: () => undefined },
+      github: { trackedIssues: () => [] },
       actorUsage: () => ({ settled: false, accounts: [] }),
       listEscalations: () => [],
       thread: () => undefined,
@@ -173,11 +173,12 @@ test("task escalation association includes issue subjects and returned-token hol
       held: () => false,
       boundProjects: () => f.projects,
       github: {
-        trackedIssueIds: () => ["parcel"],
-        trackedIssue: () => ({
-          issue: { nodeId: "parcel", repository: "example/delivery", number: 1, state: "open" },
-          items: [{ project: f.projects[0]!, archived: false, fields: {} }],
-        }),
+        trackedIssues: () => [
+          {
+            issue: { nodeId: "parcel", repository: "example/delivery", number: 1, state: "open" },
+            items: [{ project: f.projects[0]!, archived: false, fields: {} }],
+          },
+        ],
       },
       actorUsage: f.ledger.actorUsage,
       listEscalations: () => escalations,

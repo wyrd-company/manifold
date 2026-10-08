@@ -17,15 +17,27 @@ test("roots and tree reads include outside dependencies once and stop at untrack
     outside = issue("outside", 4),
     untracked = issue("untracked", 5);
   const tracked = [
-    { issue: root, subIssues: [untracked, child], blockedBy: [], blocking: [] },
-    { issue: child, parent: root, subIssues: [leaf], blockedBy: [outside], blocking: [leaf] },
-    { issue: leaf, parent: child, subIssues: [], blockedBy: [child], blocking: [] },
-    { issue: outside, subIssues: [issue("another", 6)], blockedBy: [], blocking: [child] },
+    { items: [], issue: root, subIssues: [untracked, child], blockedBy: [], blocking: [] },
+    {
+      items: [],
+      issue: child,
+      parent: root,
+      subIssues: [leaf],
+      blockedBy: [outside],
+      blocking: [leaf],
+    },
+    { items: [], issue: leaf, parent: child, subIssues: [], blockedBy: [child], blocking: [] },
+    {
+      items: [],
+      issue: outside,
+      subIssues: [issue("another", 6)],
+      blockedBy: [],
+      blocking: [child],
+    },
   ];
   const epics = openEpics({
     github: {
-      trackedIssueIds: () => tracked.map((t) => t.issue.nodeId),
-      trackedIssue: (id) => tracked.find((t) => t.issue.nodeId === id),
+      trackedIssues: () => tracked,
     },
     tasks: {
       list: () => ({
@@ -69,14 +81,13 @@ test("tree walks stop revisits and dependency cycles remain GitHub's", () => {
     b = issue("b", 2),
     c = issue("c", 3);
   const tracked = [
-    { issue: a, subIssues: [b, c], blockedBy: [c], blocking: [b] },
-    { issue: b, parent: a, subIssues: [c], blockedBy: [a], blocking: [c] },
-    { issue: c, parent: b, subIssues: [a], blockedBy: [b], blocking: [a] },
+    { items: [], issue: a, subIssues: [b, c], blockedBy: [c], blocking: [b] },
+    { items: [], issue: b, parent: a, subIssues: [c], blockedBy: [a], blocking: [c] },
+    { items: [], issue: c, parent: b, subIssues: [a], blockedBy: [b], blocking: [a] },
   ];
   const epics = openEpics({
     github: {
-      trackedIssueIds: () => tracked.map((t) => t.issue.nodeId),
-      trackedIssue: (id) => tracked.find((t) => t.issue.nodeId === id),
+      trackedIssues: () => tracked,
     },
     tasks: { list: () => ({ projects: [] }) },
   });
