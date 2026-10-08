@@ -1,0 +1,13 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `related-to`
+  # is the best fit.
+  related-to:
+    - operator-console
+    - state-visit
+    - agent-threads
+title: Pass
+description: >-
+  One turn of an agent thread that a state machine actor follows, from
+  the command or escalation answer that started it to the reply that
+  closed it: the agent's handoff, or the turn settling without one.

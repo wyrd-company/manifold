@@ -1,0 +1,89 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - usage-intake
+    - usage-tables
+    - operator-console
+    - accounts-declaration
+    - tasks-api
+terms:
+  - actual
+  - call
+  - late-attribution
+  - state-visit
+description: |-
+  Defines the actor usage endpoint of Manifold's API:
+  `GET /api/usage/actors/{actorId}`, which reads the usage counted for
+  one actor, in total and per state visit, in tokens and in each
+  account's native unit. `docs/specifications/actor-usage-api.openapi.yml`
+  is the machine-readable definition. The Actors list and the Actor page
+  of the operator console read it, and any automation may.
+
+  The endpoint is served by the usage intake module's listener, which the
+  service mounts with the HTTP host's `mount` at the prefix `/api/usage`,
+  and is always served without authentication. Access control belongs to
+  the deployment. It reads and changes nothing.
+
+  Path. The `{actorId}` segment is percent-decoded once. A segment that is
+  empty after decoding answers `404`. Any other id answers `200`: an id
+  the usage module has no call for answers zero tokens and no accounts, so
+  the answer for an actor whose first call has not arrived has the same
+  shape as for one with calls.
+
+  Counted calls. The calls counted for an actor are the postings whose
+  attribution names it: a posting whose ledger actor is the actor and that
+  has no late attribution, and a posting whose late attribution names the
+  actor. A posting counts in the state visit its attribution names: the
+  posting's `visit`, or its late attribution's `visit`. A pending posting
+  counts in tokens and not in any account, since it has no amount yet.
+
+  Answer. `200` with `Content-Type: application/json` and
+  `Cache-Control: no-store`, and the body:
+
+  - `actorId`: the decoded id.
+  - `tokens`: the token totals of every counted call, `{ input, output,
+    cacheRead, cacheWrite, reasoning }`, each the sum of that class over
+    the calls' postings as `usage-record` defines the classes. A posting's
+    tokens are its `tokens`, the tokens it adds to its base.
+  - `accounts`: one entry per account with a posted counted posting,
+    in account name order, `{ account, actual, unit }`. `actual` is the
+    sum of their amounts in the account's native unit, and equals the
+    `actual` of the same account in the usage module's `actorUsage` read
+    for the actor. `unit` is the unit the accounts declaration in force
+    declares for the account, and is absent for an account it does not
+    declare.
+  - `visits`: one entry per state visit number that a counted posting
+    names, in visit order, `{ visit, enteredAt, tokens, accounts }`.
+    `visit` is the number `usage_visits` holds; `enteredAt` is that
+    visit's entry time as an ISO 8601 UTC date and time with
+    milliseconds; `tokens` and `accounts` are as above over the postings
+    counted in that visit, `accounts` with `{ account, actual }` only. A
+    visit with no counted posting is not listed. A counted posting that
+    names no visit counts in the totals and in no visit.
+
+  Errors. A path under `/api/usage/actors/` with more than one segment
+  answers `404`. A method other than `GET` on the path answers `405` with
+  `Allow: GET`. A read that throws answers `500` and the error goes to
+  the service's log. Each error body is `{ error, message }`, as the
+  listener's other paths answer.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/actor-usage-api.openapi.yml` is a valid OpenAPI 3.1
+  document. A test in `packages/service/src/usage/` opens the usage module
+  and a ledger on one database file, pushes calls for one actor over two
+  state visits on two accounts, one declared with unit `usd` and one the
+  accounts declaration does not declare, a call that stays pending with
+  reason `unaccounted`, and a session's calls whose mapping arrives after
+  they posted, so that they reach the actor through late attribution; it
+  requests the endpoint through the service's HTTP host without
+  authentication and checks that the body validates against the response
+  schema, that each total and each visit's sums are the sums of the
+  postings stated, the pending call's tokens counted with no account, the
+  late calls counted in the visit their attribution names, that each
+  account's `actual` equals `actorUsage`'s, and that the session's ledger
+  actor no longer counts the late calls. It checks `200` with zeros for an
+  id with no call, the percent-decoded id of `task:` with a node id, the
+  `404` for an empty id and a deeper path, and the `405`. Fixture values
+  are generic and never drawn from Manifold's own domain.

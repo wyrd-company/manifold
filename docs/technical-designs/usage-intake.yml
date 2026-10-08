@@ -23,6 +23,7 @@ relationships:
     - usage-api
     - portfolio-api
     - move-operator-usage-through-the-ledger
+    - actor-usage-api
 terms:
   - actual
   - call
@@ -223,7 +224,9 @@ proposed-design:
   endpoint: >-
     The service mounts the module's listener with
     `mount("/api/usage", listener)`. The host CLI sends no authentication
-    credential. The listener serves `POST /api/usage/push`. It reads the body
+    credential. The listener serves `POST /api/usage/push`, and
+    `GET /api/usage/actors/{actorId}`, the actor usage read of
+    `actor-usage-api`. It reads the body
     up to 8 MiB, parses it as JSON, and validates it against
     `usage-push.schema.yml`, which references `usage-record.schema.yml`.
     It answers 413 to a larger body, 415 to a content type other than
@@ -351,6 +354,24 @@ proposed-design:
     unowned usage. The tasks read model's `actorUsage` is this read, so
     `GET /api/tasks/{actorId}` shows the task's usage with its late and
     moved calls. The read writes nothing.
+  actor-visit-usage: >-
+    `actorVisitUsage(actor)` answers the body of `actor-usage-api`. One
+    query reads the counted postings of the actor: each posting with no
+    late attribution whose `actor` is the actor, and each posted posting
+    whose late attribution's `actor` is the actor, with the visit, the
+    account, the amount, the status, and the tokens of each, the visit
+    being the late attribution's when it has one. A pure function,
+    `visitUsage(rows, visits, units)`, sums the token classes and the
+    posted amounts in total, per account, and per visit, and gives each
+    visit its entry time from the actor's `usage_visits` rows, so the
+    sums are tested without a database. The totals per account agree
+    with `actorUsage` by construction: both count a posted posting once,
+    for the actor its late attribution names, or else for its ledger
+    actor. The endpoint calls the read for each request and holds no
+    cache. The read writes nothing. `@wyrd-company/manifold-shared` adds
+    the subpath export `./actor-usage-api`, with `actorUsageApiPath(actorId)`,
+    the response types, and the guard `isActorUsageResponse`, so the
+    console checks the body at its boundary with no schema compiler.
   thread-ownership: >-
     The module's save hook runs inside every snapshot save, as the actor
     host's save hooks do. It reads `context.manifold` from the snapshot,
@@ -555,7 +576,8 @@ proposed-design:
     `listener.ts` the endpoints, `push.ts` the push transaction and its
     late attribution, `moves.ts` the move transaction, `unowned.ts` the
     unowned usage read, `actor-usage.ts` the actor usage read,
-    `attribution.ts` and `pricing.ts` pure functions, `reads.ts`
+    `actor-visit-usage.ts` the actor usage read per visit and its pure
+    `visitUsage`, `attribution.ts` and `pricing.ts` pure functions, `reads.ts`
     `lastUsedAt` and `pricing`, `hooks.ts` the save
     hook and its ownership attribution, and `migrations.ts` the steps.
     Step 1 creates the declarations, sessions, actors, threads, visits,
@@ -611,6 +633,8 @@ proposed-design:
       lastUsedAt(): Readonly<Record<string, number>>;
       /** What prices the calls: the declaration's own prices, and the models waiting for one. */
       pricing(): UsagePricing;
+      /** The counted usage of one actor in total and per state visit, as actor-usage-api answers it. */
+      actorVisitUsage(actor: string): ActorUsageResponse;
     }
 
     export type UsageMoveResult =
@@ -721,9 +745,15 @@ proposed-design:
     already hold under the target, and answers 0. A ledger
     reattribution is keyed by its posting and the posting's move number,
     so it is written once. A zero posting moves by its reattribution row
-    alone, which the same eligibility rule finds once. A crash inside any of these rolls its
+    alone, which the same eligibility rule finds once. `actorVisitUsage` and its endpoint only read, so a request that runs
+    twice answers twice from the current tables. A crash inside any of these rolls its
     transaction back whole.
   tests: |-
+    The actor usage read is tested as `actor-usage-api`'s validation
+    criteria state, in `actor-visit-usage.test.ts` beside the module, and
+    `visitUsage` is unit tested on rows with two visits, a posting with
+    no visit, and a pending posting.
+
     Service tests live in `packages/service/src/usage/usage.test.ts` and
     drive `openUsage`, its listener on an HTTP server the test opens, and
     a `Ledger` on the same database file, which each test opens in a

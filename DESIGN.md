@@ -670,8 +670,9 @@ breadcrumb shows "Actors / #ref actor", and "Actors" in it returns to the list.
 
 - Title row: "Actors" and a one-line description. No primary action.
 - Filters in one row: an Active / Completed segmented control, then
-  Portfolio item, Blueprint, Environment, and Account selects. The actor count
-  is right-aligned.
+  Portfolio item, Blueprint, Environment, and Account selects, each "All"
+  by default. The actor count ("3 active actors") and a ghost Refresh icon
+  button are right-aligned.
 - Columns: Task (title, reference in mono), Portfolio item, Blueprint (mono),
   Current state (status dot, state in mono, actor status, and a thread link
   icon for an active actor; "Last state" in Completed), Environment (mono),
@@ -680,28 +681,39 @@ breadcrumb shows "Actors / #ref actor", and "Actors" in it returns to the list.
   2px gaps. Completed visits use `edge`; the current visit is primary
   (45% opacity while it waits on a turn); an escalated visit is warning and a
   failed one is error. Each segment has a tooltip with the state and its time.
+- A cell still reading shows a muted ellipsis; a cell whose read failed
+  shows a muted dash.
 - A row opens the actor.
+- Empty states: "No active actors" in Active, "No completed actors" in
+  Completed, and "No actors match these filters" with "Clear filters"
+  when filters hide every row.
 
 #### Actor page
 
 - Header: "All actors" back link; the reference and title; a status badge
   (Running, Completed, Failed); a meta line with portfolio item, blueprint,
   environment, account, and start time. On the right: a Timeline / Sequence segmented
-  control and "Open thread".
+  control and "Open thread" when the actor has a thread to open.
 - Four tiles: Tokens, Cost, Time, Passes.
 - **Timeline** view: the actor timeline, one row per state visit with the
   state and pass on the left, a bar on a shared time axis, the event the
-  visit exited on after the bar ("handoff", "idle → retry"), or "running",
-  and usage on the right. A dashed
-  primary line marks now. A pass that ends without a handoff is warning. A
-  total row closes the table.
-- **Sequence** view: lifelines for Manifold, the T3 Code thread, and GitHub.
-  Manifold's messages are solid arrows; replies are dashed. A pass either
-  starts a thread ("Start thread") or continues one the actor already has
-  ("Continue thread"), as the blueprint decides. An abnormal reply,
-  such as "idle", is warning. The pass that is running is a note on the
+  visit exited on after the bar ("handoff", "idle", "answered: retry"), or
+  "running", and usage on the right. A dashed
+  primary line marks now while the actor runs. A pass that ends without a
+  handoff is warning. A visit that changed the blueprint commit shows the
+  new short commit, muted, under its state. A total row closes the table.
+- **Sequence** view: lifelines for Manifold, each T3 Code thread the actor
+  follows, and GitHub. Manifold's messages are solid arrows; replies are
+  dashed. A pass either starts a thread ("Start thread") or continues one
+  the actor already has ("Continue thread"), as the blueprint decides. An
+  abnormal reply, such as "idle", is warning. A card move is a solid arrow
+  to GitHub ("Move to Done · confirmed"), warning when unconfirmed; a
+  person's change on the board is a dashed arrow from GitHub ("Status:
+  Done · by a person"). The pass that is running is a note on the
   thread's lifeline. Usage sits in a right-hand column on the row of the
   reply that closed each pass.
+- The views are read-only. Nothing on the page sends a command or
+  changes a declaration.
 
 ### Blueprints
 

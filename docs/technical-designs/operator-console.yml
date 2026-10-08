@@ -13,6 +13,7 @@ relationships:
   # specification; `references` is the best fit.
   references:
     - actors-api
+    - actor-usage-api
     - blueprints-api
     - blueprint
     - blueprint-version
@@ -30,13 +31,19 @@ relationships:
     - environment-events
     - usage-api
     - price-table
+terms:
+  - pass
+  - state-visit
 objective: >-
   Give the operator console one package that builds into static files, one
   place in the service that serves them and the API the console reads, and a
   shell in T3 Code's visual language that every later screen fills, so that
   an operator opens the console from the service's own HTTP host, moves
-  between every screen `DESIGN.md` lists, sees every active actor with
-  its blueprint, current state, and environment, sees where every task
+  between every screen `DESIGN.md` lists, sees every actor, active or
+  completed, with its blueprint, state, environment, usage, time, and
+  timeline, and follows one actor's state visits and passes on its
+  Actor page as a timeline and as a sequence of messages between
+  Manifold, its T3 Code threads, and GitHub, sees where every task
   of each bound Project is, and reads and answers a task's escalations,
   state, threads, and usage on its Task page. It sees an epic's shape and
   next work on the Epics screen: the tasks under one root task as a
@@ -283,7 +290,8 @@ proposed-design:
     state: "Nothing here yet", "This screen is not built in this version
     of Manifold."
   api-client: >-
-    `src/api/client.ts` exports `fetchActors()`. It sends `GET /api/actors`
+    `src/api/client.ts` exports `fetchActors(status)`, with the actor
+    reads `actor-reads` adds. It sends `GET /api/actors`
     without authentication headers. It turns the answer into `ok` with the
     actors for `200`, or `failed` with a message for any other status, a
     network error, or a body that is not an actors response. The mapping
@@ -294,26 +302,248 @@ proposed-design:
     window regains focus and when the screen opens. No timer reads on a
     schedule.
   actors-screen: >-
-    `ActorsContent` reads `fetchActors()`. Its title row is "Actors" with
-    its description, and it has no primary action. Under it, one row holds
-    the actor count, right-aligned, and a ghost "Refresh" icon button that
-    reads again. The table columns are the Actors list's columns in
-    `DESIGN.md` that the endpoint answers, in its order: Task, Portfolio
-    item, Blueprint, Current state, and Environment. Usage, Time, and
-    Timeline join when the store holds what they show. Task is the issue
+    `ActorsContent` is the Actors list. Its route `actors` takes the
+    search `{ status?: "completed", item?, blueprint?, environment?,
+    account? }`, each a string, and drops any other value, so a list
+    link keeps its control and filters across a reload. The title row is
+    "Actors" with its description, and it has no primary action. One row
+    holds the Active / Completed segmented control, which sets `status`,
+    then the Portfolio item, Blueprint, Environment, and Account selects,
+    each "All" by default and listing the values the listed actors hold,
+    the account values taken from the rows' usage answers; then the actor
+    count right-aligned, "<n> active actors" or "<n> completed actors"
+    after the filters, and a ghost "Refresh actors" icon button that
+    reads the list and every row's reads again. Active reads
+    `fetchActors("active")` and Completed reads `fetchActors("completed")`.
+    A pure function, `filterActors(rows, search)`, keeps the rows that
+    match every set filter; an actor matches an account when its usage
+    answer has that account. The columns are those of `DESIGN.md`: Task,
+    Portfolio item, Blueprint, Current state (headed "Last state" in
+    Completed), Environment, Usage, Time, and Timeline. Task is the issue
     reference in mono when the summary has `issue`, else the actor id in
     mono, with the actor id muted under a reference. Portfolio item is its
     value, or a muted dash when absent. Blueprint is the path in mono with
     the commit's first seven characters muted under it, or the `machine`
     value in mono when the summary has no `blueprint`. Current state is a
-    success status dot and each state path in mono, one line each.
-    Environment is its value in mono, or a muted dash when absent. The
-    actor's status, the thread link, and the Active / Completed control
-    and filters join with the screens that give them data.
-    Rows follow the API's order and do not open a page. With no
-    actor, the table is replaced by the empty state "No active actors",
-    "Actors appear here while a blueprint runs." For `failed`, an error
-    alert shows the message with "Try again".
+    status dot and each state path in mono, one line each, then the
+    actor's status label, and, for an active actor whose task read
+    answers a thread with a `url`, a link icon to the last such thread,
+    labelled "Open thread". Environment is its value in mono, or a muted
+    dash. Usage is the token total over each account's actual, formatted
+    in its unit with the shared amounts formatter, one line per account;
+    a muted dash when the answer has no token. Time is the actor's
+    duration, as `actorTimeline` gives it. Timeline is the mini bar of
+    `actor-timeline`. Each row is a link to the actor's page, its name the
+    Task cell's text, so a row opens by click and by keyboard. A cell
+    whose read has not answered shows a muted ellipsis, and a cell whose
+    read failed shows a muted dash with the message as its title; the
+    row's other cells still show. With no actor, Active shows the empty
+    state "No active actors", "Actors appear here while a blueprint
+    runs.", and Completed shows "No completed actors", "Actors appear here
+    when they end." With actors and none that match the filters, the
+    table is replaced by "No actors match these filters" with a "Clear
+    filters" button. A failed list read shows an error alert with the
+    message and "Try again".
+  actor-reads: >-
+    `src/api/client.ts` exports `fetchActors(status)`,
+    `fetchActorHistory(actorId)`, and `fetchActorUsage(actorId)`.
+    `fetchActors("active")` sends `GET /api/actors` and
+    `fetchActors("completed")` sends `GET /api/actors?status=completed`;
+    each answers as `fetchActors` does. `fetchActorHistory` sends
+    `GET /api/actors/{actorId}/history` and `fetchActorUsage` sends
+    `GET /api/usage/actors/{actorId}`, each with the id percent-encoded as
+    one segment; each turns `200` into `ok` with the body, `404` into
+    `missing`, and anything else, a network error, or a body that fails
+    its guard into `failed` with a message. Each mapping from a status
+    and a body to a result is a pure function. Bodies are checked at this
+    boundary with `isActorsResponse` and the history guard of
+    `@wyrd-company/manifold-shared/actors-api`, and with
+    `isActorUsageResponse` of `@wyrd-company/manifold-shared/actor-usage-api`.
+    Reads go through TanStack Query under the keys `["actors", status]`,
+    `["actor-history", actorId]`, `["actor-usage", actorId]`, and, for a
+    `task:` id, the Task page's `["task", actorId]` with `fetchTask`, so
+    the list, the Actor page, and the Task page share one read of each.
+    The list reads each listed row's history, usage, and task with
+    `useQueries`. Reads happen when a screen opens, when the window
+    regains focus, and on Refresh, which marks every key of the screen
+    stale. No timer reads on a schedule, and nothing moves on screen
+    between reads: "now" is the time of the screen's latest history read.
+  actor-history-stand-in: >-
+    The console designs against the actor history seam as ruled: a
+    history answer holds `actorId`; `visits`, in order, each with its
+    state value, its blueprint `{ path, commit }`, `enteredAt`,
+    `exitedAt` (absent while the visit runs), and the type of the event
+    it exited on (absent while it runs); `events`, each with `eventId`,
+    `type`, `topic`, `receivedAt`, and `payload`; and `commands`, each
+    with `kind`, `threadId`, `turnId` (null for a command that names no
+    turn), and `at`. Until the history owner's shared types merge, the
+    console holds this shape and its guard in
+    `src/api/actor-history.ts`, and its tests serve recorded answers of
+    this shape. At the rebase onto the merged seam, the file is removed
+    and its readers import the owner's types and guard; field names
+    follow the owner's. Where the merged seam adds a member, the console
+    reads it in place of the fallback beside it here: the actor's status
+    in place of membership in the active list and the task read's
+    `held`; a visit's number in place of its place in `visits`; the id of
+    the event a visit exited on in place of the last event of its exit
+    type received at or before `exitedAt`; and the actor's summary in
+    place of the summary found in the active or completed list.
+  actor-route: >-
+    The Actor page is the route `actors/$actorId` under `/console/`, with
+    the actor id percent-encoded in its segment, and the search
+    `{ view?: "sequence" }`, so the view survives a reload and a pasted
+    link. It is a route of its own, beside the Actors route rather than
+    under it, so the list's search does not reach it; the sidebar marks
+    Actors as the current screen and the breadcrumb shows "Actors / <ref>
+    actor", where `<ref>` is the issue reference, or the actor id when
+    the actor has no issue. "Actors" in the breadcrumb and the "All
+    actors" back link return to the list. The Task page's Current actor
+    block links "Open actor" to this route.
+  actor-page: >-
+    `ActorContent` reads the actor's history, its usage, the active list,
+    and, when the actor id is a `task:` id, its task. The actor's summary
+    is its entry in the active list, else in the completed list, which
+    the page then reads. The header holds the reference and title (the
+    task read's issue title when it has one), the status badge, and the
+    meta line: portfolio item, blueprint path and short commit,
+    environment, the accounts of the usage answer, and the start time,
+    the first visit's `enteredAt`. The status is Running for an actor in
+    the active list, Failed for one whose task read answers
+    `actor.status` `held`, and Completed for an ended one. On the right,
+    the Timeline / Sequence segmented control sets `view`, and "Open
+    thread" links to the last thread of the task read with a `url`; it is
+    absent when there is none. Four tiles follow: Tokens, the usage
+    answer's token total; Cost, each account's actual in its unit; Time,
+    the actor's duration; and Passes, the number of passes. The view
+    below is the Timeline or the Sequence. A history answer of `missing`
+    shows the empty state "Actor not found", "The store holds no history
+    for this actor.", with a link to Actors. A failed read shows an error
+    alert with the message and "Try again", and the reads that answered
+    still show. The page reads and writes nothing else: it sends no
+    command and changes no declaration.
+  actor-model: |-
+    `src/screens/actors/actor-model.ts` holds the pure functions the list
+    and the page draw from, so every rule below is tested without a
+    browser.
+
+    ```ts
+    export interface ActorModelInput {
+      readonly actorId: string;
+      readonly history: ActorHistory;
+      readonly usage: ActorUsageResponse | undefined;
+      /** Escalations of the actor's task, open and recent, when it has a task read. */
+      readonly escalations: readonly Escalation[];
+      readonly running: boolean;
+      readonly held: boolean;
+      /** The time of the latest history read, in epoch milliseconds. */
+      readonly now: number;
+    }
+
+    export function actorTimeline(input: ActorModelInput): ActorTimeline;
+    export function actorSequence(input: ActorModelInput): ActorSequence;
+    export function actorPasses(input: ActorModelInput): readonly Pass[];
+    export function leafStatePaths(value: unknown): readonly string[];
+    ```
+
+    Visits. Each history visit gets a number, its place in `visits` from
+    1, which is the state visit number the usage answer's `visits`
+    carry, and its leaf state paths, the rule `actors-api` gives. A visit
+    runs from `enteredAt` to `exitedAt`, or to `now` when it has none
+    and the actor is running. A visit whose blueprint commit differs from
+    the previous visit's at the same path is a migration: its row and its
+    segment carry the new commit.
+
+    Passes. A pass starts at a `turn-start` command, or at an
+    `agent.escalation.answered` event with a non-null `turnId`, and
+    belongs to that command's or event's thread and turn. It is a "Start
+    thread" pass when a `thread-create` command for its thread comes
+    before it with no other pass on that thread between, and a "Continue
+    thread" pass otherwise. It is closed by the first `agent.handoff` of
+    its turn, or else by the first `t3.turn.settled` of its turn; a
+    settle that closes it is "idle" when its `state` is `completed`, else
+    its `state`. A pass with no closing event is running while the actor
+    runs, and ends unclosed when the actor has ended. Passes are numbered
+    from 1 in the order they start. A command whose `turnId` is null
+    takes the turn of the first `t3.turn.started` on its thread after it.
+    A pass's usage is the sum of the usage answer's visits from the visit
+    it started in to the visit its closing event arrived in, a time
+    falling in the visit with the greatest entry time not after it.
+
+    Timeline. `actorTimeline` answers the axis, from the first visit's
+    entry to the last visit's end; the duration, the axis's length; one
+    row per visit with its number, its leaf paths, the pass that ran in
+    it, its start and end, its exit label, its tone, its usage, and its
+    commit when it is a migration; and a total row with the token total
+    and each account's actual. The exit label is "running" for a running
+    visit, else the label of the event it exited on: "handoff" for
+    `agent.handoff`, the closing label of the pass a `t3.turn.settled`
+    closed, "answered: <choice or text>" for an escalation answer,
+    and for any exit of a visit in which an escalation of the task was
+    answered,
+    "<field>: <to>" for `github.project-item.field-changed`, "<id> done"
+    and "<id> failed" for XState's `xstate.done.actor.<id>` and
+    `xstate.error.actor.<id>`, and the event type in mono for any other.
+    A visit's tone is error when it is the last visit of a held actor;
+    warning when it received `agent.escalated`, overlaps an escalation of
+    the task between its `raisedAt` and its `closedAt` (or now), or closed
+    a pass without a handoff; primary when it is the running visit,
+    waiting when a pass is running in it; and edge otherwise. The mini
+    bar draws the same rows as segments.
+
+    Sequence. `actorSequence` answers the lifelines, Manifold, one
+    "T3 Code thread" lifeline per thread in the order the actor first
+    named it, labelled with the thread id's first eight characters, and
+    GitHub; and the messages in time order, a command at its `at` and an
+    event at its `receivedAt`, each with its from and to lifelines, its
+    label, its style (`solid`, `dashed`, `self`, or `note`), its tone, and
+    the pass it opens or closes. A pass's start is one solid arrow from
+    Manifold to its thread, "Start thread" or "Continue thread", with the
+    `thread-create` command folded into it; an escalation answer's arrow
+    is "Continue thread · answer: <choice or text>". A command of another
+    kind is a solid arrow to its thread labelled with its kind. An event
+    whose topic's first segment is `t3` or `agent` is a dashed reply from
+    the thread its payload's `threadId` names: the closing label of a
+    pass for the event that closed it, which is warning when it is not
+    "handoff"; "escalated" in warning for `agent.escalated`; and the type
+    for any other, warning for `t3.session.failed`,
+    `t3.thread.archived`, and `t3.thread.deleted`. `t3.turn.started` is
+    not drawn, since the pass's arrow shows the start, nor is a
+    `t3.turn.settled` that follows its pass's handoff. A
+    `github.project-item.field-changed` whose `movedBy.actorId` is the
+    actor is a card move: a solid arrow from Manifold to GitHub, "Move to
+    <to>", with "confirmed", or "unconfirmed" in warning when
+    `movedBy.confirmed` is false. Any other field change is a dashed
+    arrow from GitHub, "<field>: <to>", with "by a person" when
+    `movedBy` is null and "by <actorId>" for another actor. Any other
+    `github` event is a dashed arrow from GitHub labelled with its type.
+    An event of any other source is a self message on Manifold labelled
+    with its type. A running pass is a note on its thread's lifeline,
+    "running", after its last message. The message that closes a pass
+    carries the pass's usage for the right-hand column.
+  actor-views: >-
+    The Timeline view is a table: the state paths in mono and "pass <n>"
+    muted on the left, the bar on the shared axis, the exit label after
+    the bar, and the visit's tokens and actuals right-aligned; a dashed
+    primary line marks now while the actor runs, and the total row closes
+    the table. The bar's left and width are percentages of the axis,
+    with a minimum width so a visit of a few milliseconds stays visible.
+    The Sequence view is a grid with one column per lifeline and one row
+    per message, the lifelines drawn as vertical lines and each message
+    as an arrow between its columns, and a right-hand usage column. Both
+    are DOM and CSS from the console's tokens, with no chart library, so
+    each label is text the browser test reads and the colors follow the
+    theme. Each segment and bar has a tooltip with the state and its
+    time; each message has its time in its title.
+  actors-layout: >-
+    `src/screens/ActorsContent.tsx` is the list. `src/screens/actors/`
+    holds `ActorContent.tsx`, `ActorTimeline.tsx`, `ActorSequence.tsx`,
+    `TimelineBar.tsx` (the mini bar, which the list and the timeline
+    rows share), `actor-model.ts`, and their tests. `src/router.tsx` adds
+    the Actors route's search and the `actors/$actorId` route.
+    `src/styles.css` adds the Actors section's classes, and
+    `TaskContent.tsx` adds the "Open actor" link. The service adds no
+    module: the history and completed routes are the history owner's,
+    and the usage read is the usage module's, as `usage-intake` states.
   tasks-api-client: >-
     `src/api/tasks.ts` exports `fetchTasks()`, `fetchTask(actorId)`, and
     `answerEscalation(id, answer)`. `fetchTasks` sends `GET /api/tasks`
@@ -3376,7 +3606,12 @@ proposed-design:
     same `saveId` answers `already-saved` or pushes the change once. The
     list, source, and lint endpoints only read. A draft is the operator's
     latest text for a path, written whole on each change, so a reload or a
-    crash of the browser leaves the last written text. The actors
+    crash of the browser leaves the last written text. The Actors list
+    and the Actor page only read: their state is the URL's search and
+    TanStack Query's cache, so a read that runs twice draws the same
+    rows from the same answers, a reload reads again from the service,
+    and a read cut off halfway leaves the previous answer shown. The
+    actors
     endpoint and the console listener only read, so a request that
     runs twice answers twice from the current store and files. A console
     build that runs twice empties `dist/` and writes the same files; a
@@ -3405,6 +3640,48 @@ proposed-design:
     summary with no identity fields; it is not an error. The console shows
     every failed read as an alert on the screen that made it, and the shell
     keeps working.
+  actors-tests: >-
+    Each behavior is red before green, and tests go through public
+    interfaces. In `packages/console`, `actor-model.test.ts` drives
+    `actorTimeline`, `actorSequence`, and `actorPasses` over four
+    recorded history answers with their usage answers: an actor that ran
+    the starter repository's default blueprint from intake through both
+    card moves, confirmed, and a handoff to its end; an escalated one,
+    whose first pass settles without a handoff, whose escalation is
+    answered with a choice, and whose next pass continues the same thread
+    to a handoff; a failed one, held in a visit after a turn settled with
+    `error`; and one that migrated, whose visit's blueprint commit changes
+    with no other member. For each it checks the rows, their exit labels,
+    tones, passes, and usage, the total, the lifelines, every message's
+    ends, label, style, and tone, the "Start thread" and "Continue
+    thread" arrows, the confirmed card move and a person's field change
+    from GitHub, the migration's commit, and, for a running variant of
+    the default actor, the running visit, the waiting tone, the "running"
+    note, and the axis ending at `now`. Unit tests cover the result
+    mappings of `fetchActors(status)`, `fetchActorHistory`, and
+    `fetchActorUsage`, the guard of the stand-in history, `filterActors`,
+    and the Actors route's search. The browser test,
+    `packages/service/src/console/actors.browser.test.ts`, starts the
+    production HTTP host with the built console, the console mount with
+    its actors, history, and completed routes, the usage listener, and the
+    tasks mount, on one database file where the actor host ran two
+    actors of a fixture blueprint by routing events, one to its final
+    state and one left running in a pass, and the usage module holds
+    calls for both. It opens Actors and sees the running actor with its
+    state, usage, time, and mini bar; switches to Completed, sees the
+    ended actor and the count, reloads and still sees Completed; sets a
+    Portfolio item filter that leaves no row and clears it; opens the
+    ended actor and sees its status, tiles, one Timeline row per visit
+    with its exit label and usage, and the total; switches to Sequence,
+    sees the three lifelines, a "Start thread" arrow, the handoff reply
+    with the pass's usage, and the card move with "confirmed"; reloads
+    and still sees Sequence; returns with "All actors"; opens the running
+    actor and sees Running, the "running" note, and "Open thread" with
+    the thread's link. Until the history owner merges, the test serves
+    recorded history answers at the history and completed paths from a
+    fixture listener, and the rebase replaces it with the merged routes.
+    Fixture values are generic and never drawn from Manifold's own
+    domain.
   tests: >-
     Each behavior is red before green, and tests go through public
     interfaces. The blueprints endpoints are tested as `blueprints-api`'s
