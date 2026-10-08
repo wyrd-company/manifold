@@ -16,6 +16,7 @@ relationships:
     - blueprint
     - blueprint-version
     - tasks-api
+    - epics-api
     - escalation-contract
     - lint-console-edits-on-the-service
     - declarations-api
@@ -32,7 +33,10 @@ objective: >-
   between every screen `DESIGN.md` lists, sees every active actor with
   its blueprint, current state, and environment, sees where every task
   of each bound Project is, and reads and answers a task's escalations,
-  state, threads, and usage on its Task page. It changes a process
+  state, threads, and usage on its Task page. It sees an epic's shape and
+  next work on the Epics screen: the tasks under one root task as a
+  dependency graph read from GitHub, with the chain that holds the most
+  open work. It changes a process
   from the Blueprints screen: edits each blueprint on a canvas of its
   states and transitions, with an inspector for every node and edge, or as
   YAML in a view the operator toggles to, with the service's own lint
@@ -139,6 +143,12 @@ design-challenges:
     declaration is a YAML file a person also edits by hand. An edit must
     change only the values it names, keep the file's comments and order,
     and still apply when the file changed on the branch under the draft.
+  epic-from-github: >-
+    An epic's shape is GitHub's: its sub-issues and its dependencies, which
+    reach issues outside the tree and on no bound Project, and which may
+    form cycles GitHub's data allows. The Epics screen must show that
+    shape as GitHub holds it, keep no relationship of its own, and still
+    give one deterministic critical path.
   browser-proof: >-
     The console is proved only when a browser renders it from the service.
     The test must run inside `task check` on a developer machine and in CI.
@@ -157,6 +167,12 @@ proposed-design:
     of each bound Project in lanes by lifecycle status, and a card opens
     the Task page, which reads `GET /api/tasks/{actorId}` and answers the
     task's open escalations through `POST /api/escalations/{id}/answer`.
+    The Epics screen reads `GET /api/epics` and `GET
+    /api/epics/{issueNodeId}`, specified in `epics-api`, which the epics
+    read model, `packages/service/src/epics/`, serves from the GitHub
+    mirror and the tasks read model, mounted under `/api/epics` with
+    `mount`, and draws the epic as a graph whose critical path a pure
+    function computes in the browser.
     The tasks read model, `packages/service/src/tasks/`, specified in
     `tasks-api`, is mounted by service assembly under `/api/tasks` with
     `mount`. The Portfolio screen reads and writes through the endpoints
@@ -239,7 +255,7 @@ proposed-design:
     stylesheet, sets the class from the kept choice before the first paint,
     so that a reload in dark theme does not flash light.
   empty-screens: >-
-    Overview, Epics, Environments, and the Settings tabs
+    Overview, Environments, and the Settings tabs
     Accounts and budget sources and General show
     their title row and the empty state from `DESIGN.md`: a dashed border,
     the screen's icon, the title "Nothing here yet", and the line "This
@@ -486,7 +502,7 @@ proposed-design:
     T3 Code source's `thread`, `tokenHolder` is the gates module's
     `tokenHolder`, `accountUnit` reads the account's `unit` from usage
     intake's `accounts()`, and `held` is whether the router's `held` answers for
-    the actor.
+    the actor. The part gives the tasks read model as its member `tasks`.
   board-and-task-convergence: >-
     The tasks endpoints only read, so a request that runs twice answers
     twice from the current state. An answer from the escalation panel is
@@ -525,6 +541,308 @@ proposed-design:
     answers it through `POST /api/escalations/{id}/answer` with text, and
     answers it from the panel with a choice; the panel shows the text
     answer as the one recorded, and the module holds that answer only.
+  epics-routes: >-
+    The Epics screen is the route `epics` under `/console/`, with two
+    search parameters: `root`, the node id of the epic's root task, and
+    `selected`, the node id of the selected issue. A reload or a pasted
+    link shows the same epic with the same selection, and the Task page's
+    back link returns to it. `epicsSearch` in `src/screens/EpicsContent.tsx`
+    validates them: each is kept when it is a non-empty string, and
+    dropped otherwise. The Task page opened from Epics is the route
+    `epics/task/$actorId`, with the actor id percent-encoded in its
+    segment and the same search parameters, beside the Board's
+    `board/task/$actorId`. Both render `TaskContent` with the screen it
+    came from, `board` or `epics`, which names the breadcrumb's first
+    entry, its link, and the page's back link: "Epics" links to `epics`
+    with the search parameters the operator came from. The header's
+    breadcrumb reads the screen from the route in the same way. The
+    sidebar keeps Epics selected on the Task page opened from it.
+  epics-api-client: >-
+    `src/api/epics.ts` exports `fetchEpicRoots()` and `fetchEpic(nodeId)`.
+    `fetchEpicRoots` sends `GET /api/epics` and `fetchEpic` sends `GET
+    /api/epics/{issueNodeId}` with the id percent-encoded. Each turns the
+    answer into `ok` with the body, or `failed` with a message for any
+    other status, a network error, or a body that does not validate, as
+    `fetchActors` does; `fetchEpic` turns `404` into `missing`. Each
+    mapping from a status and a body to a result is a pure function.
+    Bodies are checked at this boundary with the guards exported by
+    `@wyrd-company/manifold-shared/epics-api`. Reads go through TanStack
+    Query under the keys `["epics"]` and `["epic", nodeId]`, read when the
+    screen opens and when the window regains focus. No timer reads on a
+    schedule.
+  epics-screen: >-
+    `EpicsContent` reads `fetchEpicRoots()` and, for the shown root,
+    `fetchEpic(root)`. Under the title row is the toolbar, then the graph
+    card, then the selection bar, as `DESIGN.md` states. The toolbar
+    holds the Root task select, the summary, a ghost "Refresh" icon
+    button that reads both again, and, right-aligned, the "Critical path"
+    and "Fade completed" switches. The select lists the roots in the
+    API's order, each as its reference in mono and its title, with
+    "Closed" muted after a closed root. The shown root is the `root`
+    search parameter when it is set, else the first root; a `root` that
+    names a tracked issue the list does not hold is shown first in the
+    select, so a link to a sub-tree opens it. Choosing a root sets `root`
+    and removes `selected`. The summary counts the issues of the tree
+    other than the root: "N tasks · N done · N open", done being closed.
+    Each switch is on by default and is kept in `localStorage` under
+    `manifold.epics.criticalPath` and `manifold.epics.fadeCompleted`, set
+    to the operator's latest choice. With no root, the screen shows the
+    empty state "No epics", "An epic appears here when a tracked issue has
+    sub-issues on GitHub." For `missing`, the graph card shows the empty
+    state "Root task not found", "This issue is not on a bound Project.",
+    with a link to Epics with no search parameters. A root whose tree
+    holds no other issue shows the empty state "No sub-issues" in the
+    card. For `failed`, an error alert shows the message with "Try
+    again". When the epic has cyclic dependencies, a warning alert above
+    the graph says "N dependencies on GitHub form a cycle. The critical
+    path leaves them out."
+  epics-graph: |-
+    `src/screens/epics/epic-graph.ts` holds the graph's pure functions.
+    Each takes the epic as the API answers it and returns plain values,
+    so the critical path, focus, and fading are tested without a browser.
+
+    ```ts
+    import type { Epic } from "@wyrd-company/manifold-shared/epics-api";
+
+    /** The issues drawn and their dependencies, with each cyclic dependency marked. */
+    export function epicGraph(epic: Epic): EpicGraph;
+    /** The chain with the most open issues, through `through` when it is given. */
+    export function criticalPath(graph: EpicGraph, through?: string): Chain;
+    /** The issue, the issues it waits on, and the issues that wait on it. */
+    export function neighborhood(graph: EpicGraph, nodeId: string): Focus;
+    /** Each node's and edge's opacity, and the edges drawn critical. */
+    export function epicEmphasis(graph: EpicGraph, state: EmphasisState): Emphasis;
+
+    export interface EmphasisState {
+      readonly hovered?: string;
+      readonly selected?: string;
+      readonly criticalPath: boolean;
+      readonly fadeCompleted: boolean;
+    }
+    export interface Emphasis {
+      /** Node id to opacity, 0 to 1. */
+      readonly nodes: ReadonlyMap<string, number>;
+      /** Edge id to opacity, 0 to 1. */
+      readonly edges: ReadonlyMap<string, number>;
+      readonly critical: ReadonlySet<string>;
+    }
+
+    export interface EpicGraph {
+      /** Node ids in the API's order. */
+      readonly nodes: readonly string[];
+      readonly edges: readonly GraphEdge[];
+      /** Whether the issue is open; a closed issue is done. */
+      open(nodeId: string): boolean;
+    }
+    export interface GraphEdge {
+      /** `${blocking}->${blocked}` */
+      readonly id: string;
+      readonly blocking: string;
+      readonly blocked: string;
+      /** Both ends lie in one strongly connected component. */
+      readonly cyclic: boolean;
+    }
+    export interface Chain {
+      /** Node ids from the first issue waited on to the last issue waiting. */
+      readonly nodes: readonly string[];
+      /** Edge ids between consecutive nodes. */
+      readonly edges: readonly string[];
+      readonly open: number;
+    }
+    export interface Focus {
+      readonly nodes: ReadonlySet<string>;
+      readonly edges: ReadonlySet<string>;
+    }
+    ```
+
+    `epicGraph` draws every issue of the answer except the root, and the
+    root too when a dependency names it. Each dependency is an edge from
+    `blocking` to `blocked`. Tarjan's algorithm finds the strongly
+    connected components over the edges, visiting nodes and edges in the
+    API's order; an edge whose two ends are in one component is cyclic.
+    The edges that are not cyclic form an acyclic graph, since every cycle
+    lies inside one component.
+
+    `criticalPath` works on that acyclic graph. A chain is a path in it,
+    and its weight is the number of open issues on it. Chains compare by,
+    in turn: the most open issues; the fewest issues; and the sequence of
+    their nodes' indexes in the API's order, compared element by element,
+    the lower first. The best chain ending at an issue is the issue alone
+    or the best chain ending at one of the issues it waits on followed by
+    the issue, whichever compares first; the best chain starting at an
+    issue is defined the same way over the issues that wait on it. Both
+    are computed once per graph in topological order. Through an issue,
+    the critical path is the best chain ending at it joined to the best
+    chain starting at it, the issue counted once. With no `through`, it is
+    the chain through any issue that compares first; when no issue is
+    open, it is empty. A cyclic edge is never on a chain.
+
+    `neighborhood` is the issue, the ends of every edge, cyclic or not,
+    that names it, and those edges.
+  epics-canvas: >-
+    `EpicGraphView`, under `src/screens/epics/`, draws the graph with
+    ReactFlow in a card on a dotted grid, with ReactFlow's zoom controls at
+    the bottom left and the legend at the bottom right, as `DESIGN.md`
+    states. The graph is read only: nodes do not drag and edges do not
+    connect. `layoutEpic(graph, measure)` in `epic-layout.ts` is a pure
+    async function from the graph to positioned nodes and edges with
+    elkjs's `layered` algorithm, the engine the blueprint canvas uses, left
+    to right, with orthogonal edge routing, each node 152×84, 40px between
+    nodes, 64px between layers, and each edge from its `blocking` node's
+    right side to its `blocked` node's left side, so a task sits to the
+    right of every task it waits on. elkjs breaks the graph's cycles
+    itself; cyclic edges are laid out with the rest. Layout runs again
+    when the set of nodes or edges changes, and the first drawing of an
+    epic fits the view. Each edge is drawn as a polyline through its
+    section's points with 6px rounded corners and an arrow at its blocked
+    end, as the blueprint canvas draws its edges.
+  epics-nodes: >-
+    Each issue is a `TaskNode`, the ReactFlow custom node `DESIGN.md`
+    names, 152×84 in the node style the blueprint canvas's `StateNode`
+    uses. From top to bottom: the status mark and the reference in mono,
+    with an "Escalated" warning badge when `openEscalations` is above 0 or
+    a "Failed" error badge when the actor is `held`; the title in at most
+    two lines, or the reference again in muted text when the mirror has
+    no title; and the lifecycle line, the status on the task's first
+    Project, or "No status", then the actor's first state path in mono.
+    The status mark is a check for a closed issue, whose title is muted; a
+    status dot in the actor's color, as on a Board card, for an open task
+    with an actor; and a hollow dot for an open issue with no actor. An
+    issue that is no task shows "Not on a bound Project" in its lifecycle
+    line. An outside issue has a dashed border, and its lifecycle line
+    starts with "Outside this epic". Edges are 1.5px in the `edge` color;
+    a critical edge is 2px primary; a cyclic edge is 1.5px dashed in the
+    error color and is never critical. The legend shows the done, actor,
+    and no-actor marks, the outside border, and the edge, critical, and
+    cyclic strokes.
+  epics-focus: >-
+    `epicEmphasis(graph, state)` gives every node and edge its opacity and
+    names the edges drawn critical, from the hovered or keyboard-focused
+    node, the selection, and the two switches; `TaskNode` and the edges
+    apply it with a 150ms opacity transition. The critical edges are
+    those of the critical path through the selected node when there is a
+    selection, else those of `criticalPath(graph)` when "Critical path" is
+    on, else none. Focus is the hovered node's `neighborhood` when a node
+    is hovered or focused, else the selected node's critical path when
+    there is a selection, else everything. Out of focus, nodes are at 30%
+    and edges at 10%. In focus, with no hover and no selection, "Fade
+    completed" puts closed nodes at 55% and the edges whose `blocking`
+    end is closed at 25%; every other node and edge in focus is at 100%.
+    The selected node has the 2px primary border and ring. Clicking a
+    node, or Enter on a focused node, sets `selected` to it; clicking the
+    selected node, "Clear", or Escape removes `selected`. Nodes are
+    focusable in the API's order with Tab. A `selected` that names no
+    drawn node is ignored.
+  epics-selection-bar: >-
+    The selection bar is 56px under the graph card. With no selection it
+    shows, muted, "Select a task to see the chain through it." With a
+    selection it shows the chain's references in mono joined by arrows,
+    the selected one in primary text, cut with an ellipsis from the left
+    when it does not fit, then "N open", then "Clear" (ghost) and the one
+    action: "Open task" (primary) for an issue with a task, linking to
+    `epics/task/$actorId` with the screen's search parameters, or "Open on
+    GitHub" (outline) opening the issue's URL in a new tab for an issue
+    with no task.
+  epics-endpoint: >-
+    The epics read model is `packages/service/src/epics/`. `openEpics`
+    takes its reads as functions and structural parts, holds no state, and
+    computes each answer per request from what they return, so each
+    request reads the mirror and the tasks list as they are. It reads
+    every tracked issue once per request, `trackedIssueIds` then
+    `trackedIssue` for each, and the tasks list once. Pure functions in
+    `epics.ts` build the answers: `epicRoots(tracked)` and `epicOf(nodeId,
+    tracked, tasks)`, which walks the tree, collects the outside issues
+    and dependencies, and joins each issue to its task entries by node id,
+    as `epics-api` states. `requestListener` implements `epics-api` and
+    writes the JSON. A read that throws answers `500` and the error goes
+    to `log` with the request path.
+  epics-public-interface: |-
+    `packages/service/src/epics/index.ts` exports exactly these names.
+
+    ```ts
+    import type { RequestListener } from "node:http";
+    import type { EpicResponse, EpicRootsResponse } from "@wyrd-company/manifold-shared/epics-api";
+    import type { TasksResponse } from "@wyrd-company/manifold-shared/tasks-api";
+
+    export function openEpics(options: EpicsOptions): Epics;
+
+    export interface EpicsOptions {
+      /** The GitHub source's `trackedIssueIds` and `trackedIssue`. */
+      readonly github: EpicsGitHub;
+      /** The tasks read model's `list`. */
+      readonly tasks: { list(): TasksResponse };
+      readonly log?: (entry: { level: "error"; path: string; error: string }) => void;
+    }
+
+    export interface Epics {
+      roots(): EpicRootsResponse;
+      get(issueNodeId: string): EpicResponse | undefined;
+      /** Mounted with `mount("/api/epics", ...)`. */
+      readonly requestListener: RequestListener;
+    }
+    ```
+
+    `EpicsGitHub` is declared structurally in the module as the members
+    it reads of the GitHub source: `trackedIssueIds()` and
+    `trackedIssue(nodeId)` with the `issue`, `blockedBy`, `blocking`,
+    `subIssues`, and `parent` of `TrackedIssue`, so the source satisfies
+    it and a test passes fixtures of the same shape.
+
+    `@wyrd-company/manifold-shared` adds the subpath export `./epics-api`,
+    which exports `epicsApiPath` (`/api/epics`), the response types of
+    `epics-api`, `isEpicRootsResponse`, and `isEpicResponse`,
+    dependency-free type guards as `./tasks-api` exports; a shared test
+    checks each guard against the OpenAPI definitions with fixtures that
+    pass and fail.
+  epics-wiring: >-
+    The `epics` wiring part, `epics/wiring.ts`, opens the epics read model
+    after the `tasks` part, with the GitHub source as `github` and the
+    `tasks` member as `tasks`, logging `epics-read-failed`, and mounts its
+    `requestListener` at `/api/epics` with `mount`. The `tasks` part gives
+    the tasks read model as its member `tasks`, so the epics answers carry
+    each task's status, actor, and escalations exactly as the Board shows
+    them.
+  epics-convergence: >-
+    The epics endpoints only read, so a request that runs twice answers
+    twice from the current mirror and store. The Epics screen writes only
+    its two `localStorage` keys, each set to the operator's latest choice,
+    and its search parameters; a crash leaves the last choice written or
+    the one before it.
+  epics-tests: >-
+    Each behavior is red before green, and tests go through public
+    interfaces. In `packages/service/src/epics/`, the endpoint test in
+    `epics-api`'s validation criteria, with the real tasks read model over
+    the same fixtures. In `packages/console`, unit tests cover the two
+    result mappings, `epicsSearch`, and `epic-graph.ts`: `criticalPath`
+    over a fixture with two chains of equal open count and different
+    lengths, two of equal open count and length, a three-dependency cycle
+    beside an acyclic chain, a cycle that two acyclic chains enter and
+    leave, closed issues at the start, middle, and end of a chain, a
+    graph with no open issue, an outside issue on the best chain, and a
+    selection through a closed issue and through an issue on no chain;
+    `neighborhood` with a cyclic edge; `epicEmphasis` for hover, a
+    selection, both switches on and off, and a hover over a selection;
+    and `epicGraph` drawing the root only when a dependency names it.
+    `epic-layout.ts` is tested on the same fixtures: every acyclic edge's
+    `blocked` node lies right of its `blocking` node, and no two nodes
+    overlap. The browser test,
+    `packages/service/src/epics/epics.browser.test.ts`, starts the
+    production HTTP host with the built console and the console, tasks,
+    and epics mounts, on a store with GitHub mirror fixtures over two
+    bound Projects: a root with a tree three levels deep, dependencies
+    across levels and branches, a tree issue blocked by an issue of
+    another tree, a closed task, a task with an escalated actor, and an
+    issue on no bound Project. It opens Epics and checks the root select,
+    the summary, each node's reference, mark, badge, and lifecycle line,
+    the outside node's dashed border, and the critical edges; turns
+    "Critical path" off and sees no critical edge, and "Fade completed"
+    off and sees the closed node opaque, and both stay off after a
+    reload; hovers a node and sees its neighbors opaque and another node
+    at 30%; selects a node and sees the selection bar's chain and open
+    count; opens the task and sees the Task page with "Epics" in the
+    breadcrumb; returns with the back link and sees the same selection;
+    and chooses the other root and sees its graph. Fixture values are
+    generic and never drawn from Manifold's own domain.
   blueprints-routes: >-
     The Blueprints screen has two routes: `blueprints`, the list, and
     `blueprints/$`, the editor, whose splat is the blueprint's path as the

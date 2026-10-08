@@ -421,20 +421,40 @@ a task sits to the right of every task it waits on. "Waits on" is GitHub's
 issue dependency ("blocked by"); Manifold keeps no dependency data of its own.
 
 - Title row: "Epics" and a one-line description.
-- Toolbar: a Root task select, a summary (tasks, done, open), and two
-  switches on the right: "Critical path" and "Fade completed". Both are on by
-  default.
+- Toolbar: a Root task select, a summary (tasks, done, open), a ghost
+  "Refresh" icon button, and two switches on the right: "Critical path" and
+  "Fade completed". Both are on by default, and each operator's choice is
+  kept between visits.
 - The graph sits in a card on a dotted grid, with zoom controls at the bottom
   left and a legend at the bottom right. Under the graph is a 56px selection
   bar.
 
+The Root task select lists every tracked issue that has sub-issues and whose
+parent is not a tracked issue: open roots first, then closed roots marked
+"Closed", each as its reference and title. The epic is the root's sub-issue
+tree. The summary counts the tree's issues other than the root; a closed
+issue is done. The root shows in the graph only when a dependency names it.
+
 A task node is 152×84px: a status mark and the reference, an "Escalated" or
 "Failed" badge when that applies, the title in at most two lines, and the
 lifecycle state with the actor's current state. A done task shows a check and
-a muted title. An open task with no actor shows a hollow dot.
+a muted title. An open task with no actor shows a hollow dot. A sub-issue that
+is not on a bound Project shows "Not on a bound Project" in place of the
+lifecycle state.
+
+**Outside issues.** A dependency from a task of the tree to an issue outside
+it shows that issue as a node with a dashed border and "Outside this epic"
+before its lifecycle state. It takes part in the critical path, since the
+tree waits on it, and is not counted in the summary.
+
+**Cycles.** GitHub's dependencies can form a cycle. A dependency inside a
+cycle is a 1.5px dashed `error` edge and is never critical, and a warning
+alert above the graph says "N dependencies on GitHub form a cycle. The
+critical path leaves them out."
 
 **Critical path.** Critical edges are 2px primary; other edges are 1.5px
-`edge`.
+`edge`. The critical path is the chain with the most open tasks; between
+chains with as many, the shorter one.
 
 **Focus.** Everything that is not in focus fades: nodes to 30%, edges to 10%.
 Transitions take 150ms.
@@ -444,11 +464,18 @@ Transitions take 150ms.
 - Select a task (click, or Enter on a focused node): focus is the critical
   path through that task: the chain of most open tasks before it, the task,
   and the chain of most open tasks after it. The selection bar shows the
-  chain, its open count, "Clear", and "Open task". Clicking the selected
-  task again clears the selection.
+  chain, its open count, "Clear", and "Open task", or "Open on GitHub" for
+  an issue that is not a task. Clicking the selected task again, or Escape,
+  clears the selection. With no selection, the bar says "Select a task to see
+  the chain through it."
 - With no hover and no selection, "Critical path" highlights the root task's
   critical path, and "Fade completed" fades edges that leave done tasks (25%)
   and done nodes (55%).
+
+The selected root and task are in the address, so a reload, a pasted link, or
+the Task page's back link shows the same view. With no root task, the screen
+shows "No epics": "An epic appears here when a tracked issue has sub-issues on
+GitHub."
 
 ### Portfolio
 

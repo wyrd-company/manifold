@@ -472,7 +472,8 @@ proposed-design:
     | step `t3code-started` | | | | |
     | `console` | `console/wiring.ts` | `mountConsole`, logging `console-read-failed`. | | |
     | `blueprints-api` | `blueprints-api/wiring.ts` | `mountBlueprintsApi`, as `operator-console` states, logging `blueprints-api-failed`. | | |
-    | `tasks` | `tasks/wiring.ts` | `openTasks`, as `operator-console` states for the Tasks API, logging `tasks-read-failed`; mounts its listener at `/api/tasks`. | | |
+    | `tasks` | `tasks/wiring.ts` | `openTasks`, as `operator-console` states for the Tasks API, logging `tasks-read-failed`; mounts its listener at `/api/tasks`. | `tasks` | |
+    | `epics` | `epics/wiring.ts` | `openEpics` with the GitHub source and the tasks read model, as `operator-console` states for the Epics API, logging `epics-read-failed`; mounts its listener at `/api/epics`. | | |
     | `listen` | `http-host/wiring.ts` | Registers the host's `close`, then awaits `listen`. | | `requests` |
     | step `listening` | | | | |
 

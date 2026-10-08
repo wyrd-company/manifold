@@ -84,6 +84,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **draft** the edited text of one process repository file in the console, with the commit it is based on, kept in the browser until it is saved or discarded.
 - **drift** a change to a bound Project's owned configuration made on GitHub since Manifold last applied it, which the declaration in force does not hold.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
+- **epic** the issues under one root task: its sub-issue tree on GitHub, the issues outside the tree its dependencies name, and the dependencies among them.
 - **escalation** a question put to a person, with up to three choices or a free-text answer, by a blueprint state or by the service, closed by the first answer.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
 - **event match** a JSONata expression over an event that decides whether a transition takes it.
