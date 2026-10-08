@@ -1,0 +1,31 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - actor-history
+    - usage-intake
+description: >-
+  History and usage both identify an actor's state visits. A migration
+  can change the blueprint version while keeping the state value. Calls
+  can reach the service after that save with times on either side of it.
+  The two API answers must give those calls the same visit identity.
+considered-options:
+  "1": >-
+    Let history own one visit record per actor, state value, and blueprint
+    version interval; let usage read its visit number and entry time.
+  "2": >-
+    Let history and usage keep separate visit records and reconcile their
+    numbering when answers are read.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    One record gives the two answers the same identity by construction.
+    History's save hook runs before usage's in the same save transaction,
+    so version changes create a visit before usage takes its number.
+    Retention keeps those visit rows with usage. Independent records would
+    need agreement across version changes, late calls, and retention.
+expected-outcomes:
+  positive:
+    - History and usage answer identical visit numbers and entry times.
+    - A blueprint migration starts a visit even when its state value stays the same.
+  negative:
+    - Usage depends on the history visit interface and save-hook ordering.

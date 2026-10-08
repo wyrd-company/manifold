@@ -1,0 +1,43 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - retention
+    - actor-history
+    - usage-intake
+    - gate-runtime
+description: >-
+  Event payloads and comparator inputs grow with events and grant rounds.
+  Operators need bounded detail retention and durable usage attribution,
+  actor summaries, reservations, and token ownership. Accounting reads
+  use an actor's visit number and entry time even after the actor ends.
+considered-options:
+  "1": >-
+    Prune eligible ended actors' consumed events and commands, source
+    event records, and gate evaluations; keep snapshots, history visits,
+    usage, ledger rows, and token rows for the life of the store.
+  "2": >-
+    Prune every ended actor's records, including visits and accounting,
+    under the history window.
+  "3": >-
+    Keep every event, command, and comparator input for the life of the
+    store.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 bounds the largest detail rows while preserving accounting
+    and attribution. The default windows are 90 days after an actor ends
+    for its consumed events and commands, 30 days after acceptance for
+    source events, and 30 days after evaluation for comparator inputs.
+    Configured windows can be whole days or forever. Running actors,
+    pending inbox rows, held tokens' evaluations, and open escalations'
+    dependencies protect their detail. Option 2 breaks usage by visit and
+    the accounting record. Option 3 leaves the largest rows unbounded.
+expected-outcomes:
+  positive:
+    - Usage by visit and actor summaries remain readable after event and command pruning.
+    - Reservations and held tokens retain the records they need.
+    - Operators choose retention windows, including forever, per supported kind.
+  negative:
+    - Accounting, visits, snapshots, and token rows continue to grow.
+    - A pruned source event cannot reject a duplicate for an actor subscribed after its first acceptance.
+    - Pruned events and commands cannot be inspected, and pruned comparator evaluations cannot be replayed.

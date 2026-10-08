@@ -1,0 +1,25 @@
+# GAP-SCHEMA: the WIP risk schema requires slug and response; artifact IDs
+# derive from filenames and its declared property is response-strategy.
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  # GAP-EDGE: the risk schema declares no edges; mitigated-by is the best fit.
+  mitigated-by:
+    - service-assembly
+    - operator-console
+title: Concurrent checks may fail on a shared machine
+description: >-
+  Multiple test suites can contend for CPU and delay child processes,
+  persistence, and browser readiness beyond assumptions in tests. A check
+  can fail while the same test succeeds alone, delaying review and hiding
+  failures that also occur without contention.
+categories: [technical]
+likelihood: 3
+impact: 3
+response-strategy: mitigate
+status: open
+# Mitigation:
+# Single default-worker and four-worker checks and a fresh-clone four-worker
+# check pass. Two concurrent service child-process suites pinned to one CPU
+# pass with default workers. Two concurrent full default-worker checks still
+# fail four to six tests each. This risk is reduced and remains open until
+# those full runs converge without weakening behavior assertions.

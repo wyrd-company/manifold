@@ -1,0 +1,26 @@
+# GAP-SCHEMA: the WIP risk schema requires slug and response; artifact IDs
+# derive from filenames and its declared property is response-strategy.
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  # GAP-EDGE: the risk schema declares no edges; mitigated-by is the best fit.
+  mitigated-by:
+    - retention
+    - store
+    - usage-intake
+    - portfolio-ledger
+title: Retained accounting and operational rows may grow without a bound
+description: >-
+  Retention bounds eligible ended actors' event and command detail,
+  source event records, and gate evaluations. Usage, ledger rows, token
+  rows, history visits, snapshots, and other operational tables remain
+  for the life of the store. A long-running service can exhaust its disk
+  even when every configured prune run succeeds.
+categories: [technical]
+likelihood: 3
+impact: 3
+response-strategy: mitigate
+status: open
+# Mitigation:
+# Keep accounting and attribution intact while measuring retained table
+#   growth on a populated store. Extend pruning only with explicit row
+#   dependency rules and a retention contract for each additional kind.

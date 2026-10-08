@@ -1,0 +1,37 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - dependency-currency
+    - comparator-sandbox
+description: >-
+  Dependency currency must preserve the Node support floor and the
+  TypeScript compiler API used by comparator loading and lint. A general
+  update rule can pin engines.node to the newest Node or raise TypeScript
+  to a compiler that does not provide that runtime JavaScript API.
+considered-options:
+  "1": >-
+    Disable Renovate updates to engines, hold TypeScript below 7, and
+    update the development Node version and its types through Renovate.
+  "2": >-
+    Let Renovate raise engines and TypeScript under the general rules,
+    rejecting incompatible updates in review.
+  "3": >-
+    Hold all Node and TypeScript updates until Manifold replaces its
+    compiler API integration.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    The targeted holds preserve the supported Node floor and comparator
+    contract while permitting compatible compiler and Node updates.
+    engines.node is raised by hand when Manifold uses a newer Node API.
+    The TypeScript hold ends when Manifold stops using the compiler's
+    JavaScript API or TypeScript 7 provides it. Review-only rejection
+    repeatedly proposes incompatible changes; a blanket hold prevents
+    compatible updates.
+expected-outcomes:
+  positive:
+    - Renovate preserves the service support floor.
+    - Compatible TypeScript and development Node updates continue to arrive.
+  negative:
+    - An operator must revisit the TypeScript hold when the compiler API contract changes.
+    - A support-floor increase requires a manifest edit outside Renovate.

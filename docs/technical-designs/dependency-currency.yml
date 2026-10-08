@@ -1,5 +1,7 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
+  contextualized-by:
+    - hold-dependency-updates-at-runtime-contracts
   related-to:
     - agent-threads
     - usage-decoder

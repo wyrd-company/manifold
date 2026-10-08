@@ -9,6 +9,7 @@ relationships:
     - process-repository
     - store
   mitigates:
+    - github-mirror-read-scale
     - user-owned-projects-unreadable
 objective: >-
   Give every issue on a bound GitHub Project one task actor, whose blueprint
