@@ -169,8 +169,13 @@ proposed-design:
     This drops the `applied` call from the revision follower and the first
     pass from the wiring part, adds the endpoint to the operator's API,
     and replaces the pass and save tests with request tests.
-    Until the answer, the implementation builds option 1, and does not
-    merge into `epic/foundation`.
+    Options 2 and 3 are outlined here, not specified in full: if the user
+    chooses either, this design takes one amendment round that specifies
+    it fully before the implementation merges, and for option 3 that
+    round specifies durable request intent and its recovery after a
+    restart, so an accepted, deferred, or retried request survives one,
+    with failure fixtures. Until the answer, the implementation builds
+    option 1, and does not merge into `epic/foundation`.
   later-version: >-
     The target of a path is the `LoadedBlueprint` of that path in
     `latest().blueprints`. An actor is behind when its stored snapshot is
