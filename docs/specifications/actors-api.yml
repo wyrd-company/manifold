@@ -114,8 +114,9 @@ description: >-
     one.
   - `prunedAt`: absent until retention removes the history of the ended
     actor, as `retention` states, and then the time it did, as an ISO 8601
-    UTC time with milliseconds. A pruned actor's `visits` and `commands`
-    are empty and its `events` hold only the events it never took.
+    UTC time with milliseconds. A pruned actor keeps its `visits`; its
+    `commands` are empty and its `events` hold only the events it never
+    took.
 
   An actor that ended before the history tables existed answers its
   summary, its end, and its events, each consumed event with no `visit`;

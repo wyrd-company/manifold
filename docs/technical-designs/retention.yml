@@ -57,9 +57,10 @@ design-challenges:
     token, an open reservation, an open escalation, or a posted call
     depends on.
   one-actor-at-a-time: >-
-    An actor's inbox rows, its history rows, and the mark that its history
-    is gone must leave together, or a crash leaves an actor with a history
-    that holds visits and no events, or events with no visits.
+    An actor's consumed inbox rows, its event links and commands, and the
+    mark that they are gone must leave together, or a crash leaves an actor
+    whose history holds links to events that are gone, or events with no
+    link.
   event-loop: >-
     `node:sqlite` is synchronous. A prune that deletes a year of rows in
     one statement holds the service's one thread for its whole length.
@@ -73,7 +74,7 @@ proposed-design:
     interval. A pass deletes three kinds of rows, each against its own
     retention window from the `retention` section of the service
     configuration, as `retention-configuration` specifies: the consumed
-    inbox rows and the history of each ended actor, which share one window
+    inbox rows, event links, and commands of each ended actor, which share one window
     counted from the actor's end; the source events of each event source,
     counted from their acceptance; and the gate evaluations, counted from
     their evaluation. The module owns no table. Each kind is deleted by the
@@ -124,7 +125,7 @@ proposed-design:
     }
 
     export interface PruneResult {
-      /** Ended actors whose history this pass removed. */
+      /** Ended actors whose events and commands this pass removed. */
       readonly actors: number;
       readonly inboxRows: number;
       readonly historyRows: number;
@@ -152,12 +153,13 @@ proposed-design:
 
     | Kind | Window | Time compared with the cutoff | Rows deleted |
     | --- | --- | --- | --- |
-    | Ended actors | `historyDays` | the ended snapshot's `saved_at`, the actor's end | the actor's consumed inbox rows, and its `history_visit`, `history_event`, and `history_command` rows |
+    | Ended actors | `historyDays` | the ended snapshot's `saved_at`, the actor's end | the actor's consumed inbox rows, and its `history_event` and `history_command` rows; its `history_visit` rows stay |
     | Source events | `sourceEventDays.<source>`, else `sourceEventDays.default` | `router_source_event.accepted_at` | the source event row |
     | Gate evaluations | `gateEvaluationDays` | `gates_evaluation.evaluated_at` | the evaluation row |
   ended-actors: >-
     The unit of the history window is one ended actor, never one row: an
-    actor is pruned whole once its end is past the window, and a running
+    actor's events and commands are pruned together once its end is past
+    the window, and a running
     actor's inbox and history are never pruned, however old their rows
     are. The pass reads the candidates with
     `store.prunableEnded({ endedBefore, after, limit })`, 100 at a time,
@@ -165,12 +167,16 @@ proposed-design:
     in one `store.connection.transaction`, `store.pruneEnded(actorId)` and,
     when it answers `pruned`, `history.prune(actorId)`. `pruneEnded`
     deletes the actor's consumed inbox rows and marks the snapshot's
-    history as pruned; `history.prune` deletes the actor's visits, event
-    links, and commands. The two commit together, so the store never holds
-    an actor whose history is marked pruned while its history rows remain,
-    or the reverse. The ended snapshot stays: the actor's summary, its end,
+    history as pruned; `history.prune` deletes the actor's event links and
+    commands. The two commit together, so the store never holds an actor
+    whose history is marked pruned while its links or commands remain, or
+    the reverse. The ended snapshot stays: the actor's summary, its end,
     and its output are what the completed actors list and the history
-    answer read, as `actor-history` states. The actor's pending inbox rows
+    answer read, as `actor-history` states. The actor's visits stay: usage
+    postings are never pruned, and the actor usage read takes each
+    visit's entry time from the history's visits, so a visit a posted call
+    names is kept with the call. A visit is a few hundred bytes; the
+    event payloads are what the window removes. The actor's pending inbox rows
     stay, since a row the actor never consumed is not part of the history
     the window covers.
   protections: >-
@@ -187,10 +193,11 @@ proposed-design:
     | --- | --- | --- |
     | An unconsumed inbox row | its own row; its token, for a `gate:` row; its own duplicate check | pending rows are never deleted; token rows are never deleted; an actor's duplicate check is the inbox's unique key on actor and event id, which keeps every pending row |
     | A running actor's history | its inbox rows, visits, event links, and commands | only ended actors are pruned |
+    | An ended actor's usage by visit | the visits its postings name, with their entry times | visits are never deleted |
     | An outstanding token | its token row and the evaluation that granted it | token rows are never deleted; an evaluation an unreturned token names is not deleted |
     | An open reservation | the ledger's hold, keyed by its token id | the ledger and token rows are never deleted |
     | An open escalation | the actor or the gate its subject names | the actors and gates the pass keeps |
-    | A posted call's attribution | the posting's actor, item, and visit number | usage and ledger rows are never deleted; a visit number stays on the posting after the visit's history row is gone |
+    | A posted call's attribution | the posting's actor, item, and visit number | usage and ledger rows and history visits are never deleted |
 
     An ended actor holds no open reservation, since the save that ends it
     settles it, as `usage-intake` states, and holds no unreturned token,
@@ -220,12 +227,13 @@ proposed-design:
     `gate-runtime` states. A deleted evaluation cannot be replayed.
   what-a-pruned-row-no-longer-shows: >-
     An ended actor past the history window answers the actors API with its
-    summary, its end and output, its pending events, and `prunedAt`, the
-    time its history was removed; its visits, its consumed events with
-    their payloads, and its commands are gone, so the Actor page shows no
-    timeline or sequence for it and says that retention removed them. Its
-    calls keep their visit numbers, and its usage counts them in its
-    totals and in no visit. A source event past its window no longer stops
+    summary, its end and output, its visits, its pending events, and
+    `prunedAt`, the time its events and commands were removed; its
+    consumed events with their payloads, and its commands, are gone. The
+    Actor page draws its timeline from the visits with their usage, and
+    shows no sequence, and says that retention removed the events and
+    commands. A visit's exit event keeps its type and event id, and the
+    event it names is no longer readable. A source event past its window no longer stops
     a late duplicate from reaching an actor subscribed after its first
     acceptance. A gate evaluation past its window cannot be replayed, and
     the token it granted no longer names it.
@@ -292,8 +300,9 @@ proposed-design:
     past their windows and keeps every protected row; a window of
     `forever` deletes nothing of its kind; an ended actor past its window
     answers the history with its summary, end, output, pending events, and
-    `prunedAt`, and no visits, consumed events, or commands, and stays in
-    the completed actors list; the running actor's history answers the
+    `prunedAt`, every visit it held before the pass, and no consumed
+    events or commands, stays in the completed actors list, and answers
+    the same usage by visit as before the pass; the running actor's history answers the
     same before and after the pass; a source event inside its window
     published again is a replay, and one past it is a first acceptance
     that reaches no actor holding its inbox row; a gate evaluation inside
@@ -309,7 +318,7 @@ proposed-design:
     the parent asserts the kill signal, starts the service again on the
     same file, and runs passes to their end. It then finds that the first
     actor is pruned once, every other ended actor past its window is
-    pruned, delivery replay drains every pending row once, duplicate
+    pruned, every pruned actor keeps every visit, delivery replay drains every pending row once, duplicate
     detection and gate replay hold for every row inside its window, the
     running actor's history is unchanged, and a further pass deletes
     nothing. Values are generic and never drawn from Manifold's own

@@ -497,15 +497,13 @@ proposed-design:
     was given. A visit holds every active state of the actor at once,
     parallel regions included.
   retention: >-
-    Retention never deletes a usage row or a ledger row, so every
-    posting keeps its actor, item, and visit number, and every balance
-    and actual stays, as `retention` states. Once retention has removed
-    an ended actor's history, its visits are gone: a call of that actor
-    that reaches the service afterwards, or a late attribution or usage
-    move onto it, finds no visit and takes none, and keeps the actor and
-    item. `actorVisitUsage` counts a posting whose visit the actor's
-    history no longer holds in the totals and in no visit, as a posting
-    with no visit is counted, and its call keeps its `visit` number.
+    Retention never deletes a usage row, a ledger row, or a history
+    visit, so every posting keeps its actor, item, and visit, every
+    balance and actual stays, and the actor usage read finds each
+    visit's entry time after the actor's events and commands are
+    removed, as `retention` states. A call of an ended actor that
+    reaches the service after that, and a late attribution or usage move
+    onto it, falls in a visit as for any ended actor.
   settlement: >-
     When a save's snapshot status is `done` or `stopped`, the save hook
     sets the actor's end time when it is unset and calls

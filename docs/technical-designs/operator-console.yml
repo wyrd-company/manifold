@@ -592,16 +592,17 @@ proposed-design:
     theme. Each segment and bar has a tooltip with the state and its
     time; each message has its time in its title.
   actor-pruned: >-
-    A history answer with `prunedAt` is an ended actor whose history
-    retention has removed, as `retention` states. The Actor page keeps its
-    header, its meta line with no start time, and its tiles from the
-    usage answer, and replaces the Timeline or Sequence view with the
-    empty state "History removed", "Retention removed this actor's
-    visits, events, and commands on <date>.", where `<date>` is
-    `prunedAt` in the console's date format. The Actors list draws no
-    timeline bar for the row, and the Task page's Current actor block
-    shows the same sentence in muted text in place of the bar. A pending
-    event the answer still holds is not drawn.
+    A history answer with `prunedAt` is an ended actor whose consumed
+    events and commands retention has removed, as `retention` states; its
+    visits stay. The Actor page keeps its header, its meta line, its
+    tiles, and the Timeline view from the visits and the usage answer,
+    with each exit label from the visit's exit event type. Above the
+    view it shows the muted line "Retention removed this actor's events
+    and commands on <date>.", where `<date>` is `prunedAt` in the
+    console's date format, and the Sequence view shows the empty state
+    "Events removed" with the same line. The Actors list and the Task
+    page draw the timeline bar from the visits as for any ended actor. A
+    pending event the answer still holds is not drawn.
   actors-layout: >-
     `src/screens/ActorsContent.tsx` is the list. `src/screens/actors/`
     holds `ActorContent.tsx`, `ActorTimeline.tsx`, `ActorSequence.tsx`,

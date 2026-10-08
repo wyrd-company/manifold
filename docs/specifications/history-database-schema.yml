@@ -68,9 +68,12 @@ description: >-
   exited first. Only `sequence` and `accepted_at` are ever set after the
   insert, together and only from null.
 
-  Retention. The rows of an ended actor are deleted together, events
-  before visits, when retention removes its history, in the transaction
-  in which the store marks the actor's snapshot pruned. The rows of an
+  Retention. The `history_event` and `history_command` rows of an ended
+  actor are deleted together when retention removes its events and
+  commands, in the transaction in which the store marks the actor's
+  snapshot pruned. `history_visit` rows are never deleted: the visits a
+  usage posting names, and their entry times, stay for as long as the
+  posting does, which is the life of the store file. The rows of an
   active actor are never deleted.
 format: sql-ddl
 validation-criteria: >-

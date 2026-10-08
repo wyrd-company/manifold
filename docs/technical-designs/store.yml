@@ -144,7 +144,7 @@ proposed-design:
       readonly machine: string;
       readonly snapshot: PersistedSnapshot;
       readonly savedAt: number;
-      /** Present on an ended snapshot whose history retention has pruned. */
+      /** Present on an ended snapshot whose events and commands retention has pruned. */
       readonly historyPrunedAt?: number;
     }
 
@@ -423,7 +423,7 @@ proposed-design:
     `undefined` when no row is armed; the deadline loop arms its one timer
     from it.
   pruning: >-
-    Retention removes an ended actor's history through two methods, as
+    Retention removes an ended actor's events and commands through two methods, as
     `retention` states. `prunableEnded({ endedBefore, after, limit })`
     returns at most `limit` actors whose snapshot status is `done` or
     `stopped`, whose `history_pruned_at` is null, and whose `saved_at` is

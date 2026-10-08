@@ -129,7 +129,7 @@ proposed-design:
        * since the Unix epoch; undefined when the actor has no visit.
        */
       visitAt(actorId: string, at: number): number | undefined;
-      /** Deletes an ended actor's history rows; joins the caller's transaction. */
+      /** Deletes an ended actor's event links and commands, keeping its visits; joins the caller's transaction. */
       prune(actorId: string): number;
     }
     ```
@@ -308,16 +308,17 @@ proposed-design:
     history window, as `retention` states. In the transaction in which
     the store deletes the actor's consumed inbox rows and marks its
     snapshot pruned, `prune(actorId)` deletes the actor's `history_event`
-    rows, then its `history_visit` rows, then its `history_command` rows,
-    each by the actor id that leads its key or index, and returns how
-    many rows it deleted. It drops any pending command write the module
+    rows and its `history_command` rows, each by the actor id that leads
+    its key or index, and returns how many rows it deleted. It keeps every
+    `history_visit` row of the actor: usage postings are never pruned, and
+    the actor usage read takes each visit's entry time from the history's
+    visits, so the visits a posted call names stay with the call. It drops any pending command write the module
     holds for the actor. It trusts the caller to name an ended actor:
     retention calls it only after the store's `pruneEnded` answers
     `pruned`. Called twice it deletes nothing the second time. After it,
-    the actor answers its summary, its end and output, its pending
-    events with no `visit`, empty `visits` and `commands`, and
-    `prunedAt`. The calls usage attributed to the actor keep their visit
-    numbers, as `usage-intake` states. The history of an active actor is
+    the actor answers its summary, its end and output, every visit with
+    its exit event's type and id, its pending events with no `visit`,
+    empty `commands`, and `prunedAt`. The history of an active actor is
     never pruned.
   completed-actors: >-
     `GET /api/actors?status=completed` lists every actor whose stored
@@ -386,8 +387,9 @@ proposed-design:
     ended actor holds 7 visits (1,485 logical column bytes), 3 event links
     (156 bytes), and 2 commands (318 bytes): 1,959 added bytes per actor.
     Its existing inbox holds 3 rows (979 bytes), reused without copying.
-    These rows and the actor's consumed inbox rows stay until the
-    actor's end passes the history window, as `pruning` states.
+    The event links, the commands, and the actor's consumed inbox rows
+    stay until the actor's end passes the history window, and the visits
+    stay with the actor's snapshot, as `pruning` states.
     Logical bytes are UTF-8 text lengths plus the lengths of decimal
     integer representations, with null contributing zero; SQLite page,
     index, and WAL overhead is not included.
@@ -474,9 +476,9 @@ proposed-design:
     one command; after a restart that loses a pending write before any
     later save, the restarted promise writes the row once; `read` of an unknown id is undefined; `prune` of an ended actor,
     in a transaction with the store's `pruneEnded`, deletes exactly its
-    visits, links, and commands and no other actor's, and its read then
-    answers its summary, end, pending events, `prunedAt`, and empty
-    visits and commands; an
+    links and commands and no other actor's, keeps every one of its
+    visits, and its read then answers its summary, end, the same visits,
+    pending events, `prunedAt`, and empty commands; an
     actor ended before the migration, built by writing its snapshot and
     inbox rows before the history tables exist, reads its summary, end,
     and events with `visit` null, and no visits or commands. Fault tests,

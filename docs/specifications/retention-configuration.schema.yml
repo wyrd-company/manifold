@@ -14,7 +14,7 @@ properties:
   historyDays:
     description: >-
       Days after an actor ends before retention removes its consumed inbox
-      rows and its history: its visits, event links, and commands.
+      rows, its event links, and its commands. Its visits stay.
     $ref: "#/$defs/window"
     default: 90
   sourceEventDays:

@@ -173,8 +173,8 @@ components:
           $ref: "#/components/schemas/ActorEnd"
         prunedAt:
           description: >-
-            When retention removed the ended actor's visits, consumed
-            events, and commands; absent until it does.
+            When retention removed the ended actor's consumed events and
+            commands; its visits stay. Absent until it does.
           $ref: "#/components/schemas/Time"
     StateVisit:
       type: object

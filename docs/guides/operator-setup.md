@@ -362,9 +362,9 @@ Run it as the operator account that owns the deployment files. Check
 The `retention` section of `service.yml` sets how long the store keeps rows
 it no longer needs, in days, or `forever`:
 
-- `historyDays`: after an actor ends, its consumed events and its history.
-  Past it, the Actor page shows the actor's summary and end, and no timeline
-  or sequence.
+- `historyDays`: after an actor ends, its consumed events and its commands.
+  Past it, the Actor page shows the actor's summary, end, and timeline of
+  state visits, and no sequence.
 - `sourceEventDays`: a record of each accepted source event, by event source,
   with `default` for every source not named. Past it, a repeated delivery of
   that event is accepted as new.

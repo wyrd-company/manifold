@@ -23,10 +23,10 @@ description: >-
   window's days of 86,400,000 milliseconds before the start of the prune
   pass that reads it. `forever` removes nothing of its kind.
 
-  `historyDays` is the window of an ended actor's history, counted from
+  `historyDays` is the window of an ended actor's events and commands, counted from
   the actor's end. Past it, retention removes the actor's consumed inbox
-  rows, with their payloads, and its visits, event links, and commands;
-  the actor's summary, end, output, and pending events stay, and its
+  rows, with their payloads, and its event links and commands; the
+  actor's summary, end, output, visits, and pending events stay, and its
   history answers `prunedAt`. A running actor's history is never removed.
   Default 90.
 

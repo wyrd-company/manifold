@@ -9,5 +9,5 @@ title: Retention window
 description: >-
   How long Manifold's store keeps one kind of row it no longer needs, in
   whole days or `forever`, after which the service removes the row: an
-  ended actor's consumed events and history, a source event's record, or
+  ended actor's consumed events and commands, a source event's record, or
   a gate's comparator evaluation.
