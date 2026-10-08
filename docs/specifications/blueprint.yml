@@ -57,6 +57,9 @@ description: |-
   - `description`, optional: text for people.
   - `layout`, optional: where the blueprint editor's canvas draws each
     state, as under Layout. The machine never reads it.
+  - `migrations`, optional: the migration paths that map the context of
+    an actor on an earlier version of this blueprint to this version's
+    context, as under Migrations. The machine never reads it.
 
   ```yaml
   description: Moves a parcel from intake to delivery.
@@ -127,6 +130,56 @@ description: |-
       sorting: { x: 0, y: 0 }
       routing: { x: 0, y: 136 }
       delivered: { x: 0, y: 272 }
+  ```
+
+  Migrations. An actor runs one blueprint version at a time. When the
+  service applies a revision whose version at a blueprint's path is later
+  than an actor's version at that path, the actor migrates to it while it
+  waits on events, as `blueprint-migration` states: it keeps its state,
+  its identity, its threads, its gate token and reservation, its inbox,
+  and each deadline the later version still declares on its state, and
+  its context becomes the later version's context. State names are
+  identity: a state the later version does not declare at the same path
+  keeps the actor on its version. `migrations` is a list of migration
+  paths, each a mapping with these keys:
+
+  - `from`, required: a JSON Schema of draft 2020-12 that an earlier
+    version's context, without `manifold`, satisfies.
+  - `context`, required: a mapping, `{ type: expression.map, params: {
+    expression } }`, from the earlier context to this version's context.
+  - `description`, optional: text for people.
+
+  The context migrates by the first rule that applies. A context that
+  validates against this version's `schemas.context` migrates unchanged,
+  and no path runs. Otherwise the first path, in list order, whose `from`
+  accepts the context runs, and its result is the whole new context. A
+  context that neither the context schema nor any `from` accepts keeps
+  the actor on its version. A path is therefore needed exactly where the
+  context's shape changed, and one path covers every earlier version
+  whose context its `from` accepts. The mapping's binding and result are
+  those of `blueprint-expressions` (Migration mappings): `$` is `{
+  "context": <earlier context> }`, the earlier context holding
+  `manifold` for a top-level actor, and the result is an object with no
+  `manifold` that validates against this version's context schema. The
+  service puts the actor's identity back at `context.manifold`. A child
+  blueprint's context migrates with its parent, by the child version's
+  own `migrations`.
+
+  ```yaml
+  migrations:
+    - description: Splits the depot into its depot and its zone.
+      from:
+        type: object
+        required: [depot]
+        properties:
+          depot: { type: string, pattern: "^[^/]+/[^/]+$" }
+      context:
+        type: expression.map
+        params:
+          expression: >-
+            { "attempts": context.attempts,
+              "depot": $substringBefore(context.depot, "/"),
+              "zone": $substringAfter(context.depot, "/") }
   ```
 
   Machine configuration. The root is a state node with two more keys:
@@ -414,7 +467,8 @@ description: |-
   bundle it has run with, so a version whose bundle a later Manifold build
   no longer ships still builds. The service saves every
   snapshot of a state machine actor with its version key, so a restored
-  actor runs the version it started on.
+  actor runs the version it was last saved with: the version it started
+  on until it migrates.
 
   Identity. A top-level actor, one Manifold starts or restores and routes
   events to, holds the engine's identity of the actor at
@@ -442,11 +496,11 @@ description: |-
      value or, when a key is not allowed, the key, with the message of the
      first validation error there. No other rule runs.
   3. `schema-invalid`: a schema under `schemas`, `input`, `output`,
-     `context`, an event schema, or an actor's `input` or `output`, does
-     not compile as a JSON Schema of draft 2020-12. Every schema is
-     compiled, whether or not an expression site reaches it. The finding
-     is at the schema, such as `/schemas/context`, with the compiler's
-     message.
+     `context`, an event schema, or an actor's `input` or `output`, or a
+     migration path's `from`, does not compile as a JSON Schema of draft
+     2020-12. Every schema is compiled, whether or not an expression site
+     reaches it. The finding is at the schema, such as `/schemas/context`
+     or `/migrations/0/from`, with the compiler's message.
   4. `implementation-unknown`: a reference names no implementation of its
      kind among the names the lint is given, and is not an expression
      implementation of the right kind or the guard `in`. An invoke `src` that is a blueprint
@@ -471,8 +525,10 @@ description: |-
      under rule 2, so a gate with no return point does not load.
   8. The expression lint of `blueprint-expressions`, with its kinds
      `syntax`, `evaluation`, `result`, `schema`, `schema-missing`, and
-     `site-unsupported` and its fields, with the location rewritten from
-     the machine to the document. It runs only when rule 3 found nothing.
+     `site-unsupported` and its fields, with a machine site's location
+     rewritten from the machine to the document, and a migration path's
+     mapping at its document location, such as `/migrations/0/context`.
+     It runs only when rule 3 found nothing.
   9. The token lint of `token-lint`, for each gate: `token-violation`
      when a fixed-choice path reaches a trap with no route to actor
      completion, `token-potential` when traps exist and every fixed-choice
@@ -572,7 +628,9 @@ description: |-
   `agentToolDefinitions`, the name, description, and input schema of each
   agent tool, from the `agent-tools` schema asset, which the host CLI
   harness plugin serves. `parseBlueprintVersionKey` returns
-  `undefined` for a string that is not a version key. `bundleDigest`
+  `undefined` for a string that is not a version key. The
+  lint passes `migrations` to the expression lint with `machine` and
+  `schemas`, and `BlueprintDocument` carries it. `bundleDigest`
   computes the digest of a bundle from its texts by path.
 format: json-schema
 validation-criteria: >-
@@ -630,7 +688,16 @@ validation-criteria: >-
   at that `status` with its `name`; that the same blueprint lints clean
   with no `lifecycleOptions`, and with `lifecycleOptions` that hold the
   name; and that a mapping `input` lints clean with an empty
-  `lifecycleOptions`. A test shows that the `github-card-move` example in
+  `lifecycleOptions`. Lint tests show that the Migrations example added
+  to the example in this specification, with `zone` added to its context
+  schema's properties and `required`, lints clean and returns the same
+  machine; that a `from` of `{
+  type: 17 }` is a `schema-invalid` finding at `/migrations/0/from`; that
+  a mapping whose result omits a property the context schema requires is
+  a `schema` finding at `/migrations/0/context` with its sample; that a
+  mapping whose result holds `manifold` is a `result` finding; and that a
+  migration path without `from`, and one whose `context` is a bare
+  `expression.map`, are each a `shape` finding. A test shows that the `github-card-move` example in
   this specification lints clean with `lifecycleOptions` holding `Packed`
   and `github-card-move` among the actor names. Fixtures use a domain
   unrelated to Manifold.

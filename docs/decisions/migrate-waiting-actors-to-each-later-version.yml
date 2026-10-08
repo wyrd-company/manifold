@@ -1,0 +1,55 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - blueprint-migration
+    - actor-host
+    - blueprint
+description: >-
+  A blueprint version pins a blueprint and every file it names at one
+  commit, and an actor runs the version it was saved with. A process
+  evolves through saved blueprints, templates, comparators, and schemas,
+  and running work must follow it, while an actor between two steps of
+  its own, or whose context no longer fits, must not be moved. Something
+  must decide when an actor moves, to which version, and who starts it.
+considered-options:
+  "1": >-
+    Automatic. After each applied revision, at start, and after each save
+    of an actor that is behind, every actor waiting on events migrates to
+    the latest version at its path, whenever that version is later,
+    whether its blueprint text changed or only a file it names. A failure
+    leaves the actor on its version and asks the operator, whose `retry`
+    attempts again. An author who wants running actors to finish on the
+    old text saves the new text at another path.
+  "2": >-
+    Automatic only when the blueprint's own text changed between the two
+    versions. A change to a template, comparator, or schema the blueprint
+    names reaches only new actors.
+  "3": >-
+    Operator request only. Nothing moves until the operator asks for an
+    actor, or for every actor at a path, to migrate.
+  "4": >-
+    Chained. An actor several versions behind migrates through each
+    intermediate version in commit order, each by its own migration paths.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 makes a saved change reach running work with no further step,
+    which is what saving a process from the console is for, and it treats
+    every file a version pins alike, so a corrected template reaches the
+    actors that render it next. Migration paths match an earlier context by
+    its shape, so one step to the latest version needs no intermediate
+    version, and a version that failed to load or that nobody ran is never
+    a stop on the way, which rules out option 4. Option 2 needs a list of
+    every file a blueprint names to tell a change from none, and still
+    leaves a corrected template unread by running actors. Option 3 keeps
+    every actor on its old version until someone remembers to ask, the
+    friction that holds a process back. A path is the unit of migration, so
+    a new path remains the way to let running actors finish on the old
+    text.
+expected-outcomes:
+  positive:
+    - A blueprint, template, or schema saved from the console reaches waiting actors within one revision apply.
+    - The operator acts only on an actor that cannot migrate, through one escalation per target version.
+  negative:
+    - Every applied revision saves every waiting actor once, with a new version key, even when nothing it reads changed.
+    - An actor can no longer finish on the version it started on unless its author moves the new text to another path.

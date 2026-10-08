@@ -20,10 +20,12 @@ description: |-
   `type` names one of four generic implementations. `expression.guard` and
   `expression.match` stand where XState accepts a guard.
   `expression.assign` stands where XState accepts an action.
-  `expression.map` stands as the value of `input` on an `invoke`, and as the
-  value of `output` on a top-level final state. An `input` or `output` whose
-  value is an object with `type: expression.map` is a mapping; any other
-  value is static.
+  `expression.map` stands as the value of `input` on an `invoke`, as the
+  value of `output` on a top-level final state, and as the value of
+  `context` on a migration path under a blueprint's top-level
+  `migrations`. An `input` or `output` whose value is an object with
+  `type: expression.map` is a mapping; any other value is static. A
+  migration path's `context` is always a mapping.
 
   ```yaml
   on:
@@ -76,6 +78,18 @@ description: |-
     invoked `src`.
   - `expression.map` as `output`: `$` is `{ "context": <context>, "event":
     <event> }`. The result validates against the blueprint's output schema.
+  - `expression.map` as a migration path's `context`: `$` is `{
+    "context": <earlier context> }`, the context of an actor on an earlier
+    version, which the path's `from` accepts. The result is an object with
+    no `manifold` property, and validates against the context schema; it
+    replaces the whole context.
+
+  Migration mappings. A migration path's mapping is a site whose location
+  is its pointer in the blueprint document, such as
+  `/migrations/0/context`, and not in the machine configuration; it sees
+  no event. `ExpressionBlueprint` carries the blueprint's `migrations`
+  beside `machine` and `schemas`, and `collectExpressionSites` lists each
+  path's mapping after the machine's sites, in list order.
 
   `context.manifold` is a top-level actor's identity, a value of
   `#/$defs/actor-identity` of the `blueprint` schema asset. Every site of
@@ -93,7 +107,8 @@ description: |-
   `actors`, the `input` and `output` schema of each `src` it invokes.
   The `expression.error` event schema is
   `#/$defs/expression-error-event` of the schema asset, and a blueprint
-  does not declare it.
+  does not declare it. A migration path's `from` is the input schema of
+  its mapping.
 
   Event sets. The events a site sees are the events of the transitions
   that reach it, read from the machine configuration. Each transition has
@@ -159,8 +174,9 @@ description: |-
   class ExpressionError extends Error { readonly detail: ExpressionErrorDetail }
   ```
 
-  `ExpressionBlueprint` is `{ machine, schemas }`: the machine configuration
-  as parsed from YAML, and the expression schemas. `CompiledExpression`
+  `ExpressionBlueprint` is `{ machine, schemas, migrations? }`: the
+  machine configuration as parsed from YAML, the expression schemas, and
+  the blueprint's migration paths. `CompiledExpression`
   carries its source and location, so each error it yields names both; a
   decision model node passes its own location, such as a node and a cell.
   The lint reads no file, network, clock, random source, or environment;
@@ -182,14 +198,35 @@ description: |-
     machine: MachineConfig; // the configuration with every expression.map replaced by a mapping function
     guards: { "expression.guard": Guard; "expression.match": Guard };
     actions: { "expression.assign": Action };
+    migrateContext(context: Record<string, JsonValue>): ContextMigration;
   };
+  type ContextMigration =
+    | { ok: true; context: Record<string, JsonValue>; path?: number } // `path` absent when the context migrated unchanged
+    | {
+        ok: false;
+        kind: "no-path" | "mapping-failed" | "mapping-timeout" | "context-rejected";
+        path?: number; // the path whose mapping failed
+        error?: ExpressionErrorDetail; // absent for "no-path"
+        schemaErrors?: ExpressionErrorDetail["schemaErrors"]; // the context schema's errors, for "no-path"
+      };
   interface ExpressionsConfiguration { readonly timeoutMs: number }
   const expressionsDefaults: ExpressionsConfiguration; // { timeoutMs: 1000 }
   function configureBlueprintExpressions(configuration?: Partial<ExpressionsConfiguration>): void;
   ```
 
   The caller passes `guards` and `actions` to XState's `setup` and
-  `machine` to `createMachine`. Loading compiles every site and every
+  `machine` to `createMachine`. `migrateContext` takes an earlier
+  version's context, with `manifold` for a top-level actor, and applies
+  the rules of `blueprint` (Migrations): a context whose value without
+  `manifold` validates against the context schema is returned unchanged,
+  without `manifold`; otherwise the first path whose `from` accepts it
+  runs its mapping on the expressions worker under the same wait as every
+  other evaluation; no such path is `no-path`. A mapping that throws, or
+  returns a value that is not an object or that holds `manifold`, is
+  `mapping-failed`; a wait that reaches `timeoutMs` is `mapping-timeout`;
+  a result the context schema rejects is `context-rejected`. It reports
+  each failure to `onError`, changes nothing, and never throws for a
+  failure of the mapping. Loading compiles every site and every
   schema it uses. A syntax error, a `schema-missing` site, or a
   `site-unsupported` site makes `createBlueprintExpressions` throw an
   `ExpressionError` naming the first such site in location order. Each
@@ -309,7 +346,14 @@ validation-criteria: >-
   left waiting. They also show that `recordExit` after `complete` leaves
   `done`, that `abandon` loses to `complete` and to `recordExit`, and
   that `take` after `abandon` does not move the state.
-  The lint tests in `packages/shared` use fixtures for a
+  The service tests show that `migrateContext` returns a context that
+  validates unchanged, without `manifold`; runs the first of two paths
+  whose `from` accepts the context and gives its index; answers
+  `no-path` with the schema errors when no `from` accepts it; and answers
+  `mapping-failed`, `mapping-timeout`, and `context-rejected` for a
+  mapping that throws, one that recurses past `timeoutMs`, and one whose
+  result breaks the context schema, after which the next evaluation
+  succeeds. The lint tests in `packages/shared` use fixtures for a
   valid mapping, a mapping whose result breaks its output schema, a guard
   whose result is not a boolean, an expression that does not parse, and a
   mapping with no output schema, and check each finding's kind, location,
@@ -332,5 +376,8 @@ validation-criteria: >-
   whose output schema requires a string it reads from
   `context.manifold.issue` is a `schema` finding on the `required` sample,
   and that the same blueprint's expression, invoked as a child, reads
-  `context.manifold.issue` as absent. Fixtures use a domain
+  `context.manifold.issue` as absent. They show that a migration path's
+  mapping is sampled from its `from` and checked against the context
+  schema, at `/migrations/<n>/context`, and that a mapping whose result
+  holds `manifold` is a `result` finding there. Fixtures use a domain
   unrelated to Manifold.

@@ -4,6 +4,7 @@ relationships:
     - service-configuration
     - service-assembly
     - store
+    - blueprint-migration
   mitigates:
     - process-repository-pull-unbounded
 objective: >-
@@ -146,6 +147,8 @@ proposed-design:
       save(request: SaveRequest): Promise<SaveOutcome>;
       /** The commit, from the current commit down its first parents to `base`, that carries the save's trailer. Reads only. */
       findSave(request: Pick<SaveRequest, "base" | "saveId">): Promise<string | undefined>;
+      /** True when `ancestor` is reachable from `commit` through its parents and is not `commit`. Reads only. */
+      isAncestor(ancestor: string, commit: string): Promise<boolean>;
     }
 
     export interface SaveRequest {
@@ -351,6 +354,12 @@ proposed-design:
     after any later pull and after a restart. `revisionAt` is how a loader
     rebuilds what it read at an older commit: the blueprint loader rebuilds
     an older blueprint version for an actor started at that commit.
+    `isAncestor(ancestor, commit)` calls isomorphic-git's `isDescendent`
+    with `oid` the commit, `ancestor`, and no depth limit, over every
+    parent, and answers `false` when the two are equal or either is not a
+    commit the clone holds. It is how migration orders two versions, as
+    `blueprint-migration` states: a commit a force push left off the
+    branch is no ancestor of the commits after it.
   trigger: >-
     `pull` is the one function that moves the current commit. The service
     calls it once at start, and the GitHub event source calls it with the
@@ -498,4 +507,7 @@ proposed-design:
     tests run a save in a child process killed at the save probe's
     `committed` and at `pushed`; after reopening, a pull and the same
     request leave exactly one new commit on the remote branch with the
-    change.
+    change. `isAncestor` answers `true` for a commit's grandparent and for
+    the second parent of a merge, and `false` for the commit itself, for
+    its child, for a commit a force push replaced, and for a string that
+    is not a commit the clone holds.

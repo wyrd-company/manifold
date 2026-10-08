@@ -171,6 +171,7 @@ $defs:
                   - intake-failed
                   - comparator-failed
                   - agent-question
+                  - migration-failed
               subject:
                 type: object
                 additionalProperties:

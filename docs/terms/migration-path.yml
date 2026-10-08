@@ -3,7 +3,10 @@ $schema: https://refinery.systems/ontology/term
 # term; `references` is the best fit for the specification that defines it.
 relationships:
   references:
+    - blueprint
     - blueprint-expressions
-title: Mapping
+title: Migration path
 description: >-
-  A JSONata expression at a schema boundary: a child's input, a final state's output, a migration path's context, or an event payload assigned into context.
+  An entry of a blueprint's `migrations`: a JSON Schema an earlier
+  version's context satisfies and a mapping from that context to the
+  blueprint's own context.

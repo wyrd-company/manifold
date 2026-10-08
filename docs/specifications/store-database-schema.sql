@@ -63,3 +63,15 @@ CREATE TABLE store_deadline (
 ) STRICT;
 
 CREATE INDEX store_deadline_due ON store_deadline (fire_at, actor_id) WHERE fired_at IS NULL;
+
+CREATE TABLE store_migration_failure (
+  actor_id TEXT PRIMARY KEY CHECK (length(actor_id) > 0),
+  from_machine TEXT NOT NULL CHECK (length(from_machine) > 0),
+  to_machine TEXT NOT NULL CHECK (length(to_machine) > 0),
+  kind TEXT NOT NULL CHECK (kind IN ('version-invalid', 'restore-mismatch', 'gate-missing', 'token-trap', 'no-path', 'mapping-failed', 'mapping-timeout', 'context-rejected', 'store')),
+  message TEXT NOT NULL,
+  detail TEXT NOT NULL CHECK (json_valid(detail)),
+  failed_at INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX store_migration_failure_by_target ON store_migration_failure (to_machine, actor_id);

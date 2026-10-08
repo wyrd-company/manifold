@@ -15,7 +15,8 @@ $defs:
       A JSONata expression carried as the parameter of a generic
       implementation. Guards and matches stand where XState accepts a guard,
       assignments where it accepts an action, and mappings as the value of
-      `input` on an invoke or `output` on a top-level final state.
+      `input` on an invoke, `output` on a top-level final state, or
+      `context` on a blueprint's migration path.
     type: object
     required:
       - type

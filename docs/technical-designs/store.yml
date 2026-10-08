@@ -1,6 +1,7 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
+    - blueprint-migration
     - durable-event-delivery
     - gates
     - portfolio
@@ -90,6 +91,13 @@ proposed-design:
       dueDeadlines(at: number): DeadlineRow[];
       fireDeadline(deadline: DeadlineRow, topic: string): InboxRow | undefined;
       nextDeadlineAt(): number | undefined;
+
+      recordMigrationFailure(failure: MigrationFailureWrite): "recorded" | "unchanged";
+      migrationFailure(actorId: string): StoredMigrationFailure | undefined;
+      /** Every record whose `to` is the version key, ordered by actor id. */
+      migrationFailures(to: string): StoredMigrationFailure[];
+      /** Deletes every record whose `to` is the version key; returns how many. */
+      clearMigrationFailures(to: string): number;
 
       close(): void;
     }
@@ -187,6 +195,30 @@ proposed-design:
       readonly deadlineId: number;
       readonly actorId: string;
       readonly firedAt: number | undefined;
+    }
+
+    export interface MigrationFailureWrite {
+      readonly actorId: string;
+      /** The version key the actor stayed on. */
+      readonly from: string;
+      /** The version key it could not take. */
+      readonly to: string;
+      readonly kind:
+        | "version-invalid"
+        | "restore-mismatch"
+        | "gate-missing"
+        | "token-trap"
+        | "no-path"
+        | "mapping-failed"
+        | "mapping-timeout"
+        | "context-rejected"
+        | "store";
+      readonly message: string;
+      readonly detail: { readonly [key: string]: JsonValue };
+    }
+
+    export interface StoredMigrationFailure extends MigrationFailureWrite {
+      readonly failedAt: number;
     }
     ```
   module-layout: >-
@@ -359,6 +391,22 @@ proposed-design:
     `fired_at` is null, read through the `store_deadline_due` index, or
     `undefined` when no row is armed; the deadline loop arms its one timer
     from it.
+  migration-failures: >-
+    `store_migration_failure` holds at most one row per actor: the last
+    migration of that actor that failed, as `blueprint-migration` states.
+    `recordMigrationFailure`, in one transaction, returns `unchanged` and
+    writes nothing when the actor's row names the same `from` and `to`, so
+    a failure repeated for one pair is recorded once; otherwise it writes
+    the row, replacing the actor's earlier one, with `failed_at` from
+    `now`, and returns `recorded`. `saveSnapshot` of a write whose status
+    is not `active`, or whose `machine` differs from the row's `from`,
+    deletes the actor's row in the save's transaction, so a record names
+    only an actor still on the version it failed from, and the migration's
+    own save clears it. `migrationFailure` and `migrationFailures` read the
+    rows, `detail` parsed from JSON. `clearMigrationFailures(to)` deletes
+    the rows of one target in one statement, which joins the caller's
+    transaction. Step 4 of the store's migration creates the table and its
+    index.
   probe: >-
     `probe` observes a delivery between its steps: `sent` after the target
     took the event, `saved` after the snapshot statement and before the
@@ -371,7 +419,9 @@ proposed-design:
     `writeInbox` twice holds one row per actor and event and returns nothing
     the second time. `markConsumed` twice keeps the first consumed time.
     `deliver` on a consumed row is a no-op. `fireDeadline` twice writes one
-    inbox row and keeps the first fired time. A crash inside any of these rolls back its transaction, and
+    inbox row and keeps the first fired time. `recordMigrationFailure`
+    twice for one pair writes once and answers `unchanged` the second
+    time; `clearMigrationFailures` twice deletes nothing more. A crash inside any of these rolls back its transaction, and
     a crash between a delivery's `send` and its commit leaves the row
     pending for the next drain.
   errors: >-
@@ -438,4 +488,11 @@ proposed-design:
     pending row, and a second drain delivers nothing. At least one fault
     test runs the delivery in a child Node process that sends itself
     `SIGKILL` from the probe, and the parent asserts the kill signal before
-    it reopens the file.
+    it reopens the file. Migration failure tests: a record answers
+    `recorded` and then `unchanged` for the same pair, and `recorded` for
+    a new `to`, which replaces it; a save on the same machine keeps the
+    record, and a save on another machine and a `done` save delete it;
+    `migrationFailures` lists one target's records by actor id, and
+    `clearMigrationFailures` deletes only them; a file at step 3 opened by
+    this build has the table and keeps every snapshot, inbox, and
+    deadline row.

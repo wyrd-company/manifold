@@ -10,6 +10,7 @@ relationships:
     - escalations
     - blueprint-loader
     - github-event-source
+    - blueprint-migration
   mitigates:
     - gate-durability-unproven
 terms:
@@ -380,6 +381,21 @@ proposed-design:
     its own tables and the version views it holds. A save of a version the
     module has no view of returns tokens only at the actor's end, and
     reports the version to `onError`.
+  migrations: >-
+    An actor that migrates, as `blueprint-migration` states, is saved
+    through the actor host with the new version key and the same host entry
+    ids, an empty `entered`, and the same active invokes. The save hook
+    takes it like any save, in the new version's view, which `revision`
+    added before any actor migrates to it: the configuration still holds
+    the gated state and its entry id is unchanged, so the entry row, its
+    age, and an unreturned token stay; a return point of the new version
+    that the configuration already holds returns the token on that save.
+    The actor host refuses the migration of a holder whose gate the new
+    version does not declare at the gated state, or whose migrated
+    configuration is in the new version's trap set for the gate, reading
+    the holder's tokens through `heldTokens`, so no migration strands a
+    token. `heldTokens(actorId)` reads the actor's token rows whose
+    `returned_at` is null.
   restore: >-
     The router's `afterDrain` calls the module's `afterDrain` with the
     router after every restored actor's inbox is drained. The module keeps
@@ -453,6 +469,8 @@ proposed-design:
       replay(evaluationId: number): Promise<GateReplay>;
       /** The actor id of a token's holder, returned or not; undefined for an unknown token. */
       tokenHolder(tokenId: string): string | undefined;
+      /** Every unreturned token the actor holds, by gate key then token id. */
+      heldTokens(actorId: string): readonly { readonly gate: string; readonly tokenId: string }[];
       stop(): void;
     }
 
@@ -653,5 +671,9 @@ proposed-design:
     once, one reservation per token, holders counted once, and the grants
     that follow in the comparator's order; after the kill at
     `comparator-failed`, one open `comparator-failed` escalation for the
-    gate. Values are generic and never
+    gate. A holder's save with a later version key, the same entry ids,
+    and an empty `entered` keeps its entry row and its token, and a
+    return point the later version declares and the configuration holds
+    returns it on that save; `heldTokens` lists a holder's unreturned
+    tokens and drops a returned one. Values are generic and never
     drawn from Manifold's own domain.

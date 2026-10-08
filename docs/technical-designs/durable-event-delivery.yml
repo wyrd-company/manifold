@@ -1,6 +1,7 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
+    - blueprint-migration
     - gates
     - github-event-source
     - portfolio
@@ -202,7 +203,13 @@ proposed-design:
     it calls `saveSnapshot` and then `saving` inside one
     `store.connection.transaction`. An errored write calls no `saving`. An
     actor the engine starts is given to `attach`, which persists its first
-    snapshot, indexes it, and drains it. The router calls the host's
+    snapshot, indexes it, and drains it. An actor the host migrates to a
+    later blueprint version is given to `attach` too, with a new target
+    for the actor the router already holds loaded: the save commits first,
+    and only then does the new target replace the old one, the host's
+    `saved` run, the subscription take the new version's event types, and
+    the deadline loop re-arm; a save that throws leaves the old target in
+    place, as `blueprint-migration` states. The router calls the host's
     `connect` with itself once, before it restores any actor, so the host
     can attach and persist actors it starts after resume.
   resume: >-
@@ -473,10 +480,12 @@ proposed-design:
     demand. Before restoring, the loader's `checkRestore` checks every state
     path in the snapshot's value, every state id in its history, every
     child id, and every child's implementation name against the machine,
-    and returns each mismatch as a typed result. A mismatch routes the
-    actor through the version's migration path or holds it at its current
-    version, and is never a silent stall. The host runs the checks in
-    `restore` and returns `held` with the mismatch as its reason.
+    and returns each mismatch as a typed result. A mismatch holds the
+    actor at its version, and is never a silent stall. The host runs the
+    checks in `restore` and returns `held` with the mismatch as its
+    reason. A restore never changes an actor's version: an actor moves to
+    a later version only by a migration, once it is restored and waits on
+    events, as `blueprint-migration` states.
   tests: >-
     Tests import only the router's and the store's `index.ts`, run against a
     real file in a temporary directory, and start from a populated fixture:

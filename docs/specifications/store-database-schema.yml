@@ -54,6 +54,15 @@ description: >-
   for the rest of its entry, so the entry does not fire twice. A row exists
   only while its state path is active in the actor's snapshot.
 
+  Migration failures. `store_migration_failure` holds at most one row per
+  actor: the last migration of the actor to a later blueprint version that
+  failed. `from_machine` is the version key the actor stayed on,
+  `to_machine` the key it could not take, `kind` why, `message` and
+  `detail` what the operator reads, the detail as JSON. A row exists only
+  while the actor's snapshot is `active` and saved with `from_machine`.
+  One index by `to_machine` lists the actors that failed toward one
+  version.
+
   Times. Every time is an integer count of milliseconds since the Unix epoch.
 format: sql-ddl
 validation-criteria: >-

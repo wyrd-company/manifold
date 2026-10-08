@@ -2,6 +2,7 @@ $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
     - blueprint-loader
+    - blueprint-migration
     - intake
     - gates
     - gate-runtime
@@ -130,9 +131,10 @@ proposed-design:
     `openBundles` runs in one `store.connection.transaction`: when the
     store holds no `bundle` row for `current.digest`, it inserts the row
     with the store's clock time and one `bundle_file` row per path. It
-    then answers `current` with the given bundle and `at(digest)` from the
+    then answers `current` with the given bundle, `at(digest)` from the
     store, reading a bundle's rows once and keeping it for the life of the
-    process. A bundle is written whole or not at all, and its rows never
+    process, and `recordedAt(digest)` from the bundle row's `recorded_at`,
+    which orders bundles for migration, as `blueprint-migration` states. A bundle is written whole or not at all, and its rows never
     change, so `at` answers one set of texts for a digest. The service
     calls it after it migrates the store and before it creates the
     blueprint loader, so every bundle a stored snapshot names was recorded

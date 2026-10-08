@@ -9,9 +9,11 @@ relationships:
     - gates
     - actor-history
     - environment-control
+    - blueprint-migration
 objective: >-
   Run every state machine actor the router delivers to, so that an actor
-  resumes on the blueprint version it started on, hears the events of its
+  resumes on the blueprint version it was last saved with, moves to a
+  later version only in one migration step while it waits on events, hears the events of its
   issue and threads, takes each delayed transition once across restarts,
   saves every change an invoked promise or callback causes, and gives every
   invoked implementation an identity that is the same across a restart and
@@ -51,6 +53,11 @@ design-challenges:
   versions: >-
     Every version a stored snapshot names must be built before the router's
     synchronous resume restores it.
+  migration: >-
+    A migrated actor must keep every entry id, invocation, and deadline
+    that the later version still declares, so no module that reads saves
+    sees an exit or an entry, and the old actor must keep running until
+    the new snapshot commits.
 proposed-design:
   high-level-overview: >-
     The actor host is one module, `packages/service/src/actor-host/`.
@@ -68,6 +75,8 @@ proposed-design:
     invoked implementation's actor id, invoke id, and entry id from the
     host's records. `start` validates an input, places the identity at
     `context.manifold`, and attaches a new actor through the router.
+    `migrate` moves a waiting actor to a later version of its blueprint in
+    one save, as `migration` below states.
   public-interface: |-
     `packages/service/src/actor-host/index.ts` exports exactly these names.
 
@@ -99,6 +108,16 @@ proposed-design:
       }) => void;
       /** Milliseconds since the Unix epoch. Defaults to Date.now. */
       readonly now?: () => number;
+      /** The gates' `heldTokens`: the unreturned tokens an actor holds. */
+      readonly heldTokens?: (actorId: string) => readonly HeldToken[];
+      /** Called after a migration's save commits, before the old actor stops and the router re-arms. */
+      readonly probe?: (step: "migrated", actorId: string) => void;
+    }
+
+    export interface HeldToken {
+      /** The gate key, `<blueprintPath>#<statePath>`. */
+      readonly gate: string;
+      readonly tokenId: string;
     }
 
     export interface ActorHost extends RouterActorHost {
@@ -116,6 +135,45 @@ proposed-design:
       issueThreads(issue: string): readonly IssueThread[];
       /** The event schema an active actor's version declares for `type`. */
       eventSchema(actorId: string, type: string): EventSchemaLookup;
+      /** One attempt to move a waiting actor to `to`, a version at its path; changes nothing unless the save commits. */
+      migrate(actorId: string, to: LoadedBlueprint): Promise<MigrationOutcome>;
+      /** Calls `listener` with the actor id after each committed save of an active actor; the result removes it. */
+      onSaved(listener: (actorId: string) => void): () => void;
+    }
+
+    export type MigrationOutcome =
+      | {
+          readonly status: "migrated";
+          readonly from: string;
+          readonly to: string;
+          /** The index under `migrations` of the path that mapped the root context; absent when it migrated unchanged. */
+          readonly path?: number;
+        }
+      /** The stored snapshot is already saved with `to`'s key. */
+      | { readonly status: "current" }
+      /** No active stored snapshot: the actor has ended or never ran. */
+      | { readonly status: "ended" }
+      | { readonly status: "deferred"; readonly reason: MigrationDeferral }
+      | { readonly status: "failed"; readonly failure: MigrationFailure };
+
+    export type MigrationDeferral = "held" | "pending-events" | "unsaved-change" | "promise-running";
+
+    export interface MigrationFailure {
+      readonly kind:
+        | "version-invalid"
+        | "restore-mismatch"
+        | "gate-missing"
+        | "token-trap"
+        | "no-path"
+        | "mapping-failed"
+        | "mapping-timeout"
+        | "context-rejected"
+        | "store";
+      readonly from: string;
+      readonly to: string;
+      readonly message: string;
+      /** The mismatches, findings, expression error, schema errors, or gate, token, and configuration key. */
+      readonly detail: Readonly<Record<string, JsonValue>>;
     }
 
     export type EventSchemaLookup =
@@ -463,6 +521,81 @@ proposed-design:
     key: `declared` with the validator of `schemas.events[type]`, compiled
     once per version and type; `undeclared` when the version does not
     declare the type; and `unavailable` when the version is `missing`.
+  waiting: >-
+    An actor waits on events when all of these hold: the host holds it
+    loaded and the router does not hold it; its stored snapshot is
+    `active`; the host is not inside its `send`; it has no pending inbox
+    row; no save of it is queued, so its stored snapshot is its whole
+    state; and no machine actor in its tree has an invoked promise
+    running. An invoked callback and an invoked child blueprint may be
+    running: a migration stops the callback, whose cleanup runs, and starts
+    it again on the new version with the same invocation, as a restart
+    does, and migrates the child with its parent. A promise cannot be
+    stopped, so an actor that runs one waits for it to settle and for the
+    save that follows. `migrate` called from inside a delivery or a save
+    hook throws a `TypeError`, since the router is then mid-step.
+  migration: >-
+    `migrate(actorId, to)` first checks `to.version.path` against the
+    path of the actor's stored version, and throws a `TypeError` when they
+    differ. It answers `ended` when the store holds no `active` snapshot
+    for the actor, and `current` when the stored snapshot is saved with
+    `to.key`. Otherwise it loads, through `blueprints.version`, the version
+    at `to`'s commit and source of every child blueprint the stored
+    snapshot runs, at any depth; a child that does not load fails with
+    `version-invalid` and its findings or reason. From here it runs
+    synchronously, so no delivery or save interleaves. It answers
+    `deferred` with the first reason, in the order of `waiting`, that the
+    actor does not wait on events. It then builds the migrated snapshot
+    from the stored snapshot, never from memory, in this order, and the
+    first step that fails answers `failed` with its kind. (1) It removes
+    `entries` and runs `to.checkRestore` over the snapshot; any mismatch
+    fails with `restore-mismatch` and every mismatch. State names are
+    identity, so the value, history value, and children carry over
+    unchanged. (2) For each token `heldTokens(actorId)` lists, it finds
+    the gate whose `statePath` is the gate key's state path in
+    `to.tokens.gates`; none fails with `gate-missing`; a verdict of
+    `unknown` passes; otherwise a `to.tokens.configurationKey` of the
+    snapshot in the gate's `traps` fails with `token-trap`. (3) It maps
+    the root context with `to.migrateContext`, and each child blueprint's
+    context with its own version's `migrateContext`, as `blueprint-loader`
+    states; the first failure fails with its kind and the expression
+    error. The root's mapped context gets the stored `manifold` back.
+    (4) It derives the new `entries`: the stored count, and every stored
+    state entry with its id; under each, every deadline whose `after` key
+    the state node declares in the new version keeps its fire time, a
+    deadline whose key the state node no longer declares is dropped, and
+    a key the state node declares that the entry holds no fire time for
+    is armed at the migration's time plus the key's milliseconds when it
+    is decimal digits, and at the state's next entry when it names a
+    delay. It then creates the XState actor from `to.machine` with the
+    migrated snapshot, without starting it, records it under the actor id
+    with the new `entries` and an empty entry log, and calls
+    `router.attach` with its target. The attach saves the snapshot with
+    `machine` set to `to.key` and the deadline arms of the new `entries`,
+    and runs every save hook in the save's transaction: the hooks see the
+    same `entries` ids, an empty `entered`, and the same active invokes,
+    so a gate sees no exit and no entry, and keeps the actor's entry row
+    and token. When the attach throws, the host puts the old record back,
+    discards the new actor, and answers `failed` with kind `store` and the
+    error's message; the old actor never stopped. When it returns, the
+    host has called `probe("migrated", actorId)` from the router's `saved`
+    call, after the commit and before the router updates the
+    subscription and re-arms its timer; it then stops the old actor,
+    starts the new one, which starts again every invoked callback with the
+    same invocation and runs no entry or exit action, keeps `to` among its
+    loaded versions, and answers `migrated`. The new version's event types
+    form the subscription from that save on. Identity, and so the actor's
+    threads and topics, are the stored `manifold`; inbox rows are the
+    store's and never change; a token and its reservation are the gates'
+    and the ledger's rows, keyed by the token and the entry id, which the
+    migration keeps.
+  on-saved: >-
+    The router calls the host's `saved` after each save it writes commits.
+    The host calls each listener registered with `onSaved` there, for an
+    `active` snapshot, after its own index update, in registration order.
+    A listener runs inside the router's call and must not call into the
+    router or the host; the migrations module's listener adds a job to its
+    queue for the next macrotask.
   release: >-
     `release(actorId)` loads the version of the actor's stored snapshot
     through the loader, replacing a `missing` load the host kept, and then
@@ -483,11 +616,13 @@ proposed-design:
     and asserts the same names.
   service-wiring: >-
     The service opens the host with `openActorHost` from its parts, the
-    store, the blueprint loader, the log, and `serviceSaveHooks(parts)`,
-    after every module whose save hook or implementations it needs, and
-    passes it to `startRouter` as `host`. The blueprint loader is created
-    with `onStateEntry: recordStateEntry`. Modules started after the router
-    reach `start`, `actorOf`, and `release` through the host.
+    store, the blueprint loader, the log, `serviceSaveHooks(parts)`, the
+    gates' `heldTokens`, and the service's `migrated` probe, after every
+    module whose save hook or implementations it needs, and passes it to
+    `startRouter` as `host`. The blueprint loader is created with
+    `onStateEntry: recordStateEntry`. Modules started after the router
+    reach `start`, `actorOf`, `release`, `migrate`, and `onSaved` through
+    the host.
   convergence: >-
     `start` twice with one actor id creates one actor; a crash between
     creating it and its first save leaves nothing, and the next `start`
@@ -496,16 +631,22 @@ proposed-design:
     entry count, so every entry, deadline arm, and invocation takes the
     ids it had. A save twice lists the same deadline arms and the same
     active invokes, and the store keeps the first fire time. A queued
-    persist twice saves the same snapshot. `release` twice restores once,
+    persist twice saves the same snapshot. `migrate` twice with one
+    version migrates once: the second answers `current`. A crash before a
+    migration's save commits leaves the stored snapshot on its version;
+    one after leaves it on the new version, which resume restores, with
+    its deadline rows. `release` twice restores once,
     since the router's `release` of an actor that is not held does
     nothing. The save hooks run once per save the router makes and join its
     transaction, so a crash rolls back their writes with the snapshot.
   errors: >-
     A start input that fails validation throws an `ActorStartError`. A
     version or snapshot the host cannot restore is a `held` outcome with its
-    reason, never a throw. Misuse by service code throws a `TypeError`:
-    `start` or `release` before `connect`, and `invocationOf` for an actor
-    the host did not create. Store errors, loader rejections, and save hook
+    reason, never a throw, and a migration that cannot be made is a
+    `deferred` or `failed` outcome. Misuse by service code throws a
+    `TypeError`: `start`, `release`, or `migrate` before `connect`,
+    `migrate` to a version at another path or from inside a delivery or a
+    save hook, and `invocationOf` for an actor the host did not create. Store errors, loader rejections, and save hook
     errors propagate unchanged. Inputs are trusted otherwise.
   dependencies: >-
     No new third-party library. The host uses `xstate`, which the service
@@ -564,9 +705,31 @@ proposed-design:
     result; an invoked callback that sends an event that changes the state
     and then an event the state ignores, both before the queued save,
     gives the first; it is the same on a save made again after a
-    rollback, and absent on a started actor's first save. Fault tests, in a child Node
+    rollback, and absent on a started actor's first save. Migration tests: a waiting actor
+    migrates to a version that splits a context field through a migration
+    path, from the same state, with its entry ids, its deadline's first
+    fire time, its identity, and its invoked callback's invocation
+    unchanged, and no entry or exit action run; a deadline whose `after`
+    key the new version drops leaves no row, and a decimal key the new
+    version adds is armed from the migration's time; a child blueprint's
+    context migrates by the child's own path; an actor with a pending
+    inbox row, a queued save, or a running promise is `deferred` with that
+    reason and stays loaded on its version; a holder fails with
+    `gate-missing` and with `token-trap`; a mapping that throws, one that
+    times out, one whose result the new context schema rejects, a context
+    no path accepts, and a state the new version does not declare each
+    answer `failed` with their kind and leave the stored snapshot
+    byte-identical, the deadline and token rows unchanged, and the actor
+    taking its next event on its version; a save hook that throws on the
+    migration's save answers `failed` with kind `store`, and the old actor
+    takes its next event with its callback never stopped; `migrate` twice
+    answers `current` the second time; `onSaved` hears every committed
+    save of an active actor and none of an `error` snapshot. Fault tests, in a child Node
     process that sends itself `SIGKILL` and whose kill signal the parent
-    asserts before it reopens the file: a kill at the store's `sent` probe
+    asserts before it reopens the file: a kill at the host's `migrated`
+    probe, after which the actor restores on the new version once, its
+    deadline fires once at its first fire time, and an event published
+    after the restart is taken once; a kill at the store's `sent` probe
     during a delivery, and a kill after the invoked promise resolves and
     before its queued persist commits; after `openActorHost` and
     `startRouter` on the same file, each event is taken once, the delay

@@ -1,6 +1,7 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
+    - blueprint-migration
     - service-configuration
     - store
     - durable-event-delivery
@@ -238,6 +239,8 @@ proposed-design:
       readonly delivery?: DeliveryProbe;
       /** Called after the revision follower applies a revision. */
       readonly applied?: (applied: AppliedRevision) => void;
+      /** Passed to the actor host: after a migration's save commits, before the old actor stops. */
+      readonly migrated?: (actorId: string) => void;
     }
 
     export type ServiceStep =
@@ -284,6 +287,7 @@ proposed-design:
       readonly router: Router;
       readonly github: GitHubSource;
       readonly t3code: T3CodeSource;
+      readonly migrations: Migrations;
       readonly http: ServiceHttp;
       /** Stops the service; every call returns the first call's promise. */
       stop(): Promise<void>;
@@ -447,23 +451,24 @@ proposed-design:
     | `agent-threads` | `agent-threads/wiring.ts` | `openAgentThreads` with the environments, their `t3code-token` files, the actor host's `actorOf`, `bindingArchived` as `binding-archived` states, and the environment source's `ready` and `write`; adds its implementations. | `agentThreads` | `commands` |
     | `task-metadata` | `task-metadata/wiring.ts` | `openTaskMetadata` as `task-metadata` states, with the GitHub source once it starts and `bindingOf` answered by the portfolio's `githubProject`; adds its implementations. | `taskMetadata` | |
     | `agent-tools` | `agent-tools/wiring.ts` | `openAgentTools` as `agent-tools` states; mounts its listener at `/api/agent-tools`. | `agentTools` | `commands` |
-    | `escalations` | `escalations/wiring.ts` | `openEscalations` with its `ntfy-token` files and the handlers of `intake-failed`, `comparator-failed`, `agent-question`, `held-actor`, and `stranded-token`, the last from the `strandedTokenHandler` option when it is set; adds its implementations; `mountEscalations`. | `escalations` | `notifications` |
+    | `escalations` | `escalations/wiring.ts` | `openEscalations` with its `ntfy-token` files and the handlers of `intake-failed`, `comparator-failed`, `agent-question`, `held-actor`, `stranded-token`, the last from the `strandedTokenHandler` option when it is set, and `migration-failed`, from the migrations module once it starts; adds its implementations; `mountEscalations`. | `escalations` | `notifications` |
     | step `escalations-opened` | | | | |
     | `blueprint-loader` | `blueprint-loader/wiring.ts` | `createBlueprintLoader` with `serviceImplementations` of every registry added before it, `onStateEntry: recordStateEntry`, the configured lint bound, the repository's `revisionAt`, and an `onExpressionError` that logs `expression-error`. | `blueprints` | |
     | step `process-repository-opened` | | | | |
     | `gates` | `gates/wiring.ts` | The `gates` option, or `createGates` with the comparator sandbox, the token lint, and `trackedIssue` read from the GitHub mirror over the Projects the portfolio's `githubProject` binds. | `gates` | `timers` |
-    | `revisions` | `service/revisions-wiring.ts` | `createRevisions`, with an `applied` that tells intake once it starts and calls the `applied` probe; awaits `follow()`, then retries pending usage. | `revisions` | `pulls` |
+    | `revisions` | `service/revisions-wiring.ts` | `createRevisions`, with an `applied` that tells intake once it starts, runs a pass of the migrations module once it starts, and calls the `applied` probe; awaits `follow()`, then retries pending usage. | `revisions` | `pulls` |
     | step `revision-followed` | | | | |
     | `pull` | `service/revisions-wiring.ts` | Awaits `revisions.pull()`; a pull that fails logs `pull-failed` and start continues on the current commit, or with no revision when there is none, since every sweep pulls again. | | |
     | step `pulled` | | | | |
     | `gates-prepare` | `gates/wiring.ts` | Awaits the gates' `prepare`. | | |
-    | `actor-host` | `actor-host/wiring.ts` | Awaits the `actorHost` option, defaulting to `createServiceActorHost`, with `Omit<ServiceParts, "actorHost">`. | `actorHost` | |
+    | `actor-host` | `actor-host/wiring.ts` | Awaits the `actorHost` option, defaulting to `createServiceActorHost`, with `Omit<ServiceParts, "actorHost">`, the gates' `heldTokens`, and the `migrated` probe. | `actorHost` | |
     | step `actor-host-opened` | | | | |
     | `router` | `router/wiring.ts` | `startRouter` with the store, the actor host, the gates' `afterDrain`, and an `onHeld` that logs `actor-held` and raises a `held-actor` escalation. `startRouter` restores and drains every stored actor and returns. | `router` | `delivery` |
     | step `router-started` | | | | |
     | `escalations-delivery` | `escalations/wiring.ts` | The escalations module's `start`. | | |
     | `agent-tools-delivery` | `agent-tools/wiring.ts` | The agent tools module's `start`. | | |
     | step `escalations-started` | | | | |
+    | `migrations` | `migrations/wiring.ts` | `openMigrations` as `blueprint-migration` states, with the store, the actor host, `revisions.latest`, the process repository's `isAncestor`, the bundles, the escalations module, and the log; awaits its first pass. | `migrations` | `delivery` |
     | `github-source` | `github-source/wiring.ts` | `startGitHubSource` with the `github` section, the credentials, the store, the router, `boundProjects` read from `portfolio.current()`, a `processRepository` trigger whose `url` and `branch` are the section's and whose `pull` is `revisions.pull`, the `cardMove` probe, an `onTracked` and an `onMirrorChanged` that tell intake once it starts and the gates, and an `onError` that logs `github-error`; mounts its `requestListener` at `githubWebhookPath`. | `github` | `sources` |
     | step `github-started` | | | | |
     | `intake` | `intake/wiring.ts` | `startIntake` as `intake` states, with the GitHub source as `tracked`, and an `onFailed` and `onError` that log `intake-failed` and `intake-error`. | `intake` | `intake` |
@@ -555,7 +560,7 @@ proposed-design:
     | `notifications` | `escalations-stopped` | `escalations` | Delivery to ntfy ends. |
     | `pulls` | `revisions-idle` | `revisions` | The follower's queue holds every pull a source started, including one the GitHub source called and did not await; it drains before intake, the router, and the store stop. |
     | `intake` | `intake-stopped` | `intake` | Intake outlives every caller: the sources, the follower, and the escalations module. |
-    | `delivery` | `router-stopped` | `router` | No module publishes after this. |
+    | `delivery` | `router-stopped` | `migrations`, `router` | The migrations module's queue drains before the router stops; no module publishes after this. |
     | `timers` | | `gates`, `portfolio` | The gates' and the capacity's timers stop once nothing they wake can deliver. |
     | `store` | `store-closed` | `store` | Last. |
   revision-follower: >-

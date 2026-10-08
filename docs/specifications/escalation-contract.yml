@@ -136,11 +136,11 @@ description: |-
     for an unknown id; `413` for a body over 64 KiB, which holds the
     longest valid answer even with every character `\u`-escaped.
 
-  Service escalations. The service raises five kinds, each sent to the
+  Service escalations. The service raises six kinds, each sent to the
   `default` destination. Its `raiser` is
   `{ type: "service", kind, subject, occurrence }`.
-  `held-actor`, `stranded-token`, `intake-failed`, and `comparator-failed`
-  take no free text. `agent-question` takes free text when its request asks.
+  `held-actor`, `stranded-token`, `intake-failed`, `comparator-failed`,
+  and `migration-failed` take no free text. `agent-question` takes free text when its request asks.
 
   | Kind | Title | Subject | Choices | Raised when |
   |---|---|---|---|---|
@@ -149,12 +149,17 @@ description: |-
   | `intake-failed` | `Intake failed` | `{ issue }` | `retry`, `dismiss` | Intake records a failure for an issue that is still tracked and unchanged since the attempt read it. |
   | `comparator-failed` | `Comparator failed` | `{ gate }` | `retry`, `dismiss` | A gate's comparator is missing or fails to load or to evaluate. |
   | `agent-question` | The task's name and the agent's title, as `agent-tools` gives it | `{ actorId, environment, threadId, turnId }` | Request choices | An agent asks a person through the agent tools module. |
+  | `migration-failed` | `Migration failed` | `{ version }` | `retry`, `dismiss` | An actor cannot migrate to a later blueprint version, for any reason but a version that fails to load. |
 
   `actorId` is an actor id, `issue` an issue's GitHub node id, `gate` a
-  gate key, `<blueprintPath>#<statePath>`, and `tokenId` a token id.
+  gate key, `<blueprintPath>#<statePath>`, `tokenId` a token id, and
+  `version` the blueprint version key the actors could not take.
   `retry` on `intake-failed` takes the issue in again on the current
   revision; `retry` on `comparator-failed` runs the gate again, loading
-  its comparator first when the gate has none. `dismiss` closes the
+  its comparator first when the gate has none; `retry` on
+  `migration-failed` attempts again every actor whose migration toward
+  that version failed, to the latest version of its path, as
+  `blueprint-migration` states. `dismiss` closes the
   escalation and changes nothing else.
 
   An escalation, as the API returns it, has `id`, `raiser`, `title`,
@@ -171,6 +176,6 @@ validation-criteria: >-
   Every event the callback sends, every escalation and answer body the API
   returns, and every body the sender publishes, captured by a fake ntfy
   server, validates against its definition, a service escalation of each
-  of the five kinds included. A blueprint that declares the
+  of the six kinds included. A blueprint that declares the
   example's `reviewing` state lints clean with `escalate` among the actor
   names. Fixtures use a domain unrelated to Manifold.

@@ -7,6 +7,7 @@ relationships:
     - service-configuration
     - store
     - agent-tools
+    - blueprint-migration
   # GAP-EDGE: the technical-design schema declares no edge to the
   # specifications that define its contracts; `references` is the best fit.
   references:
@@ -159,7 +160,7 @@ proposed-design:
     what the escalation is about and `title` is optional, default
     `Question`. `raise` and `withdraw` join the caller's transaction, so a
     raiser writes its escalation in the transaction that records the cause.
-    Five kinds exist, as `escalation-contract` lists. `held-actor` is raised from the
+    Six kinds exist, as `escalation-contract` lists. `held-actor` is raised from the
     router's `onHeld`, with subject `{ actorId }`, the reason, the inbox
     row that errored or the restore mismatch, in its question, and the
     choices `retry` and `dismiss`. `stranded-token` is raised by a gate on
@@ -179,7 +180,13 @@ proposed-design:
     `agent-question` is raised by the agent tools module for an agent's
     `escalate` call, with subject `{ actorId, environment, threadId,
     turnId }`, a title that names the agent's task, and the agent's
-    question, choices, and free-text flag.
+    question, choices, and free-text flag. `migration-failed` is raised by
+    the migrations module in the transaction that records a migration
+    failure, with subject `{ version }`, the blueprint version key the
+    actor could not take, the actor, the kind, and the message in its
+    question, and the choices `retry` and `dismiss`, as
+    `blueprint-migration` (failures) states; every actor failing toward
+    one version shares its open occurrence.
     A service escalation goes to the `default` destination; its title
     defaults to `Question`, and it takes free text only when its request
     asks for it. `withdraw({ kind, subject })` withdraws the open escalation
@@ -215,6 +222,10 @@ proposed-design:
     nothing. The `comparator-failed` handler is the gate's: for `retry` it
     writes nothing and returns a call that runs the gate again, loading its
     comparator first when the gate has none; for `dismiss` it does nothing.
+    The `migration-failed` handler is the migrations module's: for `retry`
+    it clears the version's failure records inside the transaction and
+    returns a call that attempts each of those actors again; for `dismiss`
+    it does nothing.
     A crash after the handling commits and
     before `release` runs is covered by resume, which restores every held
     actor again; one before intake's queue call, by the reconcile at
@@ -431,7 +442,8 @@ proposed-design:
       | "stranded-token"
       | "intake-failed"
       | "comparator-failed"
-      | "agent-question";
+      | "agent-question"
+      | "migration-failed";
     export type EscalationSubject = Readonly<Record<string, string>>;
     export type ServiceEscalationHandler = (escalation: Escalation) => void | (() => void);
 

@@ -1,0 +1,13 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - blueprint-migration
+    - actor-host
+title: Migration
+description: >-
+  Moving a running state machine actor that waits on events from its
+  blueprint version to a later version at the same path, in one save that
+  keeps its state, identity, threads, gate token, reservation, inbox, and
+  the deadlines the later version still declares.

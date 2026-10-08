@@ -100,8 +100,10 @@ We need to be on the same page with terminology. When communicating, use this la
 - **issue** a way to track tasks related to a repository on GitHub
 - **late attribution** the actor, portfolio item, and state visit a call is counted for when the thread of its provider session, or the actor that owns that thread, reaches the service after the call posted; the ledger keeps the call's actual where it posted.
 - **lifecycle field** the single-select field of a bound Project that shows where each task is, declared with its option names in the process repository's task metadata declaration.
-- **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, or an event payload assigned into context.
+- **mapping** a JSONata expression at a schema boundary: a child's input, a final state's output, a migration path's context, or an event payload assigned into context.
 - **message** text a task sends to one thread, which reaches the thread's agent only once an actor that follows the thread takes it as an event, and which the agent reads once with `get-messages`.
+- **migration** moving a running actor that waits on events from its blueprint version to a later version at the same path, in one save that keeps its state, identity, threads, token, reservation, inbox, and the deadlines the later version still declares.
+- **migration path** an entry of a blueprint's `migrations`: a JSON Schema an earlier version's context satisfies and a mapping from that context to the blueprint's own context.
 - **notification destination** a name the process repository uses for where an escalation is sent, mapped in service configuration to an ntfy server, topic, security posture, and credential.
 - **pacing** a limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.
 - **parent** a task with subtasks

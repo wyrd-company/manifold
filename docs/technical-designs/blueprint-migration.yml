@@ -1,0 +1,332 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - actor-host
+    - blueprint-loader
+    - gate-runtime
+    - store
+    - escalations
+    - process-repository
+    - service-assembly
+    - durable-event-delivery
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications and decisions that define its contracts; `references` is
+  # the best fit.
+  references:
+    - blueprint
+    - blueprint-expressions
+    - escalation-contract
+    - store-database-schema
+    - migrate-waiting-actors-to-each-later-version
+objective: >-
+  Move every running actor to the latest version of its blueprint's path,
+  so that a process that evolves takes its running work with it: an actor
+  that waits on events migrates to a later version at the same path, keeps
+  its identity, threads, gate token, reservation, deadlines, and inbox,
+  reads its context through the migration path its blueprint's author
+  wrote, and an actor that cannot migrate stays exactly where it was and
+  the operator learns why.
+background:
+  current-design: >-
+    The service saves every snapshot with the key of its blueprint version,
+    `<commit>:<path>` or `<commit>:<path>@<bundle>`, and the actor host
+    restores it into that version. The revision follower loads each new
+    revision and keeps the latest `RevisionLoad`; a new actor takes the
+    `LoadedBlueprint` of its path from it. Nothing moves a running actor to
+    another key, so a blueprint saved from the console reaches only actors
+    started after the save.
+  problems:
+    - >-
+      XState restores a snapshot into any machine whose state nodes match,
+      and checks nothing about the context; a context saved under one
+      context schema and read by expressions written for another fails at
+      the first expression that reads it, or reads a wrong value silently.
+    - >-
+      A snapshot carries the entry ids, deadlines, and invokes of the states
+      it is in. A migration that runs entry or exit actions, or renumbers
+      entries, returns gate tokens, re-arms deadlines from zero, and
+      starts every invoke as new.
+    - >-
+      An actor between two steps of its own, with an event pending, an
+      invoked promise running, or a change of an invoke not yet saved, has
+      state that no snapshot holds.
+    - >-
+      A version key names a commit, and commits are ordered only by the
+      process repository's history: a force push publishes a commit that
+      does not descend from the one before it.
+design-challenges:
+  waiting: >-
+    A migration must take an actor only at a point where its stored
+    snapshot is all of its state, and must find that point again for an
+    actor that was not at it.
+  identity-preserving: >-
+    The migrated actor must be the same actor to every module that reads
+    saves: the same entry ids, the same deadlines where the new version
+    still declares them, the same invocations, the same token.
+  one-step: >-
+    The new snapshot must commit through the actor host's ordinary save,
+    with every save hook, or not at all, and a crash at any point must leave
+    the actor on exactly one version.
+  failure-visibility: >-
+    Every reason an actor cannot migrate must reach the operator once,
+    with what to fix, while the actor keeps running on its version.
+proposed-design:
+  high-level-overview: >-
+    Migration has two parts. The actor host's `migrate(actorId, to)` makes
+    one attempt for one actor: it checks that the actor waits on events,
+    builds the new snapshot from the stored one through the target
+    version's `checkRestore`, its token lint, and its migration paths, and
+    saves it through the router as the actor's next snapshot, with the
+    save hooks, in one transaction; it answers with a typed outcome and
+    changes nothing unless the save commits. The `migrations` module,
+    `packages/service/src/migrations/`, decides when and to what: after
+    each applied revision, at service start, and after each save of an
+    actor that is behind, it finds the actors whose version is earlier
+    than the latest version of their path, attempts each through
+    `migrate`, records each failure in the store once, logs it, and raises
+    a `migration-failed` escalation whose `retry` attempts again. The
+    author writes migration paths in the blueprint's top-level
+    `migrations` member, which `blueprint` specifies; the machine never
+    reads it.
+  public-interface: |-
+    `packages/service/src/migrations/index.ts` exports exactly these names.
+
+    ```ts
+    import type { Store, StoredMigrationFailure } from "../store/index.ts";
+    import type { ActorHost } from "../actor-host/index.ts";
+    import type { BundleSource, RevisionLoad } from "../blueprint-loader/index.ts";
+    import type { Escalation, Escalations } from "../escalations/index.ts";
+    import type { ServiceLogEntry } from "../service/index.ts";
+
+    export function openMigrations(options: MigrationsOptions): Migrations;
+
+    export interface MigrationsOptions {
+      readonly store: Store;
+      readonly actorHost: Pick<ActorHost, "migrate" | "onSaved">;
+      /** The revision follower's latest applied load. */
+      latest(): RevisionLoad | undefined;
+      /** The process repository's `isAncestor`. */
+      isAncestor(ancestor: string, commit: string): Promise<boolean>;
+      readonly bundles: Pick<BundleSource, "recordedAt">;
+      readonly escalations: Pick<Escalations, "raise" | "withdraw">;
+      readonly log: (entry: ServiceLogEntry) => void;
+    }
+
+    export interface Migrations {
+      /** Attempts every active actor that is behind; resolves when every attempt of the pass has ended. */
+      pass(): Promise<MigrationPass>;
+      /** The `migration-failed` handler; the function it returns runs after the handling commits. */
+      migrationFailed(escalation: Escalation): (() => void) | undefined;
+      /** Resolves when the queue is empty; later calls to `pass` and later saves start nothing. */
+      stop(): Promise<void>;
+    }
+
+    export interface MigrationPass {
+      readonly migrated: readonly string[];
+      readonly deferred: readonly string[];
+      readonly failed: readonly StoredMigrationFailure[];
+    }
+    ```
+
+    The actor host's `migrate`, `MigrationOutcome`, and
+    `MigrationFailure` are specified in `actor-host`; the store's failure
+    records in `store`; the `migration-failed` escalation in
+    `escalation-contract`.
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else.
+    `migrations.ts` implements `openMigrations`: the queue, the pass, the
+    save listener, failure records, and the handler. `later.ts` holds the
+    pure function `laterVersion(from, to, facts)` and the escalation's
+    question text. `wiring.ts` is the module's wiring part. Tests live
+    beside the module and import only `index.ts`, the store's, the actor
+    host's, and the loader's `index.ts`.
+  later-version: >-
+    The target of a path is the `LoadedBlueprint` of that path in
+    `latest().blueprints`. An actor is behind when its stored snapshot is
+    `active`, its `machine` parses with `parseBlueprintVersionKey` to a
+    version at the target's path, its key differs from the target's, and
+    the target is later. A version `to` is later than `from` when
+    `from.commit` is a proper ancestor of `to.commit`, read with
+    `isAncestor(from.commit, to.commit)`; or when the commits are equal,
+    both are bundled, and the store recorded `to.bundle` after
+    `from.bundle`, read with `recordedAt`. Every pairing at the same path
+    follows the rule, so a repository file replaces a bundled version, a
+    bundled version replaces a repository file the repository deleted, and
+    a later bundle replaces an earlier one at the same commit. A commit the
+    repository does not hold, a commit a force push left off the branch,
+    and a bundle the store recorded earlier, as after a Manifold
+    downgrade, are never later; an actor on them stays where it is. A
+    commit graph and a bundle's recorded time never change, so the module
+    caches each pair's answer for the life of the process. The target is
+    the latest version only: an actor several versions behind migrates in
+    one step, by the target's own migration paths, which match the
+    context by its shape and not by the version it was written under.
+  version-invalid: >-
+    When `latest()` holds a path in `failures` and not in `blueprints`, the
+    later version at that path did not load or lint. For each active actor
+    on an earlier version of the path, as `later-version` orders them with
+    the failed version `{ commit: latest().commit, path }`, the module
+    records a failure of kind `version-invalid` whose detail holds the
+    load's findings, and logs it. It raises no escalation: the follower
+    logs `blueprint-invalid` for the file, intake fails visibly for new
+    tasks, and the fix is a new commit, whose revision every such actor
+    then attempts. A version that is `missing` at the actor's target for a
+    child blueprint the target invokes is the same failure, raised by the
+    host.
+  pass: >-
+    The module keeps one serial queue. `pass()` adds one job: it reads
+    `store.activeSnapshots()`, and for each actor in actor id order whose
+    version is behind, unless the actor's stored failure record names the
+    same `from` and `to` keys, it awaits `actorHost.migrate(actorId,
+    target)`. A `migrated` outcome is logged `actor-migrated` with the
+    actor, both keys, and the migration path's index when one ran. A
+    `deferred` outcome adds the actor to the deferred set and is logged
+    `migration-deferred` once per actor and target with its reason. A
+    `failed` outcome is recorded. A `current` or `ended` outcome does
+    nothing. Passes run after each revision the follower applies, through
+    its `applied` callback, and once when the module's wiring part starts,
+    which awaits that pass.
+  saves: >-
+    `openMigrations` registers a listener with `actorHost.onSaved`, which
+    the host calls after each committed save of an active actor. When the
+    saved version is behind its path's target and no failure record names
+    that pair, the listener adds one job for that actor to the queue on
+    the next macrotask, so the attempt runs outside the router's delivery
+    and save. An actor deferred because an event was pending, a promise
+    was running, or a change was not yet saved is therefore attempted
+    again right after the save that settles it, and an actor that was held
+    is attempted after the save that follows its release. No timer runs.
+  failures: >-
+    A failed attempt runs one `store.connection.transaction`: it calls
+    `store.recordMigrationFailure` with the actor, the `from` and `to`
+    keys, the kind, the message, the detail, and the clock's time. When
+    the store answers `recorded`, the transaction also raises a
+    `migration-failed` escalation, for every kind except `version-invalid`,
+    with subject `{ version: <to key> }`, the question naming the path, the
+    target commit, the actor, the kind, and the message, and the choices
+    `retry` and `dismiss`; and the module logs `migration-failed` at `warn`
+    with the same fields. When the store answers `unchanged`, the same
+    failure of the same pair is already recorded and nothing is written,
+    raised, or logged. The escalations module's `raise` returns the open
+    escalation of the same subject, so every actor that fails toward one
+    target shares one open escalation. A store write that throws while
+    recording is logged `migration-failed` at `error` with its message,
+    and records nothing; the next pass or save attempts the actor again.
+  escalation: >-
+    The module's `migrationFailed` handler takes an answer to a
+    `migration-failed` escalation inside the transaction that records its
+    handling. For `retry` it reads `store.migrationFailures(version)`,
+    calls `store.clearMigrationFailures(version)`, and returns a function
+    that adds one job per actor read; each job attempts the actor to the
+    current target of its path, so a retry after a later revision takes
+    the later version. A retry that fails again records the failure anew
+    and raises the next occurrence. For `dismiss` it writes nothing: the
+    records stay, so no pass or save attempts the same pair again, and
+    the next revision's target is a new pair. After a `migrated` outcome
+    whose actor had a record, the module withdraws the escalation of that
+    record's `to` when `store.migrationFailures` of it is then empty.
+  outcomes: |-
+    Each failure kind, from the actor host or the module, with what the
+    operator sees. In every case the actor's stored snapshot, version,
+    state, context, deadline rows, inbox rows, token rows, and reservations
+    are unchanged, and the actor keeps taking events on its version.
+
+    | Kind | Raised by | Cause | Operator sees |
+    |---|---|---|---|
+    | `version-invalid` | module or host | The later version, or a child blueprint it invokes, did not load or lint at the target commit. | Log `migration-failed` with the findings; the follower's `blueprint-invalid`. |
+    | `restore-mismatch` | host | The target's `checkRestore` finds a state, history state, or invoke of the snapshot that the target does not declare. | Escalation and log, with each mismatch. |
+    | `gate-missing` | host | The actor holds a token of a gate the target does not declare at the gated state. | Escalation and log, with the gate and token. |
+    | `token-trap` | host | The actor holds a token, and the configuration key of the migrated snapshot is in the target's trap set for that gate. | Escalation and log, with the gate, the token, and the configuration key. |
+    | `no-path` | host | The context fails the target's context schema and no migration path's `from` accepts it. | Escalation and log, with the schema errors. |
+    | `mapping-failed` | host | The migration path's mapping throws or returns a value that is not an object, or an object holding `manifold`. | Escalation and log, with the expression error. |
+    | `mapping-timeout` | host | The mapping's wait on the expressions worker reaches `expressions.timeoutMs`; the worker restarts. | Escalation and log, with the expression error. |
+    | `context-rejected` | host | The mapping's result fails the target's context schema. | Escalation and log, with the schema errors. |
+    | `store` | host | The save throws: a SQLite error, or a save hook that throws. | Escalation and log, with the error's message. |
+
+    A deferral is not a failure: an actor that is held, has a pending
+    inbox row, has a change not yet saved, or runs an invoked promise is
+    attempted again after its next save, and is logged once per target.
+  convergence: >-
+    A pass twice attempts each actor that is behind once per pass; an
+    actor the first pass migrated is current, and one it failed has a
+    record of the same pair, so the second pass skips it. A failure
+    recorded twice for one pair is recorded and raised once. A crash
+    before the migration's save commits leaves the stored snapshot on its
+    version and no record; the pass at the next start attempts it again.
+    A crash after the save commits and before the router re-arms the
+    deadline timer and the subscription leaves the actor on the target
+    version; the next start restores it there, arms its deadline rows,
+    derives its subscription from the stored snapshot, and finds it
+    current. A crash after a failure's record commits leaves the record
+    and its escalation; one before leaves neither, and the next pass
+    attempts again. A `retry` whose handling commits before its jobs run
+    has cleared the records, so the pass at the next start attempts the
+    actors. Withdrawing after a migration runs after the save; a crash
+    between leaves an open escalation whose `retry` finds no record and
+    attempts nothing.
+  service-wiring: >-
+    `migrations/wiring.ts` is the module's wiring part, entry
+    `migrations` in the start list, after `agent-tools-delivery` and the
+    step `escalations-started`, so the router has restored every actor and
+    the escalations module delivers. It opens the module with the store,
+    the actor host, `revisions.latest`, the process repository's
+    `isAncestor`, the bundles, the escalations module, and the log,
+    registers `stop` at stage `delivery`, and awaits the first pass. The
+    revision follower's `applied` callback calls `pass()` on the module
+    through `context.later`, as it reaches intake, and the escalations
+    part gives the `migration-failed` handler the same way.
+  errors: >-
+    Failures are outcomes and records, never throws. `pass` rejects only
+    when `store.activeSnapshots` or `latest` throws. Misuse by service code
+    throws a `TypeError`: `pass` after `stop`.
+  dependencies: >-
+    No new third-party library. `isAncestor` uses isomorphic-git, which
+    the process repository already depends on.
+  tests: >-
+    Tests run against a real store file in a temporary directory, the real
+    router, the real actor host, and the real blueprint loader over an
+    in-memory process repository at three commits, the second a child of
+    the first and the third of the second, with fixture blueprints of a
+    generic domain: a parcel blueprint whose second version splits the
+    context's `depot` into `depot` and `zone` with a migration path, and
+    whose third version adds a state; the store is populated with other
+    actors before each test. Behaviours proved, each written red before
+    green: an actor waiting on the first version migrates to the second
+    at a pass and takes its next event through a guard that reads the
+    mapped `zone`, from the same state; an actor two versions behind
+    migrates to the third in one step; an actor on a commit that is not an
+    ancestor of the target, and one on a bundle recorded after the
+    target's, is not attempted; a bundled actor migrates to the repository
+    file at a later commit and to a later bundle at the same commit; an
+    actor with a pending inbox row is deferred and migrates after the
+    save that consumes it, with no second save of the target; a mapping
+    that throws, a mapping whose result the target's context schema
+    rejects, a mapping that runs past `timeoutMs`, a context no path
+    accepts, a state the target does not declare, and a later version
+    whose file fails the lint each leave the stored snapshot byte-identical
+    to before the attempt, the deadline, inbox, token, and reservation
+    rows unchanged, and the actor taking its next event on its version,
+    with one failure record of its kind; a second pass and a later save
+    record nothing more, raise no second escalation, and log nothing more;
+    two actors failing toward one target share one open escalation; a
+    `retry` after a fix in a later revision migrates both to it and the
+    escalation's next attempt raises nothing; a `dismiss` leaves the
+    records and no pass attempts the pair; a holder whose migrated
+    configuration is in the target's trap set fails with `token-trap` and
+    keeps its token; a holder of a gate the target drops fails with
+    `gate-missing`. A fault test runs the service in a child Node process
+    that sends itself `SIGKILL` at the actor host's `migrated` probe,
+    after the new snapshot commits and before the router re-arms its
+    deadline timer and subscription; the parent asserts the kill signal,
+    starts the service again on the same file, and shows the actor on the
+    target version once, no second migration logged, its deadline firing
+    once at its first fire time, and an event published after the restart
+    taken once on the target version. The acceptance test
+    `packages/service/src/migration.integration.test.ts` assembles the
+    service with the fake GitHub and fake T3 Code servers over a process
+    repository built from the starter repository with a parcel blueprint,
+    starts an actor through intake, saves a later version with a context
+    change and its migration path through the blueprints API, and shows
+    the actor continue from the same waiting state on the later version,
+    reading the mapped context, and its history showing one visit whose
+    blueprint commit changes with no event.
