@@ -21,7 +21,7 @@ description: |-
   `agent.escalated`; the answer to its question,
   `agent.escalation.answered`; and a message a task sends the thread,
   `agent.message`, whose payload is `{ type, environment, threadId,
-  messageId, from: { actorId, issue }, text }` and whose event id is
+  messageId, from: { actorId, issue, task }, text }` and whose event id is
   `message/<messageId>`. Every actor that follows the thread and whose
   blueprint declares the type takes the event, whichever process and
   environment the sender runs on, since the sender addresses the thread

@@ -313,6 +313,7 @@ $defs:
     required:
       - actorId
       - issue
+      - task
     properties:
       actorId:
         type: string
@@ -322,6 +323,32 @@ $defs:
         type:
           - string
           - "null"
+      task:
+        description: >-
+          The sending task's name, read from the GitHub mirror when the message was
+          sent; null when the identity holds no issue or the mirror did not track it.
+        oneOf:
+          - $ref: "#/$defs/message-sender-task"
+          - type: "null"
+  message-sender-task:
+    description: The tracked issue that names a sending task.
+    type: object
+    additionalProperties: false
+    required:
+      - repository
+      - number
+    properties:
+      repository:
+        description: "`owner/name`."
+        type: string
+        minLength: 1
+      number:
+        type: integer
+        minimum: 1
+      title:
+        description: The issue's title; absent until the GitHub mirror has read it.
+        type: string
+        minLength: 1
   thread-message:
     description: A message as `get-messages` answers it.
     type: object

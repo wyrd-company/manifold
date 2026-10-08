@@ -46,6 +46,13 @@ description: |-
   holds the `environment` and `thread_id` it is sent to, the sender's
   actor id in `sender_actor_id` and the issue of its identity in
   `sender_issue`, absent when the identity holds none, and `text`.
+  `sender_repository`, `sender_number`, and `sender_title` are the
+  sending task's name as the GitHub mirror gave it when the message was
+  sent: the repository as `owner/name` and the issue number, set together
+  and only with `sender_issue`, absent when the mirror did not track the
+  issue; and the issue's title, set only with them, absent when the
+  mirror had not read it. A message sent before the sender columns
+  existed has none.
   `sent_at` is when the row was written, in the transaction that publishes
   its `agent.message`. `delivered_at` and `delivered_to` are set together,
   in the save of the first following actor that takes the event, to when
@@ -71,7 +78,11 @@ validation-criteria: >-
   unplaced answer each fail. A message delivered without the actor
   that took it, a message read without its turn or its read position, two
   messages of one thread at one read position, and a message noticed or
-  read before it is delivered each fail. The step that adds
+  read before it is delivered each fail. A sender repository without an
+  issue or a number, a sender number without a repository, and a sender
+  title without a repository each fail. The step that adds
   `agenttool_message` is step 2 of the owner `agenttool`, and a store
   file at step 1 that holds question and answer rows migrates with every
-  row kept.
+  row kept. Step 3 adds the sender columns to `agenttool_message`, and a
+  store file at step 2 that holds messages migrates with every row kept
+  and no sender name on any of them.

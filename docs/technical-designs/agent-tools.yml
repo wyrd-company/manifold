@@ -97,6 +97,11 @@ design-challenges:
     through the actor that follows it, be read once in order, and survive
     a crash between its commit and its delivery, with no new topic the
     router derives from an identity.
+  sender: >-
+    An agent that coordinates with another task must see which task wrote
+    to it, by the name a person uses for that task, and the same name on
+    every read of a message, before and after a restart, whatever later
+    happens to the sending issue.
   notice: >-
     The receiving agent must learn it has mail while its turn runs,
     without a new turn, a steered turn, or a stopped one, on every provider.
@@ -286,7 +291,8 @@ proposed-design:
     actor id order. In one transaction the module reads the turn's
     question row in `agenttool_question` by the call key; a row answers the
     call with its escalation as a replay. Otherwise it resolves the
-    question's task and title, as `question-title` describes, calls the
+    question's task and title, as `task-name` and `question-title`
+    describe, calls the
     escalations module's `raise` with kind `agent-question`, subject
     `{ actorId, environment, threadId, turnId }`, that title, the
     question, choices, and free-text flag, and the `default` destination;
@@ -301,17 +307,23 @@ proposed-design:
     channel the escalations module offers: the `default` destination's
     ntfy topic with a button per choice, its answer page, Manifold's API,
     and the Task page, which shows every escalation.
+  task-name: >-
+    A question and a message each name the task they come from by its
+    issue. `trackedIssue(nodeId)`, an option the service answers from the
+    GitHub source's `trackedIssue`, gives the issue's repository, number,
+    and, once the mirror has read it, title. These are an
+    `AgentTaskContext`, `{ repository, number, title? }`. An identity with
+    no `issue`, or an issue the mirror does not track, has no context. The
+    read is the mirror's, so naming a task makes no GitHub request and
+    waits for none, and the module reads the context once, where the
+    question or the message is written, and never again.
   question-title: >-
     A person may get questions from several tasks at once, so the title of
     an agent's question names its task. The task is read inside the
     escalate transaction, after the replay check: the module loads the
     escalation actor's latest snapshot from the store, a held actor's
-    included, and takes the issue node id at `context.manifold.issue`;
-    then `trackedIssue(nodeId)`, an option the service answers from the
-    GitHub source's `trackedIssue`, gives the issue's repository, number,
-    and, once the mirror has read it, title. These are an
-    `AgentQuestionContext`, `{ repository, number, title? }`. An identity
-    with no `issue`, or an issue the mirror does not track, has no context.
+    included, takes the issue node id at `context.manifold.issue`, and
+    reads its context, as `task-name` describes.
     The pure function `questionTitle(context, title)` in `calls.ts` builds
     the escalation's title from the context and the agent's optional
     `title` by the question title table of `agent-tools`, and cuts it to
@@ -322,8 +334,7 @@ proposed-design:
     the close, the answer page, the API, and `agent.escalated` all carry
     that one title, and the escalations module renders it unchanged. The
     escalation's title is the context's only record, since nothing reads
-    the context after the raise. The read is the mirror's, so the call
-    makes no GitHub request and waits for none.
+    the context after the raise.
   answer-turn: >-
     The module gives the escalations module the handler of kind
     `agent-question`, which runs inside the transaction that records the
@@ -437,9 +448,26 @@ proposed-design:
     least one inbox row. When no thread is sent, the transaction rolls back
     and the invoke fails: with `no-recipient` when no resolved thread has
     a follower, and with `not-accepted` otherwise. A commit resolves the
-    invoke with the message id and thread of each thread sent. `from` is
-    the invocation's actor id and the issue of that actor's identity from
-    `actorOf`, or `null`.
+    invoke with the message id and thread of each thread sent.
+  message-sender: >-
+    `from` is read once per invoke, before its transaction: the
+    invocation's actor id; the issue of that actor's identity from
+    `actorOf`, or `null`; and `task`, the issue's context, as `task-name`
+    describes, or `null` when the identity holds no issue or the mirror
+    does not track it. The event and the message row carry the same
+    sender: the row stores the context in `sender_repository`,
+    `sender_number`, and `sender_title`. A thread whose row exists keeps
+    the sender it was written with, so a replayed invoke sends nothing
+    new; a thread it sends to for the first time gets the sender of this
+    run. `get-messages` builds each message's `from` from its row, and the
+    pure function `senderName(from)` in `calls.ts` names the sender in the
+    text by the sender table of `agent-tools`: the task's name and, in
+    parentheses, its title when the context holds one, and the actor id
+    when there is no context. `actorId` and `issue` stay in `from` for
+    every sender, so a blueprint or an agent that reads the structured
+    message can still tell two actors of one issue apart. A message sent
+    before the sender columns existed has no context and keeps the actor
+    id it was read with.
   delivery: >-
     A message is delivered in the save of the first following actor that
     takes its event. The actor host adds to each `ActorSave` the inbox
@@ -586,10 +614,11 @@ proposed-design:
       readonly threads: Pick<AgentThreads, "readThread" | "runningThreads" | "startTurn">;
       /**
        * The tracked issue of a node id, from the GitHub source's
-       * `trackedIssue`, read when an escalate call arrives; `undefined`
-       * when the mirror does not track it.
+       * `trackedIssue`, read when an escalate call arrives and when a
+       * `send-message` invoke runs; `undefined` when the mirror does not
+       * track it.
        */
-      readonly trackedIssue: (nodeId: string) => AgentQuestionContext | undefined;
+      readonly trackedIssue: (nodeId: string) => AgentTaskContext | undefined;
       /** The environment source's `environmentId`, read when a call arrives. */
       readonly environmentId: (environment: string, signal?: AbortSignal) => Promise<string>;
       /** Called after a call commits and before the response is written. */
@@ -615,8 +644,8 @@ proposed-design:
       stop(): Promise<void>;
     }
 
-    /** The task an agent's question comes from. */
-    export interface AgentQuestionContext {
+    /** The task an agent's question or a message comes from. */
+    export interface AgentTaskContext {
       /** `owner/name`. */
       readonly repository: string;
       readonly number: number;
@@ -685,12 +714,13 @@ proposed-design:
     sender runs, and the part registers the module's `stop()` with
     `context.onStop` at the stage `commands`, after the HTTP host stops
     taking requests. Its migration steps run where `service-assembly`
-    runs the `agenttool` steps, and the message table's step is step 2.
+    runs the `agenttool` steps: the message table's step is step 2, and
+    the step that adds the message's sender columns is step 3.
   module-layout: >-
     `index.ts` re-exports the public names. `calls.ts` holds the pure
     rules: the call id read from `meta`, the call key, the event ids, the
-    question title, the answer message id and text, and the path rewrite
-    of a handoff failure.
+    question title, the sender's name, the answer message id and text, and
+    the path rewrite of a handoff failure.
     `identify.ts` runs the identification over the candidates with its
     bound. `handoff.ts` and `escalate.ts` hold each tool's transaction.
     `answers.ts` holds the handler and the sender. `messages.ts` holds the
@@ -729,6 +759,14 @@ proposed-design:
     whose row exists is sent and not written again, and its event is a
     replay, so each thread holds one message per entry; a thread that a
     task follows only since the first run gets its message on the second.
+    The sender is read from the mirror, which a send never writes, and
+    stored in the message row, in the transaction that publishes the
+    event, so a crash before the commit leaves no sender behind, and a
+    read after a restart answers the sender and the text the message was
+    sent with, even when the issue's title changed or the issue left its
+    Project since. The migration step that adds the sender columns runs
+    in the store's migration transaction and is recorded with it, so it
+    runs once, and a crash inside it leaves the file at step 2.
     A crash after a message commits and before its event is delivered
     leaves the inbox row pending; after the restart the router delivers it,
     the save that takes it delivers the message once, and `get-messages`
@@ -840,7 +878,16 @@ proposed-design:
     re-entry sends a new one; three messages are answered in the order
     they were sent; two `get-messages` calls in one turn answer the same
     messages, a message delivered between them is added to the second, and
-    a call in the next turn answers only messages delivered since; with an
+    a call in the next turn answers only messages delivered since; a
+    message from a sender whose issue the mirror tracks with a title is
+    answered with `from.task` holding its repository, number, and title,
+    and the text names `<repository>#<number> (<title>)`; one whose title
+    the mirror has not read names `<repository>#<number>`; one from an
+    actor whose identity holds no issue, and one whose issue the mirror
+    does not track, are each delivered with `from.task` `null` and named
+    by the actor id; a send to two threads gives both the same sender; a
+    message read, then the issue renamed in the mirror, is answered with
+    its first sender by a second call in the turn; with an
     older message whose only follower is held and a newer one a second
     follower takes, a first call answers the newer message, the held
     follower is restored and delivers the older one, and a second call in
@@ -855,11 +902,25 @@ proposed-design:
     second's issue, the second's blueprint takes `agent.message`, its agent
     gets the notice through the compiled hook command against the
     service's endpoint, and reads the message through the compiled plugin
-    and the service's endpoint. The fault test kills the service with
+    and the service's endpoint. The sending issue is tracked by the fake
+    GitHub server with a title, and the plugin's result names it in
+    `structuredContent.messages[].from.task` and in its text. A third
+    task's blueprint waits for `github.project-item.removed` and then
+    sends to the second's issue; the test removes the third issue's item
+    from the bound Project through the fake GitHub server, and the
+    plugin's next read answers that message with `from.task` `null`,
+    `from.issue` the third issue's node id, and the text naming its actor
+    id. The fault test kills the service with
     `SIGKILL` from a store probe after the message commits and before its
     inbox row is consumed, restarts it on the same file, and shows the
     event delivered once, the message delivered once, and `get-messages`
-    answering it once. Host CLI tests run the compiled `mcp` command over
+    answering it once. A second fault test sends from a tracked sender
+    with a title, reads the message in a turn, kills the service with
+    `SIGKILL`, restarts it on the same file with the issue renamed in the
+    mirror, and shows `get-messages` in the same turn answering the same
+    `from` and the same text as before the kill. A migration test opens
+    the module on a store file at `agenttool` step 2 that holds a message,
+    and reads it with `from.task` `null` and the actor id in the text. Host CLI tests run the compiled `mcp` command over
     stdio against a test HTTP server: it lists the three tools with their
     schemas, `escalate`'s `title` optional and with no default, forwards a
     call's arguments and `_meta`, an `escalate` with no `title` forwarded

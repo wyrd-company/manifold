@@ -86,9 +86,9 @@ description: |-
     message }`. `messages` lists every message read in the calling turn,
     in read position order, as Reading below states, each
     `#/$defs/thread-message`:
-    `messageId`, `from` (`{ actorId, issue }`, the sending task's actor id
-    and its issue node id or `null`), `text`, `sentAt`, and `deliveredAt`,
-    each time an RFC 3339 UTC timestamp with milliseconds.
+    `messageId`, `from`, the sender as Messages below gives it, `text`,
+    `sentAt`, and `deliveredAt`, each time an RFC 3339 UTC timestamp with
+    milliseconds.
 
   A refused call is `{ status: "refused", code, message, issues? }`, where
   `issues` lists `{ path, message }` with RFC 6901 JSON Pointers into the
@@ -203,7 +203,7 @@ description: |-
     rejected the message. An actor takes the event before that turn's
     `t3.turn.settled`.
   - `agent.message`: a task sent the thread a message. `messageId`;
-    `from`, `{ actorId, issue }`; `text`. The thread's agent can read it
+    `from`, `{ actorId, issue, task }`, as Messages below gives it; `text`. The thread's agent can read it
     once a following actor takes the event, as Messages below states.
 
   A blueprint that takes an agent event declares it under
@@ -236,13 +236,17 @@ description: |-
   first actor in actor id order that follows the thread, sent to the
   `default` destination.
 
+  Task name. A question and a message each name the task they come from,
+  so a person or an agent that hears from several tasks can tell them
+  apart. The task is the issue whose node id is `issue` in the identity of
+  the asking or sending actor, while the GitHub mirror tracks it. Its name
+  is `<repository>#<number>`, with the repository as `owner/name`, and its
+  title is the issue's title once the mirror has read it. The service
+  reads the task from the mirror, so naming it makes no GitHub request.
+
   Question title. The escalation's title names the task the question
-  comes from, so a person who gets questions from several tasks can tell
-  them apart in the notification, on the answer page, and in Manifold's
-  API. The task is the issue whose node id is `issue` in the identity of
-  the escalation's actor, while the GitHub mirror tracks it. Its name is
-  `<repository>#<number>`, with the repository as `owner/name`. The title
-  is the row of this table that applies:
+  comes from, in the notification, on the answer page, and in Manifold's
+  API. The title is the row of this table that applies:
 
   | Task tracked | Issue title read | Agent's `title` | Escalation title |
   | --- | --- | --- | --- |
@@ -320,9 +324,30 @@ description: |-
   invocation's actor id, invoke id, and entry id, the environment, and the
   thread id, as `agent-threads` derives ids. An invoke that one state entry
   runs again, as after a restart, sends no second message to a thread, and
-  a later entry of the state sends new ones. `from` is the invoking actor's
-  id and the issue of its identity, or `null` when it holds none; a child
-  blueprint sends as its root actor.
+  a later entry of the state sends new ones.
+
+  Sender. `from` is `#/$defs/message-sender`, the sending task as the
+  service holds it when the invoke runs; a child blueprint sends as its
+  root actor:
+
+  - `actorId`: the invoking actor's id.
+  - `issue`: the issue node id of its identity, or `null` when it holds
+    none.
+  - `task`: the task's name, `{ repository, number, title? }`, as Task
+    name above gives it, with `title` absent until the mirror has read it;
+    `null` when the identity holds no issue or the mirror does not track
+    the issue.
+
+  The sender is read once per invoke, and the message keeps it: the
+  event, the stored message, and every `get-messages` answer carry the
+  sender the message was sent with, across a restart and whatever later
+  happens to the issue. A thread that an invoke run again sends to for the
+  first time gets the sender as it is read on that run.
+
+  ```json
+  { "actorId": "task:I_kwDOA1", "issue": "I_kwDOA1",
+    "task": { "repository": "example-org/widgets", "number": 7, "title": "Repaint the garden shed" } }
+  ```
 
   ```yaml
   states:
@@ -358,17 +383,28 @@ description: |-
   ```text
   You have 2 messages.
 
-  Message 1 of 2, from task `<actorId>`, sent <sentAt>:
+  Message 1 of 2, from task <sender>, sent <sentAt>:
 
   <text>
 
-  Message 2 of 2, from task `<actorId>`, sent <sentAt>:
+  Message 2 of 2, from task <sender>, sent <sentAt>:
 
   <text>
   ```
 
   with `You have 1 message.` for one, and `You have no messages.` alone
-  for none.
+  for none. `<sender>` names the task by the message's `from`:
+
+  | `from.task` | `<sender>` |
+  | --- | --- |
+  | with `title` | `<repository>#<number> (<title>)` |
+  | without `title` | `<repository>#<number>` |
+  | `null` | `` `<actorId>` `` |
+
+  ```text
+  Message 1 of 2, from task example-org/widgets#7 (Repaint the garden shed), sent 2026-03-04T05:06:07.089Z:
+  Message 2 of 2, from task `task:I_kwDOB2`, sent 2026-03-04T05:06:08.120Z:
+  ```
 
   Mail notice. The harness plugin's hook tells an agent during its turn
   that its thread has new messages. After each tool call, the provider
@@ -438,7 +474,8 @@ validation-criteria: >-
   expected strings, including a thread id that holds `.`, and shows that
   two calls in one turn give one id and calls in two turns give two. A
   test renders the `get-messages` message and the notice for none, one,
-  and two messages and compares them with the texts above.
+  and two messages, and the message's sender for each row of the sender
+  table, and compares them with the texts above.
   A test derives the escalation title for each row of the question title
   table, and for a title cut at 120 code points, and compares it with the
   expected string.
