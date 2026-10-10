@@ -205,6 +205,12 @@ export async function projectsHost(
   let saveAttempts = 0;
   mountDeclarationsApi(server.host, {
     createdProjects: () => [],
+    createDecisionModels: () => {
+      throw new Error("Unexpected evaluation");
+    },
+    lintBlueprint: async () => {
+      throw new Error("Unexpected blueprint lint");
+    },
     revisions: {
       findSave: async () => undefined,
       latest: service.revisions.latest,

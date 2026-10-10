@@ -76,12 +76,13 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && cp src/comparator.d.ts dist/comparator.d.ts && cp src/blueprint-validator.js dist/blueprint-validator.js",
+    "build": "tsc -p tsconfig.build.json && cp src/comparator.d.ts dist/comparator.d.ts && cp src/blueprint-validator.js dist/blueprint-validator.js && cp src/decision-model-validators.js dist/decision-model-validators.js",
     "typecheck": "tsc --noEmit",
     "test": "vp test run",
     "generate:blueprint-schema": "node scripts/generate-blueprint-schema.mjs && vp fmt src/blueprint-schema.ts && node scripts/generate-graph-validator.mjs && vp fmt src/blueprint-validator.js",
     "generate:portfolio-schemas": "node scripts/generate-portfolio-schemas.mjs && vp fmt src/portfolio-declaration-schema.ts",
-    "generate:implementation-contracts": "node scripts/generate-implementation-contracts.mjs && vp fmt src/implementation-contracts.ts"
+    "generate:implementation-contracts": "node scripts/generate-implementation-contracts.mjs && vp fmt src/implementation-contracts.ts",
+    "generate:decision-model-validators": "node scripts/generate-decision-model-validators.mjs && vp fmt src/decision-model-validators.js"
   },
   "dependencies": {
     "ajv": "^8.20.0",

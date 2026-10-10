@@ -2,6 +2,13 @@
 // relationships:
 //   implements: [declarations-api, service-assembly]
 // ---
+import {
+  lintBlueprint,
+  lintTaskMetadataDeclaration,
+  declaredLifecycleOptions,
+  manifoldImplementationNames,
+} from "@wyrd-company/manifold-shared";
+import { createDecisionModels } from "../decision-models.ts";
 import { mountDeclarationsApi } from "./index.ts";
 import type { DeclarationsApiOptions } from "./types.ts";
 import { wiringPart } from "../service/wiring.ts";
@@ -26,6 +33,20 @@ export const declarationsApiPart = wiringPart({
     _context,
   ): Record<never, never> {
     mountDeclarationsApi(members.http, {
+      createDecisionModels,
+      lintBlueprint: async (path, text, decisionModels, revision) => {
+        const metadata = lintTaskMetadataDeclaration({
+          taskMetadata: await revision.read("task-metadata.yml"),
+          bindings: await revision.read("bindings.yml"),
+        });
+        return lintBlueprint(path, text, manifoldImplementationNames, {
+          configurationBound: members.configuration.blueprintLint.configurationBound,
+          decisionModels,
+          ...(metadata.ok
+            ? { lifecycleOptions: declaredLifecycleOptions(metadata.declaration) }
+            : {}),
+        });
+      },
       revisions: members.revisions,
       createdProjects: members.portfolio.createdProjects,
       processRepository: members.processRepository,

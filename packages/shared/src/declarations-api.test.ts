@@ -110,7 +110,7 @@ const fixtures = [
       { ...findings, unknown: true },
       {
         ...findings,
-        findings: [{ kind: "schema", location: "", message: "Invalid", file: "other" }],
+        findings: [{ kind: "schema", location: "", message: "Invalid", file: 3 }],
       },
     ],
   ],

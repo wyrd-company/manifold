@@ -16,6 +16,12 @@ const files = {
 const revision = memoryRevision("a".repeat(40), files);
 const options: DeclarationsApiOptions = {
   createdProjects: () => [],
+  createDecisionModels: () => {
+    throw new Error("Unexpected evaluation");
+  },
+  lintBlueprint: async () => {
+    throw new Error("Unexpected blueprint lint");
+  },
   revisions: {
     findSave: async () => undefined,
     latest: () => undefined,

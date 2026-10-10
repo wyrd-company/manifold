@@ -105,7 +105,21 @@ export function mountBlueprintsApi(host: HttpHost, options: BlueprintsApiOptions
       failure(400, "bad-request", "Expected base, message and saveId.");
       return;
     }
-    const lint = await lintText(options, body["path"], body["text"]);
+    if (
+      path === "/lint" &&
+      body.base !== undefined &&
+      !(await options.processRepository.revisionAt(body.base))
+    ) {
+      failure(400, "bad-request", "Unknown base revision.");
+      return;
+    }
+    const lint = await lintText(
+      options,
+      body["path"],
+      body["text"],
+      path === "/lint" ? body.base : undefined,
+      body.models,
+    );
     if (path === "/lint") {
       answer(response, 200, lint);
       return;

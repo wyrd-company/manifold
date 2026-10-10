@@ -104,6 +104,8 @@ export interface SaveConflictResponse {
 }
 
 export interface LintBlueprintRequest {
+  readonly base?: string;
+  readonly models?: readonly { readonly path: string; readonly text: string }[];
   readonly path: string;
   readonly text: string;
 }

@@ -6,14 +6,34 @@ import {
   lintBlueprint,
   manifoldImplementationNames,
   parseBlueprintVersionKey,
+  lintInvokedDecisionModels,
+  lintTaskMetadataDeclaration,
+  declaredLifecycleOptions,
 } from "@wyrd-company/manifold-shared";
+import type { ModelText } from "@wyrd-company/manifold-shared/declarations-api";
+import { overlay } from "../declarations-api/model-files.ts";
 import type { BlueprintItem, LintResponse } from "@wyrd-company/manifold-shared/blueprints-api";
 import { lintAnswer, listAnswer } from "./answers.ts";
 import type { RevisionLoad } from "../blueprint-loader/index.ts";
 import type { BlueprintsApiOptions } from "./types.ts";
-async function inspectText(options: BlueprintsApiOptions, path: string, text: string) {
+async function inspectText(
+  options: BlueprintsApiOptions,
+  path: string,
+  text: string,
+  base?: string,
+  models: readonly ModelText[] = [],
+) {
+  const commit = base ?? options.revisions.latest()?.commit;
+  const revision = commit ? await options.processRepository.revisionAt(commit) : undefined;
+  const read = overlay(revision?.read ?? (async () => undefined), models);
+  const metadata = lintTaskMetadataDeclaration({
+    taskMetadata: await read("task-metadata.yml"),
+    bindings: await read("bindings.yml"),
+  });
   const lint = await lintBlueprint(path, text, manifoldImplementationNames, {
     configurationBound: options.configurationBound,
+    decisionModels: await lintInvokedDecisionModels(read, text),
+    ...(metadata.ok ? { lifecycleOptions: declaredLifecycleOptions(metadata.declaration) } : {}),
   });
   const response = lintAnswer(text, lint);
   return { response, description: lint.ok ? lint.blueprint.description : undefined };
@@ -22,8 +42,10 @@ export async function lintText(
   options: BlueprintsApiOptions,
   path: string,
   text: string,
+  base?: string,
+  models?: readonly ModelText[],
 ): Promise<LintResponse> {
-  return (await inspectText(options, path, text)).response;
+  return (await inspectText(options, path, text, base, models)).response;
 }
 export async function catalog(options: BlueprintsApiOptions, load = options.revisions.latest()) {
   const revision = load ? await options.processRepository.revisionAt(load.commit) : undefined;

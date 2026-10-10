@@ -21,7 +21,7 @@ export type DeclarationPath =
   | "portfolio.yml"
   | "accounts.yml";
 export interface DeclarationFinding extends ApiFinding {
-  readonly file?: "portfolio" | "bindings" | "accounts" | "prices";
+  readonly file?: string;
 }
 export type TaskFieldType = "text" | "number" | "date" | "single-select";
 export type StorageKindName =
@@ -246,7 +246,7 @@ const finding = (v: unknown) =>
   string(v["location"]) &&
   string(v["message"]) &&
   (!Object.hasOwn(v, "range") || range(v["range"])) &&
-  (!Object.hasOwn(v, "file") || oneOf("portfolio", "bindings", "accounts", "prices")(v["file"]));
+  (!Object.hasOwn(v, "file") || string(v["file"]));
 const findings = { findings: array(finding), warnings: array(finding) };
 const fieldScope = (v: unknown) =>
   shape(
@@ -435,3 +435,29 @@ export function isDeclarationErrorResponse(v: unknown): v is DeclarationErrorRes
 export function isSaveRemoteErrorResponse(v: unknown): v is SaveRemoteErrorResponse {
   return shape(v, { error: oneOf("rejected", "authentication", "remote"), message: string });
 }
+export {
+  isDecisionModelPath,
+  isRepositoryCommit,
+  isModelFindings,
+  isDecisionModelListResponse,
+  isDecisionModelSourceResponse,
+  isDecisionModelEvaluateResponse,
+  isDrawableDecisionModel,
+  isPublishResponse,
+  isPublishConflictResponse,
+  isPublishInvalidResponse,
+} from "./decision-model-api.ts";
+export type {
+  ModelText,
+  ModelFinding,
+  ModelFindings,
+  DecisionModelListResponse,
+  DecisionModelSourceResponse,
+  DecisionModelLintRequest,
+  DecisionModelEvaluateRequest,
+  DecisionModelEvaluateResponse,
+  PublishRequest,
+  PublishResponse,
+  PublishConflictResponse,
+  PublishInvalidResponse,
+} from "./decision-model-api.ts";

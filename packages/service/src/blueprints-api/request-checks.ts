@@ -3,6 +3,10 @@
 //   implements: [blueprints-api, operator-console]
 // ---
 
+import {
+  isDecisionModelPath,
+  isRepositoryCommit,
+} from "@wyrd-company/manifold-shared/declarations-api";
 import type { SaveRequest } from "../process-repository/index.ts";
 import type { LintBlueprintRequest } from "@wyrd-company/manifold-shared/blueprints-api";
 export const validPath = (path: unknown): path is string =>
@@ -34,5 +38,18 @@ export function textRequest(value: unknown): value is LintBlueprintRequest {
   return record(value) && validPath(value["path"]) && typeof value["text"] === "string";
 }
 export function lintRequest(value: LintBlueprintRequest) {
-  return Object.keys(value).every((key) => key === "path" || key === "text");
+  return (
+    Object.keys(value).every((key) => ["path", "text", "base", "models"].includes(key)) &&
+    (value.base === undefined || isRepositoryCommit(value.base)) &&
+    (value.models === undefined ||
+      (Array.isArray(value.models) &&
+        value.models.every(
+          (file) =>
+            record(file) &&
+            Object.keys(file).every((key) => key === "path" || key === "text") &&
+            isDecisionModelPath(file["path"]) &&
+            typeof file["text"] === "string",
+        ) &&
+        new Set(value.models.map((file) => file.path)).size === value.models.length))
+  );
 }

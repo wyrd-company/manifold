@@ -23,6 +23,7 @@ import {
   onlyKeys,
   archiveRequest,
 } from "./request-checks.ts";
+import { modelRequest } from "./decision-models.ts";
 import { archiveItemEdit } from "./archive-item.ts";
 import { lintAllocatedAccounts } from "@wyrd-company/manifold-shared";
 import { lintAnswer, bindingsAnswer } from "./answers.ts";
@@ -50,9 +51,21 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
     const url = new URL(request.url ?? "/", "http://example.test");
     const path = url.pathname.slice(declarationsApiPath.length);
     const method =
-      path === "/source" || path === "/bindings"
+      path === "/source" ||
+      path === "/bindings" ||
+      path === "/decision-models" ||
+      path === "/decision-model"
         ? "GET"
-        : ["/lint", "/save", "/task-fields/edit", "/bindings/save", "/archive-item"].includes(path)
+        : [
+              "/lint",
+              "/save",
+              "/task-fields/edit",
+              "/bindings/save",
+              "/archive-item",
+              "/decision-model/lint",
+              "/decision-model/evaluate",
+              "/publish",
+            ].includes(path)
           ? "POST"
           : undefined;
     const fail = (status: number, error: string, message: string) =>
@@ -95,7 +108,9 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
       }
       if (!record(value)) return fail(400, "bad-request", "Expected a request object.");
       body = value;
-      if (path === "/lint" || path === "/save") {
+      if (path.startsWith("/decision-model/") || path === "/publish") {
+        // Model requests are checked by their boundary below.
+      } else if (path === "/lint" || path === "/save") {
         if (!validPath(body["path"]) || typeof body["text"] !== "string")
           return fail(400, "bad-request", "Expected a declaration path and text.");
         declarationPath = body["path"];
@@ -144,6 +159,10 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
           commit: saved,
           loaded: options.revisions.latest() !== undefined,
         });
+    }
+    if (path.startsWith("/decision-model") || path === "/publish") {
+      const result = await modelRequest(options, path, url, body);
+      return answer(response, result.status, result.body);
     }
     const latest = options.revisions.latest();
     const revision = latest ? await options.processRepository.revisionAt(latest.commit) : undefined;

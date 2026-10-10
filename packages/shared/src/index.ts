@@ -103,11 +103,12 @@ export { compileStateGuards } from "./state-guards.ts";
 export { blueprintLintConfigurationSchema } from "./blueprint-lint-configuration-schema.ts";
 export { escalationsConfigurationSchema } from "./escalations-configuration-schema.ts";
 export { escalationContractSchema } from "./escalation-contract-schema.ts";
-export { lintProcessManifest } from "./process-manifest.ts";
+export { lintProcessManifest, lintDecisionModelSet } from "./process-manifest.ts";
 export type {
   ProcessManifest,
   ProcessManifestFinding,
   ProcessManifestLint,
+  DecisionModelSetLint,
 } from "./process-manifest.ts";
 export { processManifestSchema } from "./process-manifest-schema.ts";
 export { intakeDecisionModelSchema } from "./intake-decision-model-schema.ts";
@@ -150,3 +151,5 @@ export { scopeKey, scopeOwnership, repositoryInScope } from "./task-metadata-sco
 export type { StorageScope, ScopeOwnership, OwnedEntity } from "./task-metadata-scopes.ts";
 export { parseFrontMatter, setFrontMatter } from "./front-matter.ts";
 export type { FrontMatter } from "./front-matter.ts";
+
+export { invokedDecisionModelPaths, lintInvokedDecisionModels } from "./blueprint-models.ts";

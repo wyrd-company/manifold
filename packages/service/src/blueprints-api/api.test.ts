@@ -641,3 +641,44 @@ test("service lists the shipped task blueprint and its repository replacement", 
     ]),
   );
 });
+
+test("blueprint lint uses one base with model overlays outside the invoke directory", async () => {
+  const { url, fixture } = await setup();
+  const text =
+    "machine:\n  initial: quote\n  states:\n    quote:\n      invoke:\n        src: decision-models/quote.yml\n        onDone: done\n    done:\n      type: final\nschemas:\n  input: true\n  output: true\n  context: true\n  events: {}\n";
+  const post = (body: unknown) =>
+    fetch(url + "/lint", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const base = { path: "blueprints/quote.yml", text, base: fixture.first };
+  const missing = await post(base);
+  expect(await missing.json()).toMatchObject({
+    findings: [{ kind: "decision-model", reason: "missing" }],
+  });
+  const root = {
+    nodes: [
+      { id: "in", type: "inputNode" },
+      { id: "nested", type: "decisionNode", content: { key: "shared/rates.yml" } },
+      { id: "out", type: "outputNode" },
+    ],
+    edges: [
+      { id: "one", sourceId: "in", targetId: "nested" },
+      { id: "two", sourceId: "nested", targetId: "out" },
+    ],
+  };
+  const second = {
+    nodes: [
+      { id: "in", type: "inputNode" },
+      { id: "out", type: "outputNode" },
+    ],
+    edges: [{ id: "edge", sourceId: "in", targetId: "out" }],
+  };
+  const models = [
+    { path: "decision-models/quote.yml", text: JSON.stringify(root) },
+    { path: "shared/rates.yml", text: JSON.stringify(second) },
+  ];
+  expect(await (await post({ ...base, models })).json()).toMatchObject({ findings: [] });
+  expect((await post({ ...base, models: [...models, models[0]] })).status).toBe(400);
+});

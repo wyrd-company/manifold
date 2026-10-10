@@ -8,6 +8,7 @@ import { compileStateGuards, StateGuardError } from "./state-guards.ts";
 import { gateFindings } from "./gate-lint.ts";
 import { createSchemaCompiler } from "./schema-compiler.ts";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import type { ProcessManifestFinding } from "./process-manifest.ts";
 import type { ValidateFunction } from "ajv";
 import { LineCounter, parseDocument } from "yaml";
 import { createMachine, fromPromise } from "xstate";
@@ -33,6 +34,7 @@ export type BlueprintFinding = {
     | "event-unknown"
     | "machine"
     | "final-state-missing"
+    | "decision-model"
     | "lifecycle-option"
     | "task-field-value"
     | "gate"
@@ -45,6 +47,8 @@ export type BlueprintFinding = {
   readonly column?: number;
   readonly implementationKind?: "actor" | "action" | "guard" | "delay";
   readonly name?: string;
+  readonly reason?: "missing" | "invalid";
+  readonly modelFindings?: readonly ProcessManifestFinding[];
   readonly gate?: string;
   readonly steps?: readonly TokenStep[];
   readonly choices?: readonly TokenChoice[];
@@ -61,6 +65,7 @@ export interface BlueprintLintOptions {
       readonly options: ReadonlySet<string>;
     }
   >;
+  readonly decisionModels?: ReadonlyMap<string, readonly ProcessManifestFinding[]>;
 }
 export type BlueprintLint =
   | {
@@ -188,7 +193,11 @@ export async function lintBlueprint(
         : kind === "action"
           ? ["expression.assign"]
           : [];
-    if (kind === "actor" && name.startsWith("blueprints/")) return;
+    if (
+      kind === "actor" &&
+      (name.startsWith("blueprints/") || /^decision-models\/.+\.yml$/.test(name))
+    )
+      return;
     if (!names[`${kind}s`].has(name) && !builtIn.includes(name))
       unknowns.push({
         path,
@@ -214,6 +223,7 @@ export async function lintBlueprint(
   }
   const lifecycleFindings: BlueprintFinding[] = [];
   const taskFieldFindings: BlueprintFinding[] = [];
+  const modelFindings: BlueprintFinding[] = [];
   function walk(config: Record<string, unknown>, location: string) {
     actions(config["entry"], `${location}/entry`);
     actions(config["exit"], `${location}/exit`);
@@ -229,6 +239,24 @@ export async function lintBlueprint(
       const invoke = record(item),
         at = `${location}/invoke${Array.isArray(config["invoke"]) ? `/${i}` : ""}`;
       reference(invoke["src"], "actor", `${at}/src`);
+      const src = invoke["src"];
+      if (
+        typeof src === "string" &&
+        /^decision-models\/.+\.yml$/.test(src) &&
+        options.decisionModels
+      ) {
+        const errors = options.decisionModels.get(src);
+        if (errors === undefined || errors.length)
+          modelFindings.push({
+            path,
+            kind: "decision-model",
+            location: `${at}/src`,
+            name: src,
+            reason: errors === undefined ? "missing" : "invalid",
+            ...(errors ? { modelFindings: errors } : {}),
+            message: `Decision model ${errors === undefined ? "missing" : "invalid"}: ${src}`,
+          });
+      }
       const input = record(invoke["input"]);
       if (
         invoke["src"] === "github-card-move" &&
@@ -368,7 +396,13 @@ export async function lintBlueprint(
   if (findings.length)
     return {
       ok: false,
-      findings: [...findings, ...unknownEvents, ...lifecycleFindings, ...taskFieldFindings],
+      findings: [
+        ...findings,
+        ...unknownEvents,
+        ...lifecycleFindings,
+        ...taskFieldFindings,
+        ...modelFindings.sort((a, b) => compareExpressionText(a.location, b.location)),
+      ],
       warnings: [],
     };
   const tokens = lintTokens(blueprint, { names, ...options });
@@ -381,6 +415,7 @@ export async function lintBlueprint(
   findings.push(...unknownEvents);
   findings.push(...lifecycleFindings);
   findings.push(...taskFieldFindings.sort((a, b) => compareExpressionText(a.location, b.location)));
+  findings.push(...modelFindings.sort((a, b) => compareExpressionText(a.location, b.location)));
   return findings.length
     ? { ok: false, findings, warnings }
     : { ok: true, blueprint, warnings, tokens };

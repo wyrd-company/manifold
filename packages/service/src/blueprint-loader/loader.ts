@@ -2,7 +2,7 @@
 // relationships:
 //   implements: blueprint-loader
 // ---
-import { setup, enqueueActions } from "xstate";
+import { setup, enqueueActions, fromPromise } from "xstate";
 import type { AnyActorLogic, AnyActorRef, AnyStateMachine, Snapshot } from "xstate";
 import {
   blueprintVersionKey,
@@ -13,6 +13,8 @@ import {
   declaredTaskFields,
   ExpressionError,
   compileStateGuards,
+  lintInvokedDecisionModels,
+  lintDecisionModelSet,
 } from "@wyrd-company/manifold-shared";
 import type {
   TokenLintResult,
@@ -21,8 +23,10 @@ import type {
   BlueprintVersion,
   ImplementationNames,
   ProcessRepositoryRevision,
+  DecisionModelSetLint,
 } from "@wyrd-company/manifold-shared";
 import { createBlueprintExpressions } from "../blueprint-expressions.ts";
+import { createDecisionModels } from "../decision-models.ts";
 import { bindChildren } from "./children.ts";
 import { checkRestore } from "./restore-check.ts";
 import type { RestoreCheck } from "./restore-check.ts";
@@ -109,7 +113,8 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
     for (const name of Object.keys(entries)) {
       if (
         name.startsWith("expression.") ||
-        (entries === implementations.actors && name.startsWith("blueprints/"))
+        (entries === implementations.actors &&
+          (name.startsWith("blueprints/") || name.startsWith("decision-models/")))
       )
         throw new TypeError(`Reserved implementation name: ${name}`);
     }
@@ -126,6 +131,19 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
     delays: new Set(Object.keys(implementations.delays)),
   };
   const cache = new Map<string, Promise<VersionLoad>>();
+  const modelCache = new Map<string, Promise<DecisionModelSetLint>>();
+  function modelSet(revision: ProcessRepositoryRevision, path: string) {
+    const key = `${revision.commit}:${path}`;
+    let pending = modelCache.get(key);
+    if (!pending) {
+      pending = lintDecisionModelSet(revision.read, path).catch((error) => {
+        modelCache.delete(key);
+        throw error;
+      });
+      modelCache.set(key, pending);
+    }
+    return pending;
+  }
   async function build(
     version: BlueprintVersion,
     revision?: ProcessRepositoryRevision,
@@ -140,7 +158,11 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
       taskMetadata: await source.read("task-metadata.yml"),
       bindings: await source.read("bindings.yml"),
     });
+    const decisionModels = await lintInvokedDecisionModels(source.read, text, (path) =>
+      modelSet(source, path),
+    );
     const lint = await lintBlueprint(version.path, text, names, {
+      decisionModels,
       ...(options.configurationBound === undefined
         ? {}
         : { configurationBound: options.configurationBound }),
@@ -156,6 +178,35 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
       const expressions = createBlueprintExpressions(lint.blueprint, {
         onError: (error) => options.onExpressionError(error, version),
       });
+      const modelActors: Record<string, AnyActorLogic> = {};
+      for (const path of decisionModels.keys()) {
+        const set = await modelSet(source, path);
+        if (!set.ok) continue;
+        modelActors[path] = fromPromise(async ({ input }) => {
+          if (!input || typeof input !== "object" || Array.isArray(input))
+            throw {
+              type: "decision-model",
+              path,
+              reason: "input",
+              message: "Decision model input must be an object.",
+            };
+          const models = createDecisionModels(set.models);
+          try {
+            const evaluation = await models.evaluate(path, input as Record<string, unknown>);
+            if (evaluation.outcome === "error")
+              throw {
+                type: "decision-model",
+                path,
+                reason: "evaluation",
+                message: evaluation.error.message,
+                evaluation,
+              };
+            return evaluation.result;
+          } finally {
+            models.dispose();
+          }
+        });
+      }
       const children = await bindChildren(lint.blueprint, version, source, load, bundle?.files);
       function observe(node: Record<string, unknown>, statePath: string) {
         const own =
@@ -175,7 +226,7 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
       }
       observe(expressions.machine as Record<string, unknown>, "");
       const bound = setup({
-        actors: { ...implementations.actors, ...children },
+        actors: { ...implementations.actors, ...children, ...modelActors },
         delays: implementations.delays as NonNullable<SetupImplementations["delays"]>,
         guards: {
           ...(implementations.guards as NonNullable<SetupImplementations["guards"]>),
@@ -199,7 +250,12 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
           key: blueprintVersionKey(version),
           document: lint.blueprint,
           machine,
-          actorKinds: { ...implementations.actorKinds },
+          actorKinds: {
+            ...implementations.actorKinds,
+            ...Object.fromEntries(
+              [...decisionModels.keys()].map((path) => [path, "promise" as const]),
+            ),
+          },
           warnings: lint.warnings,
           tokens: lint.tokens,
           migrateContext: expressions.migrateContext,

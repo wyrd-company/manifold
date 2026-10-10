@@ -96,3 +96,61 @@ it("prints exactly the loader findings and warnings for every fixture with shipp
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+it("lints invoked model sets only with a repository, including shared models and missing or invalid roots", async () => {
+  const { mkdir } = await import("node:fs/promises");
+  const directory = await mkdtemp(join(tmpdir(), "blueprint-model-lint-"));
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const file = join(directory, "sample.yml");
+    await writeFile(
+      file,
+      stringify({
+        machine: {
+          initial: "quote",
+          states: {
+            quote: {
+              invoke: { src: "decision-models/quote.yml", onDone: "done", onError: "done" },
+            },
+            done: { type: "final" },
+          },
+        },
+        schemas: { input: true, output: true, context: true, events: {} },
+      }),
+    );
+    expect(await blueprintLintCommand([file])).toBe(0);
+    expect(await blueprintLintCommand(["--repository", directory, file])).toBe(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("decision-model"));
+    await mkdir(join(directory, "decision-models"));
+    await mkdir(join(directory, "shared"));
+    const model = {
+      nodes: [
+        { id: "in", type: "inputNode" },
+        { id: "nested", type: "decisionNode", content: { key: "shared/rates.yml" } },
+        { id: "out", type: "outputNode" },
+      ],
+      edges: [
+        { id: "one", sourceId: "in", targetId: "nested" },
+        { id: "two", sourceId: "nested", targetId: "out" },
+      ],
+    };
+    await writeFile(join(directory, "decision-models/quote.yml"), stringify(model));
+    expect(await blueprintLintCommand(["--repository", directory, file])).toBe(1);
+    await writeFile(
+      join(directory, "shared/rates.yml"),
+      stringify({
+        nodes: [
+          { id: "in", type: "inputNode" },
+          { id: "out", type: "outputNode" },
+        ],
+        edges: [{ id: "one", sourceId: "in", targetId: "out" }],
+      }),
+    );
+    expect(await blueprintLintCommand(["--repository", directory, file])).toBe(0);
+    await writeFile(join(directory, "shared/rates.yml"), "[");
+    expect(await blueprintLintCommand(["--repository", directory, file])).toBe(1);
+  } finally {
+    log.mockRestore();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

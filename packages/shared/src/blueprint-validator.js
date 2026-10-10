@@ -3,7 +3,7 @@
 //   realizes: blueprint
 // ---
 // Generated; do not edit.
-// Schema digest: 18a3ef5d7d9877ca581afad82d5fba94ad1f574640564127d0ab3f53bffface5
+// Schema digest: 16b5a0f8ed14115787e1ae913c9b0809dedd810995f51c64efba8eaffbf1d2f4
 "use strict";
 export const validate = validate20;
 export default validate20;
@@ -1883,8 +1883,12 @@ const schema52 = {
   properties: {
     src: {
       description:
-        "An actor implementation name, or a blueprint path that invokes a child blueprint.",
-      anyOf: [{ $ref: "#/$defs/blueprint-path" }, { $ref: "#/$defs/implementation-name" }],
+        "An actor implementation name, a blueprint path that invokes a child blueprint, or a decision model path that evaluates a decision model.",
+      anyOf: [
+        { $ref: "#/$defs/blueprint-path" },
+        { $ref: "#/$defs/decision-model-path" },
+        { $ref: "#/$defs/implementation-name" },
+      ],
     },
     id: { type: "string", minLength: 1 },
     systemId: { type: "string", minLength: 1 },
@@ -1902,8 +1906,14 @@ const schema53 = {
   type: "string",
   pattern: "^blueprints/.+\\.ya?ml$",
 };
+const schema54 = {
+  description: "The repository-relative path of a decision model file an invoke evaluates.",
+  type: "string",
+  pattern: "^decision-models/.+\\.yml$",
+};
 const pattern9 = new RegExp("^blueprints/.+\\.ya?ml$", "u");
-const schema55 = {
+const pattern10 = new RegExp("^decision-models/.+\\.yml$", "u");
+const schema56 = {
   description:
     "A static value, or a mapping. An object whose `type` is `expression.map` is a mapping and has the expression reference shape.",
   if: { type: "object", required: ["type"], properties: { type: { const: "expression.map" } } },
@@ -2272,22 +2282,59 @@ function validate48(
             valid1 = valid1 || _valid0;
             const _errs7 = errors;
             const _errs8 = errors;
-            const _errs10 = errors;
-            const _errs11 = errors;
-            if (typeof data0 === "string") {
-              if (!pattern6.test(data0)) {
-                const err2 = {};
+            if (errors === _errs8) {
+              if (typeof data0 === "string") {
+                if (!pattern10.test(data0)) {
+                  const err2 = {
+                    instancePath: instancePath + "/src",
+                    schemaPath: "#/$defs/decision-model-path/pattern",
+                    keyword: "pattern",
+                    params: { pattern: "^decision-models/.+\\.yml$" },
+                    message: 'must match pattern "' + "^decision-models/.+\\.yml$" + '"',
+                  };
+                  if (vErrors === null) {
+                    vErrors = [err2];
+                  } else {
+                    vErrors.push(err2);
+                  }
+                  errors++;
+                }
+              } else {
+                const err3 = {
+                  instancePath: instancePath + "/src",
+                  schemaPath: "#/$defs/decision-model-path/type",
+                  keyword: "type",
+                  params: { type: "string" },
+                  message: "must be string",
+                };
                 if (vErrors === null) {
-                  vErrors = [err2];
+                  vErrors = [err3];
                 } else {
-                  vErrors.push(err2);
+                  vErrors.push(err3);
                 }
                 errors++;
               }
             }
-            var valid4 = _errs11 === errors;
-            if (valid4) {
-              const err3 = {
+            var _valid0 = _errs7 === errors;
+            valid1 = valid1 || _valid0;
+            const _errs10 = errors;
+            const _errs11 = errors;
+            const _errs13 = errors;
+            const _errs14 = errors;
+            if (typeof data0 === "string") {
+              if (!pattern6.test(data0)) {
+                const err4 = {};
+                if (vErrors === null) {
+                  vErrors = [err4];
+                } else {
+                  vErrors.push(err4);
+                }
+                errors++;
+              }
+            }
+            var valid5 = _errs14 === errors;
+            if (valid5) {
+              const err5 = {
                 instancePath: instancePath + "/src",
                 schemaPath: "#/$defs/implementation-name/not",
                 keyword: "not",
@@ -2295,25 +2342,25 @@ function validate48(
                 message: "must NOT be valid",
               };
               if (vErrors === null) {
-                vErrors = [err3];
+                vErrors = [err5];
               } else {
-                vErrors.push(err3);
+                vErrors.push(err5);
               }
               errors++;
             } else {
-              errors = _errs10;
+              errors = _errs13;
               if (vErrors !== null) {
-                if (_errs10) {
-                  vErrors.length = _errs10;
+                if (_errs13) {
+                  vErrors.length = _errs13;
                 } else {
                   vErrors = null;
                 }
               }
             }
-            if (errors === _errs8) {
+            if (errors === _errs11) {
               if (typeof data0 === "string") {
                 if (func1(data0) < 1) {
-                  const err4 = {
+                  const err6 = {
                     instancePath: instancePath + "/src",
                     schemaPath: "#/$defs/implementation-name/minLength",
                     keyword: "minLength",
@@ -2321,14 +2368,14 @@ function validate48(
                     message: "must NOT have fewer than 1 characters",
                   };
                   if (vErrors === null) {
-                    vErrors = [err4];
+                    vErrors = [err6];
                   } else {
-                    vErrors.push(err4);
+                    vErrors.push(err6);
                   }
                   errors++;
                 }
               } else {
-                const err5 = {
+                const err7 = {
                   instancePath: instancePath + "/src",
                   schemaPath: "#/$defs/implementation-name/type",
                   keyword: "type",
@@ -2336,17 +2383,17 @@ function validate48(
                   message: "must be string",
                 };
                 if (vErrors === null) {
-                  vErrors = [err5];
+                  vErrors = [err7];
                 } else {
-                  vErrors.push(err5);
+                  vErrors.push(err7);
                 }
                 errors++;
               }
             }
-            var _valid0 = _errs7 === errors;
+            var _valid0 = _errs10 === errors;
             valid1 = valid1 || _valid0;
             if (!valid1) {
-              const err6 = {
+              const err8 = {
                 instancePath: instancePath + "/src",
                 schemaPath: "#/properties/src/anyOf",
                 keyword: "anyOf",
@@ -2354,9 +2401,9 @@ function validate48(
                 message: "must match a schema in anyOf",
               };
               if (vErrors === null) {
-                vErrors = [err6];
+                vErrors = [err8];
               } else {
-                vErrors.push(err6);
+                vErrors.push(err8);
               }
               errors++;
               validate48.errors = vErrors;
@@ -2378,8 +2425,8 @@ function validate48(
           if (valid0) {
             if (data.id !== undefined) {
               let data1 = data.id;
-              const _errs12 = errors;
-              if (errors === _errs12) {
+              const _errs15 = errors;
+              if (errors === _errs15) {
                 if (typeof data1 === "string") {
                   if (func1(data1) < 1) {
                     validate48.errors = [
@@ -2406,15 +2453,15 @@ function validate48(
                   return false;
                 }
               }
-              var valid0 = _errs12 === errors;
+              var valid0 = _errs15 === errors;
             } else {
               var valid0 = true;
             }
             if (valid0) {
               if (data.systemId !== undefined) {
                 let data2 = data.systemId;
-                const _errs14 = errors;
-                if (errors === _errs14) {
+                const _errs17 = errors;
+                if (errors === _errs17) {
                   if (typeof data2 === "string") {
                     if (func1(data2) < 1) {
                       validate48.errors = [
@@ -2441,13 +2488,13 @@ function validate48(
                     return false;
                   }
                 }
-                var valid0 = _errs14 === errors;
+                var valid0 = _errs17 === errors;
               } else {
                 var valid0 = true;
               }
               if (valid0) {
                 if (data.input !== undefined) {
-                  const _errs16 = errors;
+                  const _errs19 = errors;
                   if (
                     !validate49(data.input, {
                       instancePath: instancePath + "/input",
@@ -2461,13 +2508,13 @@ function validate48(
                       vErrors === null ? validate49.errors : vErrors.concat(validate49.errors);
                     errors = vErrors.length;
                   }
-                  var valid0 = _errs16 === errors;
+                  var valid0 = _errs19 === errors;
                 } else {
                   var valid0 = true;
                 }
                 if (valid0) {
                   if (data.onDone !== undefined) {
-                    const _errs17 = errors;
+                    const _errs20 = errors;
                     if (
                       !validate27(data.onDone, {
                         instancePath: instancePath + "/onDone",
@@ -2481,13 +2528,13 @@ function validate48(
                         vErrors === null ? validate27.errors : vErrors.concat(validate27.errors);
                       errors = vErrors.length;
                     }
-                    var valid0 = _errs17 === errors;
+                    var valid0 = _errs20 === errors;
                   } else {
                     var valid0 = true;
                   }
                   if (valid0) {
                     if (data.onError !== undefined) {
-                      const _errs18 = errors;
+                      const _errs21 = errors;
                       if (
                         !validate27(data.onError, {
                           instancePath: instancePath + "/onError",
@@ -2501,13 +2548,13 @@ function validate48(
                           vErrors === null ? validate27.errors : vErrors.concat(validate27.errors);
                         errors = vErrors.length;
                       }
-                      var valid0 = _errs18 === errors;
+                      var valid0 = _errs21 === errors;
                     } else {
                       var valid0 = true;
                     }
                     if (valid0) {
                       if (data.onSnapshot !== undefined) {
-                        const _errs19 = errors;
+                        const _errs22 = errors;
                         if (
                           !validate27(data.onSnapshot, {
                             instancePath: instancePath + "/onSnapshot",
@@ -2523,7 +2570,7 @@ function validate48(
                               : vErrors.concat(validate27.errors);
                           errors = vErrors.length;
                         }
-                        var valid0 = _errs19 === errors;
+                        var valid0 = _errs22 === errors;
                       } else {
                         var valid0 = true;
                       }
@@ -2552,7 +2599,7 @@ function validate48(
   return errors === 0;
 }
 validate48.evaluated = { props: true, dynamicProps: false, dynamicItems: false };
-const schema57 = {
+const schema58 = {
   description:
     "The gate a state declares in `meta.gate`: its comparator file, where its token is returned, whether a reservation accompanies the token, the token event's type, and the region the comparator reads as the task's dependency state.",
   type: "object",
@@ -2586,8 +2633,8 @@ const schema57 = {
     dependencies: { $ref: "#/$defs/state-path" },
   },
 };
-const pattern11 = new RegExp("(^|/)\\.{1,2}(/|$)", "u");
-const pattern12 = new RegExp("^[^/].*\\.ts$", "u");
+const pattern12 = new RegExp("(^|/)\\.{1,2}(/|$)", "u");
+const pattern13 = new RegExp("^[^/].*\\.ts$", "u");
 function validate56(
   data,
   { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {},
@@ -2650,7 +2697,7 @@ function validate56(
             const _errs4 = errors;
             const _errs5 = errors;
             if (typeof data0 === "string") {
-              if (!pattern11.test(data0)) {
+              if (!pattern12.test(data0)) {
                 const err0 = {};
                 if (vErrors === null) {
                   vErrors = [err0];
@@ -2684,7 +2731,7 @@ function validate56(
             }
             if (errors === _errs2) {
               if (typeof data0 === "string") {
-                if (!pattern12.test(data0)) {
+                if (!pattern13.test(data0)) {
                   validate56.errors = [
                     {
                       instancePath: instancePath + "/comparator",
@@ -4184,7 +4231,7 @@ validate23.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema60 = {
+const schema61 = {
   description:
     "The JSON Schemas that bound a blueprint's expressions. Each value is a JSON Schema of draft 2020-12.",
   type: "object",
@@ -4215,7 +4262,7 @@ const schema60 = {
     },
   },
 };
-const schema61 = { description: "A JSON Schema of draft 2020-12.", type: ["object", "boolean"] };
+const schema62 = { description: "A JSON Schema of draft 2020-12.", type: ["object", "boolean"] };
 function validate61(
   data,
   { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {},
@@ -4286,7 +4333,7 @@ function validate61(
                   instancePath: instancePath + "/input",
                   schemaPath: "#/$defs/json-schema/type",
                   keyword: "type",
-                  params: { type: schema61.type },
+                  params: { type: schema62.type },
                   message: "must be object,boolean",
                 },
               ];
@@ -4309,7 +4356,7 @@ function validate61(
                     instancePath: instancePath + "/output",
                     schemaPath: "#/$defs/json-schema/type",
                     keyword: "type",
-                    params: { type: schema61.type },
+                    params: { type: schema62.type },
                     message: "must be object,boolean",
                   },
                 ];
@@ -4332,7 +4379,7 @@ function validate61(
                       instancePath: instancePath + "/context",
                       schemaPath: "#/$defs/json-schema/type",
                       keyword: "type",
-                      params: { type: schema61.type },
+                      params: { type: schema62.type },
                       message: "must be object,boolean",
                     },
                   ];
@@ -4363,7 +4410,7 @@ function validate61(
                                 key1.replace(/~/g, "~0").replace(/\//g, "~1"),
                               schemaPath: "#/$defs/json-schema/type",
                               keyword: "type",
-                              params: { type: schema61.type },
+                              params: { type: schema62.type },
                               message: "must be object,boolean",
                             },
                           ];
@@ -4462,7 +4509,7 @@ function validate61(
                                             "/input",
                                           schemaPath: "#/$defs/json-schema/type",
                                           keyword: "type",
-                                          params: { type: schema61.type },
+                                          params: { type: schema62.type },
                                           message: "must be object,boolean",
                                         },
                                       ];
@@ -4493,7 +4540,7 @@ function validate61(
                                               "/output",
                                             schemaPath: "#/$defs/json-schema/type",
                                             keyword: "type",
-                                            params: { type: schema61.type },
+                                            params: { type: schema62.type },
                                             message: "must be object,boolean",
                                           },
                                         ];
@@ -4567,7 +4614,7 @@ function validate61(
   return errors === 0;
 }
 validate61.evaluated = { props: true, dynamicProps: false, dynamicItems: false };
-const schema67 = {
+const schema68 = {
   description: "Where the blueprint editor's canvas draws each state. The machine never reads it.",
   type: "object",
   additionalProperties: false,
@@ -4581,7 +4628,7 @@ const schema67 = {
     },
   },
 };
-const schema69 = {
+const schema70 = {
   type: "object",
   required: ["x", "y"],
   additionalProperties: false,
@@ -4832,7 +4879,7 @@ function validate63(
   return errors === 0;
 }
 validate63.evaluated = { props: true, dynamicProps: false, dynamicItems: false };
-const schema70 = {
+const schema71 = {
   description:
     "Maps the context of an actor on an earlier version whose context, without `manifold`, `from` accepts to this version's context.",
   type: "object",
@@ -4934,7 +4981,7 @@ function validate65(
                     instancePath: instancePath + "/from",
                     schemaPath: "#/properties/from/type",
                     keyword: "type",
-                    params: { type: schema70.properties.from.type },
+                    params: { type: schema71.properties.from.type },
                     message: "must be object,boolean",
                   },
                 ];

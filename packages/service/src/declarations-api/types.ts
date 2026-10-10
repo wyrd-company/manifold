@@ -2,6 +2,12 @@
 // relationships:
 //   implements: declarations-api
 // ---
+import type {
+  BlueprintLint,
+  ProcessManifestFinding,
+  ProcessRepositoryRevision,
+} from "@wyrd-company/manifold-shared";
+import type { DecisionModels } from "../decision-models.ts";
 import type { TaskMetadataDeclaration } from "@wyrd-company/manifold-shared";
 import type { Revisions } from "../service/index.ts";
 import type { ProcessRepository } from "../process-repository/index.ts";
@@ -23,6 +29,13 @@ export interface DeclarationImpact {
   }[];
 }
 export interface DeclarationsApiOptions {
+  lintBlueprint(
+    path: string,
+    text: string,
+    decisionModels: ReadonlyMap<string, readonly ProcessManifestFinding[]>,
+    revision: ProcessRepositoryRevision,
+  ): Promise<BlueprintLint>;
+  createDecisionModels(models: Readonly<Record<string, unknown>>): DecisionModels;
   readonly revisions: Pick<Revisions, "latest" | "save" | "findSave">;
   readonly processRepository: Pick<ProcessRepository, "revisionAt">;
   readonly repository: { readonly url: string; readonly branch: string };

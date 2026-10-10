@@ -13,7 +13,7 @@ import { manifestFindingLocation } from "./process-manifest-locations.ts";
 export interface ProcessManifest {
   readonly intake: { readonly decisionModel: string };
 }
-export interface ProcessManifestFinding {
+export type ProcessManifestFinding = {
   readonly file: string;
   readonly location: string;
   readonly severity: "error" | "warning";
@@ -27,7 +27,7 @@ export interface ProcessManifestFinding {
     | "decision-model";
   readonly message: string;
   readonly finding?: DecisionModelFinding;
-}
+};
 export type ProcessManifestLint =
   | {
       readonly ok: true;
@@ -73,9 +73,49 @@ export async function lintProcessManifest(
       add("manifold.yml", error.instancePath, "schema", error.message ?? "Invalid manifest.");
     return { ok: false, findings };
   }
-  const queue = [
-    { key: manifest.intake.decisionModel, file: "manifold.yml", location: "/intake/decisionModel" },
-  ];
+  const lint = await lintSet(read, manifest.intake.decisionModel, {
+    file: "manifold.yml",
+    location: "/intake/decisionModel",
+  });
+  return lint.ok ? { ...lint, manifest } : lint;
+}
+export type DecisionModelSetLint =
+  | {
+      readonly ok: true;
+      readonly models: Readonly<Record<string, unknown>>;
+      readonly findings: readonly ProcessManifestFinding[];
+    }
+  | { readonly ok: false; readonly findings: readonly ProcessManifestFinding[] };
+export function lintDecisionModelSet(
+  read: (path: string) => Promise<string | undefined>,
+  root: string,
+): Promise<DecisionModelSetLint> {
+  return lintSet(read, root, { file: root, location: "" });
+}
+async function lintSet(
+  read: (path: string) => Promise<string | undefined>,
+  root: string,
+  origin: { file: string; location: string },
+): Promise<DecisionModelSetLint> {
+  validateKey ??= ajv.compile<string>({ $ref: processManifestSchema.$id + "#/$defs/model-path" });
+  const findings: ProcessManifestFinding[] = [];
+  const add = (
+    file: string,
+    location: string,
+    kind: ProcessManifestFinding["kind"],
+    message: string,
+  ) => findings.push({ file, location, kind, message, severity: "error" });
+  if (!validateKey(root)) {
+    add(
+      origin.file,
+      origin.location,
+      "model-key-invalid",
+      "Model key must be a repository-relative .yml path.",
+    );
+    return { ok: false, findings };
+  }
+  const queue = [{ key: root, ...origin }];
+
   const visited = new Set<string>();
   const models: Record<string, unknown> = {};
   for (const { key, file, location } of queue) {
@@ -138,5 +178,5 @@ export async function lintProcessManifest(
   }
   return findings.some((f) => f.severity === "error")
     ? { ok: false, findings }
-    : { ok: true, manifest, models, findings };
+    : { ok: true, models, findings };
 }

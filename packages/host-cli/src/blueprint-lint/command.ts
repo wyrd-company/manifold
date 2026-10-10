@@ -6,7 +6,11 @@ import { readTaskMetadata } from "../task-metadata-lint/command.ts";
 import { declaredLifecycleOptions, declaredTaskFields } from "@wyrd-company/manifold-shared";
 import { join } from "node:path";
 import { readdir, readFile } from "node:fs/promises";
-import { lintBlueprint, manifoldImplementationNames } from "@wyrd-company/manifold-shared";
+import {
+  lintBlueprint,
+  manifoldImplementationNames,
+  lintInvokedDecisionModels,
+} from "@wyrd-company/manifold-shared";
 import type { BlueprintFinding } from "@wyrd-company/manifold-shared";
 
 function line(file: string, finding: BlueprintFinding) {
@@ -117,7 +121,19 @@ export async function blueprintLintCommand(
   }
   let exitCode = 0;
   for (const { file, text } of inputs) {
+    const decisionModels =
+      repository === undefined
+        ? undefined
+        : await lintInvokedDecisionModels(async (path) => {
+            try {
+              return await readFile(join(repository, path), "utf8");
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+              throw error;
+            }
+          }, text);
     const result = await lintBlueprint(file, text, manifoldImplementationNames, {
+      ...(decisionModels === undefined ? {} : { decisionModels }),
       ...(configurationBound === undefined ? {} : { configurationBound }),
       ...(lifecycleOptions === undefined ? {} : { lifecycleOptions }),
       ...(taskFields === undefined ? {} : { taskFields }),
