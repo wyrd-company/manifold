@@ -604,7 +604,7 @@ proposed-design:
     a read before, a recorded basis, and a check after, and a crash at any
     point leaves a check still to run. The write's `github_task_field_write`
     row holds, for a front matter write, `attempt`, the number of the
-    latest body write it sent, the first write 1 and each repair one more;
+    latest body write it sent, 1 for the write and 2 for its one repair;
     `basis_edited_at`, the time of the newest edit GitHub held when that
     attempt was computed, so that every edit of the issue at or before it
     precedes the attempt and the attempt's own edit is newer; and `check`,
@@ -624,24 +624,27 @@ proposed-design:
     and then writes the body with `updateIssue`. (d) It reads the issue's
     `userContentEdits` newer than the row's `basis_edited_at`, oldest
     first, up to the 100 GitHub keeps. Since each attempt has its own
-    basis, every earlier attempt's edit is at or before it, and the first
-    edit by the App's account among them is the latest attempt's. No such
-    edit means the attempt never reached GitHub: `check` becomes `none`
-    and the write runs again from (a). An edit by another account before
-    it was replaced by it. When the attempt's edit is the newest edit,
-    the source repairs: it takes the replaced edit's text from its
-    `diff`, sets the key on it with `setFrontMatter`, and writes it from
-    (c) as the next attempt, whose basis is the time of the attempt's
-    edit, the newest GitHub then held, so the repair's check finds the
-    repair's edit and never the earlier one, and the person's text stays
-    with the key set. When a newer edit follows the attempt's, a person
-    has edited the body since, and a repair would replace that edit too,
-    so the source does not repair. With no edit by another account before
-    the attempt's, `check` becomes `passed`. When the replaced text is not available,
-    or a newer edit follows the attempt's, `check` becomes `conflict` with
-    the replaced edit's time, the write fails
-    `body-conflict`, and the body keeps what the write made, so the
-    replaced text stays in GitHub's edit history and the failure names it.
+    basis, the write's edit is at or before the repair's basis, and the
+    first edit by the App's account among them is the latest attempt's.
+    No such edit means the attempt never reached GitHub: `check` becomes
+    `none` and the attempt runs again from (a), or for a repair from the
+    replaced edit's text again. With the attempt's edit the newest and no edit by
+    another account before it, `check` becomes `passed`. A write repairs
+    at most once. When the check of attempt 1 finds an edit by another
+    account before the write's edit, the write replaced it; when the
+    write's edit is also the newest edit, the source repairs once: it
+    takes the replaced edit's text from its `diff`, sets the key on it
+    with `setFrontMatter`, and writes it from (c) as attempt 2, whose
+    basis is the time of the write's edit, so the repair's check finds
+    the repair's edit and never the write's, and the person's text stays
+    with the key set. Every other outcome writes nothing more and makes
+    `check` `conflict` with the time of the other account's edit: attempt
+    1's check finding the replaced text unavailable or an edit newer than
+    the write's, and attempt 2's check finding any edit by another
+    account newer than its basis, before or after the repair's edit, or
+    the repair's edit not the newest. Then the write fails `body-conflict`, and the body keeps what GitHub holds,
+    so a person's edit made after Manifold's stays in the body, a replaced
+    text stays in GitHub's edit history, and the failure names it.
     Each change of `check` commits before the next request, so a crash
     after the body write and before its check leaves `pending`, and the
     restored invoke's step (0) runs the check before the equal-value

@@ -1256,15 +1256,17 @@ proposed-design:
     and after the restart the restored invoke runs the pending check
     first, keeps the person's text with the key set, or, with the fake's
     `diff` withheld, fails `body-conflict`, and a second replay fails the
-    same with no request. Repair checks use each attempt's own basis: with
-    a person's edit applied before the first write and another before the
-    repair write, the second check repairs once more, and the write ends
-    with both people's text and the key set, three body writes in the
-    fake's log; with the service killed after the fake answers the repair
-    write and before its check, the restored invoke checks the repair
-    against the repair's basis, passes with no further body write, and
-    leaves two body writes in the fake's log; and with a person's edit
-    after the write's own edit, the check repairs nothing and fails
+    same with no request. A write repairs at most once, and each attempt
+    has its own basis: with the service killed after the fake answers the
+    repair write and before its check, the restored invoke checks the
+    repair against the repair's basis, passes with no further body write,
+    and leaves two body writes in the fake's log; with a second person's
+    edit applied on the repaired body after the repair write and before
+    its check, the check writes nothing more and fails `body-conflict`,
+    and the body holds the second person's edit over the repaired text,
+    so both people's text is kept, with two body writes in the log and
+    the same failure on a replay; and with a person's edit after the
+    write's own edit, the check repairs nothing and fails
     `body-conflict`, keeping the later edit.
     Partial and repeated Apply: the fault test kills the service after the
     fake answers the second of three scope writes, an issue type create

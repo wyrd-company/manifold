@@ -429,8 +429,10 @@ description: |-
   - `front-matter-invalid`: the issue body's front matter does not parse,
     so Manifold does not rewrite it.
   - `body-conflict`: a person's edit of the body landed while Manifold
-    wrote it, and its text could not be kept; the body holds Manifold's
-    write and GitHub's edit history holds the person's.
+    wrote it, and Manifold's one repair could not keep it, or a further
+    edit followed; Manifold writes nothing more, the body holds what
+    GitHub holds, and an edit Manifold replaced stays in GitHub's edit
+    history. A replay of the same write fails the same way.
   - `forbidden`, `transport`, `rejected`: as for a card move.
 
   A write that one state entry repeats sets the same value again and

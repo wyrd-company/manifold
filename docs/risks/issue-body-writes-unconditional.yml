@@ -16,9 +16,10 @@ description: >-
   documents conditional requests for reads only. A front matter write
   reads the body, sets one key, and writes the body back, so a person's
   edit that GitHub takes between that read and that write is replaced.
-  The source checks the issue's edit history after each write and sets
-  the key on the replaced text when GitHub's `UserContentEdit.diff`
-  gives it; GitHub's documentation does not state that `diff` holds the
+  The source checks the issue's edit history after each write and, once
+  per write, sets the key on the replaced text when GitHub's
+  `UserContentEdit.diff` gives it; any further edit ends the write as
+  `body-conflict`; GitHub's documentation does not state that `diff` holds the
   edit's whole text, and GitHub keeps at most 100 edits of an issue. When
   the text cannot be recovered the write fails as `body-conflict`, the
   replaced text stays in GitHub's edit history, and the blueprint decides
