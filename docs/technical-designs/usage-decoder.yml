@@ -251,43 +251,65 @@ proposed-design:
     session yields the same key with larger counts.
   cursor-sessions: >-
     An ACP session store is a SQLite database the decoder opens read-only
-    and reads one statement from, `SELECT id, data FROM blobs`; it never
-    reads the `meta` table, which holds a blob encryption key. A blob is a
-    JSON message when its data parses as a JSON object, and otherwise a
-    Protocol Buffers record, which the decoder reads with its own wire
-    reader of varint and length-delimited fields; a record that does not
-    read as wire format, or that is neither kind below, is skipped as
-    content the decoder does not need. A conversation state is a record
-    with a varint field 26, the conversation's creation time in epoch
-    milliseconds, and repeated field 1, each the 32 bytes of a message's
-    blob id. A tool record is a record whose field 2 holds a string field
-    57, a tool-call id, and varint fields 59 and 60, the tool call's start
-    and end times in epoch milliseconds. Each JSON message whose `role` is
-    `assistant` is one call, one model response. Its key is
-    `cursor/<session-id>/<blob id>`: the blob id is the hash of the
-    message's content, which never changes and does not depend on the
-    order or number of the store's other blobs, while the message's own
-    `id` repeats within a session. Its model is the first
-    `providerOptions.cursor.modelName` of its `content` parts. Its
-    timestamp is the earliest start time of the tool records whose
-    tool-call ids its `tool-call` parts hold. A call with no such tool
-    record takes the latest end time of the tool records of the calls
-    before it in the message order, else the conversation's creation
-    time, and is `estimated`. The message order is the order of the
-    conversation state with the most message references, followed by the
-    messages that only other states reference, in the order of the first
-    state, by length, that references each. A JSON message whose `role`
-    is not `system`, `user`, `assistant`, or `tool` is an `unknown-record`;
-    an assistant message whose `content` is not an array is a
-    `malformed-record` and yields no call. A store that cannot be opened,
-    or that has no `blobs` table, is `unreadable`. SQLite gives each read
-    one consistent snapshot of the store and its write-ahead log, so a
-    session Cursor still writes yields the calls committed at the read and
-    no partial record. The `firstRecord` of a store's errors is the index
-    of the blob in ascending blob id order. The store's record field
-    numbers are not documented by Cursor; the `t3code-session-mapping`
-    spike records them as measured, and the fixture store and the golden
-    output gate them.
+    and reads one statement from, `SELECT id, data FROM blobs ORDER BY
+    id`; it never reads the `meta` table, which holds a blob encryption
+    key. SQLite gives the statement one consistent snapshot of the store
+    and its write-ahead log, so a session Cursor still writes yields the
+    calls committed at the read and no partial record. Every blob is one
+    of these kinds, tried in this order. A JSON message is data that
+    parses as a JSON object. A Protocol Buffers record is data that the
+    decoder's own wire reader, of varint, length-delimited, 32-bit, and
+    64-bit fields, reads to its last byte with no field number 0. A
+    conversation state is a record with a varint field 26, a time in epoch
+    milliseconds, and one or more field 1 values, each 32 bytes, the blob
+    id of a message. A tool record is a record whose only top-level field
+    is 2, holding a string field 57, a tool-call id, and varint fields 59
+    and 60, the tool call's start and end times in epoch milliseconds. The
+    records the decoder needs nothing from are a record with field 26
+    whose field 1 is not 32 bytes, a record whose only top-level field is
+    3, a record whose only top-level field is 1, and a record whose
+    top-level fields are among 1 to 5. A content blob is data of neither
+    format whose id another blob names, as its hexadecimal text or its 32
+    bytes, such as a file a tool result names by `contentBlobId`. The
+    `t3code-session-mapping` spike records this census as measured; the
+    store is undocumented, so each of its rules is also a check. A JSON
+    message whose `role` is not `system`, `user`, `assistant`, or `tool`,
+    a record of no kind above, and a record whose only top-level field is
+    2 without string 57 and varints 59 and 60, are `unknown-record`. Data
+    of neither format that no blob names, and a conversation state with a
+    reference that names no blob, are `malformed-record`. A store that
+    cannot be opened, or that has no `blobs` table, is `unreadable`.
+    `firstRecord` is the blob's index in the statement's order.
+    Each JSON message whose `role` is `assistant` is one call, one model
+    response. Its key is `cursor/<session-id>/<blob id>`: the blob id is
+    the hash of the message's content, which never changes and does not
+    depend on the store's other blobs, while the message's own `id`
+    repeats within a session. Its model is the first
+    `providerOptions.cursor.modelName` of its `content` parts. An
+    assistant message whose `content` is not an array is a
+    `malformed-record` and yields no call. A call's timestamp is the
+    earliest start time of the tool records whose tool-call ids its
+    `tool-call` parts hold. A `tool-call` part whose id no tool record
+    holds is an `unknown-record`, so a moved field shows as an error and
+    not as a quiet change of time. A call with no tool record takes its
+    time from its anchor and is `estimated`. Its anchor is the
+    conversation state that ends with its reference and holds the fewest
+    references, the least state blob id among equals; a state ends with a
+    call when no assistant message's reference follows the call's. The
+    time is the latest end time of the tool records of the calls before
+    it in its anchor, else the anchor's field 26. Cursor writes the state
+    that ends with a call when it writes the call, so an append, which adds
+    references after the call, and a compaction state that holds later
+    calls after it never become its anchor, and the anchor of one store is
+    one state whatever the order of reads. A later state that ends with
+    the call, holds no more references than its anchor, and gives another
+    time would change the estimated time of a fresh decode; the
+    `t3code-session-mapping` spike measures no such state, and the
+    service keeps the first record of a key, so a pushed call keeps its
+    time and its state visit. A call with no tool record
+    and no state that ends with it yields nothing and is a
+    `malformed-record`; it yields its call at the first decode after
+    Cursor writes its state, and the service fixes its record then.
   unpriced-models: >-
     The decoder emits every call the library decodes, whatever its model,
     including a call with no model. It holds no price table. The service
@@ -354,12 +376,18 @@ proposed-design:
     version whose record shapes it follows. The Cursor ACP session store
     is built by the test from SQL in the fixture directory, whose JSON
     messages hold generic text and whose records are hexadecimal
-    literals: a conversation state in two revisions, the later one
-    referencing one more message; assistant messages with one and with two
-    tool calls on two models, one with no tool call, and one with no model
-    name; tool records for each tool call; one message with an unknown
-    role and one assistant message whose content is not an array; and one
-    blob that is not wire format.
+    literals: conversation states for each turn, each ending with its
+    turn's last call; assistant messages with one and with two tool calls
+    on two models, one with no tool call, and one with no model name; a
+    tool record for each tool call; a content blob a tool result names;
+    and a record of each kind the decoder needs nothing from. Further
+    stores each add one fault to that store: a message with an unknown
+    role; an assistant message whose content is not an array; a tool
+    record whose times are in fields 61 and 62; a record whose only
+    top-level field is 7; data of neither format that no blob names; a
+    state whose field 26 is a string; a state with a reference to no
+    blob; and an assistant message with no tool call and no state that
+    ends with it.
   tests: >-
     Tests drive `decodeUsage`, `defaultUsageRoots`, and `runUsageCommand`
     only, and never an adapter. The SQLite fixtures are built by the test
@@ -382,7 +410,15 @@ proposed-design:
     fixture roots and checks that its records, in order, equal
     `fixtures/expected.jsonl`, that every source is named by exactly one
     batch, and that a `skip` answering true for a source leaves its calls
-    out and its stamp's files unread. A Cursor test decodes the ACP fixture
-    store, adds the blobs of one more turn, decodes it again, and checks
-    that every earlier record is unchanged, that only the new turn's calls
-    are added, and that no Cursor call has token counts.
+    out and its stamp's files unread. Cursor tests decode the ACP fixture
+    store and then, each from a copy of it, the store with the blobs of
+    one more turn, with a compaction state that summarizes the earlier
+    references and holds the text-only call before later calls, and with
+    a second state of the anchor's length, with a greater blob id, that
+    ends with the same call after the same tool calls, and decode the
+    unchanged store again; each checks that every earlier
+    record is unchanged in every field, that only the new turn's calls are
+    added, and that no Cursor call has token counts. Each fault store
+    yields its source error with the calls the fault does not touch, and
+    the store whose tool record moved its times yields that call with its
+    anchored time, `estimated`, beside the `unknown-record` error.

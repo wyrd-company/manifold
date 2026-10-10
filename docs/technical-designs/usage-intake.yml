@@ -558,9 +558,7 @@ proposed-design:
     an actor's actual and variance read as covering only its metered
     calls; the unowned usage read and the portfolio read's `pricing`
     count it the same way, so the console shows every unmetered call by
-    provider and model. The push answer counts it as `unmetered`. A
-    store holding postings that an earlier decoder made from token counts
-    derived from text keeps them; their keys replay.
+    provider and model. The push answer counts it as `unmetered`.
   posting: >-
     A posting resolves its account, then its amount, then posts. The
     account is the one the accounts declaration in force gives the call's
