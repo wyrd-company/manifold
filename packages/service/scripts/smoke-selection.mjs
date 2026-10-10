@@ -6,16 +6,15 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-// Conservative prefixes include future scripts and build inputs automatically.
+// Only known non-packaging paths may skip the exhaustive recovery sweep.
+// New build inputs, including package-manager configuration, fail closed.
 export function selectMode(event, paths) {
   if (!["push", "pull_request"].includes(event) || !Array.isArray(paths)) return "full";
-  return paths.some((path) =>
-    /^(packages\/|\.github\/workflows\/|Taskfile\.yml$|package\.json$|pnpm-|\.node-version$|tsconfig|vite\.config)/.test(
-      path,
-    ),
+  return paths.every((path) =>
+    /^(docs\/|testing\/|test-support\/|[^/]+\.md$|LICENSE$|NOTICE$|\.editorconfig$)/.test(path),
   )
-    ? "full"
-    : "short";
+    ? "short"
+    : "full";
 }
 
 export function selectCut(mode, seen, command, operation, cut, recovery = "") {

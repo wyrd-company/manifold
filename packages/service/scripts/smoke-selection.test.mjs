@@ -18,12 +18,22 @@ test("events and unknown changes retain exhaustive coverage", () => {
     assert.equal(selectMode(event, ["README.md"]), "short");
     assert.equal(selectMode(event, []), "short");
     for (const path of [
+      "docs/technical-designs/example.yml",
+      "testing/live-github/src/check.ts",
+      "test-support/limits.ts",
+    ])
+      assert.equal(selectMode(event, [path]), "short", path);
+    assert.equal(selectMode(event, ["README.md", ".npmrc"]), "full");
+    for (const path of [
       "packages/service/scripts/manifold-upgrade.sh",
       "packages/service/scripts/new-smoke.mjs",
       "packages/service/src/main.ts",
       "packages/shared/src/index.ts",
       "packages/console/src/main.ts",
       "packages/host-cli/package.json",
+      ".npmrc",
+      ".pnpmfile.cjs",
+      "new-build-input.toml",
       "package.json",
       "pnpm-lock.yaml",
       "pnpm-workspace.yaml",
