@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: [declarations-api, portfolio, usage-intake]
 // ---
+import { childProcessLimit } from "../../../../test-support/limits.ts";
 import { fork } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -146,4 +147,5 @@ test.each(["before", "committed", "pushed", "applied"])(
       await f.close();
     }
   },
+  childProcessLimit * 2,
 );
