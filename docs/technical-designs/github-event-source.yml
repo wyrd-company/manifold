@@ -566,8 +566,7 @@ proposed-design:
     entity. A write whose outcome is unknown leaves GitHub's state to the
     next observation, which the Apply makes before it plans again.
   task-field-writes: >-
-    `writeTaskField(write, signal)` queues the write as a card move is
-    queued, and the runner runs it in these steps. (1) Scope: a `label` or
+    `writeTaskField(write, signal)` queues the write as a card move is queued, and the runner runs it in these steps. (1) Scope: a `label` or
     `milestone` write whose issue's repository is not in `repositories`,
     and an `issue-field` or `issue-type` write whose issue's repository
     another owner owns, fail `out-of-scope`; a scope whose row is not
@@ -580,7 +579,8 @@ proposed-design:
     write's `github_task_field_write` row is written, as a card move's row
     is: state `sent`, keyed by the invocation, the issue, and the task
     field, with the resolved ids and the value, only when the invocation
-    has no row for the same resolved ids. (4) Write: a Project field
+    has no row for the same resolved ids; a front matter write's row also
+    holds its check state, as front-matter-writes states. (4) Write: a Project field
     with `updateProjectV2ItemFieldValue`, or `clearProjectV2ItemFieldValue`
     for `null`; an issue field with `setIssueFieldValue`, or
     `deleteIssueFieldValue` for `null`, a `NOT_FOUND` for a value the
@@ -601,23 +601,42 @@ proposed-design:
   front-matter-writes: >-
     GitHub has no conditional write of an issue body: `PATCH` and
     `updateIssue` take no version, so the source guards a body write with
-    a read before and a check after. (a) It reads the issue's `body`,
-    `lastEditedAt`, and `userContentEdits(last: 1)` now. (b) It computes
-    the new body with `setFrontMatter` on that body; an `invalid` block
-    fails `front-matter-invalid`, and a body that already holds the value
-    resolves with no write. (c) It writes the body with `updateIssue`.
-    (d) It reads `userContentEdits(last: 2)` and finds its own edit, the
-    newest by the App's account. When the edit before it is newer than the
-    `lastEditedAt` step (a) read, a person's edit landed between the read
-    and the write and the write replaced it: the source takes that edit's
-    text from its `diff`, sets the key on it with `setFrontMatter`, and
-    writes once more from step (c), so the person's text stays with the
-    key set. When that text is not available, it fails `body-conflict`,
-    with the edit's time, and leaves the body as its write made it, so the
-    replaced text stays in GitHub's edit history and the failure names
-    it. The window between (a) and (c) is one request in the serial
-    runner, so a person's edit lands in it rarely, and is never dropped
-    without the check finding it.
+    a read before, a recorded basis, and a check after, and a crash at any
+    point leaves a check still to run. The write's `github_task_field_write`
+    row holds, for a front matter write, `basis_edited_at`, the
+    `lastEditedAt` of the body the write was computed from, and
+    `check`, one of `none`, `pending`, `passed`, or `conflict`, with the
+    conflicting edit's time for `conflict`. (0) When the invocation's row
+    holds `check` `pending`, the source runs step (d) first, against the
+    row's `basis_edited_at`, before anything else; a row whose `check` is
+    `conflict` fails `body-conflict` again with no request, so a replay
+    reports the same failure. (a) It reads the issue's `body` and
+    `lastEditedAt` now. (b) It computes the new body with `setFrontMatter`
+    on that body; an `invalid` block fails `front-matter-invalid`, and a
+    body that already holds the value resolves with no write, which step
+    (0) makes safe, since a write of this invocation that reached GitHub
+    has had its check run first. (c) In one transaction it sets the row's
+    `basis_edited_at` to the time (a) read and `check` to `pending`, and
+    then writes the body with `updateIssue`. (d) It reads the issue's
+    `userContentEdits` newer than `basis_edited_at`, oldest first, up to
+    the 100 GitHub keeps. No edit by the App's account among them means
+    the write never reached GitHub: the row's `check` becomes `none` and
+    the write runs again from (a). Otherwise the first edit by the App's
+    account is this write, and an edit by another account before it was
+    replaced by it: the source takes that edit's text from its `diff`,
+    sets the key on it with `setFrontMatter`, sets the row's
+    `basis_edited_at` to that edit's time, and writes again from (c), so
+    the person's text stays with the key set. With no edit before its own,
+    `check` becomes `passed`. When the replaced text is not available,
+    `check` becomes `conflict` with the edit's time, the write fails
+    `body-conflict`, and the body keeps what the write made, so the
+    replaced text stays in GitHub's edit history and the failure names it.
+    Each change of `check` commits before the next request, so a crash
+    after the body write and before its check leaves `pending`, and the
+    restored invoke's step (0) runs the check before the equal-value
+    shortcut of step (b) can resolve. The window between (a) and (c) is
+    one request in the serial runner, so a person's edit lands in it
+    rarely, and is never dropped without the check finding it.
   scope-permissions: >-
     Task fields outside a Project use these permissions of the App's
     installation on each owner, beside those under permissions:

@@ -112,11 +112,16 @@ description: |-
     holds an `invalid` value.
   - A `label` task field holds which one of its labels the issue has. Each
     option is a label named `prefix` followed by the option's name, in
-    each repository of the binding's `repositories`. A label of the
-    repository whose name begins with a non-empty `prefix` and that no
-    option names is an undeclared label of the field. With an empty
-    prefix no label is undeclared, so Manifold owns only the labels the
-    options name.
+    each repository of the binding's `repositories`. A field's non-empty
+    `prefix` is an owned prefix of each repository the field reaches. A
+    label of a repository is undeclared when its name begins with an
+    owned prefix of the repository, from any binding, and no option of
+    any label field that reaches the repository, from any binding and
+    with any prefix, names it. Undeclared is decided over the whole
+    repository scope, so a label one field declares is never undeclared
+    for another field, nested prefixes such as `size: ` and `size: extra: `
+    included. With no owned prefix in a repository no label there is
+    undeclared, so Manifold owns only the labels the options name.
   - A `milestone` task field holds the issue's milestone. Each option is a
     milestone titled with the option's name in each repository of the
     binding's `repositories`. An issue has at most one milestone, so a
@@ -166,9 +171,11 @@ description: |-
   - Two declarations of one issue type, label, or milestone are
     compatible when no property both declare differs and the fields that
     declare it have the same `whenChanged`.
-  - Two `label` fields with the same non-empty `prefix` in overlapping
-    scopes are compatible when they declare the same option names, since
-    each owns the undeclared labels of that prefix.
+
+  Label fields of different bindings in one repository coalesce whatever
+  their prefixes and options: the repository's declared labels are the
+  union of their options, and its undeclared labels are decided against
+  that union, as the `label` kind states.
 
   Two repository scopes overlap when they share a repository, an
   `owner/*` entry overlapping every entry of its owner, so that overlap is
@@ -447,9 +454,8 @@ validation-criteria: >-
   two bindings of one owner that declare an `issue-field` field of one
   name with different types, with the same options in another order, and
   with one option's color `red` in one and `blue` in the other, an
-  `issue-type` option whose `description` differs, two `label` fields
-  with prefix `size: ` and different options in `example-org/*` and
-  `example-org/depot`, and one field `revert` and the other `accept`,
+  `issue-type` option whose `description` differs, and one field
+  `revert` and the other `accept`,
   each a `shared-conflict` finding at the later binding's declaration;
   the same two `issue-field` fields where one declares a color the other
   leaves out, which coalesce with no finding; two bindings whose owners
@@ -475,7 +481,8 @@ validation-criteria: >-
   `declaredTaskFields` holds `Effort` with type `single-select` and
   options `Light` and `Heavy` from both Projects. `taskFieldStorageKinds`
   equals the storage kinds table. Each case of
-  `docs/specifications/task-metadata-declaration.fixtures.yml` holds: a
+  `docs/specifications/task-metadata-declaration.fixtures.yml` holds: each
+  bindings text validates against `bindings-declaration.schema.yml`; a
   declaration case lints to its findings, kinds and locations in order,
   or lints clean with `scopeOwnership` giving its scopes and entity keys;
   and a front matter case reads as stated with `parseFrontMatter` and

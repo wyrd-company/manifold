@@ -536,8 +536,9 @@ proposed-design:
     shows the Project `pending` until the operator applies. The scope's
     owned configuration lists each owned entity with its entity key, the
     bindings and task fields that declare it, its declared properties
-    coalesced, its `whenChanged`, and the options of an issue field and
-    the undeclared-label prefixes of a label field. The entity key is
+    coalesced, its `whenChanged`, and the options of an issue field; a
+    repository scope also lists its owned label prefixes, each non-empty
+    `prefix` of a label field from any binding that reaches it. The entity key is
     `issue-field:<name>`, `issue-type:<name lower-cased>`,
     `label:<name lower-cased>`, or `milestone:<title>`. The lint calls
     the same function with each wildcard reaching no repository and
@@ -614,8 +615,14 @@ proposed-design:
     type, label, or milestone with no match is a `create`; a match whose
     name, or a declared color or description, differs is a `change`; an
     owned issue type GitHub holds disabled is a `change` of `enabled`. An
-    undeclared option of an owned issue field, and an undeclared label of
-    a non-empty prefix, is a `remove`, `requiresRemoval`. Nothing else in
+    undeclared option of an owned issue field is a `remove`,
+    `requiresRemoval`. A label is a `remove`, `requiresRemoval`, only when
+    its name begins with one of the repository scope's owned prefixes and
+    no owned label entity of the scope names it, the scope's owned labels
+    being the options of every label field of every binding that reaches
+    the repository, whatever their prefixes; so a label one binding
+    declares under a nested prefix, or one field declares without a
+    prefix inside another field's prefix, is never removed. Nothing else in
     a shared scope is owned: an issue field, an issue type, a milestone,
     or a label of no owned prefix that no binding declares is never
     planned, so an entity no binding declares any more is released, not
@@ -1075,9 +1082,10 @@ proposed-design:
     row. A label write adds the option's label and then removes the
     field's other labels, so a crash between the two leaves the issue with
     two of the field's labels, an `invalid` value, until the restored
-    invoke removes the other. A front matter write re-reads the body
-    before it writes, so a write repeated after a crash finds the key
-    already holding the value and sends nothing.
+    invoke removes the other. A front matter write first finishes the
+    history check its row holds pending, then re-reads the body, so a
+    write repeated after a crash recovers or reports a replaced edit
+    before it finds the key already holding the value and sends nothing.
   tests: >-
     Tests run through a real store file in a temporary directory, router, actor host, blueprint loader,
     and GitHub event source, against the GitHub fake of the source's test
@@ -1203,7 +1211,7 @@ proposed-design:
     | Plan from an empty scope: creates, `not-applied`; Apply: `in-sync`; a second Apply writes nothing | yes | yes | yes | yes, in each named repository | yes, in each named repository | no change planned |
     | Rename on GitHub matched by applied id: `change` of `name` with `drift`; revert keeps the id; `accept` saves one commit | yes | yes | yes | yes | yes | n/a |
     | Delete on GitHub: `create` with `drift` | yes | yes | yes | yes | yes | n/a |
-    | Undeclared entity: `remove` with `requiresRemoval`, made only with `removeUndeclared` | field, option | option of an owned field | never planned | label of a non-empty prefix | never planned | n/a |
+    | Undeclared entity: `remove` with `requiresRemoval`, made only with `removeUndeclared` | field, option | option of an owned field | never planned | label under an owned prefix that no label field of any binding declares | never planned | n/a |
     | Read values: `set`, `empty`, `invalid`, `unavailable` at intake, in the task input, and on `GET /api/tasks/{actorId}` | yes | yes, `unavailable` for another organization's repository | yes, `invalid` for an undeclared type | yes, `invalid` for two labels of the field | yes | yes, `invalid` for a broken block and for a wrong type |
     | `github-task-field-set` sets and clears the value; the change reaches the actor with `setBy` the actor, confirmed; a person's change with `setBy` `null` | yes | yes | yes | yes | yes | yes |
     | Write outside scope fails `out-of-scope` with no request to GitHub | n/a | yes | yes | yes | yes | n/a |
@@ -1231,14 +1239,24 @@ proposed-design:
     card moves; with `owner/*` the third repository, once the fake adds an
     issue in it to the Project and a sweep reads it, plans creates and
     shows the Project `pending`, and no label is created there before an
-    Apply. Front matter cases, through `setFrontMatter` and through the
+    Apply. Overlapping labels: with one binding's prefix `size: ` and
+    another's `size: extra: ` in one repository, and with one field's
+    unprefixed option `size: odd` inside another field's prefix, an Apply
+    with `removeUndeclared` removes only the labels the fixtures name as
+    removable, and no label either binding declares. Front matter cases, through `setFrontMatter` and through the
     write against the fake: a body with no block gains one and a clear
     gives back the original body byte for byte; a body with comments,
     other keys, `\r\n` line endings, and prose after the block keeps each;
     an invalid block refuses the write as `front-matter-invalid` with no
     request; a person's edit of the body's prose between Manifold's read
     and its write, which the fake applies just before the write, is found
-    by the write's check and kept, with the key set on the person's text.
+    by the write's check and kept, with the key set on the person's text;
+    and the fault test applies a person's edit after the read, kills the
+    service after the fake answers `updateIssue` and before the check,
+    and after the restart the restored invoke runs the pending check
+    first, keeps the person's text with the key set, or, with the fake's
+    `diff` withheld, fails `body-conflict`, and a second replay fails the
+    same with no request.
     Partial and repeated Apply: the fault test kills the service after the
     fake answers the second of three scope writes, an issue type create
     and a label create in one repository, and checks after the restart

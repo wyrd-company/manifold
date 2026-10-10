@@ -7,19 +7,24 @@
 # Representative cases of the task metadata declaration and its front
 # matter, for the lint, `scopeOwnership`, and the front matter functions.
 # Each declaration case holds `bindings.yml` and `task-metadata.yml` texts
-# and the lint's answer: `ok` with what the case checks, or `findings` in
-# document order, each with its kind and location. Each front matter case
+# and the lint's answer: `ok` with what `scopeOwnership` gives for each
+# shared scope, its owned entity keys and, for a repository, its owned
+# label prefixes, or `findings` in document order, each with its kind and
+# location. `undeclared` gives, for a repository's observed label names,
+# those an Apply that asks for removal removes. Every bindings text
+# validates against
+# `bindings-declaration.schema.yml`. Each front matter case
 # holds a body, a read, and, for a write, the key, the value, and the body
 # after. Values use a parcel domain unrelated to Manifold.
 bindings:
   two-of-one-organization: |
     githubProjects:
-      parcels: { project: { owner: example-org, number: 1 }, environment: env-one, item: alpha }
-      returns: { project: { owner: example-org, number: 2 }, environment: env-one, item: alpha }
+      parcels: { owner: example-org, number: 1, environment: env-one, item: alpha }
+      returns: { owner: example-org, number: 2, environment: env-one, item: alpha }
   user-and-organization: |
     githubProjects:
-      parcels: { project: { owner: example-user, number: 1 }, environment: env-one, item: alpha }
-      returns: { project: { owner: example-org, number: 2 }, environment: env-one, item: alpha }
+      parcels: { owner: example-user, number: 1, environment: env-one, item: alpha }
+      returns: { owner: example-org, number: 2, environment: env-one, item: alpha }
 declarations:
   - name: every kind coalesces across two bindings of one organization
     bindings: two-of-one-organization
@@ -56,13 +61,17 @@ declarations:
     ok:
       scopes:
         organization:example-org:
-          - issue-field:Effort
-          - issue-type:letter
-          - issue-type:parcel
+          entities:
+            - issue-field:Effort
+            - issue-type:letter
+            - issue-type:parcel
         repository:example-org/depot:
-          - label:size: large
-          - label:size: small
-          - milestone:North loop
+          entities:
+            - "label:size: large"
+            - "label:size: small"
+            - milestone:North loop
+          prefixes:
+            - "size: "
   - name: an issue field declared with another type in a second binding conflicts
     bindings: two-of-one-organization
     taskMetadata: |
@@ -91,7 +100,7 @@ declarations:
             Kind: { type: single-select, storage: { kind: issue-type }, options: [{ name: parcel, color: blue }] }
     findings:
       - { kind: shared-conflict, location: /projects/returns/fields/Kind/options/0/color }
-  - name: one label prefix with different options in overlapping repositories
+  - name: one label prefix with different options owns the union of both
     bindings: two-of-one-organization
     taskMetadata: |
       projects:
@@ -102,11 +111,69 @@ declarations:
             Size: { type: single-select, storage: { kind: label, prefix: "size: " }, options: [small, large] }
         returns:
           lifecycle: { field: Stage, options: [Received] }
-          repositories: [example-org/*]
+          repositories: [example-org/depot]
           fields:
             Size: { type: single-select, storage: { kind: label, prefix: "size: " }, options: [small, medium] }
-    findings:
-      - { kind: shared-conflict, location: /projects/returns/fields/Size }
+    ok:
+      scopes:
+        repository:example-org/depot:
+          entities:
+            - "label:size: large"
+            - "label:size: medium"
+            - "label:size: small"
+          prefixes:
+            - "size: "
+  - name: nested prefixes in two bindings remove no label either declares
+    bindings: two-of-one-organization
+    taskMetadata: |
+      projects:
+        parcels:
+          lifecycle: { field: Stage, options: [Sorting] }
+          repositories: [example-org/depot]
+          fields:
+            Size: { type: single-select, storage: { kind: label, prefix: "size: " }, options: [small] }
+        returns:
+          lifecycle: { field: Stage, options: [Received] }
+          repositories: [example-org/depot]
+          fields:
+            Bulk: { type: single-select, storage: { kind: label, prefix: "size: extra: " }, options: [large] }
+    ok:
+      scopes:
+        repository:example-org/depot:
+          entities:
+            - "label:size: extra: large"
+            - "label:size: small"
+          prefixes:
+            - "size: "
+            - "size: extra: "
+      undeclared:
+        repository:example-org/depot:
+          observed:
+            ["size: small", "size: extra: large", "size: tiny", "size: extra: huge", "fragile"]
+          removable: ["size: tiny", "size: extra: huge"]
+  - name: one binding's label without a prefix inside another field's prefix stays declared
+    bindings: two-of-one-organization
+    taskMetadata: |
+      projects:
+        parcels:
+          lifecycle: { field: Stage, options: [Sorting] }
+          repositories: [example-org/depot]
+          fields:
+            Size: { type: single-select, storage: { kind: label, prefix: "size: " }, options: [small] }
+            Handling: { type: single-select, storage: { kind: label }, options: ["size: odd", fragile] }
+    ok:
+      scopes:
+        repository:example-org/depot:
+          entities:
+            - "label:fragile"
+            - "label:size: odd"
+            - "label:size: small"
+          prefixes:
+            - "size: "
+      undeclared:
+        repository:example-org/depot:
+          observed: ["size: small", "size: odd", "size: tiny", "fragile", "urgent"]
+          removable: ["size: tiny"]
   - name: revert and accept on one shared entity conflict
     bindings: two-of-one-organization
     taskMetadata: |
@@ -136,9 +203,11 @@ declarations:
     ok:
       scopes:
         organization:example-user:
-          - issue-field:Effort
+          entities:
+            - issue-field:Effort
         organization:example-org:
-          - issue-field:Effort
+          entities:
+            - issue-field:Effort
   - name: a user-owned Project names the organization of its issues
     bindings: user-and-organization
     taskMetadata: |
@@ -154,7 +223,8 @@ declarations:
     ok:
       scopes:
         organization:example-org:
-          - issue-field:Effort
+          entities:
+            - issue-field:Effort
   - name: storage kinds refuse what they cannot hold
     bindings: two-of-one-organization
     taskMetadata: |
