@@ -42,6 +42,13 @@ design-challenges:
   fault-proof: >-
     The delivery order must be proved against crashes at each step,
     including a real process kill, through the module's public interface.
+  text-values: >-
+    A string kept in a TEXT column must come back as the same string on
+    every Node release the service supports, whatever characters it holds.
+    On the supported releases before 24.16, `node:sqlite` ends a TEXT
+    result at its first NUL (U+0000) when it makes the JavaScript string,
+    though SQLite keeps every byte. On every release, SQLite's `length`,
+    `GLOB`, and `LIKE` read a string only up to its first NUL.
 proposed-design:
   high-level-overview: >-
     The store is one module, `packages/service/src/store/`, whose only public
@@ -53,15 +60,23 @@ proposed-design:
     lists active snapshots and the next deadline for the router. Its
     `connection` is the seam to other modules that keep tables in the same
     file: it exposes the database, a nesting transaction, and per-owner
-    migrations. Every method is synchronous, since `node:sqlite` is. The
+    migrations. `storedText` turns a TEXT value read as bytes back into its
+    string, for the store and for every module that keeps tables in the
+    file. Every method is synchronous, since `node:sqlite` is. The
     tables are specified in `store-database-schema`.
   public-interface: |-
     `packages/service/src/store/index.ts` exports exactly these names.
 
     ```ts
-    import type { DatabaseSync } from "node:sqlite";
+    import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 
     export function openStore(options: StoreOptions): Store;
+
+    /**
+     * The string whose UTF-8 bytes a TEXT column holds, from a value selected
+     * as `CAST(<column> AS BLOB)`. Throws a TypeError for any other value.
+     */
+    export function storedText(value: SQLOutputValue): string;
 
     export interface StoreOptions {
       /** Path of the SQLite file. Created when absent; its directory exists. */
@@ -248,7 +263,7 @@ proposed-design:
     `index.ts` re-exports the public names and nothing else. `connection.ts`
     opens the file, sets the pragmas, and implements `transaction` and
     `migrate`. `migrations.ts` holds the store's migration steps as an array
-    of SQL strings. `state-paths.ts` holds the pure function from a state
+    of SQL strings. `stored-text.ts` holds `storedText`. `state-paths.ts` holds the pure function from a state
     value to its state paths. `store.ts` implements `Store` over the
     connection. Tests live beside the module and import only `index.ts`.
     The store adds no dependency: `node:sqlite` is built into Node.
@@ -267,7 +282,8 @@ proposed-design:
     a gate can call `writeInbox` for a token and the ledger's reserve inside
     one `transaction` and both commit together. A module never closes the
     database, never sets a pragma, and never reads or writes a table whose
-    name does not start with its owner prefix. `store.close()` closes the
+    name does not start with its owner prefix. A module reads and constrains
+    its TEXT columns as `text-values` states. `store.close()` closes the
     database for every module.
   migrations: >-
     `migrate(owner, steps)` brings an owner's tables to the latest step. In
@@ -297,11 +313,41 @@ proposed-design:
     database file and keeps it for the life of the process. Opening a store
     on a file a crashed process left behind is the restart path: SQLite
     discards any transaction the crash left uncommitted.
+  text-values: >-
+    A TEXT column that can hold a string from outside the store, such as an
+    actor id, a machine, a state path, an event id, a topic, an event name,
+    an entry id, or a message, keeps the string's UTF-8 bytes, and a NUL is
+    a character like any other. Every read of such a column selects it as
+    `CAST(<column> AS BLOB) AS <column>`, and the row reader makes the string
+    with `storedText`, which decodes the bytes as UTF-8. The same holds for
+    every other TEXT result built from such a string: a `RETURNING` column,
+    a string taken out of JSON with `json_extract` or `->>`, and an
+    aggregate or expression over the column. Comparisons need no cast:
+    `=`, unique keys, and `ORDER BY` compare every byte of a bound
+    parameter and a column. A column of JSON written with `JSON.stringify`
+    and read whole with `JSON.parse` is read as TEXT, since JSON writes
+    U+0000 as an escape. A column whose values the service takes from a
+    closed set, such as a status or a kind, is read as TEXT. `storedText`
+    throws a `TypeError` for a value that is not a `Uint8Array`, so a read
+    that misses the cast fails on every Node release, not only on the ones
+    that end a string at a NUL; a nullable column is checked for `null`
+    before the call. No constraint or query applies `length`, `GLOB`,
+    `LIKE`, `instr`, or `printf` to a column whose strings may hold a NUL,
+    since each reads only up to the first one: a column that must not be
+    empty is checked with `<column> <> ''`. A column whose format admits no
+    NUL, such as a hex digest or a GitHub repository name, may keep such a
+    check. The reads are the same on
+    every release, and nothing checks the Node version. The store's own
+    reads name their columns, with no `SELECT *`, and cast `actor_id`,
+    `machine`, `event_id`, `topic`, `state_path`, `event_name`, `entry_id`,
+    `from_machine`, `to_machine`, and `message`; `status`, `kind`, and the
+    JSON columns `snapshot`, `payload`, and `detail` are read as TEXT.
   state-paths: >-
     A state path names one state node of a snapshot's state value: the keys
     from the root to the node joined with `.`. `statePaths(value)` returns
     every active node's path, ancestors included, in depth-first order with
-    keys in the order the value lists them. `"idle"` gives `["idle"]`.
+    keys in the order the value lists them. A key may hold any character,
+    a NUL included. `"idle"` gives `["idle"]`.
     `{ open: { lifecycle: "ready", budget: "reserved" } }` gives `["open",
     "open.lifecycle", "open.lifecycle.ready", "open.budget",
     "open.budget.reserved"]`. An empty object below a key contributes only
@@ -390,7 +436,7 @@ proposed-design:
     snapshot's state paths, or `""`, which names the root state node every
     snapshot is in. In the transaction of a `saved` write, the store first
     deletes every deadline row of the actor that the write does not list,
-    by state path and event name. Then for each listed deadline,
+    by state path and event name, each read as `text-values` states. Then for each listed deadline,
     keyed by actor, state path, and event name: when no row exists it
     inserts one; when a row exists with the same `entryId` it leaves the
     row unchanged, fired or not, so a retained deadline and a replayed save
@@ -465,7 +511,8 @@ proposed-design:
   convergence: >-
     Every write converges. `migrate` twice runs nothing more. `saveSnapshot`
     twice holds the same rows, and the same deadline id and first fire time
-    of every deadline, since the second call lists the same entry ids.
+    of every deadline, since the second call lists the same entry ids and
+    the store reads each row's text in full.
     `writeInbox` twice holds one row per actor and event and returns nothing
     the second time. `markConsumed` twice keeps the first consumed time.
     `deliver` on a consumed row is a no-op. `fireDeadline` twice writes one
@@ -479,8 +526,9 @@ proposed-design:
     Misuse by a caller throws: a `TypeError` for a row delivered to another
     actor, a thenable returned to `transaction`, or an invalid owner; a
     `RangeError` for a deadline outside the snapshot's states; an `Error`
-    for a database migrated by a later build. SQLite errors propagate
-    unchanged. Inputs are trusted otherwise: the store is called by service
+    for a database migrated by a later build; a `TypeError` from
+    `storedText` for a TEXT read that misses its cast. SQLite errors
+    propagate unchanged. Inputs are trusted otherwise: the store is called by service
     code, and validation of what arrives from outside happens at the source
     that receives it.
   tests: >-
@@ -532,7 +580,23 @@ proposed-design:
     `phase.one` with event `tick` and state path `phase` with event
     `one:tick`, due at the same time, each fire with their own inbox row;
     and a state re-entered and its deadline fired again at the same fire
-    time writes a second inbox row beside the consumed first. Fault tests, for each crash
+    time writes a second inbox row beside the consumed first. A text
+    round-trip test uses two values for each text field: one with a NUL
+    inside, such as `tick\0entry`, and one that starts with a NUL, such as
+    `\0tick`. It saves actors whose actor id, machine, state key, deadline
+    state path, event name, and entry id hold them, writes inbox events
+    whose event id and topic hold them, saves an errored snapshot with such
+    an event id, and records a migration failure whose versions and message
+    hold them. It asserts each value back unchanged through `loadSnapshot`,
+    `loadErroredSnapshot`, `activeSnapshots`, `endedSnapshots`,
+    `findActorsInState` with the value as its state path, `writeInbox`,
+    `pendingInbox`, `actorInbox`, `dueDeadlines`, the payload type of the
+    row `fireDeadline` writes, `migrationFailure`, `migrationFailures`, and
+    `prunableEnded`; that a repeated identical save keeps the deadline id;
+    and that `drain` delivers the full event name. On the supported floor,
+    Node 24.11, the test fails while the reads take TEXT; on every release
+    it fails while a constraint uses `length`. `storedText` of a string, a
+    number, and `null` throws a `TypeError`. Fault tests, for each crash
     after the inbox write, after `sent`, and after `saved`: the crashed
     store is closed, a fresh store opens on the same file, `drain` with a
     target restored from `loadSnapshot` leaves the total applied once, no

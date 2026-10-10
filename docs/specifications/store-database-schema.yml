@@ -69,6 +69,16 @@ description: >-
   One index by `to_machine` lists the actors that failed toward one
   version.
 
+  Text. A TEXT column holds a string's UTF-8 bytes, and a NUL (U+0000) is a
+  character like any other. A column that must not be empty is checked with
+  `<column> <> ''`, never with `length`, which counts only the characters
+  before the first NUL. Every column that holds a string from outside the
+  store is read as `CAST(<column> AS BLOB)`, as `store` (text values)
+  states: `actor_id`, `machine`, `state_path`, `event_id`, `topic`,
+  `event_name`, `entry_id`, `from_machine`, `to_machine`, and `message`.
+  `snapshot`, `payload`, and `detail` hold JSON written with
+  `JSON.stringify`, which writes a NUL as an escape.
+
   Times. Every time is an integer count of milliseconds since the Unix epoch.
   At 0.1.0, step 1 creates the complete schema in this file.
   Schema changes edit that step in place and require a new store. After
@@ -82,3 +92,4 @@ validation-criteria: >-
   the rows the same file's statements produce on a second empty database,
   with each run of whitespace in `sql` read as one space; they are equal.
   After the store opens, `schema_migration` holds the row `('store', 1)`.
+  No `CHECK` constraint of a `store_` table calls `length`.

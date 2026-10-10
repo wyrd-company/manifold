@@ -1,0 +1,63 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - store
+    - store-database-schema
+description: >-
+  Manifold supports Node 24.11 and later. On Node 24.11 through 24.15,
+  `node:sqlite` ends a TEXT result at its first NUL (U+0000) when it makes
+  the JavaScript string. SQLite keeps every byte, binding a parameter keeps
+  every byte, and a TEXT value cast to BLOB comes back whole as a
+  `Uint8Array`. On every release, SQLite's `length`, `GLOB`, and `LIKE` read
+  a string only up to its first NUL, so a `length(column) > 0` constraint
+  refuses a non-empty string that starts with a NUL. Actor ids, machines,
+  state paths, event names, event ids, topics, keys, and messages reach the
+  store from blueprints, GitHub, and T3 Code, and may hold any character.
+  A truncated read changes identity: an event name read short no longer
+  matches the deadline a save lists, so a repeated save replaces an armed
+  deadline, and the fired event carries the short name.
+considered-options:
+  "1": >-
+    Read every TEXT column that can hold a string from outside the store as
+    `CAST(<column> AS BLOB)`, and decode the bytes as UTF-8 with one store
+    function, `storedText`, which throws for any value that is not bytes.
+    Check non-empty with `<column> <> ''`. The schema keeps its TEXT columns.
+  "2": >-
+    Declare those columns BLOB, bind each string as its UTF-8 bytes, and
+    decode every read.
+  "3": >-
+    Encode NUL, and the escape character itself, on every write to a TEXT
+    column, and decode on every read, so no stored string holds a NUL.
+  "4": >-
+    Wrap the connection's statements so that reads convert TEXT results
+    generically, without changing the SQL.
+  "5": >-
+    Raise the supported Node floor to 24.16, the first release that keeps a
+    NUL in a TEXT result, or refuse strings that hold a NUL.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 changes only reads and four-character constraints, keeps the
+    stored bytes, every comparison, unique key, and ordering as they are,
+    and behaves the same on every release, with no Node version check. The
+    `TypeError` from `storedText` makes a read that misses its cast fail on
+    the declared release too, where a plain TEXT read would pass. Option 2
+    changes the type of every such column in every module, every bound
+    parameter, and every constraint and comparison written against TEXT,
+    and makes the rows unreadable as text in a SQLite shell. Option 3 adds
+    an encoding that every write, every read, and every SQL comparison must
+    apply, and a stored value no longer equals its string. Option 4 cannot
+    work: the string is already cut when `node:sqlite` returns it, and only
+    the SQL can ask for the bytes. Option 5 narrows the supported Node range
+    or the supported values, which is the user's choice, and options 1 to 4
+    keep both.
+expected-outcomes:
+  positive:
+    - Every supported string comes back whole on every supported Node release.
+    - A repeated identical save keeps each armed deadline, whatever its event name holds.
+    - A string that starts with a NUL is stored like any other non-empty string.
+    - A read that misses its cast fails a test on the declared release, not only on the floor.
+  negative:
+    - Each read of such a column names it and casts it, and `SELECT *` is not used for them.
+    - Each module that keeps tables in the store's file follows the rule in its own reads.
+    - A read that misses its cast and never runs in a test still truncates on Node 24.11 through 24.15.
