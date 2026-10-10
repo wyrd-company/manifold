@@ -283,8 +283,10 @@ proposed-design:
     actor, on the actor's portfolio item, else on the item of its
     thread's T3code project, else on `other`, in the state visit its
     timestamp falls in, as `state-visits` states. A call whose thread has
-    no actor posts on the item
-    `portfolio.t3codeProject` gives the thread's T3code project, or on
+    no actor posts on the usage item of the item
+    `portfolio.t3codeProject` gives the thread's T3code project,
+    `portfolio.usageItem(item)`: that item's Other when the item has
+    sub-items, as `portfolio` states, else the item; or on
     `other` when the T3 Code environment source holds no project for the
     thread, under the ledger actor `thread:<environment>:<thread id>`. A
     call whose session has no mapping posts on `other` under the ledger
@@ -298,9 +300,10 @@ proposed-design:
     The item of a thread's T3code project is the one resolution answers
     at the moment the posting or the late attribution is made, from the
     declaration in force: a binding, an association, a created project's
-    record, or `other`. An archive that declares a created project's
-    binding therefore moves the project's later unowned calls, and the
-    late attributions made after it, to the binding's item, and leaves
+    record, or `other`, then its usage item. An archive that declares a
+    created project's binding therefore moves the project's later
+    unowned calls, and the late attributions made after it, to the usage
+    item of the binding's item, and leaves
     every posting made before it where it posted. An archived binding
     keeps its item, so an archived created project's later unowned calls
     stay on the archived item, charged to its parent and its account.
@@ -645,7 +648,7 @@ proposed-design:
       /** The history module, on the same connection. */
       visits: Pick<History, "visits" | "visitAt">;
       ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage" | "reattribute">;
-      portfolio: Pick<Portfolio, "t3codeProject" | "current">;
+      portfolio: Pick<Portfolio, "t3codeProject" | "usageItem" | "current">;
       threadProject(environment: string, threadId: string): string | undefined;
       threadTitle(environment: string, threadId: string): string | undefined;
       environments: ReadonlySet<string>;
@@ -852,7 +855,9 @@ proposed-design:
       machines; a call on
       `session-2` mapped to `thread-2`, which no actor owns, in
       `t3-project-1`, posts on `beta`; a call on unmapped `session-3`
-      posts on `other`.
+      posts on `other`. After a revision that gives `beta` a sub-item
+      `delta`, the same call on `thread-2` posts on `beta/other`, and
+      after one that archives `delta` it still posts on `beta/other`.
 
     - Settlement: `actor-1` reserves 10 on `alpha`; a call priced 15 posts
       to it; a save with status `done` settles it. A second

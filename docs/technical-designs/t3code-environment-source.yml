@@ -520,7 +520,14 @@ proposed-design:
     of keys, so a thread row written after the batch was chosen keeps the
     record. The creating actor's `project-create` command stays in its
     actor history and posted usage keeps its item in the ledger, so
-    retiring a record loses no history.
+    retiring a record loses no history. Two kinds of record are never
+    retirable and stay: a record of a project that T3 Code deleted before
+    any shell item listed it, which stays `unseen`; and a record of an
+    environment removed from service configuration, whose shell the
+    source no longer reads, so its presence never changes. Both are
+    conservative, since neither can be told apart from a project that
+    can still receive usage, and both are bounded by the projects the
+    environment's actors created.
   project-view: >-
     `projects(environment)` answers the T3code projects of the
     environment's shell: the projects of the last shell snapshot the

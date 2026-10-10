@@ -3342,9 +3342,11 @@ proposed-design:
     `t3-<p2 title>` on `gamma`, and `t3-<p3 title>` on `beta` with
     `archived: true`, and `bound-five` on `alpha`; the store's
     `t3_created_project` rows are unchanged; a call then pushed for each
-    created project's thread posts on `alpha`, `gamma`, and `beta`, and a
-    late mapping of an earlier call of `p1`'s thread attributes it to
-    `alpha` while its posted actual stays on `beta`. Sibling and parent:
+    created project's thread posts on `alpha/other`, `gamma`, and `beta`,
+    and a call on the unowned thread of the project `board-one`
+    associates posts on `alpha/other`; a late mapping of an earlier call
+    of `p1`'s thread attributes it to `alpha/other` while its posted
+    actual stays on `beta`. Sibling and parent:
     a request that reassigns `p2` to `delta`, which is not `beta`'s
     sibling, answers `422` with `not-sibling`; a request for `delta`, a
     top-level item, with a `move` answers `no-parent`; and the dialog
@@ -3369,7 +3371,7 @@ proposed-design:
     has applied it before the answer, starts it again on the same files,
     and sends the same request: the remote holds exactly one archive
     commit, the request answers `already-saved` or `saved`, a call then
-    pushed for `p1`'s thread posts on `alpha`, and the bindings read
+    pushed for `p1`'s thread posts on `alpha/other`, and the bindings read
     lists no created project attached to `beta`. A kill before the
     commit leaves the remote and the store unchanged, and the request
     after restart saves once. The Board and Task page browser test checks the

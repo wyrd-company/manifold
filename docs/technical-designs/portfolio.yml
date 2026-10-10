@@ -102,7 +102,8 @@ proposed-design:
     record is not retirable. The archive lists it beside the bindings, by
     environment and project id, and takes the same three choices. A
     choice for a created project is declared as a new T3code project
-    binding in the same commit: move gives it the archived item's parent;
+    binding in the same commit: move gives it the archived item's parent,
+    whose Other then takes its unowned usage, as `usage-item` states;
     reassign, the sibling; archive, the record's item with `archived:
     true`. The binding takes precedence over the record, as resolution
     states, so the commit alone sets where the project's unowned usage
@@ -121,7 +122,8 @@ proposed-design:
     The effective ownership of a created project is where its unowned
     usage goes now: its own binding's item, else its association's item,
     else its record's item while the declaration in force declares it,
-    else the top-level Other, as resolution states. `createdProjects()`
+    else the top-level Other, as resolution states, mapped to that item's
+    Other when it has sub-items, as `usage-item` states. `createdProjects()`
     answers it for every created project record with the record's
     provenance and its retirement state, so that the console lists
     attached projects and retention knows which records it may retire.
@@ -555,6 +557,8 @@ proposed-design:
       current(): PortfolioInForce;
       githubProject(project: { owner: string; number: number }): GitHubProjectResolution | undefined;
       t3codeProject(project: { environment: string; id: string }): T3codeProjectResolution;
+      /** The item's Other when the declaration in force holds one, else the item. */
+      usageItem(item: string): string;
       /** The effective ownership of every created project, in the order of `createdProjects`. */
       createdProjects(): readonly CreatedProjectOwnership[];
     }
@@ -565,8 +569,10 @@ proposed-design:
       /** Creation provenance: the creating actor and its item at creation. */
       actorId: string;
       createdItem: string;
-      /** Where unowned usage of the project goes now, by the declaration in force. */
+      /** What decides the project's item now, by the declaration in force. */
       resolution: T3codeProjectResolution;
+      /** Where unowned usage of the project posts now: `usageItem(resolution.item)`. */
+      usageItem: string;
       /** True when its resolution is `via: "created"` and its item, or an item above it, is archived. */
       unresolved: boolean;
       /** The record can attribute nothing and retention may delete it. */
@@ -660,6 +666,25 @@ proposed-design:
     and number and by environment and T3code project id. An archived
     binding resolves like any other and reports `archived: true`; intake
     and the console decide what an archived binding allows.
+  usage-item: >-
+    Unowned usage attributed to an item lands where a task that matches
+    none of the item's sub-items lands: `usageItem(item)` answers the
+    item's Other, `<item>/other`, when the declaration in force holds
+    that Other, and the item itself otherwise. The declaration holds an
+    Other under every item that declares a sub-item, archived sub-items
+    included, so an item keeps its Other, and its usage keeps landing
+    there, after its last live sub-item is archived; once every sub-item
+    is removed from `portfolio.yml` the item has no Other and the usage
+    lands on the item. An archived item's Other is archived with it, and
+    its usage lands there, charged to the item's parent and its account
+    as an archived item's usage is. Usage intake applies `usageItem` to
+    the item `t3codeProject` answers for a thread no actor owns, whether
+    a binding, an association, or a created project's record gave it,
+    so a T3code project bound or moved to an item with sub-items is
+    charged to that item's Other. An actor's own item needs no mapping,
+    since intake already assigns the lowest matching item or an Other,
+    and an operator's usage move puts usage on the item the operator
+    names.
   lint: >-
     `lintPortfolioDeclaration` in `packages/shared` is the one function that
     validates a declaration. The service runs it on every revision, and the
@@ -885,7 +910,8 @@ proposed-design:
       `beta` that a binding names on `alpha`, and `p3` on `beta` that is
       retirable, `createdProjects()` answers `p1` `via: "created"` on
       `beta`, `p2` `via: "binding"` on `alpha` with `createdItem` `beta`,
-      and `p3` with `retirable` true, each with its actor id. After a
+      and `p3` with `retirable` true, each with its actor id, and `p2`'s
+      `usageItem` `alpha/other`, since `alpha` holds `beta`. After a
       revision that archives `beta` with no binding for `p1`, `p1` reads
       `unresolved` true and still resolves to `beta`; after a revision that
       adds an archived binding of `p1` on `beta`, it resolves `via:
@@ -894,6 +920,12 @@ proposed-design:
 
     - Several projects: `alpha` holds two GitHub Projects and two T3code
       project bindings, and all four resolve to `alpha`.
+
+    - Usage item: with `alpha` holding `beta` and `gamma`, `usageItem`
+      answers `alpha/other` for `alpha`, `beta` for `beta`, and `other`
+      for `other`; after a revision that archives `beta` and `gamma` it
+      still answers `alpha/other`; after one that removes both from
+      `portfolio.yml` it answers `alpha`.
 
     - Convergence: `apply` twice with one revision returns `applied` then
       `unchanged` and leaves one row; a revision at a new commit with the

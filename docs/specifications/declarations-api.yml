@@ -303,7 +303,9 @@ description: >-
   - `choice: "move"` sets the binding's `item` to the archived item's
     parent, where intake places the binding's tasks by the rule it uses
     for any binding of that item, so that a task no sub-item matches
-    lands on the parent's Other.
+    lands on the parent's Other, and usage intake posts the unowned usage
+    of its T3code projects on the parent's Other by the same rule,
+    `portfolio.usageItem`.
   - `choice: "reassign", item` sets the binding's `item` to `item`, a
     sibling of the archived item: an item with the same parent that is
     not the archived item, not an Other item, and not archived.
