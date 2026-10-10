@@ -603,9 +603,12 @@ proposed-design:
     `updateIssue` take no version, so the source guards a body write with
     a read before, a recorded basis, and a check after, and a crash at any
     point leaves a check still to run. The write's `github_task_field_write`
-    row holds, for a front matter write, `basis_edited_at`, the
-    `lastEditedAt` of the body the write was computed from, and
-    `check`, one of `none`, `pending`, `passed`, or `conflict`, with the
+    row holds, for a front matter write, `attempt`, the number of the
+    latest body write it sent, the first write 1 and each repair one more;
+    `basis_edited_at`, the time of the newest edit GitHub held when that
+    attempt was computed, so that every edit of the issue at or before it
+    precedes the attempt and the attempt's own edit is newer; and `check`,
+    one of `none`, `pending`, `passed`, or `conflict`, with the
     conflicting edit's time for `conflict`. (0) When the invocation's row
     holds `check` `pending`, the source runs step (d) first, against the
     row's `basis_edited_at`, before anything else; a row whose `check` is
@@ -616,19 +619,27 @@ proposed-design:
     body that already holds the value resolves with no write, which step
     (0) makes safe, since a write of this invocation that reached GitHub
     has had its check run first. (c) In one transaction it sets the row's
-    `basis_edited_at` to the time (a) read and `check` to `pending`, and
-    then writes the body with `updateIssue`. (d) It reads the issue's
-    `userContentEdits` newer than `basis_edited_at`, oldest first, up to
-    the 100 GitHub keeps. No edit by the App's account among them means
-    the write never reached GitHub: the row's `check` becomes `none` and
-    the write runs again from (a). Otherwise the first edit by the App's
-    account is this write, and an edit by another account before it was
-    replaced by it: the source takes that edit's text from its `diff`,
-    sets the key on it with `setFrontMatter`, sets the row's
-    `basis_edited_at` to that edit's time, and writes again from (c), so
-    the person's text stays with the key set. With no edit before its own,
-    `check` becomes `passed`. When the replaced text is not available,
-    `check` becomes `conflict` with the edit's time, the write fails
+    `attempt`, its `basis_edited_at` to the attempt's basis, the
+    `lastEditedAt` (a) read for the first write, and `check` to `pending`,
+    and then writes the body with `updateIssue`. (d) It reads the issue's
+    `userContentEdits` newer than the row's `basis_edited_at`, oldest
+    first, up to the 100 GitHub keeps. Since each attempt has its own
+    basis, every earlier attempt's edit is at or before it, and the first
+    edit by the App's account among them is the latest attempt's. No such
+    edit means the attempt never reached GitHub: `check` becomes `none`
+    and the write runs again from (a). An edit by another account before
+    it was replaced by it. When the attempt's edit is the newest edit,
+    the source repairs: it takes the replaced edit's text from its
+    `diff`, sets the key on it with `setFrontMatter`, and writes it from
+    (c) as the next attempt, whose basis is the time of the attempt's
+    edit, the newest GitHub then held, so the repair's check finds the
+    repair's edit and never the earlier one, and the person's text stays
+    with the key set. When a newer edit follows the attempt's, a person
+    has edited the body since, and a repair would replace that edit too,
+    so the source does not repair. With no edit by another account before
+    the attempt's, `check` becomes `passed`. When the replaced text is not available,
+    or a newer edit follows the attempt's, `check` becomes `conflict` with
+    the replaced edit's time, the write fails
     `body-conflict`, and the body keeps what the write made, so the
     replaced text stays in GitHub's edit history and the failure names it.
     Each change of `check` commits before the next request, so a crash
