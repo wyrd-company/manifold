@@ -177,6 +177,8 @@ proposed-design:
       trackedIssueIds(): readonly string[];
       /** trackedIssue's answer for each of trackedIssueIds, in that order, from one read of the mirror. */
       trackedIssues(): readonly TrackedIssue[];
+      /** trackedIssue's answer for every tracked issue, keyed by node id, from one read of the mirror. */
+      trackedIssueIndex(): TrackedIssueIndex;
       /** The mirror's Project of a node id, or undefined when the mirror holds none. */
       project(nodeId: string): GitHubProject | undefined;
       /** The mirror's Project of an owner and number, the owner compared without regard to case. */
@@ -327,6 +329,9 @@ proposed-design:
       /** The item's field values in the mirror, keyed by field name. */
       readonly fields: Readonly<Record<string, GitHubFieldValue>>;
     }
+
+    /** The tracked issues of one mirror read, keyed by node id, in code point order of node id. */
+    export interface TrackedIssueIndex extends ReadonlyMap<string, TrackedIssue> {}
 
     /** A field value of `github-events`, or null. */
     export type GitHubFieldValue =
@@ -1217,8 +1222,9 @@ proposed-design:
     dependencies in each direction, the present sub-issues and parent, and
     the bound Projects with a present item for it. It returns `undefined`
     for an issue that is not tracked, not yet baselined, or observed absent, so every answer
-    it gives holds the issue's complete relationship lists. Intake and gates read the dependency
-    graph through it. `items` lists the issue's present item on each bound
+    it gives holds the issue's complete relationship lists. Intake's record
+    checks and reconciles, and the gates' grant rounds, read the dependency
+    graph through `trackedIssueIndex`. `items` lists the issue's present item on each bound
     Project, with its `archived` flag and every field value row the mirror
     holds for it, keyed by the field's latest name, a row with no value as
     `null`. `title` and `url` are the issue's as the mirror last read
@@ -1229,15 +1235,29 @@ proposed-design:
     `trackedIssue` answers. `trackedIssues()` answers every tracked issue
     of the bound Projects at once: element `i` is `trackedIssue`'s answer
     for element `i` of `trackedIssueIds()`, so a reader that wants every
-    tracked issue makes one call. Each of `trackedIssue`,
-    `trackedIssueIds`, and `trackedIssues` reads the mirror once per call:
-    one `SELECT` of each mirror table. A pure function,
+    tracked issue makes one call. `trackedIssueIndex()` answers the same
+    issues as a `TrackedIssueIndex`: a map from node id to `trackedIssue`'s
+    answer, whose keys are `trackedIssueIds()` in order, so a reader that
+    looks up many issues, or follows their relationships, makes one call
+    and reads every lookup from it. Each of `trackedIssue`,
+    `trackedIssueIds`, `trackedIssues`, and `trackedIssueIndex` reads the
+    mirror once per call: one call of the mirror's `read`, which is one
+    `SELECT` of each mirror table, against the bound Projects of that
+    moment, which hold for the whole answer. A pure function,
     `trackedIssueIndex(state, bound)` in `mirror.ts`, groups that read's
     present items, field values, dependencies, and sub-issues by the node
     id they name in one pass over each table, and builds every answer from
     the groups, so a call's work grows with the mirror's rows and not with
-    their square. The three members answer from that function and keep no
-    result between calls, so each call sees the mirror as it is.
+    their square. It returns the `TrackedIssueIndex`, and the four members
+    answer from it. The mirror's own `trackedIssueIndex(bound)` reads once
+    and returns it, for a module that starts before the source and names
+    its bound Projects itself, as `gate-runtime` states. No member keeps a
+    result between calls, so each call sees the mirror as it is, and a
+    caller that holds an index holds it only for work that runs in one
+    synchronous run of the event loop, in which no reconcile can commit. A
+    member that a later change adds to `TrackedIssue` or `TrackedItem` is
+    built by the same function from the same read; a mirror table it needs
+    joins `read`, so every member still answers from one read.
     `project(nodeId)` reads the mirror's Project
     row of a node id, so the service maps an actor's Project to its
     binding, and `projectByNumber(owner, number)` reads the row of a
@@ -1357,8 +1377,10 @@ proposed-design:
     issue outside every bound Project, a sub-issue tree, an archived item,
     an item on a Project that is not bound, an issue observed absent, and
     an issue not yet baselined, `trackedIssues()` equals
-    `trackedIssueIds().map(trackedIssue)`. With the store's `prepare`
-    counted, `trackedIssues()` prepares one `SELECT` of `github_issue` on
+    `trackedIssueIds().map(trackedIssue)`, and `trackedIssueIndex()` maps
+    each id of `trackedIssueIds()`, in that order, to `trackedIssue`'s
+    answer. With the store's `prepare` counted, `trackedIssues()` and
+    `trackedIssueIndex()` each prepare one `SELECT` of `github_issue` on
     a mirror of 10 tracked issues and on one of 1,000. A matching push calls
     `pull` with its head once, a push to another branch or repository does
     not, and each sweep calls `pull()`. Every published event validates

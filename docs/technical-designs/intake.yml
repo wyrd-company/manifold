@@ -85,7 +85,7 @@ proposed-design:
     ```ts
     import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
     import type { LoadedBlueprint, RevisionLoad, VersionLoad } from "../blueprint-loader/index.ts";
-    import type { GitHubProject, TrackedIssue } from "../github-source/index.ts";
+    import type { GitHubProject, TrackedIssue, TrackedIssueIndex } from "../github-source/index.ts";
     import type { PortfolioInForce } from "../portfolio/index.ts";
     import type { JsonValue, Store } from "../store/index.ts";
     import type { DecisionModels } from "../decision-models.ts";
@@ -147,7 +147,7 @@ proposed-design:
 
     export interface TrackedIssues {
       trackedIssue(nodeId: string): TrackedIssue | undefined;
-      trackedIssueIds(): readonly string[];
+      trackedIssueIndex(): TrackedIssueIndex;
     }
 
     export interface IntakeRevision {
@@ -271,12 +271,12 @@ proposed-design:
     truth, and a reconcile rebuilds the queue from them, so a discovery
     lost to a crash after the source's commit is taken at the next start.
   reconcile: >-
-    A reconcile queues every issue that needs intake: each id of
-    `tracked.trackedIssueIds()` with no record, or with a `failed` record
+    A reconcile queues every issue that needs intake: each key of
+    `tracked.trackedIssueIndex()` with no record, or with a `failed` record
     whose `commit` is not the commit `current()` answers, and each
     `recorded` record. It then checks every record, as `issue-changes`
-    states, so a `failed` record at the current commit whose issue changed
-    is queued, and the open escalation of an issue no longer tracked is
+    states, over the same index, so a reconcile reads the mirror once, and a
+    `failed` record at the current commit whose issue changed is queued, and the open escalation of an issue no longer tracked is
     withdrawn, even when the callback that would have done so was lost to
     a crash. `startIntake` runs a reconcile, and so does
     `revisionLoaded`. Before the first revision, `current()` answers
@@ -368,8 +368,15 @@ proposed-design:
     tracked issue it captured in its basis.
 
     A record check reads every `failed` and `recorded` record and the
-    issue `trackedIssue` answers for each now. A record whose issue it does
-    not answer has left tracking: the check withdraws the issue's open
+    issue that `tracked.trackedIssueIndex()` holds for each now. It takes
+    the index once, at its first record, and looks up every record in it,
+    so a check reads the mirror once however many records and issues there
+    are, and a check with no such record reads it not at all. The check
+    runs in one synchronous run of the event loop, so no mirror change
+    commits during it and the index holds what `trackedIssue` would answer
+    for each record; the next check takes a new index and sees every change
+    committed since. A record whose issue the index does not hold has left
+    tracking: the check withdraws the issue's open
     `intake-failed` escalation, and changes no record, so a `recorded`
     decision stays as it is and starts when the issue is tracked again. A
     `failed` record at the current commit whose `issueDigest` is null or
@@ -584,7 +591,8 @@ proposed-design:
     carries that declaration with the new commit's blueprints and models. Intake starts after `startRouter` returns, so
     every resumed actor is indexed before an actor starts.
   permissions: >-
-    Intake reads only the store, the mirror through `trackedIssue`, and
+    Intake reads only the store, the mirror through `trackedIssue` and
+    `trackedIssueIndex`, and
     the process repository revision. It calls no GitHub API and needs no
     permission beyond those the GitHub event source and the process
     repository hold.
@@ -606,9 +614,12 @@ proposed-design:
     router started on it and a fixture actor host that restores and starts
     actors with XState's `createActor` and derives subscriptions from
     `context.manifold`. A structural fake of `TrackedIssues` holds tracked
-    issues with their items and field values and can publish an issue
-    event through the router in the transaction that changes them, as the
-    source does. The process repository is `memoryRevision` at two
+    issues with their items and field values, answers `trackedIssueIndex`
+    from them, and can publish an issue event through the router in the
+    transaction that changes them, as the source does. Read-count tests
+    pass the GitHub source's mirror instead, a real `createMirror` on the
+    store file whose tables a fixture writes, bound to one Project, with
+    the store's `prepare` counted. The process repository is `memoryRevision` at two
     commits, holding `manifold.yml`, an intake decision model with a JSONata
     decision table over a single-select field, two blueprints of a generic
     domain, `portfolio.yml` with `alpha` holding `beta` and `gamma`, and
@@ -653,6 +664,16 @@ proposed-design:
     starts on its recorded version when the fake adds it back; the same
     removal made while intake is stopped is withdrawn by the reconcile of
     the next `startIntake`;
+    with 10 and with 1,000 tracked issues in the mirror, each with a
+    record at the current commit: `failed` for most, half of those over an
+    issue that changed since its digest, `recorded` for a fifth, and
+    `failed` for one whose issue then left the bound Project, a call of `mirrorChanged` and one
+    of `revisionLoaded` each prepare one `SELECT` of `github_issue` before
+    the call returns, ahead of the runner's own reads, the changed records
+    and no others are then decided, and the escalation of
+    the issue that left is withdrawn with its record unchanged; with no
+    `failed` or `recorded` record, a record check prepares none; a change
+    committed after one check is found by the next;
     a reconcile at start takes every tracked issue with no record; an
     issue event the fake publishes in the turn after `actors.start` reaches
     the actor, and a change committed before the start step is in its
