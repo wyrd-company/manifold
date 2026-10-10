@@ -2002,7 +2002,7 @@ it.each(["inside\0tail", "\0leading"])(
       providerSessionId: text,
       unit: { id: text, kind: "session" as const },
     };
-    expect(s.push([record]).calls).toEqual({ accepted: 1, pending: 0, replayed: 0 });
+    expect(s.push([record]).calls).toEqual({ accepted: 1, pending: 0, unmetered: 0, replayed: 0 });
     s.restart();
     expect(s.usage.actorUsage(text)).toMatchObject({
       accounts: [expect.objectContaining({ account: "acct", actual: 6000000 })],
@@ -2030,5 +2030,60 @@ it.each(["inside\0tail", "\0leading"])(
     expect(s.usage.move({ from: entry!.actor, to: { actor: text } }).status).toBe("moved");
     expect(s.usage.actorUsage(text).accounts[0]?.actual).toBe(12000000);
     expect(s.usage.unowned()).toEqual([]);
+  },
+);
+
+it.each(["inside\0tail", "\0leading"])(
+  "unmetered text restores through pricing, session mapping, moves and ownership: %j",
+  async (text) => {
+    const s = await setup(true, text);
+    const record: UsageCall = {
+      ...unmeteredCall(text, text),
+      unit: { id: text, kind: "session" },
+      model: text,
+    };
+    const request = { environment: "env-one", threads: [], records: [record] };
+    expect(s.usage.push(request).calls).toEqual({
+      accepted: 0,
+      pending: 0,
+      unmetered: 1,
+      replayed: 0,
+    });
+    s.restart();
+    expect(s.usage.pricing().unmetered).toEqual([{ provider: "cursor", model: text, postings: 1 }]);
+    expect(s.usage.unowned()).toMatchObject([
+      {
+        actor: `session:env-one:cursor:${text}`,
+        providerSessionId: text,
+        unmetered: 1,
+        pending: 0,
+        usage: [],
+      },
+    ]);
+    expect(s.usage.push(request).calls.replayed).toBe(1);
+    const mapping = {
+      provider: "cursor" as const,
+      providerSessionId: text,
+      threadId: text,
+      providerInstance: text,
+    };
+    expect(s.usage.push({ ...request, records: [], threads: [mapping] }).threads.accepted).toBe(1);
+    s.restart();
+    const from = `thread:env-one:${text}`;
+    expect(s.usage.unowned()).toMatchObject([{ actor: from, threadId: text, unmetered: 1 }]);
+    expect(s.usage.move({ from, to: { item: "alpha" } }).moved).toBe(1);
+    s.save();
+    s.restart();
+    expect(s.usage.actorVisitUsage(text)).toMatchObject({
+      unmetered: 1,
+      calls: [{ total: null, thread: { environment: "env-one", threadId: text }, actual: null }],
+    });
+    expect(s.usage.unowned()).toEqual([]);
+    expect(s.usage.retryPending()).toEqual({
+      posted: 0,
+      pending: { unaccounted: 0, unpriced: 0, noWindow: 0 },
+    });
+    expect(s.usage.push({ ...request, threads: [mapping] }).calls.replayed).toBe(1);
+    expect(s.usage.pricing().unmetered).toEqual([{ provider: "cursor", model: text, postings: 1 }]);
   },
 );
