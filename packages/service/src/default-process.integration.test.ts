@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   verifies: [default-process, service-assembly, intake, gate-runtime, agent-threads, agent-tools, usage-intake, host-cli-usage, tasks-api, declarations-api, portfolio-api, projects-api, actor-history, blueprint-migration, environments-api, usage-api, task-metadata, decision-models, retention]
+//   verifies: [default-process, service-assembly, intake, gate-runtime, agent-threads, agent-tools, usage-intake, host-cli-usage, tasks-api, declarations-api, portfolio-api, projects-api, actor-history, blueprint-migration, environments-api, usage-api, task-metadata, decision-models, retention, usage-decoder]
 // ---
 import { afterEach, expect, it } from "vite-plus/test";
 import { readFile, writeFile } from "node:fs/promises";
@@ -11,6 +11,8 @@ import { once } from "node:events";
 import { fork, execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
+import { isActorUsageResponse } from "@wyrd-company/manifold-shared/actor-usage-api";
+import type { UsageRecord } from "../../host-cli/src/usage/types.ts";
 import { isTaskResponse } from "@wyrd-company/manifold-shared/tasks-api";
 import git from "isomorphic-git";
 import { schemas } from "@wyrd-company/t3code-client";
@@ -2036,4 +2038,199 @@ it("creates projects, archives with every choice, recovers an open tool operatio
       c.commit.message.startsWith("Archive sample item"),
     ),
   ).toHaveLength(1);
+}, 60000);
+
+it("decodes Cursor ACP blobs and pushes unmetered calls to their thread, actor and account across append, compaction and restart", async () => {
+  const f = await fixture(false, undefined, (files) => {
+    const accounts = parse(files.get("accounts.yml")!);
+    accounts.accounts.agents.usage = [
+      {
+        environment: "workstation",
+        provider: "cursor",
+        instance: "sample-instance",
+      },
+    ];
+    files.set("accounts.yml", stringify(accounts));
+  });
+  await f.add();
+  await f.waiting();
+  const thread = [...f.t3.threads.values()][0]!;
+  const root = join(f.directory, "cursor");
+  const session = join(root, "acp-sessions/session-a");
+  const t3home = join(f.directory, "t3-home");
+  const hostState = join(f.directory, "host-state");
+  await fs.mkdir(session, { recursive: true });
+  await fs.mkdir(join(t3home, "userdata"), { recursive: true });
+  const mapping = new DatabaseSync(join(t3home, "userdata/state.sqlite"));
+  mapping.exec(
+    "CREATE TABLE provider_session_runtime (thread_id TEXT, provider_name TEXT, provider_instance_id TEXT, resume_cursor_json TEXT)",
+  );
+  mapping
+    .prepare("INSERT INTO provider_session_runtime VALUES (?,?,?,?)")
+    .run(thread.id, "cursor", "sample-instance", JSON.stringify({ sessionId: "session-a" }));
+  mapping.close();
+  // This generic ACP database has only blobs, never Cursor's meta table.
+  const path = join(session, "store.db");
+  const db = new DatabaseSync(path);
+  db.exec(
+    await readFile(
+      new URL("../../host-cli/src/usage/fixtures/cursor/acp.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  db.close();
+  const id = (n: number) => n.toString(16).padStart(64, "0");
+  function varint(value: number) {
+    const bytes = [];
+    let remaining = BigInt(value);
+    while (remaining > 127n) {
+      bytes.push(Number(remaining & 127n) | 128);
+      remaining >>= 7n;
+    }
+    return Buffer.from([...bytes, Number(remaining)]);
+  }
+  const state = (refs: number[]) =>
+    Buffer.concat([
+      ...refs.map((n) => Buffer.concat([Buffer.from([10, 32]), Buffer.from(id(n), "hex")])),
+      varint(26 * 8),
+      varint(1767225610000),
+    ]);
+  function append(rows: readonly (readonly [number, Uint8Array])[]) {
+    const store = new DatabaseSync(path);
+    try {
+      const insert = store.prepare("INSERT INTO blobs VALUES (?,?)");
+      for (const [n, value] of rows) insert.run(id(n), value);
+    } finally {
+      store.close();
+    }
+  }
+  const execute = (args: string[]) => promisify(execFile)(childArtifacts().host, args);
+  const decode = async () => {
+    const result = await execute(["usage", "decode", "--root", "cursor=" + root]);
+    return result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as UsageRecord);
+  };
+  const push = async () => {
+    const result = await execute([
+      "usage",
+      "push",
+      "--service",
+      f.url,
+      "--environment",
+      "workstation",
+      "--t3-home",
+      t3home,
+      "--state-dir",
+      hostState,
+      "--root",
+      "cursor=" + root,
+    ]);
+    return JSON.parse(result.stdout);
+  };
+  const get = async (route: string) => {
+    const response = await fetch(f.url + route);
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  const beforeUsage = await get("/api/portfolio");
+  const initialUsed = beforeUsage.accounts[0].window.used;
+  const original = await decode();
+  expect(original).toHaveLength(4);
+  expect(original).toEqual(
+    [1, 2, 3, 4].map((n) =>
+      expect.objectContaining({
+        type: "call",
+        key: `cursor/session-a/${id(n)}`,
+        provider: "cursor",
+        providerSessionId: "session-a",
+        tokens: null,
+      }),
+    ),
+  );
+  expect(await push()).toMatchObject({
+    calls: { accepted: 0, pending: 0, unmetered: 4, replayed: 0 },
+    threads: { accepted: 1, conflicting: 0 },
+  });
+  async function attributed(count: number, lastUsedAt: string) {
+    const usage = await get("/api/usage/actors/task%3AI_A");
+    expect(isActorUsageResponse(usage)).toBe(true);
+    expect(usage).toMatchObject({
+      actorId: "task:I_A",
+      unmetered: count,
+      tokens: { total: 0 },
+      accounts: [],
+    });
+    expect(usage.calls).toHaveLength(count);
+    for (const call of usage.calls)
+      expect(call).toMatchObject({
+        thread: { environment: "workstation", threadId: thread.id },
+        total: null,
+        actual: null,
+      });
+    expect(await get("/api/usage/unowned")).toEqual({ unowned: [] });
+    const portfolio = await get("/api/portfolio");
+    expect(portfolio.accounts).toEqual([
+      expect.objectContaining({
+        name: "agents",
+        lastUsedAt,
+        window: expect.objectContaining({ used: initialUsed }),
+      }),
+    ]);
+    expect(portfolio.pricing.unpriced).toEqual([]);
+    expect(
+      portfolio.pricing.unmetered.reduce(
+        (sum: number, row: { postings: number }) => sum + row.postings,
+        0,
+      ),
+    ).toBe(count);
+  }
+  await attributed(4, "2026-01-01T00:00:06.000Z");
+  expect(await push()).toMatchObject({ skippedSources: 1, calls: { unmetered: 0, replayed: 0 } });
+  append([
+    [5, Buffer.from(JSON.stringify({ role: "assistant", content: [] }))],
+    [22, state([5])],
+    [23, state([1, 2, 3, 4, 5])],
+  ]);
+  const appended = await decode();
+  expect(appended.slice(0, 4)).toEqual(original);
+  expect(appended).toHaveLength(5);
+  expect(appended[4]).toMatchObject({
+    key: `cursor/session-a/${id(5)}`,
+    tokens: null,
+    timestamp: "2026-01-01T00:00:10.000Z",
+  });
+  expect(await push()).toMatchObject({
+    calls: { unmetered: 1, replayed: 4, accepted: 0, pending: 0 },
+  });
+  // Compaction adds a shorter state at the same anchor time; stored messages remain.
+  append([[24, state([3, 4, 5])]]);
+  expect(await decode()).toEqual(appended);
+  expect(await push()).toMatchObject({ calls: { unmetered: 0, replayed: 5 } });
+  append([[50, Buffer.from(JSON.stringify({ role: "assistant", content: null }))]]);
+  const malformed = await decode();
+  expect(malformed.filter((r) => r.type === "call")).toEqual(appended);
+  expect(malformed.filter((r) => r.type === "source-error")).toEqual([
+    expect.objectContaining({
+      provider: "cursor",
+      code: "malformed-record",
+      records: 1,
+      firstRecord: expect.any(Number),
+    }),
+  ]);
+  expect(await push()).toMatchObject({
+    calls: { unmetered: 0, replayed: 5, accepted: 0, pending: 0 },
+  });
+  await attributed(5, "2026-01-01T00:00:10.000Z");
+  await f.restart();
+  // Losing the host checkpoint forces a full decode and service replay after SIGKILL.
+  await fs.rm(hostState, { recursive: true, force: true });
+  expect(await decode()).toEqual(malformed);
+  expect(await push()).toMatchObject({
+    calls: { unmetered: 0, replayed: 5, accepted: 0, pending: 0 },
+    threads: { accepted: 0, replayed: expect.any(Number), conflicting: 0 },
+  });
+  await attributed(5, "2026-01-01T00:00:10.000Z");
+  expect(await push()).toMatchObject({ skippedSources: 1, calls: { unmetered: 0, replayed: 0 } });
 }, 60000);
