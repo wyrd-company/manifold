@@ -34,7 +34,7 @@ importers:
         version: 0.3.3(@types/node@24.19.0)(jiti@2.7.0)(typescript@6.0.3)(yaml@2.9.1)
 
   packages/console:
-    dependencies:
+    devDependencies:
       '@base-ui/react':
         specifier: ^1.8.0
         version: 1.8.0(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -62,12 +62,24 @@ importers:
       '@gorules/jdm-editor':
         specifier: 1.52.0
         version: 1.52.0(@types/node@24.19.0)(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@tailwindcss/vite':
+        specifier: ^4.3.3
+        version: 4.3.3(vite@8.3.2(@types/node@24.19.0)(jiti@2.7.0)(yaml@2.9.1))
       '@tanstack/react-query':
         specifier: ^5.104.1
         version: 5.104.1(react@19.3.0)
       '@tanstack/react-router':
         specifier: ^1.170.0
         version: 1.170.41(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@types/react':
+        specifier: ^19.2.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.2.0
+        version: 19.3.0(@types/react@19.3.0)
+      '@vitejs/plugin-react':
+        specifier: ^6.1.1
+        version: 6.1.1(vite@8.3.2(@types/node@24.19.0)(jiti@2.7.0)(yaml@2.9.1))
       '@wyrd-company/manifold-shared':
         specifier: workspace:*
         version: link:../shared
@@ -95,22 +107,6 @@ importers:
       tailwind-merge:
         specifier: ^3.7.0
         version: 3.7.0
-      yaml:
-        specifier: ^2.9.1
-        version: 2.9.1
-    devDependencies:
-      '@tailwindcss/vite':
-        specifier: ^4.3.3
-        version: 4.3.3(vite@8.3.2(@types/node@24.19.0)(jiti@2.7.0)(yaml@2.9.1))
-      '@types/react':
-        specifier: ^19.2.0
-        version: 19.3.0
-      '@types/react-dom':
-        specifier: ^19.2.0
-        version: 19.3.0(@types/react@19.3.0)
-      '@vitejs/plugin-react':
-        specifier: ^6.1.1
-        version: 6.1.1(vite@8.3.2(@types/node@24.19.0)(jiti@2.7.0)(yaml@2.9.1))
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -120,6 +116,9 @@ importers:
       vite-plus:
         specifier: 'catalog:'
         version: 0.3.3(@types/node@24.19.0)(jiti@2.7.0)(typescript@6.0.3)(yaml@2.9.1)
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   packages/host-cli:
     dependencies:

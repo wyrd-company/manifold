@@ -130,6 +130,12 @@ try {
       `Workspace source: ${path}`,
     );
   }
+  assert(
+    !paths.some((path) =>
+      /\/(?:@gorules[+/]jdm-editor|reactflow|monaco-editor)(?:@|\/)/.test(path),
+    ),
+    "Console build dependencies must not ship in the service archive",
+  );
   const platforms = paths.filter((path) => /zen-engine-(linux|darwin|win32)/.test(path));
   assert(platforms.length > 0, "Missing native decision engine");
   assert(

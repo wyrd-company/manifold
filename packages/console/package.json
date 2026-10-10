@@ -16,7 +16,7 @@
     "typecheck": "pnpm --filter @wyrd-company/manifold-shared build && tsc --noEmit",
     "test": "pnpm --filter @wyrd-company/manifold-shared build && vp test run"
   },
-  "dependencies": {
+  "devDependencies": {
     "@base-ui/react": "^1.8.0",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-yaml": "^6.1.3",
@@ -26,8 +26,12 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.13",
     "@gorules/jdm-editor": "1.52.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-router": "^1.170.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "@wyrd-company/manifold-shared": "workspace:*",
     "@xyflow/react": "^12.12.0",
     "class-variance-authority": "^0.7.1",
@@ -37,16 +41,10 @@
     "react-dom": "^19.3.0",
     "reactflow": "11.11.4",
     "tailwind-merge": "^3.7.0",
-    "yaml": "^2.9.1"
-  },
-  "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^6.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "yaml": "^2.9.1"
   },
   "relationships": {
     "implements": [
