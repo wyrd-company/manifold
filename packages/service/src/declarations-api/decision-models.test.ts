@@ -108,6 +108,46 @@ test("model APIs evaluate overlays and publish all changed files in one idempote
     });
     expect(invalid.status).toBe(422);
     expect(await git.log({ fs, gitdir: f.remote.gitdir, ref: "main" })).toHaveLength(2);
+    const fieldBlueprint = stringify({
+      machine: {
+        initial: "set",
+        states: {
+          set: {
+            invoke: {
+              src: "github-task-field-set",
+              input: { field: "Weight", value: 3 },
+              onDone: "done",
+              onError: "done",
+            },
+          },
+          done: { type: "final" },
+        },
+      },
+      schemas: { input: true, output: true, context: true, events: {} },
+    });
+    const fieldLint = await fetch(url.replace("/declarations", "/blueprints") + "/lint", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        path: "blueprints/quote.yml",
+        text: fieldBlueprint,
+        base: result.commit,
+      }),
+    });
+    expect(await fieldLint.json()).toMatchObject({
+      findings: [{ kind: "task-field-value", name: "Weight" }],
+    });
+    const fieldPublish = await post("/publish", {
+      ...request,
+      base: result.commit,
+      saveId: "5".repeat(32),
+      files: [{ path: "blueprints/quote.yml", text: fieldBlueprint }],
+    });
+    expect(fieldPublish.status).toBe(422);
+    expect(await fieldPublish.json()).toMatchObject({
+      findings: [{ kind: "task-field-value", name: "Weight" }],
+    });
+    expect(await git.log({ fs, gitdir: f.remote.gitdir, ref: "main" })).toHaveLength(2);
     for (const files of [
       [{ path: "bindings.yml", text: "" }],
       [

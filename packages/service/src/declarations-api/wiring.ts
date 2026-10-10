@@ -6,6 +6,7 @@ import {
   lintBlueprint,
   lintTaskMetadataDeclaration,
   declaredLifecycleOptions,
+  declaredTaskFields,
   manifoldImplementationNames,
 } from "@wyrd-company/manifold-shared";
 import { createDecisionModels } from "../decision-models.ts";
@@ -43,7 +44,10 @@ export const declarationsApiPart = wiringPart({
           configurationBound: members.configuration.blueprintLint.configurationBound,
           decisionModels,
           ...(metadata.ok
-            ? { lifecycleOptions: declaredLifecycleOptions(metadata.declaration) }
+            ? {
+                lifecycleOptions: declaredLifecycleOptions(metadata.declaration),
+                taskFields: declaredTaskFields(metadata.declaration),
+              }
             : {}),
         });
       },

@@ -9,6 +9,7 @@ import {
   lintInvokedDecisionModels,
   lintTaskMetadataDeclaration,
   declaredLifecycleOptions,
+  declaredTaskFields,
 } from "@wyrd-company/manifold-shared";
 import type { ModelText } from "@wyrd-company/manifold-shared/declarations-api";
 import { overlay } from "../declarations-api/model-files.ts";
@@ -33,7 +34,12 @@ async function inspectText(
   const lint = await lintBlueprint(path, text, manifoldImplementationNames, {
     configurationBound: options.configurationBound,
     decisionModels: await lintInvokedDecisionModels(read, text),
-    ...(metadata.ok ? { lifecycleOptions: declaredLifecycleOptions(metadata.declaration) } : {}),
+    ...(metadata.ok
+      ? {
+          lifecycleOptions: declaredLifecycleOptions(metadata.declaration),
+          taskFields: declaredTaskFields(metadata.declaration),
+        }
+      : {}),
   });
   const response = lintAnswer(text, lint);
   return { response, description: lint.ok ? lint.blueprint.description : undefined };

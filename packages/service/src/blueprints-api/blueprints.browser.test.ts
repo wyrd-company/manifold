@@ -309,6 +309,7 @@ test("bundled blueprints list and publish as repository replacements", async () 
     repository: { url: f.remote.url, branch: "main" },
     environments: [],
     t3codeProjects: () => [],
+    createdProjects: () => [],
     planDeclaration: () => [],
     log: () => {},
     createDecisionModels,
