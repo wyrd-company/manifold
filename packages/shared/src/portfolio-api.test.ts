@@ -62,7 +62,13 @@ const item = {
 };
 const body = {
   commit: "a".repeat(40),
-  pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
+  pricing: {
+    bundledCommit: "a".repeat(40),
+    bundledModels: 1,
+    overrides: 0,
+    unpriced: [],
+    unmetered: [],
+  },
   at: "2026-01-01T00:00:00.000Z",
   accounts: [account],
   items: [item],
@@ -84,7 +90,13 @@ test("portfolio guard agrees with the OpenAPI shape across nested valid and inva
     {
       ...body,
       commit: null,
-      pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
+      pricing: {
+        bundledCommit: "a".repeat(40),
+        bundledModels: 1,
+        overrides: 0,
+        unpriced: [],
+        unmetered: [],
+      },
       accounts: [],
       items: [{ ...item, projects: { github: [], t3code: [] }, allocations: [] }],
       warnings: [],
@@ -93,7 +105,11 @@ test("portfolio guard agrees with the OpenAPI shape across nested valid and inva
     {
       ...body,
       accounts: [{ ...account, archived: true, lastUsedAt: body.at }],
-      pricing: { ...body.pricing, unpriced: [{ provider: "codex", model: null, postings: 1 }] },
+      pricing: {
+        ...body.pricing,
+        unpriced: [{ provider: "codex", model: null, postings: 1 }],
+        unmetered: [{ provider: "cursor", model: "sample-model", postings: 2 }],
+      },
     },
   ]) {
     expect(validate(value)).toBe(true);
@@ -105,6 +121,10 @@ test("portfolio guard agrees with the OpenAPI shape across nested valid and inva
     { ...body, items: [] },
     { ...body, extra: true },
     { ...body, pricing: undefined },
+    {
+      ...body,
+      pricing: (({ unmetered: _unmetered, ...pricing }) => pricing)(body.pricing),
+    },
     { ...body, pricing: { ...body.pricing, bundledCommit: "bad" } },
     {
       ...body,
@@ -116,6 +136,13 @@ test("portfolio guard agrees with the OpenAPI shape across nested valid and inva
     {
       ...body,
       pricing: { ...body.pricing, unpriced: [{ provider: "codex", model: null, postings: 0 }] },
+    },
+    {
+      ...body,
+      pricing: {
+        ...body.pricing,
+        unmetered: [{ provider: "cursor", model: null, postings: 0 }],
+      },
     },
     { ...body, accounts: [{ ...account, archived: "true" }] },
     { ...body, accounts: [{ ...account, unit: "tokens" }] },

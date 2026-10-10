@@ -28,7 +28,13 @@ test("preserves declared account order, counts descendant tasks, and retains int
   const read = portfolioRead({
     portfolio: { commit: null, declaration: lint.declaration },
     lastUsedAt: {},
-    pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
+    pricing: {
+      bundledCommit: "a".repeat(40),
+      bundledModels: 1,
+      overrides: 0,
+      unpriced: [],
+      unmetered: [],
+    },
     accounts: { "acct-z": account, "acct-a": account },
     balances: new Map(lint.declaration.items.map((i) => [i.id, new Map([["acct-z", balance]])])),
     totals: new Map([
@@ -87,7 +93,13 @@ test("active accounts precede sorted allocated archived or undeclared names, wit
     kind: "api" as const,
     capacity: { amount: 1, reset: "2026-01-01T00:00:00Z", every: { days: 1 } },
   };
-  const pricing = { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 2, unpriced: [] };
+  const pricing = {
+    bundledCommit: "a".repeat(40),
+    bundledModels: 1,
+    overrides: 2,
+    unpriced: [],
+    unmetered: [],
+  };
   const read = portfolioRead({
     portfolio: { commit: null, declaration: lint.declaration },
     accounts: { "acct-z": { ...account, archived: true }, "acct-a": account },

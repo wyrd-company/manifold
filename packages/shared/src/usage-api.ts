@@ -24,6 +24,7 @@ export type UnownedEntry = {
   title?: string;
   lastUsedAt: string;
   pending: number;
+  unmetered: number;
   usage: { item: string; account: string; amount: number; calls: number }[];
 };
 export type UsageUnownedResponse = { unowned: UnownedEntry[] };
@@ -55,6 +56,7 @@ export function isUsageUnownedResponse(v: unknown): v is UsageUnownedResponse {
           environment: nonempty,
           lastUsedAt: dateTime,
           pending: natural,
+          unmetered: natural,
           usage: array((v) =>
             shape(v, {
               item: nonempty,

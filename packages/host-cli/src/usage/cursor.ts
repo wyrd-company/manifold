@@ -8,11 +8,13 @@ import {
 } from "@codeburn/core/providers/cursor-agent";
 import { basename, extname, join } from "node:path";
 import { stat } from "node:fs/promises";
+import { decodeCursorStore } from "./cursor-acp.ts";
 import { sqlite } from "./sqlite.ts";
 import { absent, jsonLines, object, read, SourceReadError, text, type Problems } from "./source.ts";
 import type { Source, UsageUnit } from "./types.ts";
 
 export async function decodeCursor(source: Source, problems: Problems, seen: Set<string>) {
+  if (source.path.endsWith(".db")) return decodeCursorStore(source, problems, seen);
   const conversationId = basename(source.path, extname(source.path));
   const mtime = (await stat(source.path)).mtime.toISOString();
   const database = join(source.root, "ai-tracking", "ai-code-tracking.db");
@@ -36,13 +38,17 @@ export async function decodeCursor(source: Source, problems: Problems, seen: Set
             conversationId,
             model: text(row["model"]) ?? null,
             title: text(row["title"]) ?? null,
-            updatedAt: text(row["updatedAt"]) ?? null,
+            updatedAt:
+              typeof row["updatedAt"] === "number"
+                ? String(row["updatedAt"])
+                : (text(row["updatedAt"]) ?? null),
           }
         : null;
     });
   let transcript = await read(source.path);
   if (source.path.endsWith(".jsonl"))
     transcript = jsonLines(transcript, problems, (record) => {
+      if (record["type"] === "turn_ended" || record["role"] === "turn_ended") return "valid";
       if (record["role"] !== "user" && record["role"] !== "assistant") return "unknown-record";
       return object(record["message"])["content"] === undefined ? "malformed-record" : "valid";
     })
@@ -61,5 +67,14 @@ export async function decodeCursor(source: Source, problems: Problems, seen: Set
       diagnostic.index,
     );
   const unit: UsageUnit = { id: conversationId, kind: "session" };
-  return [{ unit, calls: result.calls }];
+  return [
+    {
+      unit,
+      calls: result.calls.map((call) => ({
+        ...call,
+        model: summary?.model ?? "",
+        costIsEstimated: true,
+      })),
+    },
+  ];
 }

@@ -88,9 +88,14 @@ export async function discover(
       ].filter((file) => file.endsWith(".jsonl"));
       break;
     case "cursor":
-      files = (await walk(join(path, "projects"), unreadable)).filter((file) =>
-        /[/\\]agent-transcripts[/\\][^/\\]+\.(txt|jsonl)$/.test(file),
-      );
+      files = [
+        ...(await walk(join(path, "projects"), unreadable)).filter((file) =>
+          /[/\\]agent-transcripts[/\\](?:[^/\\]+[/\\])?[^/\\]+\.(txt|jsonl)$/.test(file),
+        ),
+        ...(await walk(join(path, "acp-sessions"), unreadable)).filter((file) =>
+          /[/\\]acp-sessions[/\\][^/\\]+[/\\]store\.db$/.test(file),
+        ),
+      ];
       break;
     case "grok":
       files = (await walk(join(path, "sessions"), unreadable))

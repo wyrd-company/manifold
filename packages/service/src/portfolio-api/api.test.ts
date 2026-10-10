@@ -60,7 +60,7 @@ test("portfolio read uses balances and updates warnings when accounts alone chan
       },
     },
     lastUsedAt: () => ({}),
-    pricing: () => ({ overrides: 0, unpriced: [] }),
+    pricing: () => ({ overrides: 0, unpriced: [], unmetered: [] }),
     accounts: () => (declared ? { "acct-a": account, "acct-c": account } : { "acct-a": account }),
     processRepository: {
       revisionAt: async () => {
@@ -130,7 +130,7 @@ test("read failure answers JSON and logs the path", async () => {
         },
       },
       lastUsedAt: () => ({}),
-      pricing: () => ({ overrides: 0, unpriced: [] }),
+      pricing: () => ({ overrides: 0, unpriced: [], unmetered: [] }),
       accounts: () => ({}),
       processRepository: { revisionAt: async () => undefined },
       store: { activeSnapshots: () => [], endedSnapshots: () => [] },

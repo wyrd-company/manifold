@@ -77,7 +77,16 @@ it("partitions escalation continuation and several passes in one visit without d
         account: "sample",
         actual: 7,
       },
+      {
+        usedAt: at(7),
+        thread: { environment: "sample", threadId: "thread-a" },
+        visit: 2,
+        total: null,
+        account: null,
+        actual: null,
+      },
       { usedAt: at(0), thread: null, visit: null, total: 2, account: null, actual: null },
+      { usedAt: at(0), thread: null, visit: null, total: null, account: null, actual: null },
       {
         usedAt: at(6),
         thread: { environment: "other", threadId: "thread-a" },
@@ -88,13 +97,15 @@ it("partitions escalation continuation and several passes in one visit without d
       },
     ],
     tokens: { ...input.usage!.tokens, total: 22 },
+    unmetered: 2,
   };
   const passes = actorPasses(input);
-  expect(passes.map((p) => [p.label, p.close, p.tokens])).toEqual([
-    ["Start thread", "idle", 10],
-    ["Continue thread", "handoff", 7],
+  expect(passes.map((p) => [p.label, p.close, p.tokens, p.unmetered])).toEqual([
+    ["Start thread", "idle", 10, 0],
+    ["Continue thread", "handoff", 7, 1],
   ]);
   expect(actorSequence(input).unattributed.tokens).toBe(5);
+  expect(actorSequence(input).unattributed.unmetered).toBe(1);
   expect(actorSequence(input).messages.map((m) => m.label)).toContain(
     "Continue thread · answer: retry",
   );

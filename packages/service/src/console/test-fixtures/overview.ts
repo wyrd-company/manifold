@@ -138,7 +138,7 @@ export async function overviewWorld() {
   mountEscalations(server.host, f.module);
   mountPortfolioApi(server.host, {
     lastUsedAt: () => ({}),
-    pricing: () => ({ overrides: 0, unpriced: [] }),
+    pricing: () => ({ overrides: 0, unpriced: [], unmetered: [] }),
     portfolio: {
       current: () => ({ commit: null, declaration: declaration.declaration }),
       ledger,

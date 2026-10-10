@@ -133,7 +133,13 @@ test("closest declared account uses greatest share, stable ties, positive window
 });
 test("budgets retain every depth, exclude archived subtrees and independently warn at 85 percent", () => {
   const read: PortfolioResponse = {
-    pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
+    pricing: {
+      bundledCommit: "a".repeat(40),
+      bundledModels: 1,
+      overrides: 0,
+      unpriced: [],
+      unmetered: [],
+    },
     commit: null,
     at: "2026-01-01T00:00:00.000Z",
     accounts: [account("sample", 85)],
@@ -302,7 +308,13 @@ test("escalation targets follow each raiser and held tasks link to task pages", 
 test("item budgets include outstanding reservations in the share", () => {
   const allocated = item("alpha", null, 40);
   const read: PortfolioResponse = {
-    pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
+    pricing: {
+      bundledCommit: "a".repeat(40),
+      bundledModels: 1,
+      overrides: 0,
+      unpriced: [],
+      unmetered: [],
+    },
     commit: null,
     at: new Date(0).toISOString(),
     accounts: [account("sample", 85)],

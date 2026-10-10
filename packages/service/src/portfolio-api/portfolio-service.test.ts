@@ -183,7 +183,7 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
           ],
           records: [call(key, "model-a", at - (2 - index) * 1000, amount)],
         }).calls,
-      ).toEqual({ accepted: 1, pending: 0, replayed: 0 });
+      ).toEqual({ accepted: 1, pending: 0, replayed: 0, unmetered: 0 });
     }
     expect(
       service.usage.push({
@@ -191,7 +191,7 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
         threads: [],
         records: [call("unpriced", "unpriced-model", at - 3000, 100)],
       }).calls,
-    ).toEqual({ accepted: 0, pending: 1, replayed: 0 });
+    ).toEqual({ accepted: 0, pending: 1, replayed: 0, unmetered: 0 });
     await save(text.replace("  epsilon: {}\n", ""));
     service.store.saveSnapshot({
       actorId: "task:parcel",
@@ -233,6 +233,7 @@ test("started Portfolio endpoint observes credit, ledger balances, historical an
       bundledModels: Object.keys(bundledPriceTable.models).length,
       overrides: 1,
       unpriced: [{ provider: "codex", model: "unpriced-model", postings: 1 }],
+      unmetered: [],
     });
     expect(body.items.some((i) => i.id === "epsilon")).toBe(false);
     expect(body.items.find((i) => i.id === "delta")?.archived).toBe(true);

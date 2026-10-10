@@ -121,12 +121,14 @@ export const sampleInput = (active = false): ActorModelInput => ({
   usage: {
     actorId: "task:parcel",
     tokens: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 10 },
+    unmetered: 0,
     accounts: [{ account: "sample", actual: 10, unit: "usd" }],
     visits: [
       {
         visit: 2,
         enteredAt: at(1),
         tokens: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 10 },
+        unmetered: 0,
         accounts: [{ account: "sample", actual: 10 }],
       },
     ],

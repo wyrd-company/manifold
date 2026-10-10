@@ -10,7 +10,7 @@ import type { UsageOptions } from "./types.ts";
 export function unownedUsage(options: UsageOptions): UnownedEntry[] {
   const rows = options.connection.database
     .prepare(
-      "SELECT CAST(attributed_actor AS BLOB) AS attributed_actor, CAST(environment AS BLOB) AS environment, provider, CAST(json_extract(c.record,'$.providerSessionId') AS BLOB) AS session, used_at, status, CAST(held_item AS BLOB) AS held_item, CAST(account AS BLOB) AS account, amount FROM usage_attributed_postings p JOIN usage_calls c USING(environment,call_key) ORDER BY used_at DESC,p.seq DESC",
+      "SELECT CAST(attributed_actor AS BLOB) AS attributed_actor, CAST(environment AS BLOB) AS environment, provider, CAST(json_extract(c.record,'$.providerSessionId') AS BLOB) AS session, used_at, status, reason, CAST(held_item AS BLOB) AS held_item, CAST(account AS BLOB) AS account, amount FROM usage_attributed_postings p JOIN usage_calls c USING(environment,call_key) ORDER BY used_at DESC,p.seq DESC",
     )
     .all()
     .map(readUsageAttributedPostings) as {
@@ -20,6 +20,7 @@ export function unownedUsage(options: UsageOptions): UnownedEntry[] {
     session: string;
     used_at: number;
     status: string;
+    reason: string | null;
     held_item: string;
     account: string | null;
     amount: number | null;
@@ -41,6 +42,7 @@ export function unownedUsage(options: UsageOptions): UnownedEntry[] {
         environment: row.environment,
         lastUsedAt: new Date(row.used_at).toISOString(),
         pending: 0,
+        unmetered: 0,
         usage: [],
         ...(threadId ? { threadId } : { provider: row.provider, providerSessionId: row.session }),
         ...(project ? { project } : {}),
@@ -48,7 +50,8 @@ export function unownedUsage(options: UsageOptions): UnownedEntry[] {
       };
       entries.set(actor, entry);
     }
-    if (row.status === "pending") entry.pending++;
+    if (row.reason === "unmetered") entry.unmetered++;
+    else if (row.status === "pending") entry.pending++;
     else {
       let group = entry.usage.find((g) => g.item === row.held_item && g.account === row.account);
       if (!group) {

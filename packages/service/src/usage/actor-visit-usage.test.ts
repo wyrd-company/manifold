@@ -43,6 +43,18 @@ it("sums sparse visits, pending tokens and provider totals, listing each posting
       environment: "sample",
       thread_id: null,
     },
+    {
+      seq: 4,
+      provider: "cursor",
+      tokens: "null",
+      visit: 4,
+      account: "first",
+      amount: null,
+      status: "pending",
+      used_at: 40,
+      environment: "sample",
+      thread_id: "thread-b",
+    },
   ];
   const result = visitUsage(
     "actor-a",
@@ -62,6 +74,7 @@ it("sums sparse visits, pending tokens and provider totals, listing each posting
     reasoning: 12,
     total: 68,
   });
+  expect(result.unmetered).toBe(1);
   expect(result.accounts).toEqual([
     { account: "first", actual: 9, unit: "usd" },
     { account: "second", actual: 7 },
@@ -70,9 +83,14 @@ it("sums sparse visits, pending tokens and provider totals, listing each posting
     [2, 20],
     [4, 24],
   ]);
+  expect(result.visits.map((v) => [v.visit, v.unmetered])).toEqual([
+    [2, 0],
+    [4, 1],
+  ]);
   expect(result.calls.map((c) => [c.total, c.thread, c.actual])).toEqual([
     [20, { environment: "sample", threadId: "thread-a" }, 7],
     [24, { environment: "sample", threadId: "thread-a" }, 9],
     [24, null, null],
+    [null, { environment: "sample", threadId: "thread-b" }, null],
   ]);
 });

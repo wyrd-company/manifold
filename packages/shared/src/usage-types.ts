@@ -26,7 +26,7 @@ export type UsageCall = {
   };
   timestamp: string;
   model: string | null;
-  tokens: UsageTokens;
+  tokens: UsageTokens | null;
   speed: "standard" | "fast";
   granularity: "call" | "session-total";
   estimated: boolean;
@@ -53,7 +53,7 @@ export type UsagePushRequest = {
   records: readonly UsageRecord[];
 };
 export type UsagePushResult = {
-  calls: { accepted: number; pending: number; replayed: number };
+  calls: { accepted: number; pending: number; replayed: number; unmetered: number };
   threads: { accepted: number; replayed: number; conflicting: number };
   sourceErrors: number;
 };

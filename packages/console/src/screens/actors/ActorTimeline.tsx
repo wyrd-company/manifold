@@ -6,33 +6,58 @@ import { formatAmount } from "@wyrd-company/manifold-shared/amounts";
 import type { ActorActual, ActorTokens } from "@wyrd-company/manifold-shared/actor-usage-api";
 import type { ActorTimeline as Timeline } from "./actor-model.ts";
 import { TimelineBar } from "./TimelineBar.tsx";
+const unmeteredText = (calls: number) => `${calls} unmetered ${calls === 1 ? "call" : "calls"}`;
+const unmeteredHelp = "The provider records no token counts for these calls, so they have no cost.";
+export function ActorTokenLabel({
+  tokens,
+  unmetered,
+  tokenClasses,
+}: {
+  tokens: number;
+  unmetered: number;
+  tokenClasses?: ActorTokens | undefined;
+}) {
+  const title = [
+    tokenClasses
+      ? Object.entries(tokenClasses)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join("\n")
+      : undefined,
+    unmetered > 0 ? unmeteredHelp : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (
+    <span title={title || undefined}>
+      {tokens === 0 && unmetered > 0
+        ? unmeteredText(unmetered)
+        : `${tokens.toLocaleString()} tokens`}
+      {tokens > 0 && unmetered > 0 ? (
+        <small className="muted">+ {unmeteredText(unmetered)}</small>
+      ) : null}
+    </span>
+  );
+}
 export function ActorUsageLabel({
   tokens,
+  unmetered,
   accounts,
   tokenClasses,
 }: {
   tokens: number;
+  unmetered: number;
   accounts: readonly ActorActual[];
   tokenClasses?: ActorTokens | undefined;
 }) {
   return (
     <span className="actor-usage-label">
-      <span
-        title={
-          tokenClasses
-            ? Object.entries(tokenClasses)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join("\n")
-            : undefined
-        }
-      >
-        {tokens.toLocaleString()} tokens
-      </span>
+      <ActorTokenLabel tokens={tokens} unmetered={unmetered} tokenClasses={tokenClasses} />
       {accounts.map((a) => (
         <small key={a.account}>
           {a.account} · {formatAmount(a.actual, a.unit)}
         </small>
       ))}
+      {!accounts.length && unmetered > 0 ? <small className="muted">—</small> : null}
     </span>
   );
 }
@@ -66,6 +91,7 @@ export function ActorTimeline({ timeline, active }: { timeline: Timeline; active
               <td>
                 <ActorUsageLabel
                   tokens={row.tokens}
+                  unmetered={row.unmetered}
                   accounts={row.accounts}
                   tokenClasses={row.tokenClasses}
                 />

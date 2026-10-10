@@ -17,14 +17,17 @@ export function lastUsedAt(connection: LedgerConnection): Readonly<Record<string
   return Object.fromEntries(rows.map((row) => [row.account, row.at]));
 }
 export function pricing(connection: LedgerConnection, prices: PriceTable): UsagePricing {
+  const grouped = (reason: "unpriced" | "unmetered") =>
+    connection.database
+      .prepare(
+        "SELECT provider, CAST(model AS BLOB) AS model, COUNT(*) AS postings FROM usage_postings WHERE status = 'pending' AND reason = ? GROUP BY provider, model ORDER BY provider, model",
+      )
+      .all(reason)
+      .map(readUsagePostingsModel) as UsagePricing[typeof reason];
   return {
     overrides: Object.keys(prices.models).length,
-    unpriced: connection.database
-      .prepare(
-        "SELECT provider, CAST(model AS BLOB) AS model, COUNT(*) AS postings FROM usage_postings WHERE status = 'pending' AND reason = 'unpriced' GROUP BY provider, model ORDER BY provider, model",
-      )
-      .all()
-      .map(readUsagePostingsModel) as UsagePricing["unpriced"],
+    unpriced: grouped("unpriced"),
+    unmetered: grouped("unmetered"),
   };
 }
 

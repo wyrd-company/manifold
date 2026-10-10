@@ -110,7 +110,7 @@ export async function runUsagePush(
     batches: 0,
     requests: 0,
     skippedSources: 0,
-    calls: { accepted: 0, pending: 0, replayed: 0 },
+    calls: { accepted: 0, pending: 0, replayed: 0, unmetered: 0 },
     threads: { accepted: 0, replayed: 0, conflicting: 0 },
   };
   const send = async (threads: UsageMapping[], records: UsagePushRequest["records"]) => {
@@ -123,7 +123,7 @@ export async function runUsagePush(
     if (response.status !== 200) throw Error(`Service answered ${response.status}`);
     const counts: unknown = await response.json();
     if (!isUsagePushResult(counts)) throw new Error("Invalid usage acknowledgement");
-    for (const key of ["accepted", "pending", "replayed"] as const)
+    for (const key of ["accepted", "pending", "replayed", "unmetered"] as const)
       result.calls[key] += counts.calls[key];
     for (const key of ["accepted", "replayed", "conflicting"] as const)
       result.threads[key] += counts.threads[key];

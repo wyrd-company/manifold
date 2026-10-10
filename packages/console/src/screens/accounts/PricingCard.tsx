@@ -34,6 +34,25 @@ export function PricingCard({ pricing }: { pricing: PortfolioPricing }) {
           </p>
         </>
       ) : null}
+      {pricing.unmetered.length ? (
+        <>
+          <p className="muted">
+            {pricing.unmetered.length} {pricing.unmetered.length === 1 ? "model" : "models"} in use
+            report no token counts
+          </p>
+          <ul>
+            {pricing.unmetered.map((entry) => (
+              <li key={JSON.stringify([entry.provider, entry.model])}>
+                <span className="mono">
+                  {entry.provider} · {entry.model ?? "no model name"}
+                </span>{" "}
+                · {entry.postings} unmetered calls
+              </li>
+            ))}
+          </ul>
+          <p className="muted">Their calls are counted on their tasks without tokens or cost.</p>
+        </>
+      ) : null}
     </section>
   );
 }

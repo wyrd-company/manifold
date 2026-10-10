@@ -16,7 +16,13 @@ import { StatusBar } from "./StatusBar.tsx";
 import { ProblemsList } from "./ProblemsList.tsx";
 const read: PortfolioResponse = {
   commit: null,
-  pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
+  pricing: {
+    bundledCommit: "a".repeat(40),
+    bundledModels: 1,
+    overrides: 0,
+    unpriced: [],
+    unmetered: [],
+  },
   at: new Date(0).toISOString(),
   accounts: [],
   items: [],

@@ -46,13 +46,17 @@ export function ActorSequence({ sequence }: { sequence: Sequence }) {
               </div>
               <div className="actor-message-usage" style={{ gridColumn: columns + 1 }}>
                 {m.tokens !== undefined ? (
-                  <ActorUsageLabel tokens={m.tokens} accounts={m.accounts ?? []} />
+                  <ActorUsageLabel
+                    tokens={m.tokens}
+                    unmetered={m.unmetered ?? 0}
+                    accounts={m.accounts ?? []}
+                  />
                 ) : null}
               </div>
             </div>
           );
         })}
-        {sequence.unattributed.tokens > 0 ? (
+        {sequence.unattributed.tokens > 0 || sequence.unattributed.unmetered > 0 ? (
           <div className="actor-unattributed" style={{ gridColumn: "1 / -1" }}>
             Not in a pass <ActorUsageLabel {...sequence.unattributed} />
           </div>

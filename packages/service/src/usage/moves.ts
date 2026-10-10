@@ -56,15 +56,15 @@ export function moveUsage(
     }
     const postings = db
       .prepare(
-        "SELECT seq, CAST(held_actor AS BLOB) AS held_actor, CAST(held_item AS BLOB) AS held_item, CAST(account AS BLOB) AS account, amount, used_at, moves FROM usage_attributed_postings WHERE status='posted' AND attributed_actor=? ORDER BY seq",
+        "SELECT seq, CAST(held_actor AS BLOB) AS held_actor, CAST(held_item AS BLOB) AS held_item, CAST(account AS BLOB) AS account, amount, used_at, moves FROM usage_attributed_postings WHERE (status='posted' OR reason='unmetered') AND attributed_actor=? ORDER BY seq",
       )
       .all(from)
       .map(readUsageAttributedPostings) as {
       seq: number;
       held_actor: string;
       held_item: string;
-      account: string;
-      amount: number;
+      account: string | null;
+      amount: number | null;
       used_at: number;
       moves: number;
     }[];
@@ -72,13 +72,16 @@ export function moveUsage(
     let moved = 0;
     for (const posting of postings) {
       if (posting.held_actor === target.actor && posting.held_item === target.item) continue;
-      const key = posting.amount > 0 ? `usage-move:${posting.seq}:${posting.moves + 1}` : null;
+      const key =
+        posting.amount !== null && posting.amount > 0
+          ? `usage-move:${posting.seq}:${posting.moves + 1}`
+          : null;
       if (key) {
         try {
           options.ledger.reattribute({
             key,
-            account: posting.account,
-            amount: posting.amount,
+            account: posting.account!,
+            amount: posting.amount!,
             usedAt: posting.used_at,
             from: { actor: posting.held_actor, item: posting.held_item },
             to: target,
@@ -100,7 +103,8 @@ export function moveUsage(
         now(),
       );
       moved++;
-      accounts.set(posting.account, (accounts.get(posting.account) ?? 0) + posting.amount);
+      if (posting.account !== null)
+        accounts.set(posting.account, (accounts.get(posting.account) ?? 0) + (posting.amount ?? 0));
     }
     return {
       status: "moved" as const,

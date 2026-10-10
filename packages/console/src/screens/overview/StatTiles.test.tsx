@@ -23,7 +23,13 @@ test("successful empty reads show zero counts and no declared account", () => {
       rows={[]}
       attention={[]}
       portfolio={{
-        pricing: { bundledCommit: "a".repeat(40), bundledModels: 1, overrides: 0, unpriced: [] },
+        pricing: {
+          bundledCommit: "a".repeat(40),
+          bundledModels: 1,
+          overrides: 0,
+          unpriced: [],
+          unmetered: [],
+        },
         commit: null,
         at: new Date(0).toISOString(),
         accounts: [],

@@ -40,6 +40,7 @@ export type UsageRetryResult = {
 export type UsagePricing = {
   overrides: number;
   unpriced: readonly { provider: UsageProvider; model: string | null; postings: number }[];
+  unmetered: readonly { provider: UsageProvider; model: string | null; postings: number }[];
 };
 export interface Usage {
   lastUsedAt(): Readonly<Record<string, number>>;
@@ -84,6 +85,8 @@ export type Posting = {
   item: string;
   visit: number | null;
   status: "pending" | "posted";
+  reason: "unaccounted" | "unpriced" | "no-window" | "unmetered" | null;
+  moves?: number;
 };
 export const zeroTokens = (): UsageTokens => ({
   input: 0,

@@ -3,7 +3,7 @@
 //   verifies: usage-intake
 // ---
 import { afterEach, expect, it } from "vite-plus/test";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,9 +12,11 @@ import { openStore } from "../store/index.ts";
 import { createLedger, ledgerMigrationSteps, parseLedgerPortfolio } from "../ledger/index.ts";
 import { openUsage, usageMigrationSteps } from "./index.ts";
 import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
-import type { UsageCall } from "@wyrd-company/manifold-shared";
+import type { UsageCall, UsageRecord } from "@wyrd-company/manifold-shared";
 import type { PortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api";
 import { createServer } from "node:http";
+import { decodeUsage } from "../../../host-cli/src/usage/index.ts";
+import { readSessionMappings } from "../../../host-cli/src/usage-push/index.ts";
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const close of cleanups.splice(0).toReversed()) close();
@@ -41,6 +43,13 @@ const call = (key = "call-1", input = 1000000, output = 500000): UsageCall => ({
   granularity: "call",
   estimated: false,
 });
+const unmeteredCall = (key = "unmetered-1", session = "session-1") =>
+  ({
+    ...call(key),
+    provider: "cursor",
+    providerSessionId: session,
+    tokens: null,
+  }) as unknown as UsageCall;
 const accounts =
   "accounts:\n  acct:\n    unit: usd\n    kind: api\n    capacity: { amount: 1, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }\n    usage: [{ environment: env-one, provider: codex }]";
 const prices =
@@ -206,7 +215,7 @@ it("prices, attributes and replays a call once with its state visit and provider
   s.save();
   s.now(200);
   s.save("active", "checking");
-  expect(s.push([call()]).calls).toEqual({ accepted: 1, pending: 0, replayed: 0 });
+  expect(s.push([call()]).calls).toEqual({ accepted: 1, pending: 0, unmetered: 0, replayed: 0 });
   expect(s.push([call()]).calls.replayed).toBe(1);
   expect(s.push([call("call-1", 2000000, 1000000)]).calls.replayed).toBe(1);
   expect(s.ledger.actorUsage("actor-1").accounts[0]?.actual).toBe(6000000);
@@ -317,6 +326,252 @@ it("retains tokens without an account or window and retries when the missing fac
   expect(s.usage.retryPending().posted).toBe(1);
   expect(s.usage.retryPending().posted).toBe(0);
   expect(s.ledger.actorUsage("actor-1").accounts[0]?.actual).toBe(6000000);
+});
+it("stores, attributes and replays an unmetered call without posting ledger cost", async () => {
+  const s = await setup();
+  s.save();
+  await s.apply(accounts.replace("provider: codex", "provider: cursor"), prices);
+  const record = unmeteredCall();
+  const push = () =>
+    s.usage.push({
+      environment: "env-one",
+      threads: [{ provider: "cursor", providerSessionId: "session-1", threadId: "thread-1" }],
+      records: [record],
+    });
+  expect(push().calls).toEqual({ accepted: 0, pending: 0, unmetered: 1, replayed: 0 });
+  expect(push().calls).toEqual({ accepted: 0, pending: 0, unmetered: 0, replayed: 1 });
+  expect(s.usage.retryPending()).toEqual({
+    posted: 0,
+    pending: { unaccounted: 0, unpriced: 0, noWindow: 0 },
+  });
+  expect(s.connection.database.prepare("SELECT charged FROM usage_calls").get()).toEqual({
+    charged: "null",
+  });
+  expect(
+    s.connection.database
+      .prepare(
+        "SELECT base_tokens,tokens,account,amount,status,reason,ledger_key FROM usage_postings",
+      )
+      .get(),
+  ).toEqual({
+    base_tokens: "null",
+    tokens: "null",
+    account: "acct",
+    amount: null,
+    status: "pending",
+    reason: "unmetered",
+    ledger_key: null,
+  });
+  expect(s.connection.database.prepare("SELECT count(*) AS n FROM ledger_entries").get()).toEqual({
+    n: 1,
+  });
+  expect(s.usage.actorVisitUsage("actor-1")).toMatchObject({
+    tokens: { total: 0 },
+    unmetered: 1,
+    accounts: [],
+    visits: [{ visit: 1, unmetered: 1 }],
+    calls: [{ total: null, account: null, actual: null }],
+  });
+  expect(s.usage.pricing()).toMatchObject({
+    unmetered: [{ provider: "cursor", model: "model-a", postings: 1 }],
+  });
+  s.restart();
+  expect(push().calls).toEqual({ accepted: 0, pending: 0, unmetered: 0, replayed: 1 });
+});
+it("resolves an unmetered call's account before retaining its terminal reason", async () => {
+  const s = await setup();
+  s.save();
+  const result = s.push([unmeteredCall()]);
+  expect(result.calls).toMatchObject({ unmetered: 1 });
+  expect(s.connection.database.prepare("SELECT account,reason FROM usage_postings").get()).toEqual({
+    account: null,
+    reason: "unmetered",
+  });
+  await s.apply(accounts.replace("provider: codex", "provider: cursor"), prices);
+  expect(s.connection.database.prepare("SELECT account,reason FROM usage_postings").get()).toEqual({
+    account: null,
+    reason: "unmetered",
+  });
+});
+it("adds metered, pending, unmetered and replayed call counts in one push", async () => {
+  const s = await setup();
+  s.save();
+  await s.apply(
+    accounts.replace(
+      "provider: codex }]",
+      "provider: codex }, { environment: env-one, provider: cursor }]",
+    ),
+    prices,
+  );
+  s.push([call("replayed", 1, 1)]);
+  expect(
+    s.push([
+      call("accepted", 1, 1),
+      { ...call("pending", 1, 1), model: "model-b" },
+      call("replayed", 1, 1),
+      unmeteredCall(),
+    ]).calls,
+  ).toEqual({ accepted: 1, pending: 1, unmetered: 1, replayed: 1 });
+});
+it("moves an unmetered unowned call without a ledger write", async () => {
+  const s = await setup();
+  s.save();
+  await s.apply(accounts.replace("provider: codex", "provider: cursor"), prices);
+  s.usage.push({ environment: "env-one", threads: [], records: [unmeteredCall()] });
+  const before = s.connection.database.prepare("SELECT count(*) AS n FROM ledger_operations").get();
+  expect(
+    s.usage.move({ from: "session:env-one:cursor:session-1", to: { item: "beta" } }),
+  ).toMatchObject({ moved: 1, accounts: [{ account: "acct", amount: 0 }] });
+  expect(
+    s.connection.database.prepare("SELECT count(*) AS n FROM ledger_operations").get(),
+  ).toEqual(before);
+  expect(s.usage.unowned()).toMatchObject([
+    { actor: "session:env-one:cursor:session-1", pending: 0, unmetered: 1, usage: [] },
+  ]);
+  expect(
+    s.connection.database.prepare("SELECT cause,ledger_key FROM usage_reattributions").get(),
+  ).toEqual({
+    cause: "move",
+    ledger_key: null,
+  });
+  s.usage.push({
+    environment: "env-one",
+    threads: [{ provider: "cursor", providerSessionId: "session-1", threadId: "thread-1" }],
+    records: [],
+  });
+  expect(s.usage.unowned()).toEqual([]);
+  expect(s.usage.actorVisitUsage("actor-1")).toMatchObject({
+    unmetered: 1,
+    visits: [{ visit: 1, unmetered: 1 }],
+  });
+  expect(
+    s.connection.database
+      .prepare("SELECT attributed_actor,held_item,moves FROM usage_attributed_postings")
+      .get(),
+  ).toEqual({ attributed_actor: "actor-1", held_item: "beta", moves: 1 });
+});
+it("attributes an item-moved unmetered thread when its owner is saved", async () => {
+  const s = await setup();
+  await s.apply(accounts.replace("provider: codex", "provider: cursor"), prices);
+  s.usage.push({
+    environment: "env-one",
+    threads: [{ provider: "cursor", providerSessionId: "session-1", threadId: "thread-1" }],
+    records: [unmeteredCall()],
+  });
+  expect(s.usage.move({ from: "thread:env-one:thread-1", to: { item: "alpha" } })).toMatchObject({
+    moved: 1,
+  });
+  s.save();
+  expect(s.usage.unowned()).toEqual([]);
+  expect(s.usage.actorVisitUsage("actor-1")).toMatchObject({
+    unmetered: 1,
+    visits: [{ visit: 1, unmetered: 1 }],
+  });
+  expect(
+    s.connection.database
+      .prepare("SELECT attributed_actor,held_item,moves FROM usage_attributed_postings")
+      .get(),
+  ).toEqual({ attributed_actor: "actor-1", held_item: "alpha", moves: 1 });
+});
+it("carries decoded Cursor ACP calls through their T3 Code mapping across restart", async () => {
+  const s = await setup();
+  s.save();
+  await s.apply(
+    accounts.replace("provider: codex }", "provider: cursor, instance: instance-one }"),
+    prices,
+  );
+  const root = mkdtempSync(join(tmpdir(), "usage-cursor-integration-"));
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  const sessionDirectory = join(root, "acp-sessions", "session-a");
+  mkdirSync(sessionDirectory, { recursive: true });
+  const cursorStore = new DatabaseSync(join(sessionDirectory, "store.db"));
+  cursorStore.exec(
+    readFileSync(
+      new URL("../../../host-cli/src/usage/fixtures/cursor/acp.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  cursorStore.close();
+  const runtimePath = join(root, "state.sqlite");
+  const runtime = new DatabaseSync(runtimePath);
+  runtime.exec(
+    "CREATE TABLE provider_session_runtime (thread_id TEXT, provider_name TEXT, provider_instance_id TEXT, resume_cursor_json TEXT)",
+  );
+  runtime
+    .prepare("INSERT INTO provider_session_runtime VALUES (?,?,?,?)")
+    .run("thread-1", "cursor", "instance-one", JSON.stringify({ sessionId: "session-a" }));
+  runtime.close();
+  const records: UsageRecord[] = [];
+  for await (const record of decodeUsage([{ provider: "cursor", path: root }]))
+    records.push(record);
+  const request = {
+    environment: "env-one",
+    threads: readSessionMappings(runtimePath),
+    records,
+  };
+  const server = createServer(s.usage.listener);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  cleanups.push(() => server.close());
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing test address");
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/usage/push`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  expect(response.status).toBe(200);
+  expect((await response.json()).calls).toEqual({
+    accepted: 0,
+    pending: 0,
+    unmetered: 4,
+    replayed: 0,
+  });
+  expect(s.usage.actorVisitUsage("actor-1")).toMatchObject({
+    unmetered: 4,
+    visits: [{ visit: 1, unmetered: 4 }],
+  });
+  expect(s.usage.actorVisitUsage("actor-1").calls).toHaveLength(4);
+  expect(
+    s.connection.database
+      .prepare(
+        "SELECT actor,item,visit,account,amount,reason,ledger_key FROM usage_postings ORDER BY seq",
+      )
+      .all(),
+  ).toEqual(
+    Array.from({ length: 4 }, () => ({
+      actor: "actor-1",
+      item: "alpha",
+      visit: 1,
+      account: "acct",
+      amount: null,
+      reason: "unmetered",
+      ledger_key: null,
+    })),
+  );
+  expect(s.usage.actorUsage("actor-1").accounts).toEqual([]);
+  expect(
+    s.connection.database
+      .prepare("SELECT count(*) AS n FROM ledger_entries WHERE kind='actual'")
+      .get(),
+  ).toEqual({ n: 0 });
+  const identities = s.connection.database
+    .prepare("SELECT call_key,record,charged FROM usage_calls ORDER BY call_key")
+    .all();
+  s.restart();
+  expect(s.usage.push(request).calls).toEqual({
+    accepted: 0,
+    pending: 0,
+    unmetered: 0,
+    replayed: 4,
+  });
+  const restarted = new DatabaseSync(s.path, { readOnly: true });
+  try {
+    expect(
+      restarted.prepare("SELECT call_key,record,charged FROM usage_calls ORDER BY call_key").all(),
+    ).toEqual(identities);
+  } finally {
+    restarted.close();
+  }
 });
 it("attributes unowned threads to a project and unmapped sessions to other", async () => {
   const s = await setup();
@@ -818,8 +1073,18 @@ it("retains negative cache reclassification as pending and commits later calls a
     threads: [{ provider: "codex" as const, providerSessionId: "session-1", threadId: "thread-1" }],
     records: [first, second, call("later", 1, 0)],
   };
-  expect(usage.push(request).calls).toEqual({ accepted: 2, pending: 1, replayed: 0 });
-  expect(usage.push(request).calls).toEqual({ accepted: 0, pending: 0, replayed: 3 });
+  expect(usage.push(request).calls).toEqual({
+    accepted: 2,
+    pending: 1,
+    unmetered: 0,
+    replayed: 0,
+  });
+  expect(usage.push(request).calls).toEqual({
+    accepted: 0,
+    pending: 0,
+    unmetered: 0,
+    replayed: 3,
+  });
   expect(usage.retryPending().pending.unpriced).toBe(1);
   expect(s.ledger.actorUsage("actor-1").accounts[0]?.actual).toBe(4000002);
 });
@@ -1478,6 +1743,7 @@ it("reads the last charged call and unpriced groups across restart, and skips ar
       { provider: "codex", model: null, postings: 1 },
       { provider: "codex", model: "model-b", postings: 1 },
     ],
+    unmetered: [],
   });
   f.restart();
   expect(f.usage.lastUsedAt()).toEqual({ acct: 200 });

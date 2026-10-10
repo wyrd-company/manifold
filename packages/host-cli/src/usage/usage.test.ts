@@ -158,8 +158,10 @@ const fixtureProviders = ["claude", "codex", "cursor", "grok", "opencode"] as co
 beforeAll(async () => {
   fixtureCopy = await mkdtemp(join(tmpdir(), "usage-fixtures-"));
   await cp(fixtures, fixtureCopy, { recursive: true });
+  await mkdir(join(fixtureCopy, "cursor", "acp-sessions", "session-a"), { recursive: true });
   await mkdir(join(fixtureCopy, "cursor", "ai-tracking"), { recursive: true });
   for (const [sql, database] of [
+    ["cursor/acp.sql", "cursor/acp-sessions/session-a/store.db"],
     ["cursor/summary.sql", "cursor/ai-tracking/ai-code-tracking.db"],
     ["opencode/sessions.sql", "opencode/opencode.db"],
   ]) {
@@ -190,7 +192,7 @@ function roots(path = fixtureCopy): UsageRoot[] {
 test("decodes Cursor summaries and transcripts without a summary row", async () => {
   const records = await collect(decodeUsage(roots().filter((root) => root.provider === "cursor")));
   const calls = records.filter((record) => record.type === "call");
-  expect(calls).toHaveLength(2);
+  expect(calls).toHaveLength(6);
   expect(calls.find((call) => call.unit.id === "conversation-a")).toMatchObject({
     model: "sample-model",
     estimated: true,
@@ -273,7 +275,7 @@ test("matches golden records and the strict usage schema for all five providers"
   const records = await collect(decodeUsage(roots()));
   for (const record of records) {
     expect(validator(record), JSON.stringify(validator.errors)).toBe(true);
-    if (record.type === "call")
+    if (record.type === "call" && record.tokens)
       expect(record.tokens.cacheWriteOneHour).toBeLessThanOrEqual(record.tokens.cacheWrite);
   }
   expect(canonical(records)).toBe(await expected());
@@ -535,7 +537,11 @@ test("a Cursor database without the summary table reports that database once", a
   } finally {
     db.close();
   }
-  expect(await collect(decodeUsage([{ provider: "cursor", path: copy }]))).toEqual([
+  expect(
+    (await collect(decodeUsage([{ provider: "cursor", path: copy }]))).filter(
+      (record) => record.type === "source-error",
+    ),
+  ).toEqual([
     { type: "source-error", provider: "cursor", source: database, code: "unreadable", records: 1 },
   ]);
 });
@@ -750,7 +756,7 @@ test("provider groups follow first root appearance and retain shared deduplicati
   expect([...new Set(records.map((record) => record.provider))]).toEqual(
     ordered.slice(0, -1).map((root) => root.provider),
   );
-  expect(records.filter((record) => record.type === "call")).toHaveLength(14);
+  expect(records.filter((record) => record.type === "call")).toHaveLength(18);
 });
 
 test.each(["primaryModelId", "modelsUsed"])(

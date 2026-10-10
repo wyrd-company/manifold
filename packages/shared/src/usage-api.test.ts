@@ -53,12 +53,15 @@ test("usage response guards agree with the native specification on populated, ze
     title: "A recipe",
     lastUsedAt: new Date(0).toISOString(),
     pending: 1,
+    unmetered: 2,
     usage: [{ item: "alpha", account: "acct", amount: 0, calls: 1 }],
   };
   for (const value of [
     { unowned: [] },
     { unowned: [entry] },
     { unowned: [{ ...entry, pending: -1 }] },
+    { unowned: [{ ...entry, unmetered: -1 }] },
+    { unowned: [(({ unmetered: _unmetered, ...value }) => value)(entry)] },
     { unowned: [{ ...entry, usage: [{ ...entry.usage[0], calls: 0 }] }] },
     { unowned: [entry], extra: true },
   ])

@@ -20,7 +20,13 @@ const item = (id: string, parent: string | null = null, archived = false, other 
 const read: PortfolioResponse = {
   commit: "a".repeat(40),
   at: new Date(0).toISOString(),
-  pricing: { bundledCommit: "a".repeat(40), bundledModels: 0, overrides: 0, unpriced: [] },
+  pricing: {
+    bundledCommit: "a".repeat(40),
+    bundledModels: 0,
+    overrides: 0,
+    unpriced: [],
+    unmetered: [],
+  },
   accounts: [],
   warnings: [],
   unallocated: [],

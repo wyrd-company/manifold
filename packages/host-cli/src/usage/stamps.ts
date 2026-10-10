@@ -9,7 +9,7 @@ import type { Source, UsageSourceStamp } from "./types.ts";
 export async function sourceStamp(source: Source): Promise<UsageSourceStamp> {
   let files = [source.path];
   if (source.provider === "claude") files.push(source.path.replace(/\.jsonl$/, ".meta.json"));
-  if (source.provider === "cursor")
+  if (source.provider === "cursor" && !source.path.endsWith(".db"))
     files.push(join(source.root, "ai-tracking", "ai-code-tracking.db"));
   if (source.provider === "grok") files = await walk(source.path);
   if (source.provider === "opencode" && !source.path.endsWith(".db"))

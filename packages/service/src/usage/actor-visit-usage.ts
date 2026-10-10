@@ -39,8 +39,13 @@ export function visitUsage(
   const sum = (group: readonly Row[]) => {
     const tokens = { ...zero() },
       accounts = new Map<string, number>();
+    let unmetered = 0;
     for (const row of group) {
-      const t = JSON.parse(row.tokens) as UsageTokens;
+      const t = JSON.parse(row.tokens) as UsageTokens | null;
+      if (t === null) {
+        unmetered++;
+        continue;
+      }
       for (const key of ["input", "output", "cacheRead", "cacheWrite", "reasoning"] as const)
         tokens[key] += t[key];
       tokens.total +=
@@ -54,6 +59,7 @@ export function visitUsage(
     }
     return {
       tokens,
+      unmetered,
       accounts: [...accounts]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([account, actual]) => ({ account, actual })),
@@ -81,7 +87,7 @@ export function visitUsage(
         thread:
           row.thread_id === null ? null : { environment: row.environment, threadId: row.thread_id },
         visit: row.visit,
-        total: sum([row]).tokens.total,
+        total: JSON.parse(row.tokens) === null ? null : sum([row]).tokens.total,
         account: row.status === "posted" ? row.account : null,
         actual: row.status === "posted" ? row.amount : null,
       })),

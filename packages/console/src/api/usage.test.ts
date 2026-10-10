@@ -30,6 +30,7 @@ test("usage client rejects malformed success bodies and preserves refusal messag
           threadId: "one",
           lastUsedAt: new Date(0).toISOString(),
           pending: 1,
+          unmetered: 0,
           usage: [],
         },
       ],

@@ -98,7 +98,12 @@ async function setup(responseBody?: unknown) {
     res.end(
       JSON.stringify(
         responseBody ?? {
-          calls: { accepted: requests.at(-1)!.records.length, pending: 0, replayed: 0 },
+          calls: {
+            accepted: requests.at(-1)!.records.length,
+            pending: 0,
+            replayed: 0,
+            unmetered: 0,
+          },
           threads: { accepted: 0, replayed: 0, conflicting: 0 },
           sourceErrors: 0,
         },
@@ -333,4 +338,54 @@ it("sends all unacknowledged mappings in batches before decoding and retries cha
     threads: [{ threadId: "thread-0", providerInstance: "instance-2" }],
   });
   db.close();
+});
+it("Cursor ACP push carries provider instance mapping and checkpoints only acknowledged blobs", async () => {
+  const s = await setup({
+    calls: { accepted: 0, pending: 0, replayed: 0, unmetered: 4 },
+    threads: { accepted: 1, replayed: 0, conflicting: 0 },
+    sourceErrors: 0,
+  });
+  const root = join(s.home, "cursor");
+  await mkdir(join(root, "acp-sessions/session-a"), { recursive: true });
+  const db = new DatabaseSync(join(root, "acp-sessions/session-a/store.db"));
+  db.exec(await readFile(new URL("../usage/fixtures/cursor/acp.sql", import.meta.url), "utf8"));
+  db.close();
+  await mkdir(join(s.home, "userdata"), { recursive: true });
+  const runtime = new DatabaseSync(join(s.home, "userdata/state.sqlite"));
+  runtime.exec(
+    "CREATE TABLE provider_session_runtime (thread_id TEXT,provider_name TEXT,provider_instance_id TEXT,resume_cursor_json TEXT); INSERT INTO provider_session_runtime VALUES ('thread-a','cursor','instance-a','{\"sessionId\":\"session-a\"}')",
+  );
+  runtime.close();
+  const args = [...s.args.slice(0, -2), "--root", `cursor=${root}`];
+  s.status(500);
+  expect(await runUsagePush(args, s.io)).toBe(1);
+  s.status(200);
+  expect(await runUsagePush(args, s.io)).toBe(0);
+  expect(s.requests).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        threads: [
+          {
+            provider: "cursor",
+            providerSessionId: "session-a",
+            threadId: "thread-a",
+            providerInstance: "instance-a",
+          },
+        ],
+      }),
+      expect.objectContaining({
+        records: expect.arrayContaining([
+          expect.objectContaining({
+            provider: "cursor",
+            providerSessionId: "session-a",
+            tokens: null,
+          }),
+        ]),
+      }),
+    ]),
+  );
+  const count = s.requests.length;
+  expect(await runUsagePush(args, s.io)).toBe(0);
+  expect(s.requests).toHaveLength(count);
+  expect(JSON.parse(s.out.text.trim().split("\n")[0]!).calls.unmetered).toBeGreaterThan(0);
 });

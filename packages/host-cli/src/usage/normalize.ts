@@ -25,24 +25,27 @@ export function normalize(
     unit,
     timestamp: (invalidTime ? mtime : timestamp).toISOString(),
     model: typeof call.model === "string" && call.model.length > 0 ? call.model : null,
-    tokens: {
-      input: call.inputTokens,
-      output: call.outputTokens,
-      cacheRead: call.cacheReadInputTokens,
-      cacheWrite: call.cacheCreationInputTokens,
-      cacheWriteOneHour: call.cacheCreationOneHourTokens ?? 0,
-      reasoning: call.reasoningTokens,
-      webSearchRequests: call.webSearchRequests,
-    },
+    tokens:
+      provider === "cursor"
+        ? null
+        : {
+            input: call.inputTokens,
+            output: call.outputTokens,
+            cacheRead: call.cacheReadInputTokens,
+            cacheWrite: call.cacheCreationInputTokens,
+            cacheWriteOneHour: call.cacheCreationOneHourTokens ?? 0,
+            reasoning: call.reasoningTokens,
+            webSearchRequests: call.webSearchRequests,
+          },
     speed: call.speed,
     granularity,
-    estimated: Boolean(call.costIsEstimated) || provider === "cursor" || invalidTime,
+    estimated: Boolean(call.costIsEstimated) || invalidTime,
   };
 }
 export function compareTotals(a: UsageCall, b: UsageCall): number {
   if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? -1 : 1;
-  const av = Object.values(a.tokens),
-    bv = Object.values(b.tokens);
+  const av = Object.values(a.tokens!),
+    bv = Object.values(b.tokens!);
   const sum =
     av.reduce((total, count) => total + count, 0) - bv.reduce((total, count) => total + count, 0);
   if (sum) return sum;

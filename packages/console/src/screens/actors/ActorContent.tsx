@@ -11,7 +11,7 @@ import { Button } from "../../ui/button.tsx";
 import { EmptyState } from "../EmptyContent.tsx";
 import { actorTimeline, actorSequence, actorPasses } from "./actor-model.ts";
 import { useActorReads } from "./actor-reads.ts";
-import { ActorTimeline } from "./ActorTimeline.tsx";
+import { ActorTimeline, ActorTokenLabel } from "./ActorTimeline.tsx";
 import { ActorSequence } from "./ActorSequence.tsx";
 import { durationLabel } from "./TimelineBar.tsx";
 export const actorViewSearch = (s: Record<string, unknown>): { view?: "sequence" } =>
@@ -172,25 +172,37 @@ function ActorStats({
           title={
             usage
               ? Object.entries(usage.tokens)
-                  .map(([k, v]) => `${k}: ${v}`)
+                  .map(([key, value]) => `${key}: ${value}`)
                   .join("\n")
               : undefined
           }
         >
-          {usage ? usage.tokens.total.toLocaleString() : "—"}
+          {usage?.unmetered ? (
+            <ActorTokenLabel
+              tokens={usage.tokens.total}
+              unmetered={usage.unmetered}
+              tokenClasses={usage.tokens}
+            />
+          ) : usage ? (
+            usage.tokens.total.toLocaleString()
+          ) : (
+            "—"
+          )}
         </strong>
       </div>
       <div>
         <small>Cost</small>
         {usage ? (
           <div>
-            {usage.accounts.length
-              ? usage.accounts.map((a) => (
-                  <div key={a.account}>
-                    {a.account} · {formatAmount(a.actual, a.unit)}
-                  </div>
-                ))
-              : "—"}
+            {usage.accounts.length ? (
+              usage.accounts.map((a) => (
+                <div key={a.account}>
+                  {a.account} · {formatAmount(a.actual, a.unit)}
+                </div>
+              ))
+            ) : (
+              <span className="muted">—</span>
+            )}
           </div>
         ) : (
           <strong>—</strong>

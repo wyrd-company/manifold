@@ -49,7 +49,8 @@ export function saveActor(
             posting.session,
             posting.used_at,
           );
-          if (posting.status === "pending") {
+          const movedUnmetered = posting.reason === "unmetered" && (posting.moves ?? 0) > 0;
+          if (posting.status === "pending" && !movedUnmetered) {
             db.prepare("UPDATE usage_postings SET actor=?,item=?,visit=? WHERE seq=?").run(
               attribution.actor,
               attribution.item,
@@ -58,6 +59,8 @@ export function saveActor(
             );
             resolvePosting(options, declaration, now, { ...posting, ...attribution });
           } else {
+            if (posting.status === "pending")
+              resolvePosting(options, declaration, now, { ...posting, ...attribution });
             db.prepare(
               "INSERT INTO usage_reattributions (posting,cause,actor,item,visit,recorded_at) VALUES (?,'ownership',?,?,?,?)",
             ).run(posting.seq, attribution.actor, attribution.item, attribution.visit, now());

@@ -253,6 +253,7 @@ export function ActorsContent() {
                     {usage.data?.kind === "ok" ? (
                       <ActorUsageLabel
                         tokens={usage.data.usage.tokens.total}
+                        unmetered={usage.data.usage.unmetered}
                         accounts={usage.data.usage.accounts}
                         tokenClasses={usage.data.usage.tokens}
                       />

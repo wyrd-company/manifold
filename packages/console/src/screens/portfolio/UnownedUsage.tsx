@@ -11,6 +11,36 @@ import { Button } from "../../ui/button.tsx";
 import { Amount } from "./BudgetSourceCards.tsx";
 import { resetLabel } from "./rows.ts";
 import { MoveUsageDialog } from "./MoveUsageDialog.tsx";
+export function UnownedAmount({
+  amount,
+  calls,
+  pending,
+  unmetered,
+  unit,
+}: {
+  amount: number;
+  calls: number;
+  pending: number;
+  unmetered: number;
+  unit?: string | undefined;
+}) {
+  return (
+    <>
+      <Amount value={amount} unit={unit} />
+      <small className="muted">
+        {calls} calls
+        {pending ? ` · ${pending} pending` : ""}
+        {unmetered ? ` · ${unmetered} unmetered` : ""}
+      </small>
+    </>
+  );
+}
+export const visibleUnownedEntries = (entries: readonly UnownedEntry[], account: string) =>
+  entries.filter((entry) =>
+    Boolean(
+      entry.pending || entry.unmetered || entry.usage.some((usage) => usage.account === account),
+    ),
+  );
 export function UnownedUsage({ read, account }: { read: PortfolioResponse; account: string }) {
   const query = useQuery({
     queryKey: ["usage", "unowned"],
@@ -22,11 +52,7 @@ export function UnownedUsage({ read, account }: { read: PortfolioResponse; accou
   const [toast, setToast] = useState<string>();
   const [now] = useState(() => Date.now());
   const rows =
-    query.data?.kind === "ok"
-      ? query.data.body.unowned.filter(
-          (e) => e.pending || e.usage.some((u) => u.account === account),
-        )
-      : [];
+    query.data?.kind === "ok" ? visibleUnownedEntries(query.data.body.unowned, account) : [];
   return (
     <section className="unowned-usage">
       <h2>Unowned usage</h2>
@@ -79,14 +105,13 @@ export function UnownedUsage({ read, account }: { read: PortfolioResponse; accou
                           .join(", ") || "—"}
                       </td>
                       <td>
-                        <Amount
-                          value={usage.reduce((n, u) => n + u.amount, 0)}
+                        <UnownedAmount
+                          amount={usage.reduce((n, u) => n + u.amount, 0)}
+                          calls={usage.reduce((n, u) => n + u.calls, 0)}
+                          pending={e.pending}
+                          unmetered={e.unmetered}
                           unit={read.accounts.find((a) => a.name === account)?.unit}
                         />
-                        <small className="muted">
-                          {usage.reduce((n, u) => n + u.calls, 0)} calls
-                          {e.pending ? ` · ${e.pending} pending` : ""}
-                        </small>
                       </td>
                       <td className="muted">
                         about{" "}

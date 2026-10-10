@@ -19,11 +19,14 @@ import type { Posting, UsageOptions, UsageRetryResult } from "./types.ts";
 function compareCopies(a: UsageCall, b: UsageCall): number {
   const time = Date.parse(a.timestamp) - Date.parse(b.timestamp);
   if (time) return time;
+  const aTokens = a.tokens,
+    bTokens = b.tokens;
+  if (aTokens === null || bTokens === null) return 0;
   const keys = Object.keys(zeroTokens()) as (keyof UsageTokens)[];
-  const sum = keys.reduce((n, key) => n + a.tokens[key] - b.tokens[key], 0);
+  const sum = keys.reduce((n, key) => n + aTokens[key] - bTokens[key], 0);
   if (sum) return sum;
   for (const key of keys) {
-    const delta = a.tokens[key] - b.tokens[key];
+    const delta = aTokens[key] - bTokens[key];
     if (delta) return delta;
   }
   return 0;
@@ -33,7 +36,7 @@ export function resolvePosting(
   declaration: UsageDeclaration,
   now: () => number,
   posting: Posting,
-): "posted" | "unaccounted" | "unpriced" | "no-window" {
+): "posted" | "unaccounted" | "unpriced" | "no-window" | "unmetered" {
   const db = options.connection.database;
   const session = readUsageSessions(
     db
@@ -52,13 +55,15 @@ export function resolvePosting(
         else if (usage.instance === session?.provider_instance) account = name;
       }
   account ??= fallback;
-  let reason: "unaccounted" | "unpriced" | "no-window" | undefined;
+  const postingTokens = JSON.parse(posting.tokens) as UsageTokens | null;
+  let reason: "unaccounted" | "unpriced" | "no-window" | "unmetered" | undefined;
   let amount: number | undefined;
-  if (!account) reason = "unaccounted";
+  if (postingTokens === null) reason = "unmetered";
+  else if (!account) reason = "unaccounted";
   else {
     amount = priceGrowth(
       JSON.parse(posting.base_tokens) as UsageTokens,
-      JSON.parse(posting.tokens) as UsageTokens,
+      postingTokens,
       posting.provider,
       priceEntry(posting.model, declaration.prices),
       posting.speed,
@@ -107,12 +112,13 @@ export function retryPostings(
     };
     for (const posting of options.connection.database
       .prepare(
-        "SELECT seq, CAST(environment AS BLOB) AS environment, CAST(call_key AS BLOB) AS call_key, revision, used_at, provider, CAST(model AS BLOB) AS model, speed, base_tokens, tokens, CAST(actor AS BLOB) AS actor, CAST(item AS BLOB) AS item, visit, CAST(account AS BLOB) AS account, amount, status, reason, CAST(ledger_key AS BLOB) AS ledger_key, posted_at FROM usage_postings WHERE status='pending' ORDER BY seq",
+        "SELECT seq, CAST(environment AS BLOB) AS environment, CAST(call_key AS BLOB) AS call_key, revision, used_at, provider, CAST(model AS BLOB) AS model, speed, base_tokens, tokens, CAST(actor AS BLOB) AS actor, CAST(item AS BLOB) AS item, visit, CAST(account AS BLOB) AS account, amount, status, reason, CAST(ledger_key AS BLOB) AS ledger_key, posted_at FROM usage_postings WHERE status='pending' AND reason<>'unmetered' ORDER BY seq",
       )
       .all()
       .map(readUsagePostings) as Posting[]) {
       const status = resolvePosting(options, declaration, now, posting);
       if (status === "posted") result.posted++;
+      else if (status === "unmetered") continue;
       else result.pending[status === "no-window" ? "noWindow" : status]++;
     }
     return result;
@@ -172,7 +178,7 @@ export function pushUsage(
   return options.connection.transaction(() => {
     const db = options.connection.database;
     const result: UsagePushResult = {
-      calls: { accepted: 0, pending: 0, replayed: 0 },
+      calls: { accepted: 0, pending: 0, unmetered: 0, replayed: 0 },
       threads: { accepted: 0, replayed: 0, conflicting: 0 },
       sourceErrors: 0,
     };
@@ -214,7 +220,8 @@ export function pushUsage(
           mapping.providerSessionId,
           posting.used_at,
         );
-        if (posting.status === "pending") {
+        const movedUnmetered = posting.reason === "unmetered" && (posting.moves ?? 0) > 0;
+        if (posting.status === "pending" && !movedUnmetered) {
           db.prepare("UPDATE usage_postings SET actor=?,item=?,visit=? WHERE seq=?").run(
             attribution.actor,
             attribution.item,
@@ -223,6 +230,8 @@ export function pushUsage(
           );
           resolvePosting(options, declaration, now, { ...posting, ...attribution });
         } else {
+          if (posting.status === "pending")
+            resolvePosting(options, declaration, now, { ...posting, ...attribution });
           db.prepare(
             "INSERT INTO usage_reattributions (posting,cause,actor,item,visit,recorded_at) VALUES (?,'mapping',?,?,?,?)",
           ).run(posting.seq, attribution.actor, attribution.item, attribution.visit, now());
@@ -253,18 +262,26 @@ export function pushUsage(
         .get(request.environment, record.key) as
         | { record: string; charged: string; revision: number }
         | undefined;
-      const base: UsageTokens = previous
-        ? (JSON.parse(previous.charged) as UsageTokens)
-        : zeroTokens();
-      const charged = { ...record.tokens },
-        added = { ...record.tokens };
-      for (const key of Object.keys(base) as (keyof UsageTokens)[]) {
-        charged[key] = Math.max(base[key], record.tokens[key]);
-        added[key] = charged[key] - base[key];
+      const previousCharged = previous
+        ? (JSON.parse(previous.charged) as UsageTokens | null)
+        : undefined;
+      if (previous && (record.tokens === null || previousCharged === null)) {
+        result.calls.replayed++;
+        continue;
       }
+      const base: UsageTokens | null =
+        record.tokens === null ? null : (previousCharged ?? zeroTokens());
+      const charged: UsageTokens | null = record.tokens === null ? null : { ...record.tokens };
+      const added: UsageTokens | null = record.tokens === null ? null : { ...record.tokens };
+      if (base !== null && charged !== null && added !== null && record.tokens !== null)
+        for (const key of Object.keys(base) as (keyof UsageTokens)[]) {
+          charged[key] = Math.max(base[key], record.tokens[key]);
+          added[key] = charged[key] - base[key];
+        }
       if (
         previous &&
-        (record.granularity === "call" || Object.values(added).every((n) => n === 0))
+        (record.granularity === "call" ||
+          (added !== null && Object.values(added).every((n) => n === 0)))
       ) {
         result.calls.replayed++;
         continue;
@@ -308,7 +325,9 @@ export function pushUsage(
           )
           .get(request.environment, record.key, revision),
       ) as Posting;
-      if (resolvePosting(options, declaration, now, posting) === "posted") result.calls.accepted++;
+      const status = resolvePosting(options, declaration, now, posting);
+      if (status === "posted") result.calls.accepted++;
+      else if (status === "unmetered") result.calls.unmetered++;
       else result.calls.pending++;
     }
     return result;

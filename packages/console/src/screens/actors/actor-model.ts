@@ -31,6 +31,7 @@ export interface Pass {
   end?: number;
   running: boolean;
   tokens: number;
+  unmetered: number;
   accounts: readonly ActorActual[];
 }
 export interface TimelineRow {
@@ -41,6 +42,7 @@ export interface TimelineRow {
   exit: string;
   tone: Tone;
   tokens: number;
+  unmetered: number;
   tokenClasses: ActorTokens | undefined;
   accounts: readonly ActorActual[];
   passes: readonly number[];
@@ -53,6 +55,7 @@ export interface ActorTimeline {
   rows: readonly TimelineRow[];
   total: {
     tokens: number;
+    unmetered: number;
     accounts: readonly ActorActual[];
     tokenClasses: ActorTokens | undefined;
   };
@@ -67,12 +70,13 @@ export interface SequenceMessage {
   tone: Tone;
   pass?: number;
   tokens?: number;
+  unmetered?: number;
   accounts?: readonly ActorActual[];
 }
 export interface ActorSequence {
   lifelines: readonly { id: string; label: string }[];
   messages: readonly SequenceMessage[];
-  unattributed: { tokens: number; accounts: readonly ActorActual[] };
+  unattributed: { tokens: number; unmetered: number; accounts: readonly ActorActual[] };
 }
 const time = (s: string) => Date.parse(s);
 const object = (v: unknown): Record<string, unknown> =>
@@ -104,14 +108,17 @@ function answerText(input: ActorModelInput, event: ReceivedEvent): string {
 }
 const totals = (calls: ActorUsageResponse["calls"], units: readonly ActorActual[]) => {
   const accounts = new Map<string, number>();
-  let tokens = 0;
+  let tokens = 0,
+    unmetered = 0;
   for (const c of calls) {
-    tokens += c.total;
+    if (c.total === null) unmetered += 1;
+    else tokens += c.total;
     if (c.account !== null && c.actual !== null)
       accounts.set(c.account, (accounts.get(c.account) ?? 0) + c.actual);
   }
   return {
     tokens,
+    unmetered,
     accounts: [...accounts]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([account, actual]) => ({
@@ -319,6 +326,7 @@ export function actorTimeline(input: ActorModelInput): ActorTimeline {
       exit,
       tone,
       tokens: counted?.tokens.total ?? 0,
+      unmetered: counted?.unmetered ?? 0,
       tokenClasses: counted?.tokens,
       accounts: (counted?.accounts ?? []).map((a) => {
         const unit = usage?.accounts.find((total) => total.account === a.account)?.unit;
@@ -337,6 +345,7 @@ export function actorTimeline(input: ActorModelInput): ActorTimeline {
     rows,
     total: {
       tokens: usage?.tokens.total ?? 0,
+      unmetered: usage?.unmetered ?? 0,
       accounts: usage?.accounts ?? [],
       tokenClasses: usage?.tokens,
     },
@@ -457,7 +466,14 @@ export function actorSequence(input: ActorModelInput): ActorSequence {
       label: pending ? `${label} · pending` : label,
       style,
       tone: pending ? "muted" : tone,
-      ...(pass ? { pass: pass.number, tokens: pass.tokens, accounts: pass.accounts } : {}),
+      ...(pass
+        ? {
+            pass: pass.number,
+            tokens: pass.tokens,
+            unmetered: pass.unmetered,
+            accounts: pass.accounts,
+          }
+        : {}),
     });
   }
   for (const p of passes.filter((p) => p.running))
@@ -475,6 +491,7 @@ export function actorSequence(input: ActorModelInput): ActorSequence {
       tone: "primary",
       pass: p.number,
       tokens: p.tokens,
+      unmetered: p.unmetered,
       accounts: p.accounts,
     });
   const unmatched =

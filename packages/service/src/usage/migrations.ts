@@ -76,7 +76,8 @@ CREATE TABLE usage_calls (
 -- \`session-total\`, with the tokens it adds to its base, the tokens the key
 -- had charged before it, and the attribution fixed when
 -- it was made. A pending posting waits for an account, a price, or a
--- ledger window; a posted one names its ledger operation.
+-- ledger window, except an \`unmetered\` one, whose call has no token
+-- counts and which never posts; a posted one names its ledger operation.
 CREATE TABLE usage_postings (
   seq INTEGER PRIMARY KEY,
   environment TEXT NOT NULL,
@@ -94,7 +95,7 @@ CREATE TABLE usage_postings (
   account TEXT,
   amount INTEGER CHECK (amount >= 0),
   status TEXT NOT NULL CHECK (status IN ('pending', 'posted')),
-  reason TEXT CHECK (reason IN ('unaccounted', 'unpriced', 'no-window')),
+  reason TEXT CHECK (reason IN ('unaccounted', 'unpriced', 'no-window', 'unmetered')),
   ledger_key TEXT UNIQUE,
   posted_at INTEGER,
   UNIQUE (environment, call_key, revision),
@@ -106,7 +107,8 @@ CREATE TABLE usage_postings (
   CHECK (reason IS NOT 'unaccounted' OR account IS NULL)
 ) STRICT;
 
-CREATE INDEX usage_postings_pending ON usage_postings (seq) WHERE status = 'pending';
+CREATE INDEX usage_postings_pending ON usage_postings (seq)
+  WHERE status = 'pending' AND reason <> 'unmetered';
 
 CREATE INDEX usage_postings_by_actor ON usage_postings (actor, visit);
 

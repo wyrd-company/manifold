@@ -21,18 +21,20 @@ export interface ActorActual {
 export interface ActorUsageResponse {
   readonly actorId: string;
   readonly tokens: ActorTokens;
+  readonly unmetered: number;
   readonly accounts: readonly ActorActual[];
   readonly visits: readonly {
     readonly visit: number;
     readonly enteredAt: string;
     readonly tokens: ActorTokens;
+    readonly unmetered: number;
     readonly accounts: readonly ActorActual[];
   }[];
   readonly calls: readonly {
     readonly usedAt: string;
     readonly thread: { readonly environment: string; readonly threadId: string } | null;
     readonly visit: number | null;
-    readonly total: number;
+    readonly total: number | null;
     readonly account: string | null;
     readonly actual: number | null;
   }[];
@@ -51,12 +53,14 @@ export function isActorUsageResponse(v: unknown): v is ActorUsageResponse {
   return shape(v, {
     actorId: nonempty,
     tokens,
+    unmetered: natural,
     accounts: array(actual),
     visits: array((v) =>
       shape(v, {
         visit: (v) => natural(v) && Number(v) > 0,
         enteredAt: dateTime,
         tokens,
+        unmetered: natural,
         accounts: array((v) => shape(v, { account: nonempty, actual: natural })),
       }),
     ),
@@ -65,7 +69,7 @@ export function isActorUsageResponse(v: unknown): v is ActorUsageResponse {
         usedAt: dateTime,
         thread: (v) => v === null || shape(v, { environment: nonempty, threadId: nonempty }),
         visit: (v) => v === null || (natural(v) && Number(v) > 0),
-        total: natural,
+        total: (v) => v === null || natural(v),
         account: (v) => v === null || nonempty(v),
         actual: (v) => v === null || natural(v),
       }),

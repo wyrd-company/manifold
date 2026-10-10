@@ -71,12 +71,15 @@ export const usagePushSchema = {
         calls: {
           type: "object",
           additionalProperties: false,
-          required: ["accepted", "pending", "replayed"],
+          required: ["accepted", "pending", "unmetered", "replayed"],
           properties: {
             accepted: {
               $ref: "#/$defs/count",
             },
             pending: {
+              $ref: "#/$defs/count",
+            },
+            unmetered: {
               $ref: "#/$defs/count",
             },
             replayed: {
@@ -209,7 +212,9 @@ export const usageRecordSchema = {
           minLength: 1,
         },
         tokens: {
-          type: "object",
+          description:
+            "The call's token counts, or null for an unmetered call, whose provider records no token counts.",
+          type: ["object", "null"],
           additionalProperties: false,
           required: [
             "input",
@@ -254,6 +259,21 @@ export const usageRecordSchema = {
         },
         estimated: {
           type: "boolean",
+        },
+      },
+      if: {
+        properties: {
+          tokens: {
+            type: "null",
+          },
+        },
+        required: ["tokens"],
+      },
+      then: {
+        properties: {
+          granularity: {
+            const: "call",
+          },
         },
       },
     },

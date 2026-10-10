@@ -85,6 +85,11 @@ export interface PortfolioPricing {
     readonly model: string | null;
     readonly postings: number;
   }[];
+  readonly unmetered: readonly {
+    readonly provider: "claude" | "codex" | "cursor" | "grok" | "opencode";
+    readonly model: string | null;
+    readonly postings: number;
+  }[];
 }
 export interface PortfolioResponse {
   readonly pricing: PortfolioPricing;
@@ -190,6 +195,13 @@ export function isPortfolioResponse(v: unknown): v is PortfolioResponse {
         bundledModels: natural,
         overrides: natural,
         unpriced: array((v) =>
+          shape(v, {
+            provider: oneOf("claude", "codex", "cursor", "grok", "opencode"),
+            model: (v) => v === null || nonempty(v),
+            postings: positive,
+          }),
+        ),
+        unmetered: array((v) =>
           shape(v, {
             provider: oneOf("claude", "codex", "cursor", "grok", "opencode"),
             model: (v) => v === null || nonempty(v),
