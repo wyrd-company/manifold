@@ -115,7 +115,7 @@ test("rename outside the label prefix reverts even when Accept is declared", () 
     planScopeConfiguration({ ...base, observed, applied }).changes.find((c) => c.drift),
   ).toMatchObject({ side: "github", to: { name: "size: Small" } });
 });
-test("declared label rename retains applied identity and never deletes the renamed entity", () => {
+test("a declaration option name change creates a new entity and requires consent to remove the earlier name", () => {
   const base = input();
   const applied = planScopeConfiguration(base).applied!;
   const owned = {
@@ -125,15 +125,16 @@ test("declared label rename retains applied identity and never deletes the renam
     ),
   };
   const planned = planScopeConfiguration({ ...base, owned, applied });
-  expect(planned.writes.find((g) => g.write.kind === "label-update")?.write).toEqual({
-    kind: "label-update",
+  expect(planned.writes.find((g) => g.write.kind === "label-create")?.write).toMatchObject({
+    kind: "label-create",
     repository: "sample/depot",
-    nodeId: "L_one",
     name: "size: Tiny",
   });
-  expect(
-    planned.writes.some((g) => g.write.kind === "label-delete" && g.write.nodeId === "L_one"),
-  ).toBe(false);
+  expect(planned.writes.some((g) => g.write.kind === "label-update")).toBe(false);
+  expect(planned.changes.find((c) => c.target.field === "size: Small")).toMatchObject({
+    action: "remove",
+    requiresRemoval: true,
+  });
 });
 test("milestone title drift accepts the option and leaves unrelated and closed milestones intact", () => {
   const base = input();
@@ -239,3 +240,49 @@ test.each(["size: ", "size:  Tiny", "size: Tiny "])(
     ).toMatchObject({ side: "github", to: { name: "size: Small" } });
   },
 );
+test("a label rename may accept a name already used by a milestone", () => {
+  const base = input();
+  if (base.observed?.status !== "ready") throw new Error("ready required");
+  const owned = {
+    ...base.owned,
+    entities: base.owned.entities.map((e) =>
+      e.key === "label:size: small"
+        ? { ...e, key: "label:small", name: "Small", labelPrefixes: [""] }
+        : e,
+    ),
+  };
+  const before = {
+    ...base.observed,
+    labels: base.observed.labels.map((l) => (l.nodeId === "L_one" ? { ...l, name: "Small" } : l)),
+  };
+  const applied = planScopeConfiguration({ ...base, owned, observed: before }).applied!;
+  const observed = {
+    ...before,
+    labels: before.labels.map((l) => (l.nodeId === "L_one" ? { ...l, name: "Spring" } : l)),
+  };
+  expect(
+    planScopeConfiguration({ ...base, owned, applied, observed }).changes.find((c) => c.drift),
+  ).toMatchObject({ side: "declaration", to: { name: "Spring" } });
+});
+test("unowned description drift does not override a declared color change under Accept", () => {
+  const base = input();
+  if (base.observed?.status !== "ready") throw new Error("ready required");
+  const applied = planScopeConfiguration(base).applied!;
+  const owned = {
+    ...base.owned,
+    entities: base.owned.entities.map((e) =>
+      e.key === "label:size: small" ? { ...e, color: "ddeeff", description: undefined } : e,
+    ),
+  };
+  const observed = {
+    ...base.observed,
+    labels: base.observed.labels.map((l) =>
+      l.nodeId === "L_one" ? { ...l, description: "External note" } : l,
+    ),
+  };
+  expect(
+    planScopeConfiguration({ ...base, owned, applied, observed }).changes.find(
+      (c) => c.target.field === "size: Small",
+    ),
+  ).toMatchObject({ side: "github", drift: false, properties: ["color"], to: { color: "ddeeff" } });
+});

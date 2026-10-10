@@ -2,7 +2,6 @@
 // relationships:
 //   implements: task-metadata
 // ---
-import { repositoryIdentities } from "./repository-identities.ts";
 import { scopeKey } from "@wyrd-company/manifold-shared";
 import type {
   ScopeEntityWrite,
@@ -10,7 +9,6 @@ import type {
   MilestoneConfiguration,
 } from "../github-source/index.ts";
 import type { EntityTarget, ScopeInput, ScopePlan, PlanChange } from "./project-types.ts";
-import { canonical } from "./plan.ts";
 const target = (entity: LabelConfiguration | MilestoneConfiguration): EntityTarget =>
   "title" in entity
     ? { entity: "milestone", name: entity.title, description: entity.description }
@@ -35,12 +33,11 @@ export function planRepositoryConfiguration(input: ScopeInput): ScopePlan | unde
   const writes: { write: ScopeEntityWrite; changes: readonly PlanChange[] }[] = [];
   const owned: Record<string, string> = {};
   const matched = new Set<string>();
-  const identities = repositoryIdentities(input);
   for (const entity of input.owned.entities) {
     if (entity.storage !== "label" && entity.storage !== "milestone") continue;
     const labels = entity.storage === "label";
     const candidates = labels ? configuration.labels : configuration.milestones;
-    const id = identities[entity.key];
+    const id = input.applied?.owned[entity.key];
     const observed =
       candidates.find((c) => c.nodeId === id) ??
       candidates.find((c) =>
@@ -70,7 +67,13 @@ export function planRepositoryConfiguration(input: ScopeInput): ScopePlan | unde
       previous?.status === "ready"
         ? (labels ? previous.labels : previous.milestones).find((c) => c.nodeId === id)
         : undefined;
-    const drift = !!before && canonical(target(before)) !== canonical(from);
+    const drift =
+      !!before &&
+      (!from ||
+        (["name", "color", "description"] as const).some(
+          (property) =>
+            properties.includes(property) && target(before)[property] !== from[property],
+        ));
     // Only an entity each declaring field can represent may be accepted.
     const canAccept =
       entity.whenChanged === "accept" &&
@@ -85,6 +88,7 @@ export function planRepositoryConfiguration(input: ScopeInput): ScopePlan | unde
       !input.owned.entities.some(
         (other) =>
           other !== entity &&
+          other.storage === entity.storage &&
           (labels
             ? other.name.toLowerCase() === from!.name.toLowerCase()
             : other.name === from!.name),

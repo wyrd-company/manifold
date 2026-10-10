@@ -3,7 +3,7 @@
 //   verifies: [task-metadata, projects-api, github-event-source]
 // ---
 import { expect, test } from "vite-plus/test";
-import { repositoryConsole, repositoryMetadata } from "./test-fixtures/console.ts";
+import { repositoryConsole } from "./test-fixtures/console.ts";
 test("repository Apply reads actual adapters, converges, reports outside tasks, and refuses whole Apply before writes", async () => {
   const h = await repositoryConsole();
   try {
@@ -74,16 +74,21 @@ test("external rename Accept saves the declaration; Revert renames the same GitH
     expect(current).toContain("color: ddeeff");
     expect(current).toContain("# retain");
     expect((await h.plan("delivery")).configuration).toEqual({ state: "in-sync" });
-    await h.changeTaskMetadata(
-      repositoryMetadata.replace("whenChanged: accept", "whenChanged: revert"),
-    );
+    await h.changeTaskMetadata(current!.replace("whenChanged: accept", "whenChanged: revert"));
     await h.service.revisions.pull();
     await h.configuration.apply(h.service.processRepository.current()!);
+    await h.platform.adapters.writeScopeEntity({
+      kind: "label-update",
+      repository: "sample/depot",
+      nodeId: "L_small",
+      name: "size: Small",
+      color: "aabbcc",
+    });
     await h.configuration.projects.apply("delivery", { removeUndeclared: true });
     expect(h.platform.labels()[0]).toMatchObject({
       node_id: "L_small",
-      name: "size: Small",
-      color: "aabbcc",
+      name: "size: Tiny",
+      color: "ddeeff",
     });
   } finally {
     await h.close();
