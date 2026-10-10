@@ -937,6 +937,8 @@ it("records identity errors and host ActorStartError as input-invalid", async ()
   });
 });
 
+// The 1,000-record fixture took 4,586 ms with default workers and
+// 10,658/10,433 ms in paired CPU-0 runs; retain 60 s for shared-load margin.
 it.each([10, 1000])(
   "record checks and reconciles share one mirror read with %i unfinished records",
   async (size) => {

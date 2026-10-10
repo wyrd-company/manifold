@@ -1117,91 +1117,102 @@ it("reads a token holder before and after return, and no holder for an unknown t
   expect(f.gates.tokenHolder(token)).toBe("parcel-00");
 });
 
-it.each([10, 1000])(
-  "one mirror read supplies every evaluation of a grant round with %i issues",
-  async (size) => {
-    const f = await fixture(
-      `export default i => i.holders.length >= 5 ? null : {task: [...i.population].sort((a,b) => b.criticalPath-a.criticalPath || a.id.localeCompare(b.id))[0].id};`,
-      {},
-      document("exit", false),
-    );
-    const { mirror, bound } = trackedMirror(f.store, size);
-    f.options.trackedIssueIndex = () => mirror.trackedIssueIndex(bound);
-    const before = mirror.read(),
-      after = mirror.read();
-    for (const [from, to] of [
-      ["parcel-1", "parcel-0"],
-      ["parcel-2", "parcel-1"],
-      ["parcel-4", "parcel-3"],
-      ["parcel-3", "parcel-4"],
-      ["parcel-9", "parcel-0"],
-    ])
-      after.dependencies.set(`${from}:${to}`, { from: from!, to: to!, present: true, revision: 0 });
-    after.items.get("parcel-9")!.present = false;
-    mirror.write(before, after);
-    for (let i = 0; i < size + 2; i++)
-      f.store.saveSnapshot({
-        actorId: `member-${String(i).padStart(4, "0")}`,
-        machine: f.blueprint.key,
-        snapshot: {
-          ...snapshot(),
-          context: {
-            manifold: {
-              portfolioItem: "left",
-              ...(i === size ? {} : { issue: i === size + 1 ? "unknown" : `parcel-${i}` }),
+// The 1,000-issue fixture took 642 ms with default workers, 1,551/1,557 ms
+// in paired CPU-0 runs, and 5,380 ms in CI; allow shared-load margin.
+for (const size of [10, 1000])
+  it(
+    `one mirror read supplies every evaluation of a grant round with ${size} issues`,
+    async () => {
+      const f = await fixture(
+        `export default i => i.holders.length >= 5 ? null : {task: [...i.population].sort((a,b) => b.criticalPath-a.criticalPath || a.id.localeCompare(b.id))[0].id};`,
+        {},
+        document("exit", false),
+      );
+      const { mirror, bound } = trackedMirror(f.store, size);
+      f.options.trackedIssueIndex = () => mirror.trackedIssueIndex(bound);
+      const before = mirror.read(),
+        after = mirror.read();
+      for (const [from, to] of [
+        ["parcel-1", "parcel-0"],
+        ["parcel-2", "parcel-1"],
+        ["parcel-4", "parcel-3"],
+        ["parcel-3", "parcel-4"],
+        ["parcel-9", "parcel-0"],
+      ])
+        after.dependencies.set(`${from}:${to}`, {
+          from: from!,
+          to: to!,
+          present: true,
+          revision: 0,
+        });
+      after.items.get("parcel-9")!.present = false;
+      mirror.write(before, after);
+      for (let i = 0; i < size + 2; i++)
+        f.store.saveSnapshot({
+          actorId: `member-${String(i).padStart(4, "0")}`,
+          machine: f.blueprint.key,
+          snapshot: {
+            ...snapshot(),
+            context: {
+              manifold: {
+                portfolioItem: "left",
+                ...(i === size ? {} : { issue: i === size + 1 ? "unknown" : `parcel-${i}` }),
+              },
             },
           },
-        },
-      });
-    // Existing fixture members name parcel-1; move them out of the population.
-    for (let i = 0; i < 20; i++) f.save(`parcel-${String(i).padStart(2, "0")}`, "working");
-    const prepare = vi.spyOn(f.store.connection.database, "prepare");
-    await f.start();
-    expect(prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
-      1,
-    );
-    prepare.mockRestore();
-    const inputs = f.rows("gates_evaluation").map(
-      (row) =>
-        JSON.parse(String(row["input"])) as {
-          population: { id: string; criticalPath: number }[];
-        },
-    );
-    expect(inputs).toHaveLength(6);
-    for (const input of inputs.slice(1))
-      for (const member of input.population)
-        expect(member.criticalPath).toBe(
-          inputs[0]!.population.find((m) => m.id === member.id)!.criticalPath,
-        );
-    const lengths = new Map(inputs[0]!.population.map((m) => [m.id, m.criticalPath]));
-    for (let i = 0; i < size + 2; i++)
-      expect(lengths.get(`member-${String(i).padStart(4, "0")}`)).toBe(
-        i === 0 ? 3 : [1, 3, 4].includes(i) ? 2 : 1,
+        });
+      // Existing fixture members name parcel-1; move them out of the population.
+      for (let i = 0; i < 20; i++) f.save(`parcel-${String(i).padStart(2, "0")}`, "working");
+      const prepare = vi.spyOn(f.store.connection.database, "prepare");
+      await f.start();
+      expect(
+        prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue"),
+      ).toHaveLength(1);
+      prepare.mockRestore();
+      const inputs = f.rows("gates_evaluation").map(
+        (row) =>
+          JSON.parse(String(row["input"])) as {
+            population: { id: string; criticalPath: number }[];
+          },
       );
-    expect(f.scheduled).toEqual([
-      "member-0000",
-      "member-0001",
-      "member-0003",
-      "member-0004",
-      "member-0002",
-    ]);
-    const changed = mirror.read();
-    const row = changed.issues.get("parcel-2")!;
-    row.issue = { ...row.issue, state: "closed" };
-    mirror.write(after, changed);
-    f.store.saveSnapshot({ actorId: "later", machine: f.blueprint.key, snapshot: snapshot() });
-    // The comparator keeps the next population waiting once five tokens are held.
-    f.gates.inputChanged();
-    const next = vi.spyOn(f.store.connection.database, "prepare");
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    const latest = JSON.parse(String(f.rows("gates_evaluation").at(-1)?.["input"])) as {
-      population: { id: string; criticalPath: number }[];
-    };
-    expect(latest.population.find((m) => m.id === "later")?.criticalPath).toBe(1);
-    expect(next.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(1);
-    next.mockRestore();
-  },
-);
+      expect(inputs).toHaveLength(6);
+      for (const input of inputs.slice(1))
+        for (const member of input.population)
+          expect(member.criticalPath).toBe(
+            inputs[0]!.population.find((m) => m.id === member.id)!.criticalPath,
+          );
+      const lengths = new Map(inputs[0]!.population.map((m) => [m.id, m.criticalPath]));
+      for (let i = 0; i < size + 2; i++)
+        expect(lengths.get(`member-${String(i).padStart(4, "0")}`)).toBe(
+          i === 0 ? 3 : [1, 3, 4].includes(i) ? 2 : 1,
+        );
+      expect(f.scheduled).toEqual([
+        "member-0000",
+        "member-0001",
+        "member-0003",
+        "member-0004",
+        "member-0002",
+      ]);
+      const changed = mirror.read();
+      const row = changed.issues.get("parcel-2")!;
+      row.issue = { ...row.issue, state: "closed" };
+      mirror.write(after, changed);
+      f.store.saveSnapshot({ actorId: "later", machine: f.blueprint.key, snapshot: snapshot() });
+      // The comparator keeps the next population waiting once five tokens are held.
+      f.gates.inputChanged();
+      const next = vi.spyOn(f.store.connection.database, "prepare");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const latest = JSON.parse(String(f.rows("gates_evaluation").at(-1)?.["input"])) as {
+        population: { id: string; criticalPath: number }[];
+      };
+      expect(latest.population.find((m) => m.id === "later")?.criticalPath).toBe(1);
+      expect(next.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
+        1,
+      );
+      next.mockRestore();
+    },
+    size === 1000 ? 15000 : undefined,
+  );
 
 it("a grant round with no issue identities does not read the mirror", async () => {
   const f = await fixture("export default i=>null");
