@@ -351,6 +351,7 @@ export function createProjects(
         metadata: current()?.projects[binding],
         fields: after.fields,
         applied: previous,
+        scopes: await observeScopes(s, scopesFor(s, current(), binding), controller.signal),
       }).changes.some((c) => c.side === "declaration");
       if (stillPending) {
         records.savePending(binding, saveId!, saved.commit, now());
