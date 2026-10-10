@@ -332,13 +332,12 @@ proposed-design:
     that misses the cast fails on every Node release, not only on the ones
     that end a string at a NUL; a nullable column is checked for `null`
     before the call. No constraint or query applies `length`, `GLOB`,
-    `LIKE`, `instr`, or `printf` to a column whose strings may hold a NUL,
+    `LIKE`, or `printf` with `%s` to a column whose strings may hold a NUL,
     since each reads only up to the first one: a column that must not be
     empty is checked with `<column> <> ''`, and a length limit that a
     boundary schema states, such as the 8000-character limit on a message,
     stays at that boundary. A column whose format admits no NUL, such as a
-    hex digest, a generated id of fixed length, or a GitHub repository
-    name, may keep such a check. The reads are the same on
+    hex digest or a generated id of fixed length, may keep such a check. The reads are the same on
     every release, and nothing checks the Node version. The store's own
     reads name their columns, with no `SELECT *`, and cast `actor_id`,
     `machine`, `event_id`, `topic`, `state_path`, `event_name`, `entry_id`,
@@ -602,7 +601,27 @@ proposed-design:
     and that `drain` delivers the full event name. On the supported floor,
     Node 24.11, the test fails while the reads take TEXT; on every release
     it fails while a constraint uses `length`. `storedText` of a string, a
-    number, and `null` throws a `TypeError`. Fault tests, for each crash
+    number, and `null` throws a `TypeError`. Each module that keeps tables
+    in the file proves the same two values through its own public
+    interface, with a reopen of the store between the write and the read
+    where the module reads after a restart: agent-tools question
+    environment, thread and turn ids, answer thread id and text, and
+    message thread id; escalations actor id, invoke id, entry id, title,
+    question, and notification destination; gates gate, version, actor id,
+    and state entry id through entry, grant, token, and evaluation;
+    github-source node ids, owner, field names, pending node ids, and the
+    card move actor id; history visit machine and command thread id;
+    intake issue node id, actor id, environment, binding, portfolio item,
+    and blueprint version; ledger account, item, actor, and a window key
+    given to `credit`, through the current and next window, capacity,
+    balances, and the window of an actual posted by `postActual` and of a
+    reattribution; t3code-source environment id, thread id, project id, and
+    created-project fields; usage environment, provider, provider instance,
+    provider session id, thread id, call key, model, actor, item, and
+    account, through postings, attribution, moves, and unowned usage; and
+    the environment of a hold. CI runs the service tests on Node 24.11
+    beside the declared release, so a read that takes TEXT where it must
+    cast fails in CI. Fault tests, for each crash
     after the inbox write, after `sent`, and after `saved`: the crashed
     store is closed, a fresh store opens on the same file, `drain` with a
     target restored from `loadSnapshot` leaves the total applied once, no
