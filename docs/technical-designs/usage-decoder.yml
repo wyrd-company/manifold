@@ -7,6 +7,7 @@ relationships:
   # GAP-EDGE: the technical-design schema declares no edge to a spike or a
   # specification; `references` is the best fit.
   references:
+    - provider-capacity
     - cost-history
     - usage-record
     - host-cli-usage
@@ -23,6 +24,10 @@ background:
     library is `@codeburn/core`. It decodes records the host hands it. It
     does no file I/O and no pricing.
   problems:
+    - >-
+      Non-secret Codex rollouts can carry quota observations alongside tokens.
+      The provider-capacity spike separates those observations from calls and
+      identifies Antigravity in the released T3 Code provider inventory.
     - >-
       Each provider keeps its sessions in its own layout: JSON Lines
       transcripts, rollout files, session directories, and SQLite databases.

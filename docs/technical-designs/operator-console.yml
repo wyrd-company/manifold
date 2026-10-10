@@ -16,6 +16,7 @@ relationships:
   # GAP-EDGE: the technical-design schema declares no edge to a
   # specification; `references` is the best fit.
   references:
+    - provider-capacity
     - actors-api
     - actor-usage-api
     - blueprints-api
@@ -94,6 +95,12 @@ background:
     usage, GitHub mirror state, and declarations through those APIs.
     Draft edits are linted in the console and saved as commits and pushes
     to the process repository. Access control belongs to the deployment.
+  problems:
+    - >-
+      Provider percentage observations and these screens' declared-budget
+      meters represent separate values. The provider-capacity spike records
+      conditional windows, source freshness and evidence gaps for the
+      observed-capacity scope.
 design-challenges:
   client-routes: >-
     The console's routes exist only in the browser. A reload or a pasted

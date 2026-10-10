@@ -7,6 +7,7 @@ relationships:
   # GAP-EDGE: the technical-design schema declares no edge to a decision
   # record; `references` is the best fit.
   references:
+    - provider-capacity
     - move-operator-usage-through-the-ledger
 terms:
   - actual
@@ -39,6 +40,10 @@ background:
     guarantee floor, borrowing from the unallocated remainder only, weight
     over items with waiting work, and pacing as a wrapper.
   problems:
+    - >-
+      Provider quotas can have simultaneous windows and early resets. The
+      provider-capacity spike distinguishes them from this ledger's declared
+      account windows and integer budget amounts.
     - >-
       The store and ledger share one SQLite database file through
       `StoreConnection`, so ledger operations can join the caller's
