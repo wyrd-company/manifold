@@ -64,6 +64,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **available balance** allocation less usage counted as it arrives, per portfolio item and account.
 - **binding** a declaration in the process repository that ties a GitHub Project or a T3code project to a portfolio item.
 - **blueprint** a declarative, static schema (YAML) specifying states, transitions, and structure of a state machine.
+- **blueprint reference** an invoke whose `src` is a blueprint path, which runs that blueprint as a child state machine; the referenced blueprint is its own file, with its own draft and Publish, and any number of blueprints may reference it.
 - **blueprint version** a blueprint as it is at one process repository commit, named by the commit and its path, and for a bundled blueprint also by its bundle.
 - **board** a KANBAN board
 - **boundary transition** a transition with exactly one end inside a canvas scope, drawn between the state inside and a node that stands for the state outside.

@@ -42,6 +42,7 @@ terms:
   - state-visit
   - canvas-scope
   - boundary-transition
+  - blueprint-reference
 objective: >-
   Give the operator console one package that builds into static files, one
   place in the service that serves them and the API the console reads, and a
@@ -59,8 +60,9 @@ objective: >-
   open work. It changes a process
   from the Blueprints screen: edits each blueprint on a canvas of its
   states and transitions, the whole blueprint or one nested state at a
-  time with the transitions that cross into it, with an inspector for
-  every node and edge, or as
+  time with the transitions that cross into it, opens each blueprint a
+  state invokes as its own document, with an inspector for every node and
+  edge, or as
   YAML in a view the operator toggles to, with the service's own lint
   marking each finding as the draft changes, and publishes it as a commit
   pushed to the process repository, which the service then runs with no
@@ -153,6 +155,13 @@ design-challenges:
     transition from any view, and always see and publish the whole file,
     and what the canvas shows must stay out of the blueprint, so that
     looking at a blueprint never changes what it runs.
+  blueprint-references: >-
+    A blueprint can invoke another blueprint, so that one blueprint is
+    reused by many. The operator must tell at a glance a nested state of
+    this blueprint, drawn in place, from a reference to another file, which
+    has its own draft, lint, and Publish, must be able to add a reference
+    to an existing blueprint and open it, and must be able to return to
+    where they were, so that reuse never blurs which file an edit changes.
   declaration-edits: >-
     A bind dialog changes one binding in `bindings.yml`, a file the
     operator may also edit by hand with comments. The edit must keep every
@@ -1187,7 +1196,8 @@ proposed-design:
     API names it, such as `/console/blueprints/blueprints/review.yml`. Both
     render `BlueprintsContent`, which shows the list or the editor by
     route, as `DESIGN.md` states. The breadcrumb shows "Blueprints / <path>"
-    on the editor. The navigation entry, its label, and its description
+    on the editor, with the reference trail of `reference-navigation`
+    between them. The navigation entry, its label, and its description
     are unchanged.
   blueprints-list: >-
     `BlueprintsContent` on `blueprints` reads `GET /api/blueprints`. Its
@@ -1293,8 +1303,8 @@ proposed-design:
     buttons are ghost icon buttons, each with an `aria-label` and a
     tooltip naming it and its key, in groups: Select (`V`) and Move (`H`),
     one of which is the active tool; Add state (`S`), a menu of State,
-    Compound state, Parallel state, Final state, and History state, and
-    Add transition (`T`); Undo (`⌘Z` or `Ctrl+Z`) and Redo (`⌘⇧Z` or
+    Compound state, Parallel state, Final state, and History state, Add
+    reference (`R`), and Add transition (`T`); Undo (`⌘Z` or `Ctrl+Z`) and Redo (`⌘⇧Z` or
     `Ctrl+Shift+Z`); Zoom out (`-`), Zoom in (`+`), and Fit (`Shift+1`);
     and Automatic layout (`Shift+L`). Keys act while focus is on the
     canvas, never in an inspector field or the YAML view. With Select, a
@@ -1303,7 +1313,9 @@ proposed-design:
     pans. With Move, every drag pans and nothing moves or connects; holding
     Space gives Move until it is released. Choosing a state type arms
     placement: a ghost of the node follows the pointer, a click places the
-    state, and Escape disarms. Add transition arms connection: a click on
+    state, and Escape disarms. Add reference opens the blueprint picker of
+    `adding-references` and, once a blueprint is chosen, arms placement
+    the same way. Add transition arms connection: a click on
     the source state and a click on the target state, the source again for
     a transition to itself, open the event picker; Escape disarms. Zoom
     runs from 25% to 200%. Fit frames every drawn node with 48px of margin.
@@ -1323,6 +1335,8 @@ proposed-design:
     outside the scope is a `ContextNode`, as `scope-drawing` and
     `closed-groups` state. A state names the source of its first invoke, with
     "+N" for more, and a "Gate" badge when it declares a gate. A state
+    whose invoke names a blueprint path is a reference, drawn as
+    `reference-drawing` states. A state
     whose range holds a line that differs from the base text has the
     6px warning dot. A state with a finding or warning whose location is
     the state's location or under it, and not under a child state's or a
@@ -1401,7 +1415,8 @@ proposed-design:
     `{ type: history }`, a compound state with `initial` naming one child
     state, and a parallel state with two child states, `region-1` and
     `region-2`. A parent with no `initial` that needs one gets the new
-    state as `initial`. In a pinned blueprint the new state's point is
+    state as `initial`. A reference is placed the same way, as
+    `adding-references` states. In a pinned blueprint the new state's point is
     written with it. The new state is selected and its inspector opens with
     its key field focused, so the operator names it next.
   event-picker: >-
@@ -1425,7 +1440,9 @@ proposed-design:
     text unchanged. The edits are `add-state`, `rename-state`,
     `remove-state`, `set-initial`, `add-transition`, `remove-transition`,
     `move-candidate`, `set`, `remove`, `rename-key`, `set-layout`, and
-    `clear-layout`; `set`, `remove`, and `rename-key` take a JSON Pointer
+    `clear-layout`; `add-state` takes an optional `invoke`, `{ id, src }`,
+    written into the new state, for a reference; `set`, `remove`, and
+    `rename-key` take a JSON Pointer
     into the document and are what an inspector field writes. The module
     parses the text with the `yaml` package's document model, finds each
     node it changes by its pointer, and changes the text by splices
@@ -1553,18 +1570,18 @@ proposed-design:
     renders, each field with the JSON Pointer it writes.
   invoke-contract: >-
     An invoke shows what its `src` names: for a Manifold implementation,
-    its description from the implementation catalog; for a child
-    blueprint, the description the list gives for that path, or "Not in
-    the process repository" in warning text; for any other name, "Unknown
-    implementation" in warning text. Under it, Contract shows
+    its description from the implementation catalog; for a blueprint
+    reference, the card of `reference-inspector`; for any other name,
+    "Unknown implementation" in warning text. Under it, Contract shows
     `schemas.actors.<src>` of the blueprint: its input and its output,
     each as a table of property, type, and required, read from the
     schema's `properties` and `required`, or the schema as YAML when it is
     not an object schema. With no declaration it shows "Not declared" in
     muted text and, when the catalog gives the implementation's input and
-    output schemas, "Declare contract", which writes them under
-    `schemas.actors.<src>`. "Edit" opens the actor schema in the blueprint
-    inspector.
+    output schemas, or for a blueprint reference the referenced
+    blueprint's own `schemas.input` and `schemas.output`, "Declare
+    contract", which writes them under `schemas.actors.<src>`. "Edit"
+    opens the actor schema in the blueprint inspector.
   expression-field: >-
     An expression field edits the `params.expression` of an
     `expression.assign` or `expression.guard` reference, or of an
@@ -1585,8 +1602,10 @@ proposed-design:
     draft's text is still the text after it; a text changed elsewhere, by
     the YAML view or a source read, empties both stacks. Each pair also
     holds the canvas views before and after its edit, as `scope-undo`
-    states. The stacks live in memory and are emptied by a reload, a
-    discard, and a source read that replaces the text.
+    states. The stacks live in memory, one pair of stacks for each
+    blueprint path, so a return from a referenced blueprint keeps the
+    parent's Undo, and are emptied by a reload, a discard, and a source
+    read that replaces the text.
   canvas-scopes: >-
     The canvas draws one canvas scope at a time. A scope is named by a
     state path as `blueprints-api` gives it, `""` for the whole blueprint,
@@ -1601,7 +1620,13 @@ proposed-design:
     canvas view. A decision model's dialog is modal over the editor, so the
     canvas view does not change while it is open, and its Apply to draft
     changes the model file's draft, never the blueprint's text or the
-    canvas view.
+    canvas view. A scope is a view of this blueprint's own nested states
+    and never names another file: a blueprint reference is never a scope,
+    and a scope never opens one, as `blueprint-references` states. The
+    scope bar always names the view it shows, "Whole blueprint" or
+    "Scope", the frame carries a "Scope" badge, and the document title is
+    `<path> › <scope path>` in a scope and `<path>` in the whole blueprint,
+    so a scoped view never passes for the whole blueprint.
   scope-drawing: >-
     In a scope other than the whole blueprint, the in-scope states are the
     scope's state and every state under it. The scope's state is drawn as
@@ -1758,9 +1783,124 @@ proposed-design:
     transitions cross the scope." Focus stays on the canvas through every
     navigation, and the newly selected node is the focused one. Every
     scope action has a key and a pointer path, and none needs a drag. The
-    closed and context looks differ by border, shape, and icon, never by
-    color alone, and their muted text keeps `muted-foreground`'s contrast
-    on its surface in both themes.
+    closed, context, and reference looks differ by border, shape, and
+    icon, never by color alone, and their muted text keeps
+    `muted-foreground`'s contrast on its surface in both themes. A
+    reference node's label adds ", references <path>"; its button is
+    labelled "Open blueprint <path>". The page breadcrumb of
+    `reference-navigation` is a `nav` labelled "Breadcrumb", apart from
+    the scope bar's "Scope", whose current blueprint has
+    `aria-current="page"`. Opening a reference moves focus to the
+    referenced editor's canvas, and Back returns focus to the referencing
+    state's node.
+  blueprint-references: >-
+    A blueprint reference is an invoke whose `src` is a blueprint path, as
+    `blueprint` specifies under Child blueprints: the referenced blueprint
+    runs as a child state machine, and stays its own file that any number
+    of blueprints may reference. A reference is part of the blueprint: it
+    is written in the text, linted, published, and run. A scope is not: it
+    is only what the canvas draws. The two never share a look, a gesture,
+    a key, or a URL parameter. A scope stays inside one document, in the
+    canvas, named by `scope` in the editor route's search; a reference is
+    opened as another document, at its own editor route, with its own
+    draft, lint, Undo, canvas view, and Publish. Opening a referenced
+    blueprint never changes the referencing blueprint's text, draft, or
+    canvas view, and an edit in the referenced blueprint changes only that
+    file. A state that holds child states and also invokes a blueprint is
+    both: "Open scope" draws its child states in place, and "Open
+    blueprint" opens the file its invoke names.
+  reference-drawing: >-
+    A state with at least one blueprint reference has the reference look
+    of `DESIGN.md`, whatever its type: a folded top-right corner, the
+    `FileCode2` chip, and its first referenced path, with "+N" for more
+    invokes, in place of the first invoke's source, with an "Open
+    blueprint" button (`FileSymlink`) at its right end. A compound or
+    parallel reference keeps its group look and adds the corner, the path
+    row under its title bar, and the button after "Open scope". A closed
+    group that is a reference keeps the corner and the path row. A context
+    node that stands for a reference shows the corner and no button, and
+    opens nothing but a scope. A reference whose path the list does not
+    give as a repository blueprint is drawn with the warning-colored path and the tooltip "Not in the
+    process repository"; its button is disabled only when the list does
+    not give the path at all. The referenced blueprint's
+    states are never drawn on this canvas, in any view.
+  reference-navigation: >-
+    "Open blueprint" on a reference's node, `Shift+Enter` with the state
+    selected, or "Open blueprint" on the invoke card of its inspector opens
+    the referenced blueprint's editor; with several references, the node's
+    button and `Shift+Enter` open a menu of their paths. A double-click and
+    `Enter` open only scopes, never a reference. Opening a reference first
+    replaces the current history entry's state with the current selection,
+    then pushes the referenced editor route with the reference trail of
+    `reference-urls`, so Back returns to the referencing blueprint with its
+    view, from its URL, and its selection, from the entry's state. The
+    referenced editor opens on its own draft or source, in the whole
+    blueprint, in the canvas view, with nothing selected. Its page
+    breadcrumb, not the scope bar, shows where it was opened from: "Blueprints",
+    then each blueprint of the trail, then this one, each path in mono
+    and split by "/"; each trail item is a link that opens that
+    blueprint, in the scope that holds the referencing state, the state's
+    parent or the whole blueprint, with that state selected by the new
+    history entry's state, and with the trail cut before it. The referencing blueprint's draft stays in the browser,
+    and its Undo stays in memory, while the referenced one is open. A
+    reference opened from the list or by a pasted link without `from`
+    shows "Blueprints / <path>" as today.
+  reference-urls: >-
+    The editor route's search holds the reference trail as `from`: an
+    array of `{ path, state }`, the referencing blueprint's path and the
+    referencing state's path, outermost first, absent when the blueprint
+    was not opened through a reference. Opening a reference cuts the
+    current trail before the entry for the referenced path, when it holds
+    one, then appends the current blueprint and the referencing state, so
+    a cycle of references never grows the trail, no blueprint is in its
+    own trail, and opening the same reference twice gives the same URL. `scope`, `closed`, and `view` are each blueprint's own and are
+    never carried across a reference. Validation reads `from` as an array
+    of objects with string `path` and `state`, and drops it when it has
+    another shape. The trail is held in the URL and nowhere else: never in
+    a draft, a blueprint, or Manifold's store. A trail entry whose path the
+    list does not give, or whose state the blueprint does not hold, is
+    still shown, and its link opens the whole blueprint with nothing
+    selected.
+  adding-references: >-
+    Add reference opens `BlueprintPicker`, a 320px popover under the
+    toolbar titled "Reference a blueprint": a filter field over the
+    list's blueprints, each its path in mono with its description muted
+    under it, excluding the blueprint being edited. A published blueprint
+    is a repository blueprint, whose references run only repository
+    files, so a path the list gives only as bundled is shown with a
+    "Bundled" badge and the note "Not in the process repository", and
+    stays selectable, since the lint accepts it. A choice arms placement with a ghost of a reference
+    node. The click places one `add-state` edit, at the place `adding`
+    gives, whose state is `{ invoke: { id, src } }`: `src` the chosen
+    path, and the state's key and the invoke `id` both the first of the
+    path's file name without its extension, then `-2`, `-3`, and so on,
+    that no sibling holds. The edit is one Undo pair, committed on its
+    basis as `edit-basis` states, so a replay adds the state at most once
+    and a crash leaves the draft at its basis or its result. The new state is
+    selected with its key field focused; its `onDone` and `onError` are
+    left unset, so its inspector shows them as not connected. An existing
+    state becomes a reference by "Add invoke" in its inspector and a
+    blueprint path in its source combobox, whose "Blueprints" group lists
+    the picker's entries. Both write the same text a hand edit in the YAML
+    view writes. The picker offers only blueprints the list gives; the
+    source combobox, as for any invoke, also accepts a typed path.
+  reference-inspector: >-
+    An invoke whose `src` is a blueprint path is a reference card: its
+    header has the `FileCode2` icon, "Blueprint reference", and the path
+    in mono, with "Open blueprint" (outline, `FileSymlink`), and under the
+    header the description the list gives for that path, and "Not in the
+    process repository" in warning text when the list does not give it as
+    a repository blueprint. "Open blueprint" is disabled only when the
+    list does not give the path at all.
+    Its source field is the same combobox as for any invoke. The card
+    reads the referenced blueprint with `GET /api/blueprints/source` for
+    its `schemas.input` and `schemas.output`: Contract offers "Declare
+    contract" from them when the blueprint declares none, and, when a
+    declared `schemas.actors.<path>` input or output is not deep-equal to
+    them, shows the warning "This contract differs from <path>. The
+    reference will fail to run." with "Use <path>'s contract", which
+    writes them. A source read that fails leaves Contract as for any
+    invoke.
   canvas-scope-interface: |-
     `src/screens/blueprints/canvas-scope.ts` is a pure module over the
     shared `BlueprintGraph`, which does not change. It exports exactly
@@ -1840,6 +1980,46 @@ proposed-design:
     `viewAfter`. The route's search validation reads `scope` as a string
     and `closed` as an array of strings, and drops either when it has
     another shape.
+
+    `src/screens/blueprints/blueprint-references.ts` is a pure module for
+    references, apart from scopes. It exports exactly these names; the
+    route's search validation reads `from` with `readTrail`.
+
+    ```ts
+    import type { GraphState } from "@wyrd-company/manifold-shared/blueprints-api";
+
+    /** One blueprint a reference was opened from. Held only in the route's search. */
+    export interface TrailEntry {
+      /** The referencing blueprint's path. */
+      readonly path: string;
+      /** The referencing state's path in it. */
+      readonly state: string;
+    }
+
+    /** The state's invoke sources that are blueprint paths, in document order. */
+    export function blueprintReferences(state: GraphState): readonly string[];
+
+    /** The trail the referenced blueprint `target` opens with, from `at`. */
+    export function openReference(
+      trail: readonly TrailEntry[],
+      at: TrailEntry,
+      target: string,
+    ): readonly TrailEntry[];
+
+    /** The trail without `entry` and everything after it, for a trail link. */
+    export function trailBefore(
+      trail: readonly TrailEntry[],
+      entry: TrailEntry,
+    ): readonly TrailEntry[];
+
+    /** The trail a route search holds; empty for any other shape. */
+    export function readTrail(value: unknown): readonly TrailEntry[];
+    ```
+
+    A blueprint path is `blueprints/` followed by a path ending in `.yml`
+    or `.yaml`, the pattern `blueprint.schema.yml` gives an invoke `src`.
+    `StateNode` and `GroupNode` take the look of `reference-drawing` from
+    `blueprintReferences`, never from a file extension alone.
   scope-worked-example: >-
     The bundled task blueprint, `packages/service/bundle/blueprints/task.yml`,
     has fourteen states. At the top are `todo`, `starting`, `active`,
@@ -1883,7 +2063,35 @@ proposed-design:
     `active` ends at it with "to escalated", `stalled`'s first "retry"
     with "to preparing" and its second with no suffix, the `error`
     transitions start at it with "from opening" and "from prompting", and
-    the transitions among its five states are not drawn.
+    the transitions among its five states are not drawn. The scope bar
+    reads "Whole blueprint" there, and "Scope" in `active` and
+    `active.working`, where the frame has the "Scope" badge and the
+    document title is `blueprints/task.yml › active.working`.
+  reference-worked-example: >-
+    The bundled task blueprint references no blueprint, so the example
+    adds one. A fixture process repository holds a generic blueprint
+    `blueprints/parcels/sorting.yml`. In the task blueprint's scope
+    `active`, Add reference lists `blueprints/parcels/sorting.yml` and
+    not `blueprints/task.yml`; choosing it and clicking in the frame
+    beside `stalled` writes one `add-state` edit that adds
+    `active.sorting` with `invoke: { id: sorting, src:
+    blueprints/parcels/sorting.yml }`, and the URL is still
+    `?scope=active`. `sorting` is drawn as a reference, with the folded
+    corner, the `FileCode2` chip, and the path, and "Open blueprint" in
+    place of "Open scope", while `working` beside it has "Open scope" and
+    no corner. "Open blueprint" on `sorting` pushes
+    `/console/blueprints/blueprints/parcels/sorting.yml` with `from` `[{
+    path: blueprints/task.yml, state: active.sorting }]` and no `scope`:
+    the page breadcrumb reads "Blueprints / blueprints/task.yml /
+    blueprints/parcels/sorting.yml", the scope bar reads "Whole
+    blueprint" with `sorting.yml`'s machine id, the header shows its own
+    version and no draft, and the task blueprint's draft is still listed
+    with its "Draft" badge. Back returns to `blueprints/task.yml?scope=active`
+    with `active.sorting` selected, and Undo removes it. From the
+    referenced editor, the trail link `blueprints/task.yml` opens the
+    same view by a new history entry. A double-click on `active`'s title
+    bar in the whole blueprint, by contrast, keeps the path and only sets
+    `scope=active`.
   scope-tests: >-
     Each behavior is red before green, through public interfaces.
     `canvas-scope.ts` is unit tested on the bundled task blueprint and on
@@ -1941,8 +2149,31 @@ proposed-design:
     commits the whole file, whose diff with the base holds only the
     edits made; and a keyboard-only pass opens and leaves both scopes,
     toggles a group, and reaches a boundary transition's inspector without
-    a pointer. The other fixture's values are generic and never drawn from
-    Manifold's own domain.
+    a pointer. `blueprint-references.ts` is unit tested: `blueprintReferences`
+    gives the `.yml` and `.yaml` blueprint paths of a state's invokes in
+    document order and never a Manifold implementation's name or a path
+    outside `blueprints/`; `openReference` appends the referencing entry,
+    cuts the trail before the referenced path on a cycle of two and of
+    three blueprints, never holds the target, and gives the same trail for
+    the same reference twice; `trailBefore` cuts at the entry; and
+    `readTrail` drops a value of any other shape. `canvas-layout.ts` and
+    `canvas-scope.ts` tests add a state with a blueprint reference to the
+    generic fixture and show that it is drawn in place as one node in
+    every view, never as a scope, frame, or context of the referenced
+    blueprint's states. The browser test
+    `packages/service/src/blueprints-api/blueprint-references.browser.test.ts`
+    follows `reference-worked-example` in order, then: `Shift+Enter` on
+    the selected reference opens the same URL; a second reference added to
+    `blueprints/parcels/sorting.yml` back to `blueprints/task.yml`, opened
+    from there, shows the trail "Blueprints /
+    blueprints/parcels/sorting.yml / blueprints/task.yml" and no
+    repetition; editing and publishing the referenced blueprint commits
+    only its file and leaves the task blueprint's draft unchanged; a
+    declared contract that differs from the referenced blueprint's
+    schemas shows the warning and "Use <path>'s contract" writes them; and
+    a keyboard-only pass adds a reference, opens it, and returns. The
+    other fixtures' values are generic and never drawn from Manifold's
+    own domain.
   problems-strip: >-
     The Problems strip is `DESIGN.md`'s: a 36px header with the error count
     in error color and the warning count in warning color, collapsible,

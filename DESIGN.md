@@ -808,6 +808,10 @@ The editor works on a local draft. Publish commits the draft and pushes it
 to the process repository. The canvas is the main view; the YAML is the
 other view of the same draft, and the two are never shown side by side.
 
+- Above the header, the app breadcrumb names documents: "Blueprints", then
+  each blueprint a reference was opened from, then this blueprint, each path
+  in mono and split by "/". The scope bar, never the app breadcrumb, names
+  the scope.
 - Header (56px): the blueprint path in mono, the version the draft is based
   on, a "Draft · N changes" badge, the view toggle (a segmented control,
   "Canvas" and "YAML"), then "Discard draft" (ghost) and "Publish"
@@ -837,7 +841,7 @@ key in mono (weight 600), and under it the source of its first invoke in
 mono `muted-foreground`, with "+N" when it invokes more. A state that
 declares a gate has a "Gate" badge (info tint) after the source. The chip's
 icon is `Circle` for a state that invokes nothing, `Zap` for a Manifold
-implementation, and `FileCode2` for a child blueprint.
+implementation, and `FileCode2` for a blueprint reference.
 
 | Node           | Look                                                                                                                                                               |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -849,6 +853,7 @@ implementation, and `FileCode2` for a child blueprint.
 | Initial marker | `InitialNode`: a 10px `foreground` dot joined by an unlabeled `foreground` edge with an arrowhead to the initial child                                             |
 | Closed group   | `ClosedGroupNode`: 200×56, the group's chip and key, "N states" in mono `muted-foreground`, a second `input` border 4px behind it                                  |
 | Context node   | `ContextNode`: 200×40, `background` surface, 1px dashed `input` border, 8px radius, an `ArrowUpRight` icon, the path in 12px mono                                  |
+| Reference      | The state's own node with a 12px folded top-right corner (`input` border, `muted` fold), the `FileCode2` chip, and the referenced path, see References             |
 
 Nested groups alternate solid `lane` and `card` surfaces, so each level
 stands apart from the one around it. Their title bars remain above their
@@ -904,7 +909,8 @@ names the button and its key, in groups split by 1px vertical dividers:
    the `accent` fill and a `foreground` icon.
 2. Add state (`SquarePlus` with a chevron, S), a menu of State, Compound
    state, Parallel state, Final state, and History state, each with its
-   node's icon; and Add transition (`Spline`, T). While one is armed its
+   node's icon; Add reference (`FileCode2`, R); and Add transition
+   (`Spline`, T). While one is armed its
    button stays pressed and the cursor is a crosshair; a placed state
    shows as a 50% ghost node under the pointer.
 3. Undo (`Undo2`) and Redo (`Redo2`).
@@ -939,19 +945,59 @@ looks like this:
 The scope bar floats 12px under the toolbar, at the same left edge: 32px
 high, the `popover` surface, a 1px border, 8px radius. It holds:
 
-1. "Up one scope" (`CornerLeftUp`, a 28px ghost icon button, with its key
+1. The view label: "Whole blueprint" with the `Workflow` icon in
+   `muted-foreground`, or, in a scope, a "Scope" badge with the `Focus`
+   icon (info tint, 1px info border), so a scoped view never looks like
+   the whole blueprint.
+2. "Up one scope" (`CornerLeftUp`, a 28px ghost icon button, with its key
    in the tooltip), disabled in the whole blueprint.
-2. The breadcrumb: the machine id in mono for the whole blueprint, then the
+3. The breadcrumb: the machine id in mono for the whole blueprint, then the
    key of each state down to the scope, split by 14px `ChevronRight` icons
    in `muted-foreground`. The scope is `foreground` weight 600; the others
    are `muted-foreground` links, underlined on hover. When the breadcrumb is
    wider than the canvas allows, the middle keys fold into an `Ellipsis`
    menu.
-3. "Open all groups" (`ChevronsUpDown`, ghost, after a 1px divider), shown
+4. "Open all groups" (`ChevronsUpDown`, ghost, after a 1px divider), shown
    while a group is closed.
+
+The breadcrumb splits scope keys with `ChevronRight`; the app breadcrumb
+splits documents with "/". In a scope, the frame's title bar has a "Scope"
+badge (info tint) after its key, and the browser tab title is the path, a
+"›", and the scope's path.
 
 The inspector of a compound or parallel state has "Open scope" (outline,
 `Focus`) at the end of Basics.
+
+#### References
+
+A blueprint reference opens another document, never a scope, and looks
+nothing like one:
+
+- A reference node keeps its own shape (`StateNode`, `GroupNode`, or
+  `ClosedGroupNode`) and adds a 12px folded top-right corner: the corner cut
+  away, a `muted` triangle under it, and the `input` border along the fold.
+  The fold and `FileCode2` mark another file; `Focus` and the frame mark a
+  scope; the dashed border and `ArrowUpRight` mark a context node.
+- The row under the key holds the `FileCode2` icon and the referenced path
+  in 12px mono `muted-foreground`, with "+N" for more invokes. A path that is
+  not a repository blueprint is in warning text, with the `TriangleAlert`
+  icon.
+- "Open blueprint", a 20px ghost `FileSymlink` icon button, ends the node's
+  top row, shown on hover, on focus, and while selected; on a group it
+  follows "Open scope". A context node has the fold and no button.
+
+`BlueprintPicker` is a 320px popover under the toolbar: the title
+"Reference a blueprint", a filter field, and a list of rows, each the path
+in mono with the description in 13px `muted-foreground` under it, and a
+"Bundled" badge for a bundled-only path with "Not in the process
+repository" in warning text. A chosen row arms placement with a 50% ghost
+reference node.
+
+The inspector's reference card has a header row: `FileCode2`, "Blueprint
+reference", the path in mono, and "Open blueprint" (outline, `FileSymlink`)
+at the right. A declared contract that differs from the referenced
+blueprint's shows a warning alert inside Contract with "Use <path>'s
+contract" (outline).
 
 #### Event picker
 
@@ -1311,6 +1357,7 @@ with the same name as the design canvas uses:
   compound or parallel state, and for a state outside the canvas's scope
   at the far end of a transition that crosses it.
 - `ScopeBar`: the blueprint canvas's scope breadcrumb, under the toolbar.
+- `BlueprintPicker`: the popover that chooses a blueprint to reference.
 - `TransitionEdge`: a ReactFlow custom edge for a blueprint transition.
 - `CanvasToolbar`: the blueprint canvas's toolbar.
 - `Inspector`: the panel that edits the selected node or edge of a

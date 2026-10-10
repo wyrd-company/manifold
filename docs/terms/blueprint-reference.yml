@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `references`
+  # names the artifacts that define and use this term.
+  references:
+    - blueprint
+    - operator-console
+title: Blueprint reference
+description: >-
+  An invoke whose `src` is a blueprint path, which runs that blueprint as a
+  child state machine. The referenced blueprint is its own file, with its
+  own draft and Publish, and any number of blueprints may reference it.
