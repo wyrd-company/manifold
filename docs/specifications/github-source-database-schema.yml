@@ -90,7 +90,8 @@ description: |-
   GitHub refuses deletes the row only when that attempt wrote it, and a
   write whose fate is unknown leaves the row as it is. A reconcile that publishes a change of the item's
   field deletes the rows it attributes or rules out, in its transaction, as
-  `github-event-source` states.
+  `github-event-source` states. Retention deletes every row of an actor
+  whose history it has pruned, as `retention` states.
 
   Mirror. The remaining tables are the GitHub mirror: the last state the
   source read of each entity, with the revision each published change gave

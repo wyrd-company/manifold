@@ -1221,10 +1221,16 @@ proposed-design:
     after its hook's cursor stays, so a scan never meets an attempt whose
     GUID it has forgotten while GitHub can still list the attempt. The
     deletes read no other module's table, make no GitHub call, and leave
-    the mirror, `github_pending`, and `github_card_move` as they are; the
-    mirror's revisions name the events the source publishes, so a delivery
-    GitHub sends again after its row is gone publishes nothing a first
-    delivery did not.
+    the mirror and `github_pending` as they are; the mirror's revisions
+    name the events the source publishes, so a delivery GitHub sends again
+    after its row is gone publishes nothing a first delivery did not. The
+    index also exports `cardMoveActors(connection, { after, limit })`,
+    the distinct actor ids of `github_card_move` rows in id order after
+    `after`, and `pruneCardMoves(connection, actorIds)`, which deletes
+    every row of those actors in one statement and answers how many.
+    Retention passes only actors whose history is pruned, so a move that
+    an invocation repeats always finds its row; a change that shows a
+    pruned actor's value afterwards is published with `movedBy` `null`.
   push: >-
     A push that matches the process repository, as `github-events` defines,
     calls `processRepository.pull({ commit: after })` once per GUID. The

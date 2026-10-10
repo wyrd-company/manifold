@@ -14,10 +14,12 @@ properties:
   historyDays:
     description: >-
       Days after an actor ends before retention removes its consumed inbox
-      rows, its event links, and its commands. Its visits stay. A read
-      agent message goes once both its actors' histories are gone, and a
-      created project's record once its creator's history is gone, the
-      server no longer lists it, and no thread names it.
+      rows, its event links, and its commands. Its visits stay. The same
+      window removes the actor's closed escalations, counted from their
+      close, its card move records, read agent messages once both their
+      actors' histories are gone, and a created project's record once its
+      creator's history is gone, the server no longer lists it, and no
+      thread names it.
     $ref: "#/$defs/window"
     default: 90
   sourceEventDays:
@@ -48,13 +50,6 @@ properties:
       unless a held token or an open escalation of its gate keeps it.
     $ref: "#/$defs/window"
     default: 30
-  escalationDays:
-    description: >-
-      Days after an escalation closes before retention removes it with its
-      notifications and the agent question and answer that name it, once
-      nothing still depends on it. An open escalation is never removed.
-    $ref: "#/$defs/window"
-    default: 90
 $defs:
   window:
     description: >-

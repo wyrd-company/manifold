@@ -362,34 +362,35 @@ Run it as the operator account that owns the deployment files. Check
 The `retention` section of `service.yml` sets how long the store keeps rows
 it no longer needs, in days, or `forever`:
 
-- `historyDays`: after an actor ends, its consumed events and its commands.
-  Past it, the Actor page shows the actor's summary, end, and timeline of
-  state visits, and no sequence.
+- `historyDays`: after an actor ends, its consumed events and its commands,
+  and, counted from their close, its closed escalations with their
+  notifications and the agent questions and answers behind them. Past it,
+  the Actor page shows the actor's summary, end, and timeline of state
+  visits, and no sequence; the Task page no longer lists the escalation and
+  its answer link answers `404`. An escalation with a notification still to
+  send, one whose answer has not reached its agent, and the latest
+  occurrence of a recurring service escalation are kept.
 - `sourceEventDays`: a record of each accepted source event, by event source,
   with `default` for every source not named. Past it, a repeated delivery of
   that event is accepted as new.
 - `gateEvaluationDays`: each gate comparator evaluation. Past it, the grant
   cannot be replayed.
-- `escalationDays`: after an escalation closes, the escalation with its
-  notifications and the agent question and answer behind it. Past it, the
-  Task page no longer lists it and its answer link answers `404`. An open
-  escalation, one with a notification still to send, one whose answer has
-  not reached its agent, one whose actor still runs, and the latest
-  occurrence of a recurring service escalation are kept.
 
 The `github` entry of `sourceEventDays`, or `default` when it is absent, also
 sets how long the GitHub source keeps each webhook delivery and redelivery
 request; a row is kept until the hook's redelivery scan has passed it. A read
 agent message is removed once the histories of the actor that sent it and the
-actor that read it are removed, and the record of a T3 Code project an actor
-created once T3 Code no longer lists the project, no thread names it, and its
-creator's history is removed. Thread records are kept for the life of the store, so that a late
+actor that read it are removed, a card move record once its actor's history is
+removed, and the record of a T3 Code project an actor created once T3 Code no
+longer lists the project, no thread names it, and its creator's history is
+removed. Thread records are kept for the life of the store, so that a late
 usage report is attributed to the right item.
 
 The service removes rows past their window about every hour, starting five
 minutes after it starts, and logs `retention-pruned` with the counts. A
 running actor's history, pending events, held tokens, open escalations, unread
-messages, and pending webhook redeliveries are always kept. A removed row is not restored when a window grows.
+messages, and webhook deliveries the redelivery scan can still meet are always
+kept. A removed row is not restored when a window grows.
 
 ## 11. Push usage from each environment
 

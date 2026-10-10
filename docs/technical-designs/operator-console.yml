@@ -610,10 +610,12 @@ proposed-design:
     console's date format, and the Sequence view shows the empty state
     "Events removed" with the same line. The Actors list and the Task
     page draw the timeline bar from the visits as for any ended actor. A
-    pending event the answer still holds is not drawn. An escalation that
-    retention has removed, as `retention` states, is not in the Task page's
-    Escalations, and an "answered" exit label shows the choice id where the
-    escalation would have given the choice's label.
+    pending event the answer still holds is not drawn. The same history
+    window removes the actor's closed escalations, counted from their close,
+    as `retention` states: a removed escalation is not in the Task page's
+    Escalations, its answer link answers `404`, and an "answered" exit
+    label shows the choice id where the escalation would have given the
+    choice's label.
   actors-layout: >-
     `src/screens/ActorsContent.tsx` is the list. `src/screens/actors/`
     holds `ActorContent.tsx`, `ActorTimeline.tsx`, `ActorSequence.tsx`,

@@ -5,4 +5,4 @@ relationships:
     - retention
 title: Prune run
 description: >-
-  One retention operation that removes eligible ended actors' events and commands, source events, webhook delivery and redelivery records, gate evaluations, closed escalations, read messages, and retired created project records, in batches against cutoffs fixed at its start.
+  One retention operation that removes eligible ended actors' events and commands, source events, webhook delivery and redelivery records, gate evaluations, closed escalations, read messages, card move records, and retired created project records, in batches against cutoffs fixed at its start.

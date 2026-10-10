@@ -101,7 +101,7 @@ blueprintLint: {}
 
 # How long the store keeps rows it no longer needs; see retention-configuration.schema.yml.
 retention:
-  # Days after an actor ends before its consumed events and history are removed, or `forever`.
+  # Days after an actor ends before its consumed events, history, and closed escalations are removed, or `forever`.
   historyDays: 90
   # Days a source event, and for `github` a webhook delivery, is kept to recognise a repeat, by event source.
   sourceEventDays:
@@ -109,5 +109,3 @@ retention:
     default: 30
   # Days a gate's comparator evaluation is kept for replay, or `forever`.
   gateEvaluationDays: 30
-  # Days after an escalation closes before it and its notifications are removed, or `forever`.
-  escalationDays: 90

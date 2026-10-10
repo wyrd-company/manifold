@@ -98,7 +98,7 @@ proposed-design:
   high-level-overview: >-
     The retention module, `packages/service/src/retention/`, runs one prune
     run a fixed time after the service starts and then at a fixed
-    interval. A prune run deletes seven kinds of rows, each against a
+    interval. A prune run deletes nine kinds of rows, each against a
     retention window from the `retention` section of the service
     configuration, as `retention-configuration` specifies: the consumed
     inbox rows, event links, and commands of each ended actor, counted
@@ -107,8 +107,9 @@ proposed-design:
     records, under the GitHub source's source event window; the gate
     evaluations, counted from their evaluation; closed escalations, with
     their notifications and agent questions and answers, counted from
-    their close; read agent messages whose sender and reader actors are
-    both pruned; and created project records whose project the server no
+    their close under the history window; read agent messages whose sender
+    and reader actors are both pruned; card move records whose actor is
+    pruned; and created project records whose project the server no
     longer lists, that no thread names, and whose creating actor is
     pruned. The module owns no table. Each kind
     is deleted by the module that owns its table, through a function that
@@ -144,7 +145,7 @@ proposed-design:
      * `actor-pruned`, `escalation-pruned`, and `project-retired` name one
      * unit by its id; `batch-pruned` names the kind of a batch delete:
      * `source-events`, `deliveries`, `redeliveries`, `gate-evaluations`,
-     * or `messages`.
+     * `messages`, or `card-moves`.
      */
     export type PruneStep =
       | "actor-pruned"
@@ -183,6 +184,7 @@ proposed-design:
       readonly questions: number;
       readonly answers: number;
       readonly messages: number;
+      readonly cardMoves: number;
       readonly createdProjects: number;
     }
     ```
@@ -201,6 +203,8 @@ proposed-design:
     // github-source
     pruneDeliveries(connection, { receivedBefore: number, limit: number }): number;
     pruneRedeliveries(connection, { requestedBefore: number, limit: number }): number;
+    cardMoveActors(connection, { after?: string, limit: number }): string[];
+    pruneCardMoves(connection, actorIds: readonly string[]): number;
 
     // escalations
     prunableEscalations(
@@ -271,13 +275,14 @@ proposed-design:
     | `github_delivery` | GitHub source | webhook deliveries | removed past the window once its hook's redelivery scan has passed it | `sourceEventDays.github` |
     | `github_redelivery` | GitHub source | failed deliveries the source asked for again | removed past the window once its hook's redelivery scan has passed it | `sourceEventDays.github` |
     | `gates_evaluation` | gates | grant rounds | removed unless a held token or an open escalation keeps it | `gateEvaluationDays` |
-    | `escalation`, `escalation_notification` | escalations | questions to a person | a closed escalation whose notifications are settled, whose actor has ended, and that is not the newest occurrence of a subject naming no actor, is removed with its notifications | `escalationDays` |
-    | `agenttool_question`, `agenttool_answer` | agent tools | agent questions | removed with their escalation, once the answer is settled and placed | `escalationDays` |
+    | `escalation`, `escalation_notification` | escalations | questions to a person | a closed escalation whose notifications are settled, whose actor has ended, and that is not the newest occurrence of a subject naming no actor, is removed with its notifications | `historyDays`, from the close |
+    | `agenttool_question`, `agenttool_answer` | agent tools | agent questions | removed with their escalation, once the answer is settled and placed | `historyDays`, from the close |
     | `agenttool_message` | agent tools | agent messages | a read message is removed once its sender's and its reader's histories are pruned; an unread or undelivered message, never | `historyDays` |
     | `t3_created_project` | T3 Code environment source | projects actors create | removed once its presence is `removed`, no thread row names its project, and its creating actor's history is pruned; a record whose presence is never `removed` stays | `historyDays` |
     | `t3_thread` | T3 Code environment source | threads | never: a late or later call reads its project and title, and its cursor is its replay position | none |
     | `usage_*`, ledger | usage, ledger | calls, windows | never, as `usage-intake` states | none |
     | `gates_token` | gates | grants | never: a reservation and its token's history name it | none |
+    | `github_card_move` | GitHub source | card moves no change has attributed | removed once its actor's history is pruned | `historyDays` |
     | GitHub mirror tables | GitHub source | issues, items, fields, edges | never: each row's revision names the events it publishes, so a removed row would publish an id again | none |
   windows: >-
     A retention window is a number of whole days, or `forever`. A row's
@@ -294,8 +299,9 @@ proposed-design:
     | Webhook deliveries | the window of the source `github` | `github_delivery.received_at` | the delivery row |
     | Redeliveries | the window of the source `github` | `github_redelivery.requested_at` | the redelivery row |
     | Gate evaluations | `gateEvaluationDays` | `gates_evaluation.evaluated_at` | the evaluation row |
-    | Escalations | `escalationDays` | `escalation.closed_at` | the escalation, its notification rows, and the agent question and answer that name it |
+    | Escalations | `historyDays` | `escalation.closed_at` | the escalation, its notification rows, and the agent question and answer that name it |
     | Messages | `historyDays` | `agenttool_message.read_at`, and both actors' histories pruned | the message row |
+    | Card moves | `historyDays`, through the moving actor's history | the actor's history pruned | every card move row of the actor |
     | Created projects | `historyDays`, through the creating actor's history | the creating actor's history pruned | the created project record |
   ended-actors: >-
     The unit of the history window is one ended actor, never one row: an
@@ -349,6 +355,7 @@ proposed-design:
     | A callback that can start again, or a service escalation's handling | the escalation row it reads | a blueprint escalation, or a service escalation naming an actor, is pruned only once that actor has ended; an answered service escalation is pruned only once its handling is recorded |
     | The next occurrence of a service escalation | the newest occurrence of its kind and subject | the newest occurrence of a subject naming no actor is never pruned |
     | A message not yet taken or read | its message row | only read messages are pruned |
+    | A card move its invocation repeats, or a change still to attribute to it | its card move row | rows of an actor whose history is not pruned stay |
     | A webhook redelivery GitHub can still send or the scan can still ask for | the delivery and redelivery rows of its GUID | rows at or after their hook's scan cursor are not deleted |
     | A posted call's attribution | the posting's actor, item, and visit number | usage and ledger rows and history visits are never deleted |
     | A late call's attribution | its thread's project and the project's item | thread rows are never deleted; a created project record is deleted only when no thread row names its project |
@@ -404,7 +411,9 @@ proposed-design:
     evaluation is deleted keeps its row, with no evaluation, as
     `gate-runtime` states. A deleted evaluation cannot be replayed.
   escalations: >-
-    The unit of the escalation window is one closed escalation with its
+    An escalation is a record of what an ended actor did, or of a cause
+    the service raised, so it follows the history window, counted from its
+    close. The unit is one closed escalation with its
     notifications and the agent question and answer that name it. The
     prune run reads candidates with `prunableEscalations(connection, {
     closedBefore, after, limit: 100 })`, in escalation id order. A
@@ -450,6 +459,24 @@ proposed-design:
     save that takes it marks the row delivered. A delivered message that
     no turn read is never a candidate: any later turn in its thread reads
     it.
+  card-moves: >-
+    A card move row is the GitHub source's record of a field write an
+    actor made, kept until a field change attributes it or rules it out.
+    While its actor runs, a move its invocation repeats finds the row and
+    keeps its state, and a change that shows the move's value is
+    attributed to the actor. Rows of a write whose value never showed as a
+    change, of a write whose fate stayed unknown, and of a `doubtful`
+    write stay otherwise. The unit is one actor's rows. The prune run reads
+    the actors that have rows with `cardMoveActors(connection, { after,
+    limit: 100 })`, in actor id order, keeps each whose snapshot has no
+    `prunedAt`, and deletes the rows of the rest with one
+    `pruneCardMoves(connection, actorIds)`. An actor whose history is
+    pruned ended at least the history window before, so it repeats no move,
+    and a change GitHub shows after that is far later than the sweep that
+    reads a move's write; the change is then published with `movedBy`
+    `null`, as for a change no recorded write set. A new move takes a
+    `sequence` one more than the largest that remains, which still orders
+    it after every row of its item and field.
   created-projects: >-
     The T3 Code environment source keeps one record per created project,
     with the project's `presence` on its environment: `unseen` until the
@@ -509,7 +536,9 @@ proposed-design:
     page's timeline, which labels a visit's exit with the choice id where
     it had the choice's label; its answer link answers `404`. A message
     past its window is gone, and its sender's and reader's histories
-    already were. A retired created project had no thread that could
+    already were. A field change GitHub shows after a pruned actor's card
+    move rows are gone is published with `movedBy` `null`. A retired
+    created project had no thread that could
     attribute a call to it; the store no longer records which actor created
     it or the item it was created for.
   batches: >-
@@ -518,7 +547,8 @@ proposed-design:
     transaction; an escalation batch and a created project batch are the
     same with their own candidates. A source event, delivery, redelivery,
     gate evaluation, or message batch is the protections read and one
-    delete of at most 1000 rows. Each batch runs in one turn of the event
+    delete of at most 1000 rows; a card move batch is one read of up to 100
+    actors and one delete of their rows. Each batch runs in one turn of the event
     loop. After each batch the prune run calls `clock.yield`, so a
     delivery, a request, a grant round, an answer, or a new escalation runs
     between batches. A batch that reads fewer candidates than its limit is
@@ -531,8 +561,9 @@ proposed-design:
     prune run 60 minutes later. `prune` called while a prune run runs
     returns that prune run's promise. The prune run is ordered: ended
     actors, source events, deliveries, redeliveries, gate evaluations,
-    escalations, messages, then created projects, so that messages and
-    created projects whose actors this prune run pruned go in the same
+    escalations, messages, card moves, then created projects, so that
+    messages, card moves, and created projects whose actors this prune run
+    pruned go in the same
     prune run. Windows are days long, so an hour between prune runs keeps
     every kind within an hour of its window.
   logging: >-
@@ -549,7 +580,8 @@ proposed-design:
     `prunableEscalations` and `retirableCreatedProjects` list only rows
     that remain. A second prune run, or a prune run after a crash, prunes
     only the units the first did not reach. Each source event, delivery,
-    redelivery, gate evaluation, and message delete is one statement in
+    redelivery, gate evaluation, message, and card move delete is one
+    statement in
     its own transaction; a crash rolls back at most the statement it
     interrupts, and the next prune run deletes it again. A second prune run
     over the same rows with the same time deletes nothing more. A prune run
@@ -570,9 +602,12 @@ proposed-design:
     placed is placed once. A `send-message` invoke started again finds its
     rows, which stay while its sender runs. A `get-messages` call repeated
     in its turn answers the same messages, which stay while their reader
-    runs. A late call of a kept project's thread posts on the same item, and
+    runs. A card move its invocation repeats finds its row, which stays
+    while its actor's history does. A late call of a kept project's thread
+    posts on the same item, and
     no thread row names a retired project.
-    A fresh escalation, question, message, and delivery after any prune run
+    A fresh escalation, question, message, card move, and delivery after any
+    prune run
     work as on an empty store.
   errors: >-
     `openRetention` trusts its configuration, which the service
@@ -618,14 +653,16 @@ proposed-design:
     with its scan cursor before some old rows; gate evaluations before and
     after the cutoff, one named by an unreturned token, one by a returned
     token, and one of a gate with an open `comparator-failed` escalation;
-    open, answered, and withdrawn escalations before and after the
-    escalation cutoff, of blueprint and service raisers, one with a
+    open, answered, and withdrawn escalations closed before and after the
+    history cutoff, of blueprint and service raisers, one with a
     pending `close` notification, one answered service escalation whose
     handling is not recorded, one raised by a running actor, three closed
     occurrences of one gate subject, and an agent question whose answer is
     sent and not placed beside one whose answer is placed; read, delivered
     and unread, and undelivered messages between pruned, ended, and running
-    actors; and created projects that are `removed` with no thread, `removed`
+    actors; `sent`, `confirmed`, and `doubtful` card move rows of pruned,
+    ended, and running actors on one item and field; and created projects
+    that are `removed` with no thread, `removed`
     with an archived thread, `listed`, and `unseen`, with a creating actor
     pruned and not, one under a binding, and one of an environment no
     longer configured. Behaviours proved, each written red before
@@ -661,7 +698,12 @@ proposed-design:
     after a prune run work and are delivered once; read messages go only
     once both actors are pruned, and a `get-messages` call repeated in a
     running reader's turn answers the same messages before and after the
-    prune run; only the `removed` project with no thread and a pruned
+    prune run; card move rows go only for the pruned actors, a move the
+    running actor's invocation repeats after the prune run keeps its row
+    and state, a later change to a pruned actor's option is published with
+    `movedBy` `null`, a change to the running actor's option is attributed
+    to it, and a fresh move of a new actor is attributed after the prune
+    run; only the `removed` project with no thread and a pruned
     creator goes, the one under a binding included, and the others stay;
     a thread row of a `removed` project's id written by the fake clock's
     `yield` between the read and the delete keeps the record; a late call
@@ -685,10 +727,11 @@ proposed-design:
     prune run that sends itself `SIGKILL` from the probe after the first
     unit of a kind commits, once for each of `actor-pruned`,
     `escalation-pruned`, `project-retired`, and the first `batch-pruned`
-    of deliveries and of messages. For each, the parent asserts the kill
+    of deliveries, of messages, and of card moves. For each, the parent asserts the kill
     signal, starts the service again on the same file holding the
-    pre-kill running actor, its followed thread, an open escalation, a
-    pending answer, an unread message, and a pending webhook reconcile,
+    pre-kill running actor, its followed thread, its card move, an open
+    escalation, a pending answer, an unread message, and a pending webhook
+    reconcile,
     and runs prune runs to their end. It then finds that each unit is
     removed once, every other row past its window and unprotected is
     removed, every pruned actor keeps every visit, delivery replay drains
@@ -696,7 +739,8 @@ proposed-design:
     every row inside its window, the open escalation is answerable and its
     answer reaches its actor once, the pending answer is sent and placed
     once, the unread message is read once, the pending reconcile
-    publishes once, a late call posts on the item it posted on before the
+    publishes once, a change to the running actor's moved value is
+    attributed to it, a late call posts on the item it posted on before the
     kill, the running actor's history is unchanged, and a further prune run
     deletes nothing. Values are generic and never drawn from Manifold's own
     domain.
