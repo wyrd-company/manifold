@@ -136,7 +136,13 @@ Replace the starter's commented placeholders:
   project id used by intake.
 - `task-metadata.yml`: the Project's lifecycle field and its options. Include
   `In Progress` and `Done`, which the bundled blueprint uses. A new Project's
-  `Status` field includes `Todo`, `In Progress`, and `Done`.
+  `Status` field includes `Todo`, `In Progress`, and `Done`. Optionally
+  declare task fields under `fields`, each stored as a Project field, an
+  organization issue field or issue type, a repository label or milestone,
+  or a key of the issue body's front matter, as `task-metadata-declaration`
+  specifies. A label or milestone field also needs the binding's
+  `repositories`. After the service starts, review and apply the fields
+  from the console's GitHub Projects screen.
 - `decision-models/intake.yml`: set `data.model.instanceId` to the provider
   instance configured in T3 Code and `data.model.model` to a model available
   through that environment's account. The starter values are placeholders.

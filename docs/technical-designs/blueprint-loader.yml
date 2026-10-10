@@ -53,9 +53,9 @@ design-challenges:
     restored actor must run the bundled text it was last saved with after
     a Manifold upgrade changes that text.
   later-names: >-
-    Gates and task actors register implementations in a later wave. The
-    loader must accept names it does not know about today without a change
-    to the loader.
+    Modules such as gates and task actors register their own
+    implementations. The loader must accept a name a module adds without a
+    change to the loader.
 proposed-design:
   high-level-overview: >-
     The blueprint file format is specified in `blueprint`. A pure lint in
