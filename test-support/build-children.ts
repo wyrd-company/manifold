@@ -58,6 +58,7 @@ export default async function setup(project: TestProject) {
             "test-fixtures/default-process-worker.ts",
             "task-metadata/test-fixtures/card-move-worker.ts",
             "task-metadata/test-fixtures/project-config-worker.ts",
+            "github-repository-fields/test-fixtures/apply-worker.ts",
             "capacity/test-fixtures/recovery-worker.ts",
             "service/test-fixtures/crash-worker.ts",
             "service/test-fixtures/blueprint-save-worker.ts",

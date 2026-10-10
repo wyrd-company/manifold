@@ -32,6 +32,7 @@ import {
 import { taskFieldValues } from "./values.ts";
 import type { TrackedIssueIndex } from "../github-source/index.ts";
 import { planScopeConfiguration } from "./scope-plan.ts";
+import { outsideRepositories } from "./repository-outside.ts";
 import { acceptFields } from "./accept.ts";
 export class ProjectRequestError extends Error {
   readonly status: number;
@@ -161,6 +162,7 @@ export function createProjects(
         fields: fields.fields,
         applied: records.applied(binding, project.nodeId),
         scopes: await observeScopes(s, scopesFor(s, current(), binding, issues), signal),
+        outside: outsideRepositories(metadata, project.nodeId, issues),
       }),
       binding,
       owner: b.owner,
@@ -371,7 +373,7 @@ export function createProjects(
         "Project declaration was removed during Apply",
       );
     const applied = appliedConfiguration(latest, after.fields, previous);
-    const afterScopes = await observeScopes(s, scopes, controller.signal);
+    const afterScopes = await observeScopes(s, scopesFor(s, current(), binding), controller.signal);
     const failedObservation = afterScopes.filter((scope) => scope.observed?.status !== "ready");
     if (failedObservation.length)
       throw new ProjectRequestError(
@@ -460,8 +462,9 @@ export function createProjects(
       queue = operation;
       return operation;
     },
-    planDeclaration: (declaration) =>
-      bindings().flatMap((b) => {
+    planDeclaration: (declaration) => {
+      const issues = cachedSource?.trackedIssueIndex?.();
+      return bindings().flatMap((b) => {
         const project = cachedSource?.projectByNumber(b.owner, b.number);
         const fields = project ? cachedSource?.projectFields(project.nodeId) : undefined;
         if (!project || !fields) return [];
@@ -469,7 +472,8 @@ export function createProjects(
           metadata: declaration.projects[b.binding],
           fields: fields.fields,
           applied: records.applied(b.binding, project.nodeId),
-          scopes: scopesFor(cachedSource!, declaration, b.binding),
+          scopes: scopesFor(cachedSource!, declaration, b.binding, issues),
+          outside: outsideRepositories(declaration.projects[b.binding], project.nodeId, issues),
         });
         return [
           {
@@ -483,7 +487,8 @@ export function createProjects(
             outside: planned.outside,
           },
         ];
-      }),
+      });
+    },
   };
   return {
     projects,

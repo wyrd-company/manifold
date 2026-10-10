@@ -11,6 +11,7 @@ import type { ProjectSummary } from "../../api/projects.ts";
 import { FieldsTable } from "./FieldsTable.tsx";
 import { FieldPanel } from "./FieldPanel.tsx";
 export function SchemaEditor({
+  text,
   fields,
   lint,
   projects,
@@ -19,6 +20,7 @@ export function SchemaEditor({
   onSelect,
   onEdit,
 }: {
+  text?: string;
   fields: readonly TaskField[];
   lint: DeclarationFindings;
   projects: readonly ProjectSummary[];
@@ -32,6 +34,7 @@ export function SchemaEditor({
     <>
       <div className={`task-fields-visual ${lint.fields === undefined ? "dimmed" : ""}`}>
         <FieldsTable
+          {...(text !== undefined ? { text } : {})}
           fields={fields}
           storageKinds={lint.storageKinds ?? []}
           projects={projects}

@@ -9,6 +9,9 @@ import { childProcessLimit } from "../../test-support/limits.ts";
 const children = [
   "src/task-metadata/organization.integration.test.ts",
   "src/task-metadata/organization.browser.test.ts",
+  "src/github-repository-fields/recovery.test.ts",
+  "src/github-repository-fields/configuration.test.ts",
+  "src/github-repository-fields/repository.browser.test.ts",
   "src/retention/crash.test.ts",
   "src/retention/uat-data.test.ts",
   "src/retention/pruned.browser.test.ts",

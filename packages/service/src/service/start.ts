@@ -2,6 +2,7 @@
 // relationships:
 //   implements: service-assembly
 // ---
+import { repositoryFields } from "../github-repository-fields/wiring.ts";
 import { migrations } from "../migrations/wiring.ts";
 import { configuration } from "../service-configuration/wiring.ts";
 import { httpHost, listen } from "../http-host/wiring.ts";
@@ -69,6 +70,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     .part(agentToolsDelivery)
     .step("escalations-started")
     .part(migrations)
+    .part(repositoryFields)
     .part(githubSource)
     .step("github-started")
     .part(intake)

@@ -13,9 +13,13 @@ import { mountConsole } from "../../console/index.ts";
 import { boardWorld } from "../../tasks/test-fixtures/world.ts";
 import { mountDeclarationsApi } from "../index.ts";
 import { openTaskMetadata } from "../../task-metadata/index.ts";
+import type { ConfigurationSource } from "../../task-metadata/project-types.ts";
 import type { ProjectField, ProjectFieldWrite } from "../../github-source/index.ts";
 
-export async function projectsHost(host = "127.0.0.1") {
+export async function projectsHost(
+  host = "127.0.0.1",
+  sourceOverrides: Partial<ConfigurationSource> = {},
+) {
   const repository = await serviceFixture();
   const bindings = {
     githubProjects: {
@@ -86,7 +90,7 @@ export async function projectsHost(host = "127.0.0.1") {
     })),
   });
   for (const number of [1, 2]) fields.set(`project-${number}`, [stage()]);
-  const source = {
+  const source: ConfigurationSource = {
     project: () => undefined,
     projectByNumber: (owner: string, number: number) => ({
       nodeId: `project-${number}`,
@@ -99,7 +103,7 @@ export async function projectsHost(host = "127.0.0.1") {
       readAt: 1700000000000,
       fields: fields.get(projectNodeId) ?? [],
     }),
-    observeProjectFields: async (projectNodeId: string) => source.projectFields(projectNodeId),
+    observeProjectFields: async (projectNodeId: string) => source.projectFields(projectNodeId)!,
     writeProjectField: async (write: ProjectFieldWrite) => {
       const previous = fields.get(write.projectNodeId) ?? [];
       if (write.kind === "delete") {
@@ -140,6 +144,7 @@ export async function projectsHost(host = "127.0.0.1") {
       );
       return field;
     },
+    ...sourceOverrides,
   };
   const configuration = openTaskMetadata({
     connection: service.store.connection,
@@ -158,7 +163,13 @@ export async function projectsHost(host = "127.0.0.1") {
           environment: binding.environment,
           portfolioItem: binding.item,
         })),
-    revisions: service.revisions,
+    revisions: {
+      save: async (request) => {
+        const result = await service.revisions.save(request);
+        await configuration.apply(service.processRepository.current()!);
+        return result;
+      },
+    },
     revisionAt: service.processRepository.revisionAt,
     now: () => 1700000000000,
   });
@@ -224,6 +235,7 @@ export async function projectsHost(host = "127.0.0.1") {
       addRemoval(binding, "Legacy");
     },
     plan,
+    configuration,
     deferNextSave() {
       holdNextSave = true;
     },

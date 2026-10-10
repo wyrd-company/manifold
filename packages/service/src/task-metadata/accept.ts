@@ -4,6 +4,7 @@
 // ---
 import { acceptOrganization } from "./organization-accept.ts";
 import { isMap, isSeq, parseDocument } from "yaml";
+import { acceptRepositoryEntities } from "./repository-accept.ts";
 import { matchFields } from "./plan.ts";
 import type { PlanChange, PlanInput } from "./project-types.ts";
 /** Change only accepted fields in the document model, preserving unrelated comments and keys. */
@@ -65,5 +66,6 @@ export function acceptFields(
       );
     else node.delete("options");
   }
+  acceptRepositoryEntities(document, changes, input);
   return document.toString();
 }

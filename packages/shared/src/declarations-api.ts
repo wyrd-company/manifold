@@ -119,6 +119,11 @@ export interface LintDeclarationRequest {
   readonly text: string;
 }
 export type TaskFieldEdit =
+  | {
+      readonly kind: "set-repositories";
+      readonly binding: string;
+      readonly repositories: readonly string[];
+    }
   | { readonly kind: "add-field"; readonly binding: string }
   | { readonly kind: "remove-field"; readonly location: string }
   | {

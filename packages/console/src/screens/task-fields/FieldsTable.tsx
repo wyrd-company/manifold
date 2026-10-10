@@ -2,6 +2,7 @@
 // relationships:
 //   implements: operator-console
 // ---
+import { declaredRepositories, RepositoriesEditor } from "./RepositoriesEditor.tsx";
 import { Lock, Trash2 } from "lucide-react";
 import type {
   TaskField,
@@ -15,6 +16,7 @@ import type { ProjectSummary } from "../../api/projects.ts";
 import { Button } from "../../ui/button.tsx";
 import { fieldGroups, rowFindings, storageLabels } from "./fields.ts";
 export function FieldsTable({
+  text = "",
   fields,
   storageKinds,
   projects,
@@ -24,6 +26,7 @@ export function FieldsTable({
   onSelect,
   onEdit,
 }: {
+  text?: string;
   fields: readonly TaskField[];
   storageKinds: readonly StorageKind[];
   projects: readonly ProjectSummary[];
@@ -58,6 +61,13 @@ export function FieldsTable({
                 Add field
               </Button>
             </div>
+            <RepositoriesEditor
+              key={`${group.binding}:${declaredRepositories(text, group.binding).join()}`}
+              binding={group.binding}
+              repositories={declaredRepositories(text, group.binding)}
+              disabled={disabled}
+              onEdit={onEdit}
+            />
             <table className="projects-table">
               <colgroup>
                 {[40, 26, 26, 8].map((width, i) => (

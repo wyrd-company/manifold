@@ -12,6 +12,7 @@ export interface DeclarationsT3codeProject {
   readonly activeThreads: number;
 }
 export interface DeclarationImpact {
+  readonly scopes?: readonly import("../task-metadata/index.ts").ScopeStatus[];
   readonly binding: string;
   readonly changes: readonly { readonly action: "create" | "change" | "remove" }[];
   readonly fields: readonly {

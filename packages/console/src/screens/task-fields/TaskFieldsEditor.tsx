@@ -400,6 +400,7 @@ function Editor({ source: initialSource }: { source: DeclarationSourceResponse }
       </div>
       {tab === "visual" ? (
         <SchemaEditor
+          text={draft.text}
           fields={fields}
           lint={lint.body}
           projects={projects}

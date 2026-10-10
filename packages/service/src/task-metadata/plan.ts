@@ -4,6 +4,7 @@
 // ---
 import { organizationChangeOwnedBy } from "./organization-plan.ts";
 import { planScopeConfiguration } from "./scope-plan.ts";
+import { pendingRepositoryScopes } from "./repository-state.ts";
 import { createHash } from "node:crypto";
 import type { ProjectMetadata } from "@wyrd-company/manifold-shared";
 import type {
@@ -320,7 +321,10 @@ export function planProjectConfiguration(input: PlanInput): ProjectPlan {
   }));
   changes.push(...(input.scopes ?? []).flatMap((scope) => planScopeConfiguration(scope).changes));
   const drift = changes.filter((c) => c.drift).length;
-  const pending = changes.filter((c) => c.action !== "remove").length;
+  const pending = Math.max(
+    changes.filter((c) => c.action !== "remove").length,
+    pendingRepositoryScopes(input),
+  );
   return {
     changes,
     scopes,

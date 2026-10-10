@@ -2,6 +2,7 @@
 // relationships:
 //   implements: service-assembly
 // ---
+import { repositoryFields } from "../github-repository-fields/wiring.ts";
 import { scopeOwnership } from "@wyrd-company/manifold-shared";
 import { createMirror } from "./mirror.ts";
 import { githubSteps } from "./migrations.ts";
@@ -41,8 +42,10 @@ export const githubSource = wiringPart({
     const taskMetadata = context.later(taskMetadataPart);
     const { options } = context;
     const intake = context.later(intakePart);
+    const repositoryStorage = context.later(repositoryFields);
     const github = startGitHubSource({
       configuration: configuration.github,
+      storageAdapters: repositoryStorage.get().githubRepositoryFields,
       credentials: configuration.credentials,
       store,
       router,

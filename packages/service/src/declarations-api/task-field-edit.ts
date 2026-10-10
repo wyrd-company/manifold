@@ -2,6 +2,7 @@
 // relationships:
 //   implements: declarations-api
 // ---
+import { editRepositories } from "./repository-edit.ts";
 import { parseDocument, isMap, isScalar, isSeq, visit } from "yaml";
 import type { TaskFieldEdit } from "@wyrd-company/manifold-shared/declarations-api";
 const pointer = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
@@ -38,6 +39,7 @@ export function editTaskFields(text: string, edit: TaskFieldEdit) {
       },
     };
   });
+  if (edit.kind === "set-repositories") return editRepositories(doc, edit);
   if (edit.kind === "add-field") {
     const projects = doc.get("projects", true);
     const project = isMap(projects)

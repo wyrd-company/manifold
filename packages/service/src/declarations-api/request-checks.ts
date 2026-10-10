@@ -74,6 +74,12 @@ export function bindingEdit(value: unknown): value is BindingEdit {
 }
 export function taskFieldEdit(value: unknown): value is TaskFieldEdit {
   if (!record(value)) return false;
+  if (value["kind"] === "set-repositories")
+    return (
+      keys(value, ["kind", "binding", "repositories"]) &&
+      typeof value["binding"] === "string" &&
+      strings(value["repositories"])
+    );
   if (value["kind"] === "add-field")
     return keys(value, ["kind", "binding"]) && typeof value["binding"] === "string";
   if (typeof value["location"] !== "string") return false;

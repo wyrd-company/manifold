@@ -84,6 +84,12 @@ tasks:
       - task: build
       - node testing/live-github/src/front-matter.mjs
 
+  live:repository-fields:
+    desc: Check repository labels, milestones, values and name uniqueness on real GitHub
+    cmds:
+      - task: build
+      - node testing/live-github/src/repository-fields.mjs
+
   live:stop:
     desc: Stop the live environment or recover its recorded children
     cmds: [node testing/live-github/src/stop.ts]

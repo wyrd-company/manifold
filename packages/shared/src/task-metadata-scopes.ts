@@ -19,6 +19,7 @@ export interface OwnedEntity {
   readonly color?: string | undefined;
   readonly description?: string | undefined;
   readonly options?: readonly TaskFieldOption[];
+  readonly labelPrefixes?: readonly string[];
   readonly whenChanged: "revert" | "accept";
   readonly declarations: readonly { binding: string; field: string }[];
 }
@@ -66,6 +67,7 @@ function entities(binding: string, name: string, field: TaskField): OwnedEntity[
     const entityName = storage.kind === "label" ? storage.prefix + option.name : option.name;
     return {
       ...base,
+      ...(storage.kind === "label" ? { labelPrefixes: [storage.prefix] } : {}),
       ...option,
       name: entityName,
       storage: storage.kind,
@@ -120,6 +122,9 @@ export function scopeOwnership(
             ...entity,
             ...(options ? { options } : {}),
             declarations: [...earlier.declarations, ...entity.declarations],
+            ...(entity.labelPrefixes
+              ? { labelPrefixes: [...(earlier.labelPrefixes ?? []), ...entity.labelPrefixes] }
+              : {}),
             color: entity.color ?? earlier.color,
             description: entity.description ?? earlier.description,
           };

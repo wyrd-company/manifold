@@ -29,6 +29,7 @@ import type {
 } from "@wyrd-company/manifold-shared/declarations-api";
 import { sharingPreview } from "./sharing-preview.ts";
 import { organizationScope } from "./organization-scope.ts";
+import { repositoryFieldScope } from "./repository-scope.ts";
 import { taskFieldRows } from "./task-fields.ts";
 import type { DeclarationsApiOptions } from "./types.ts";
 import {
@@ -97,6 +98,9 @@ export async function lintAnswer(
               return {
                 ...row,
                 ...organizationScope(row, lint.ok ? lint.declaration : undefined),
+                ...(lint.ok && repositoryFieldScope(row, lint.declaration, plans)
+                  ? { scope: repositoryFieldScope(row, lint.declaration, plans)! }
+                  : {}),
                 ...(status ? { onGitHub: { state: status.github, detail: status.detail } } : {}),
               };
             }),

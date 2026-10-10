@@ -17,6 +17,7 @@ import type {
   FieldTarget,
   EntityTarget,
 } from "./project-types.ts";
+import { planRepositoryConfiguration } from "./repository-plan.ts";
 import { canonical } from "./plan.ts";
 function entities(input: ScopeInput, kind: OwnedEntity["storage"]): readonly ScopeEntity[] {
   if (input.observed?.status !== "ready") return [];
@@ -154,6 +155,8 @@ function write(
 }
 /** Shared entity matching and dispatch. Kind-specific adapters extend comparison at this seam. */
 export function planScopeConfiguration(input: ScopeInput, remove = true): ScopePlan {
+  const repositoryPlan = planRepositoryConfiguration(input);
+  if (repositoryPlan) return repositoryPlan;
   return input.scope.kind === "organization"
     ? organizationPlan(input, remove)
     : sharedScopePlan(input);

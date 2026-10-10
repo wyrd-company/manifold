@@ -47,6 +47,8 @@ const connection = <T>(nodes: T[]) => ({
   pageInfo: { hasNextPage: false, endCursor: null as string | null },
 });
 export interface ModelIssue {
+  labels?: { id: string; name: string }[];
+  milestone?: { id: string; number: number; title: string } | null;
   body?: string;
   lastEditedAt?: string | null;
   title?: string;
@@ -198,9 +200,9 @@ export async function githubFake() {
       ...ref,
       body: ref.body ?? "",
       lastEditedAt: ref.lastEditedAt ?? null,
-      labels: connection([]),
+      labels: connection(ref.labels ?? []),
       issueType: null,
-      milestone: null,
+      milestone: ref.milestone ?? null,
       issueFieldValues: connection([]),
       parent: issues.get(subIssues.find(([, child]) => child === id)?.[0] ?? "") ?? null,
       blockedBy: connection(
