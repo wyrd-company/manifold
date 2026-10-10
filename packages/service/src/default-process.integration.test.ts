@@ -54,6 +54,7 @@ async function fixture(
   if (organization) cleanup.push(organization.close);
   const repository = additionalStorage ? await repositoryFieldsFixture() : undefined;
   if (repository) cleanup.push(repository.close);
+  let afterBodyWrite: (() => void) | undefined;
   const github = additionalStorage
     ? await serve((request, response) => {
         void (async () => {
@@ -68,6 +69,12 @@ async function fixture(
             },
           );
           const text = await upstream.text();
+          if (
+            request.url === "/graphql" &&
+            upstream.ok &&
+            /\bmutation GitHubIssueBodyWrite\b/.test(JSON.parse(body).query ?? "")
+          )
+            afterBodyWrite?.();
           if (!rest && text.includes('"issueFieldValues"')) {
             const answer = JSON.parse(text);
             for (const issue of answer.data.nodes ?? []) {
@@ -364,6 +371,16 @@ async function fixture(
     files,
     organization,
     repository,
+    holdBodyObservation() {
+      return new Promise<ReturnType<typeof f.api.hold>>((resolve) => {
+        afterBodyWrite = () => {
+          const held = f.api.hold("GitHubIssues");
+          cleanup.push(held.release);
+          afterBodyWrite = undefined;
+          resolve(held);
+        };
+      });
+    },
     commit,
     store,
     portfolio,
@@ -1465,16 +1482,30 @@ it("applies all five additional storage kinds from the starter, observes normali
   expect(f.organization!.fields.map((field) => field.name)).toEqual(["Urgency"]);
   expect(f.organization!.types.map((type) => type.name)).toEqual(["Request", "Return"]);
   expect(f.repository!.labels().map((label) => label.name)).toContain("size: Small");
+  const observation = f.holdBodyObservation();
   await f.add();
+  const held = await observation;
+  await held.reached;
   await expect.poll(f.state, { timeout: 15000 }).toBe("done");
-  const task = await get("/api/tasks/task%3AI_A");
-  expect(task.task.projects[0].fields).toEqual(
-    expect.arrayContaining(
-      Object.entries(values).map(([name, value]) =>
-        expect.objectContaining({ name, value: { state: "set", value } }),
-      ),
-    ),
+  expect(parse(f.api.issues.get("I_A")!.body!.split("---")[1]!).note).toBe(values.note);
+  // Completion confirms the write, while the queued mirror read is still held.
+  let task = await get("/api/tasks/task%3AI_A");
+  expect(task.task.projects[0].fields).toContainEqual(
+    expect.objectContaining({ name: "note", value: { state: "set", value: "old" } }),
   );
+  held.release();
+  await expect
+    .poll(async () => {
+      task = await get("/api/tasks/task%3AI_A");
+      return task.task.projects[0].fields;
+    })
+    .toEqual(
+      expect.arrayContaining(
+        Object.entries(values).map(([name, value]) =>
+          expect.objectContaining({ name, value: { state: "set", value } }),
+        ),
+      ),
+    );
   expect(f.repository!.assigned()).toEqual(["personal", "size: Small"]);
   const updated = f.api.issues.get("I_A")!.body!;
   expect(updated).toContain("# keep this comment");
