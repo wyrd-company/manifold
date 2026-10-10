@@ -66,9 +66,11 @@ We need to be on the same page with terminology. When communicating, use this la
 - **blueprint** a declarative, static schema (YAML) specifying states, transitions, and structure of a state machine.
 - **blueprint version** a blueprint as it is at one process repository commit, named by the commit and its path, and for a bundled blueprint also by its bundle.
 - **board** a KANBAN board
+- **boundary transition** a transition with exactly one end inside a canvas scope, drawn between the state inside and a node that stands for the state outside.
 - **bundle** the blueprints one Manifold build ships, by path, identified by a digest of their texts; a process repository file at the same path replaces a bundled blueprint.
 - **call** one model request recorded in a provider session file, with its timestamp, model, and token counts.
 - **callback** an imperative actor that runs until its state exits, receiving and sending events.
+- **canvas scope** what the blueprint canvas draws: the whole blueprint, or one compound or parallel state with every state nested in it and the states outside it that its transitions reach, held in the editor's URL, never in the blueprint or the draft.
 - **capacity** what an account can spend in a window.
 - **card move** Manifold setting the lifecycle field of a task's item on its Project to a declared option, when the task's actor invokes `github-card-move`.
 - **ceiling** the most of its parent's limit a portfolio item may use, its allocation and borrowed unallocated remainder together.

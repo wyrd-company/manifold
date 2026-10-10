@@ -816,11 +816,12 @@ other view of the same draft, and the two are never shown side by side.
   of changes and the published version that stays. The confirm button is
   solid error.
 - Canvas view: the canvas toolbar over the canvas's top-left corner, the
-  ReactFlow canvas on the dotted grid, and the inspector (320px) at the
-  right. Selected paths wrap inside the panel; the controls do not expand its
-  width. Under 1024px of content width the inspector is a sheet over the
-  canvas from the right.
-- YAML view: the code editor, full width.
+  scope bar under it, the ReactFlow canvas on the dotted grid, and the
+  inspector (320px) at the right. Selected paths wrap inside the panel; the
+  controls do not expand its width. Under 1024px of content width the
+  inspector is a sheet over the canvas from the right.
+- YAML view: the code editor, full width, always the whole file, whatever
+  scope the canvas shows.
 - Under either view: the Problems strip (below).
 
 #### Canvas
@@ -847,12 +848,18 @@ implementation, and `FileCode2` for a child blueprint.
 | Parallel state | `GroupNode` with the `Columns2` icon and a "Parallel" badge; each region, a child state, has a dashed `input` border                                               |
 | History state  | `HistoryNode`: a 40px circle, 1px warning border, `H` (shallow) or `H*` (deep) in mono (weight 600), the key in 12px mono `muted-foreground` under it              |
 | Initial marker | `InitialNode`: a 10px `foreground` dot joined by an unlabeled `foreground` edge with an arrowhead to the initial child                                             |
+| Closed group   | `ClosedGroupNode`: 200×56, the group's chip and key, "N states" in mono `muted-foreground`, a second `input` border 4px behind it                                  |
+| Context node   | `ContextNode`: 200×40, `background` surface, 1px dashed `input` border, 8px radius, an `ArrowUpRight` icon, the path in 12px mono                                  |
 
 Nested groups alternate solid `lane` and `card` surfaces, so each level
 stands apart from the one around it. Their title bars remain above their
 children. Edge routes and labels use root coordinates, including transitions
 that enter or leave a nested group. Label buttons stay above the group surfaces;
 clicking or keyboard-activating a label selects its transition in the inspector.
+A group's title bar starts with a 20px ghost chevron button, `ChevronDown`
+while it is open and `ChevronRight` on a closed group, that closes or opens
+the group in place, and ends with a 20px ghost "Open scope" icon button
+(`Focus`), shown on hover and on focus.
 
 `TransitionEdge` draws a transition with a 1.75px semantic-color
 stroke, an arrowhead, and a label pill: 20px high, `card` surface, 1px
@@ -867,7 +874,10 @@ stroke, an arrowhead, and a label pill: 20px high, `card` surface, 1px
 | `onError` | solid        | `CircleAlert` icon in `error-foreground`, "error", and the invoke id  |
 
 A guarded transition has the `Filter` icon first in its pill. A
-transition with no target is a short loop on its source.
+transition with no target is a short loop on its source. A transition whose
+end lies inside a closed group is drawn to the closed group, and its pill
+ends with "from <path>" or "to <path>" in `muted-foreground`, the hidden
+state's path under the group.
 
 - Selection is a 2px primary border with a ring, as for `TaskNode`. The
   selected edge, and the edges into and out of the selected node, are 2.5px
@@ -876,7 +886,8 @@ transition with no target is a short loop on its source.
   corner.
 - A state with a problem has a 16px "!" badge on its top-right corner,
   error or warning colored. A transition with a problem has its pill
-  bordered in error or warning color with a 12px "!" icon.
+  bordered in error or warning color with a 12px "!" icon. A closed group
+  carries the dot and the badge of every state and transition it hides.
 - Handles show on hover with the Select tool: an 8px dot on the top and
   bottom edge of each node, `card` fill with a primary border.
 - When the canvas cannot draw the draft, it shows the last drawing at 40%
@@ -907,6 +918,53 @@ fixed. Pan owns viewport interaction: a primary drag pans even when it starts
 over a node or transition label, while clicks leave the inspected selection
 unchanged. Pan and temporary Space panning cannot move or connect objects.
 Middle- and right-button drags pan in either tool; the wheel continues to zoom.
+
+#### Scopes
+
+The canvas draws one scope at a time: the whole blueprint, or one compound
+or parallel state with everything nested in it. The whole blueprint is the
+scope the editor opens on. A scope is a way of looking at the blueprint; it
+never changes the draft, and Publish, the YAML view, and the Problems strip
+always hold the whole file.
+
+- In a scope, the scope's state is the frame: its `GroupNode`, open, with
+  every state nested in it. The frame does not move.
+- Outside the frame, a `ContextNode` stands for each state at the far end of
+  a transition that enters or leaves the scope. Its full path, in
+  `muted-foreground`, tells where that state is. A context node for an
+  ancestor of the scope has the `CornerLeftUp` icon in place of
+  `ArrowUpRight`. Transitions with both ends outside the scope are not
+  drawn in it.
+- A transition that enters or leaves the scope is a `TransitionEdge` like
+  any other, drawn between the state inside and the context node.
+- A group closes in place with its chevron, in any scope, the whole
+  blueprint included. A closed group shows how many states it holds, and
+  the transitions into and out of the states it hides end at it.
+- A click on the canvas background selects the scope's state, or the
+  blueprint in the whole blueprint.
+
+The scope bar floats 12px under the toolbar, at the same left edge: 32px
+high, the `popover` surface, a 1px border, 8px radius. It holds:
+
+1. "Up one scope" (`CornerLeftUp`, a 28px ghost icon button, `Alt+↑` or
+   `⌥↑`), disabled in the whole blueprint.
+2. The breadcrumb: the machine id in mono for the whole blueprint, then the
+   key of each state down to the scope, split by 14px `ChevronRight` icons
+   in `muted-foreground`. The scope is `foreground` weight 600; the others
+   are `muted-foreground` links, underlined on hover. When the breadcrumb is
+   wider than the canvas allows, the middle keys fold into an `Ellipsis`
+   menu.
+3. "Open all groups" (`ChevronsUpDown`, ghost, after a 1px divider), shown
+   while a group is closed.
+
+A compound or parallel state opens as a scope by its title bar's "Open
+scope" button, a double-click on its title bar or on its closed node,
+`Enter` while it is selected, or "Open scope" (outline, `Focus`) in its
+inspector's Basics. A context node's double-click or `Enter` opens the scope
+that holds it, with it selected. `C` closes or opens the selected group in
+place. Opening a scope fits the view to the frame and its context nodes;
+going up selects the state that was the scope and centers it. The browser's
+Back and Forward move between the scopes visited.
 
 #### Event picker
 
@@ -1262,6 +1320,10 @@ with the same name as the design canvas uses:
 - `AccountsContent`: the Accounts and budget sources section of Settings.
 - `GroupNode`, `HistoryNode`, and `InitialNode`: ReactFlow custom nodes for
   a compound or parallel state, a history state, and an initial marker.
+- `ClosedGroupNode` and `ContextNode`: ReactFlow custom nodes for a closed
+  compound or parallel state, and for a state outside the canvas's scope
+  at the far end of a transition that crosses it.
+- `ScopeBar`: the blueprint canvas's scope breadcrumb, under the toolbar.
 - `TransitionEdge`: a ReactFlow custom edge for a blueprint transition.
 - `CanvasToolbar`: the blueprint canvas's toolbar.
 - `Inspector`: the panel that edits the selected node or edge of a

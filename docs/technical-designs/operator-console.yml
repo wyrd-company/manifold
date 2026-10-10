@@ -40,6 +40,8 @@ terms:
   - sharing-preview
   - pass
   - state-visit
+  - canvas-scope
+  - boundary-transition
 objective: >-
   Give the operator console one package that builds into static files, one
   place in the service that serves them and the API the console reads, and a
@@ -56,7 +58,9 @@ objective: >-
   dependency graph read from GitHub, with the chain that holds the most
   open work. It changes a process
   from the Blueprints screen: edits each blueprint on a canvas of its
-  states and transitions, with an inspector for every node and edge, or as
+  states and transitions, the whole blueprint or one nested state at a
+  time with the transitions that cross into it, with an inspector for
+  every node and edge, or as
   YAML in a view the operator toggles to, with the service's own lint
   marking each finding as the draft changes, and publishes it as a commit
   pushed to the process repository, which the service then runs with no
@@ -141,6 +145,14 @@ design-challenges:
   positions: >-
     A position the operator gives a state must survive a reload, another
     browser, and a publish, and must not change what the blueprint runs.
+  scoped-views: >-
+    A blueprint nests states inside states, and its transitions cross
+    between levels with descendant and `#id` targets. The operator must be
+    able to work inside one nested state without losing where its
+    transitions come from and go to, reach and edit every state and
+    transition from any view, and always see and publish the whole file,
+    and what the canvas shows must stay out of the blueprint, so that
+    looking at a blueprint never changes what it runs.
   declaration-edits: >-
     A bind dialog changes one binding in `bindings.yml`, a file the
     operator may also edit by hand with comments. The edit must keep every
@@ -1231,7 +1243,9 @@ proposed-design:
     cursor at the start of the selected node's or edge's range and
     scrolls it into view; switching to the canvas selects the deepest
     transition, or else the deepest state, whose range holds the cursor,
-    opens its inspector, and pans to it when it is outside the viewport.
+    changes the canvas view when it does not draw it, as
+    `scope-selection` states, opens its inspector, and pans to it when it
+    is outside the viewport. Switching keeps the canvas view in the URL.
   yaml-view: >-
     The YAML view is a CodeMirror 6 editor over the text, full width, with
     line numbers, `@codemirror/lang-yaml`, the console's theme built from
@@ -1270,9 +1284,10 @@ proposed-design:
     resolve, the canvas keeps the last graph, dimmed and read only, with
     the info line "The canvas cannot draw this text. Fix it in the YAML
     view." and "Open YAML". While the draft is a pending save, the canvas
-    is read only. Read only, the canvas keeps select, move, zoom, and fit;
-    every other toolbar button and every inspector field is disabled. A
-    click on the canvas background selects the blueprint itself.
+    is read only. Read only, the canvas keeps select, move, zoom, fit, and
+    scope navigation; every other toolbar button and every inspector field
+    is disabled. A click on the canvas background selects the scope's
+    state, or the blueprint itself in the whole blueprint.
   canvas-toolbar: >-
     `CanvasToolbar` floats 12px inside the canvas's top-left corner. Its
     buttons are ghost icon buttons, each with an `aria-label` and a
@@ -1291,7 +1306,7 @@ proposed-design:
     state, and Escape disarms. Add transition arms connection: a click on
     the source state and a click on the target state, the source again for
     a transition to itself, open the event picker; Escape disarms. Zoom
-    runs from 25% to 200%. Fit frames every node with 48px of margin.
+    runs from 25% to 200%. Fit frames every drawn node with 48px of margin.
     Automatic layout is disabled, with the tooltip "Layout is automatic",
     while the blueprint has no `layout`. `Delete` and `Backspace` remove
     the selected state or transition.
@@ -1302,9 +1317,11 @@ proposed-design:
     under a title bar; a parallel state is a `GroupNode` marked "Parallel"
     whose regions, its child states, have dashed borders; a history state
     is a `HistoryNode`, a circle marked `H` for shallow or `H*` for deep;
-    and each compound level, the machine's root included, has an
+    each compound level, the machine's root included, has an
     `InitialNode`, a small filled dot joined to the initial child by an
-    unlabeled edge. A state names the source of its first invoke, with
+    unlabeled edge; a closed group is a `ClosedGroupNode`; and a state
+    outside the scope is a `ContextNode`, as `scope-drawing` and
+    `closed-groups` state. A state names the source of its first invoke, with
     "+N" for more, and a "Gate" badge when it declares a gate. A state
     whose range holds a line that differs from the base text has the
     6px warning dot. A state with a finding or warning whose location is
@@ -1331,7 +1348,8 @@ proposed-design:
     bordered in error or warning color with a 12px "!" icon.
   automatic-layout: >-
     `layoutCanvas(graph, layout, measure)` in `canvas-layout.ts` is a pure
-    async function from the graph, the document's `layout`, and a function
+    async function from the scoped graph of `canvas-scope-interface`, the
+    document's `layout`, and a function
     that measures a label's width to the positioned nodes, edges, and
     labels. A blueprint with no `layout` is laid out automatically, every
     time the set of states, transitions, or labels changes, with elkjs's
@@ -1368,12 +1386,14 @@ proposed-design:
     snapped to the 8px grid, as the whole `layout.states` mapping in
     document order, so the first drag of an automatic blueprint pins the
     drawing as it was shown, and an entry whose path names no state is
-    dropped. Moving a state to another parent is a change of the machine
+    dropped. In a scope, or with a closed group, the write is the merge
+    `scope-layout` states. Moving a state to another parent is a change of the machine
     and is made in the YAML view. Automatic layout removes `layout` and
     the comments inside it, and the blueprint is automatic again.
   adding: >-
-    Placing a state adds it to the deepest compound or parallel state
-    whose group holds the click point, or to the machine's root. Its key is
+    Placing a state adds it to the deepest open compound or parallel state
+    whose group holds the click point, or else to the scope's state, the
+    machine's root in the whole blueprint. Its key is
     the first of `<base>`, `<base>-2`, `<base>-3`, and so on that no
     sibling holds, where the base is `state`, `compound`, `parallel`,
     `final`, or `history` by its type. It is written as the smallest text
@@ -1563,9 +1583,351 @@ proposed-design:
     of pairs, the text before and after each canvas or inspector edit, up
     to 100. Undo restores the text before the latest edit only when the
     draft's text is still the text after it; a text changed elsewhere, by
-    the YAML view or a source read, empties both stacks. The stacks live in
-    memory and are emptied by a reload, a discard, and a source read that
-    replaces the text.
+    the YAML view or a source read, empties both stacks. Each pair also
+    holds the canvas views before and after its edit, as `scope-undo`
+    states. The stacks live in memory and are emptied by a reload, a
+    discard, and a source read that replaces the text.
+  canvas-scopes: >-
+    The canvas draws one canvas scope at a time. A scope is named by a
+    state path as `blueprints-api` gives it, `""` for the whole blueprint,
+    and only a compound or parallel state, or the whole blueprint, is a
+    scope. The canvas view is the scope and the set of closed groups, the
+    compound or parallel states drawn closed. It is held in the editor
+    route's search and nowhere else: never in the draft, the blueprint,
+    its `layout`, or Manifold's store. The editor opens on the whole
+    blueprint with no closed group, which draws exactly what the canvas
+    draws without scopes. The YAML view, the Problems strip, lint, the
+    draft, Publish, and Discard always work on the whole file, whatever the
+    canvas view. A decision model's dialog is modal over the editor, so the
+    canvas view does not change while it is open, and its Apply to draft
+    changes the model file's draft, never the blueprint's text or the
+    canvas view.
+  scope-drawing: >-
+    In a scope other than the whole blueprint, the in-scope states are the
+    scope's state and every state under it. The scope's state is drawn as
+    the frame: its `GroupNode`, open, at the drawing's origin, not
+    draggable, with its initial marker and its children. Every other
+    in-scope state is drawn as the whole blueprint draws it, unless a
+    closed group hides it. A transition is drawn when its source or its
+    target is in scope: within the frame when both are, and as a boundary
+    transition when one is. A transition with several targets is one edge
+    per target, each classified on its own. A targetless transition of the
+    scope's state loops on the frame. For each state outside the scope that
+    is an end of a boundary transition, a `ContextNode` is drawn once,
+    however many transitions name it, with that state's own path, never an
+    ancestor's, so the path says exactly where the transition goes. A
+    context node is a root-level node outside the frame. It cannot be
+    dragged or start a connection, and a connection dropped on it targets
+    its state. A context node for an ancestor of the scope's state has the
+    ancestor icon: it stands for a transition the ancestor declares into
+    the scope, such as one with a `#id` target. A transition with neither
+    end in scope, such as one an ancestor declares to a state outside the
+    scope, is not drawn in it; it is drawn in the whole blueprint and in
+    the scope of the deepest state that holds both its ends. In the whole
+    blueprint there is no frame and no context node, and the root's own
+    transitions are not drawn; the blueprint inspector lists them.
+  closed-groups: >-
+    A closed group is drawn as a `ClosedGroupNode` at the group's place,
+    and the states under it are not drawn. A transition with both ends
+    under the same closed group is not drawn. A transition with one end
+    under a closed group and the other end drawn is drawn to the outermost
+    closed group that hides that end, with "from <path>" or "to <path>" in
+    its pill, the hidden state's path under that group; a transition to
+    the group itself has no suffix. A closed group carries the changed dot
+    when any state under it has one, and the "!" badge of the most severe
+    finding or warning that marks it or anything it hides. A group under a
+    closed group keeps its own entry in the closed set, so it is still
+    closed when its ancestor opens. The frame is never drawn closed: a
+    scope opens its frame whatever the closed set holds. "Open all groups"
+    empties the closed set.
+  scope-navigation: >-
+    A compound or parallel state opens as the scope by its title bar's
+    "Open scope" button, a double-click on its title bar or on its closed
+    node, `Enter` while it is selected, or "Open scope" in its inspector's
+    Basics. Opening a scope leaves the selection and the closed set
+    unchanged. "Up one scope", `Alt+ArrowUp`, or `⌥↑` makes the nearest
+    compound or parallel ancestor the scope, or the whole blueprint, and
+    selects the state that was the scope. A breadcrumb item makes its state
+    the scope. A context node's double-click or `Enter` makes its state's
+    parent the scope, the whole blueprint for a top-level state, and
+    selects the state. `C`, with a compound or parallel state selected,
+    closes or opens it in place, as its title bar's chevron does. A scope
+    change fits the view to the frame and its context nodes with 48px of
+    margin, and going up centers the view on the state that was the scope;
+    closing or opening a group keeps the viewport. Keys act while focus is
+    on the canvas, never in an inspector field or the YAML view, and
+    Escape keeps its meaning. Navigation works on a read-only canvas, since
+    it changes no text. While the canvas cannot draw the text, it keeps the
+    last drawing in the view it was drawn in, and navigation is disabled.
+  scope-selection: >-
+    The selection keeps its one form: a state path, a transition's
+    location, or an initial marker's id, so the inspector, the Problems
+    strip, and the YAML view read it unchanged. A context node is selected
+    by its state's path and opens that state's inspector, and an edge is
+    selected by its transition's location in any view. A selection the
+    canvas view does not draw changes the view to the nearest view that
+    draws it, whatever set it: the Problems strip, the YAML cursor on a
+    switch to the canvas, an inspector's Transitions row, an edit's
+    `select`, or an undo. The scope becomes the deepest of the current
+    scope and its ancestors whose drawing holds the selected state, or
+    both ends of the selected transition, as in-scope or context nodes;
+    then each closed group that hides the selection leaves the closed set.
+    A selection the view draws never changes the view, and a view change
+    never clears the selection. A transition the canvas draws in no view,
+    one the root declares or an invoke's `onSnapshot`, leaves the view
+    unchanged, and the inspector shows it as it does without scopes. In the bundled task blueprint, with the
+    scope `active.working`, choosing a finding on `finishing` opens the
+    whole blueprint, and choosing one on `active.stalled` opens `active`.
+  scope-urls: >-
+    The editor route's search holds the canvas view beside `view`: `scope`,
+    the scope's path, absent for the whole blueprint, and `closed`, the
+    closed groups' paths as an array in document order, absent when empty.
+    A reload, a pasted link, and Back and Forward restore the view, and the
+    YAML view keeps both in its URL, so the canvas returns to them. A scope
+    change, including a reveal, pushes a history entry; closing or
+    opening a group, a rename's rewrite, and a correction replace the
+    current entry. When the canvas draws a
+    graph, it corrects the view against it: a `scope` that names no state
+    becomes its deepest existing ancestor by path, with the info line
+    "<path> is not in this blueprint. Showing <ancestor's path or the
+    machine id>." until the next view change; a `scope` that names an
+    atomic, final, or history state becomes its parent; and a `closed`
+    entry that names no compound or parallel state is dropped. A
+    correction applied twice gives the same URL. The selection is not in
+    the URL; it stays in memory, as without scopes.
+  scope-edits: >-
+    A scope adds no edit and no mutation. Every canvas and inspector edit
+    in any view is an `applyBlueprintEdit` edit on the whole text,
+    committed on its basis as `edit-basis` states, so a replay applies at
+    most once, and a crash leaves the draft at its basis or at its result,
+    as in the whole blueprint. Placing a state adds it as `adding` states;
+    a closed group and a context node are never the new state's parent. A
+    new transition may target any state: a connection dropped on a context
+    node targets its state, and the event picker's target select lists
+    every state path. Remove, `Delete`, and `Backspace` remove the
+    selected state or transition wherever it lies. When a canvas or
+    inspector edit renames the scope's state, an ancestor of it, or a
+    closed group, its result rewrites the renamed path prefix in `scope`
+    and `closed`, replacing the URL; the rewrite applied twice gives the
+    same view. A rename typed in the YAML view, and any change that
+    removes the scope's state, leave the old path to the correction of
+    `scope-urls`.
+  scope-undo: >-
+    Each canvas history pair also holds the canvas view its edit was made
+    in and the view after it. Undo restores the text before the latest
+    edit and that edit's view, and Redo restores the text after it and the
+    view after it, each corrected against the restored text, so undo shows
+    where the change was made, and a renamed scope follows its name back.
+    A scope change alone is not an edit: it adds no pair and leaves the
+    stacks as they are, and Back, not Undo, returns to the previous scope.
+  scope-layout: >-
+    `layoutCanvas` draws exactly the scoped graph it is given. With
+    automatic layout, elkjs lays out the scoped graph as it lays out the
+    whole blueprint: the frame is a group of its drawn children, a closed
+    group is a 200×56 node, and a context node is a 200×40 root-level node,
+    so layered placement puts each context node above or below the frame
+    by the direction of its transitions, and keeps it and its labels clear
+    of the frame. With a pinned layout, each drawn state inside the frame
+    takes its `layout.states` point relative to its parent group, as in
+    the whole blueprint; a closed group takes its own point at 200×56, and
+    the entries of the states it hides are not read; and the context nodes
+    stack in one column 96px right of the frame, 16px apart, top-aligned
+    with it, in document order. A drag's end writes one `set-layout` edit:
+    the points of the states drawn other than the frame and the context
+    nodes, merged over the existing `layout.states` entries, so each entry
+    for a state the view does not draw is kept. On a blueprint with no
+    `layout`, the first drag in a scope, or with a closed group, first
+    lays out the whole blueprint automatically, without drawing it, and
+    writes its points for every state the view does not draw, so the
+    whole blueprint is pinned at once. Automatic layout, in any view,
+    removes `layout` for the whole blueprint.
+  scope-accessibility: >-
+    The scope bar is a `nav` labelled "Scope" that holds an ordered list,
+    whose current scope has `aria-current="location"`. "Up one scope" names
+    its key in its tooltip. A group's chevron is a button labelled "Close
+    <key>" or "Open <key>" with `aria-expanded`. The frame is labelled
+    "<key>, scope"; a closed group "<key>, closed group, N states"; and a
+    context node "<path>, outside this scope". A polite live region
+    announces each scope change: "Scope <path or machine id>: N states, M
+    transitions cross the scope." Focus stays on the canvas through every
+    navigation, and the newly selected node is the focused one. Every
+    scope action has a key and a pointer path, and none needs a drag. The
+    closed and context looks differ by border, shape, and icon, never by
+    color alone, and their muted text keeps `muted-foreground`'s contrast
+    on its surface in both themes.
+  canvas-scope-interface: |-
+    `src/screens/blueprints/canvas-scope.ts` is a pure module over the
+    shared `BlueprintGraph`, which does not change. It exports exactly
+    these names, and `layoutCanvas` takes its `ScopedGraph`.
+
+    ```ts
+    import type {
+      BlueprintGraph,
+      GraphState,
+      GraphTransition,
+    } from "@wyrd-company/manifold-shared/blueprints-api";
+
+    /** What the canvas draws. Held only in the editor route's search. */
+    export interface CanvasView {
+      /** A compound or parallel state's path; "" for the whole blueprint. */
+      readonly scope: string;
+      /** Compound or parallel state paths drawn closed, in document order. */
+      readonly closed: readonly string[];
+    }
+
+    export type ScopedNode =
+      | { readonly role: "frame"; readonly state: GraphState }
+      | { readonly role: "state"; readonly state: GraphState; readonly parent?: string }
+      | {
+          readonly role: "closed";
+          readonly state: GraphState;
+          readonly parent?: string;
+          /** The number of states under it. */
+          readonly hidden: number;
+        }
+      | { readonly role: "context"; readonly state: GraphState; readonly ancestor: boolean };
+
+    export interface ScopedEdge {
+      readonly transition: GraphTransition;
+      /** The node the edge leaves: the source, or the closed group hiding it. */
+      readonly source: string;
+      /** The node the edge enters; absent for a targetless transition. */
+      readonly target?: string;
+      /** True when one end is in scope and the other is a context node. */
+      readonly boundary: boolean;
+      /** The hidden source's path under the closed group that stands for it. */
+      readonly from?: string;
+      /** The hidden target's path under the closed group that stands for it. */
+      readonly to?: string;
+    }
+
+    export interface ScopedGraph {
+      /** The view as drawn, after correction. */
+      readonly view: CanvasView;
+      /** The breadcrumb's paths, "" first and the scope last. */
+      readonly breadcrumb: readonly string[];
+      /** The requested scope, when it named no state. */
+      readonly missingScope?: string;
+      readonly nodes: readonly ScopedNode[];
+      readonly edges: readonly ScopedEdge[];
+    }
+
+    /** Corrects the view against the graph and gives what it draws. */
+    export function scopeGraph(graph: BlueprintGraph, view: CanvasView): ScopedGraph;
+
+    /** The nearest view that draws the selection; the view itself when it does. */
+    export function revealSelection(
+      graph: BlueprintGraph,
+      view: CanvasView,
+      selection: string | undefined,
+    ): CanvasView;
+
+    /** The view with each path at or under `from` moved under `to`. */
+    export function renameInView(view: CanvasView, from: string, to: string): CanvasView;
+    ```
+
+    A drawn node's id is its state's path in every role, and a view draws
+    a state at most once, so the selection, the problem marks, and
+    `findingSelection` map to nodes unchanged. An edge's id is its
+    transition's location with the index of the target it draws, the same
+    in every view. `canvas-history.ts` pairs add `viewBefore` and
+    `viewAfter`. The route's search validation reads `scope` as a string
+    and `closed` as an array of strings, and drops either when it has
+    another shape.
+  scope-worked-example: >-
+    The bundled task blueprint, `packages/service/bundle/blueprints/task.yml`,
+    has thirteen states. At the top are `todo`, `starting`, `active`,
+    `finishing`, `done`, `stopped`, and `closed`; `active` holds `working`
+    and `stalled`; and `working` holds `opening`, `preparing`, `prompting`,
+    `waiting`, and `escalated`. The whole blueprint draws all thirteen,
+    open, with no context node, and the breadcrumb is `task`. Opening
+    `active` gives the scope `active`, with the breadcrumb `task › active`:
+    the frame `active` holds `working`, open with its five states, and
+    `stalled`. The context nodes are `starting`, whose `done` enters
+    `active`; `finishing`, the target of `active`'s `agent.handoff` and of
+    `stalled`'s "done" answer; and `stopped`, the target of its "stop"
+    answer. Those four transitions are the boundary transitions. Inside
+    the frame are `agent.escalated` from `active` to
+    `active.working.escalated`; `working`'s four transitions to `stalled`;
+    the `error` transitions of `opening` and `prompting` to `stalled`;
+    `stalled`'s two "retry" answers to `preparing` and to `working`; and
+    the steps among `working`'s children. `active`'s targetless
+    `t3.thread.archived` and `t3.thread.deleted` loop on the frame.
+    `todo`, `done`, and `closed`, and the transitions among `todo`,
+    `starting`, and `closed`, are not drawn. Opening `working` from there
+    gives the small scope `active.working`, with the breadcrumb `task ›
+    active › working`: the frame `working` holds its five states. The
+    context nodes are `active.stalled` and `active`, the second with the
+    ancestor icon. The nine boundary transitions are `working`'s
+    `t3.turn.settled`, `t3.session.failed`, `t3.thread.archived`, and
+    `t3.thread.deleted` to `active.stalled`; the `error` transitions of
+    `opening` and `prompting` to `active.stalled`; `active.stalled`'s
+    "retry" answers to `preparing` and to `working`; and `active`'s
+    `agent.escalated` to `escalated`. Inside the frame are the `done`
+    transitions from `opening` to `preparing`, `preparing` to `prompting`,
+    and `prompting` to `waiting`; `agent.escalation.answered` from
+    `escalated` to `waiting`; and `escalated`'s targetless
+    `t3.turn.settled` loop. `active`'s `agent.handoff` to `finishing` and
+    `stalled`'s "done" and "stop" answers are not drawn here. The live
+    region announces "Scope active.working: 6 states, 9 transitions cross
+    the scope." "Up one scope" twice, the `task` breadcrumb item, or Back
+    twice returns to the whole blueprint; after "Up one scope", `active` is
+    selected and centered. In the whole blueprint, closing `active.working`
+    draws `working` as a closed node, "5 states": `agent.escalated` from
+    `active` ends at it with "to escalated", `stalled`'s first "retry"
+    with "to preparing" and its second with no suffix, the `error`
+    transitions start at it with "from opening" and "from prompting", and
+    the transitions among its five states are not drawn.
+  scope-tests: >-
+    Each behavior is red before green, through public interfaces.
+    `canvas-scope.ts` is unit tested on the bundled task blueprint and on
+    a generic fixture with a parallel state, a history state, a
+    transition with two targets, a `#id` target declared on an ancestor,
+    and a targetless transition: the whole blueprint with no closed group
+    draws every state and every transition the canvas draws without
+    scopes, with no frame and no context node, and `layoutCanvas` gives
+    the same drawing for it as before scopes; the scopes `active` and
+    `active.working` and the closed `active.working` give the nodes, roles,
+    edges, and suffixes of `scope-worked-example`; every transition the
+    canvas draws is drawn in the whole blueprint and in the scope of the
+    deepest state that holds its ends; the correction turns a missing
+    scope into its deepest existing ancestor with `missingScope`, an
+    atomic scope into its parent, and drops a `closed` entry that is no
+    group, and a corrected view corrects to itself; `revealSelection`
+    gives the worked example's views for a state, a transition, a context
+    node's state, and a state under a closed group, and returns the view
+    unchanged for a drawn selection; `renameInView` applied twice equals
+    it applied once; and Undo and Redo restore each pair's views.
+    `canvas-layout.ts` adds: in a scope with automatic layout no two nodes
+    overlap unless one holds the other, and every context node lies
+    outside the frame; in a pinned scope the context nodes stand in their
+    column; a drag in a scope writes `layout.states` with every entry for
+    an undrawn state kept; and the first drag in a scope of a blueprint
+    with no `layout` writes an entry for every state. The browser test
+    `packages/service/src/blueprints-api/canvas-scope.browser.test.ts`
+    opens the bundled task blueprint from a fixture process repository and
+    checks, in order: the whole blueprint shows thirteen states and no
+    context node; a double-click on `active`'s title bar opens `scope=active`
+    with the worked example's nodes and the announcement; `Enter` on the
+    selected `working` opens `active.working` with its five states, two
+    context nodes, and nine boundary transitions; selecting `prompting` and
+    changing its invoke id in the inspector makes the draft, and the YAML
+    view shows the whole file with that change and the fixture's comments;
+    returning to the canvas keeps `active.working`; `Enter` on the context
+    node `active.stalled` opens `active` with it selected; choosing a
+    Problems strip entry on `finishing` opens the whole blueprint with it
+    selected; Back returns to `active`; closing `working` with `C` shows
+    "5 states" and the suffixed pills; renaming `working` from its inspector
+    while it is the scope moves `scope` to the new key, and Undo restores
+    the text and `scope=active.working`; a reload of a URL with `scope`
+    and `closed` restores the view; a URL whose `scope` names no state
+    shows the info line and its ancestor; text that does not parse keeps
+    the dimmed drawing and disables the scope bar; publishing from a scope
+    commits the whole file, whose diff with the base holds only the
+    edits made; and a keyboard-only pass opens and leaves both scopes,
+    toggles a group, and reaches a boundary transition's inspector without
+    a pointer. The other fixture's values are generic and never drawn from
+    Manifold's own domain.
   problems-strip: >-
     The Problems strip is `DESIGN.md`'s: a 36px header with the error count
     in error color and the warning count in warning color, collapsible,
