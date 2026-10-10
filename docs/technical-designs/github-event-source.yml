@@ -1,6 +1,7 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
+    - retention
     - durable-event-delivery
     - service-assembly
     - service-configuration
@@ -1207,7 +1208,23 @@ proposed-design:
     GUID. When every page is read it sets `scanned_through` to the newest
     `delivered_at` it read. A redelivered delivery arrives at `receive` with
     its GUID as any delivery does. A delivery older than GitHub keeps is
-    recovered by the sweep alone.
+    recovered by the sweep alone. Retention removes delivery and
+    redelivery rows past their window that the hook's scan has passed, as
+    `retention` states.
+  retention: >-
+    The index exports `pruneDeliveries(connection, { receivedBefore,
+    limit })` and `pruneRedeliveries(connection, { requestedBefore, limit
+    })` for retention, as `retention` states. Each deletes, in one
+    statement, at most `limit` rows whose time is before the given cutoff
+    and before their hook's `scanned_through`, or whose hook has no
+    `github_hook_scan` row, and answers how many it deleted. A row at or
+    after its hook's cursor stays, so a scan never meets an attempt whose
+    GUID it has forgotten while GitHub can still list the attempt. The
+    deletes read no other module's table, make no GitHub call, and leave
+    the mirror, `github_pending`, and `github_card_move` as they are; the
+    mirror's revisions name the events the source publishes, so a delivery
+    GitHub sends again after its row is gone publishes nothing a first
+    delivery did not.
   push: >-
     A push that matches the process repository, as `github-events` defines,
     calls `processRepository.pull({ commit: after })` once per GUID. The

@@ -5,6 +5,7 @@ relationships:
   realizes:
     - github-event-source
   references:
+    - retention
     - store-database-schema
     - router-database-schema
     - github-events
@@ -25,13 +26,17 @@ description: |-
 
   Deliveries. `github_delivery` holds one row per accepted webhook delivery,
   keyed by its GUID, with the id of the hook that delivered it first, its
-  event name, and the time it was accepted. A row is never updated or
-  deleted, so a later delivery with the same GUID is a duplicate.
+  event name, and the time it was accepted. A row is never updated, so a
+  later delivery with the same GUID is a duplicate while the row stays.
   `github_redelivery` holds one row per GUID the source has asked GitHub to
   redeliver, with the hook, the id of the failed attempt it named, and the
-  time of the request, so the source asks once per GUID. `github_hook_scan`
-  holds, per hook, the `delivered_at` time of the newest delivery the last
-  completed redelivery scan read.
+  time of the request, so the source asks once per GUID while the row
+  stays. `github_hook_scan` holds, per hook, the `delivered_at` time of the
+  newest delivery the last completed redelivery scan read. Retention
+  deletes a delivery or redelivery row past the source event window of
+  `github` once its time is before its hook's `scanned_through`, or its
+  hook has none, as `retention` states; `github_delivery_received` and
+  `github_redelivery_requested` order those deletes by time.
 
   Pending reconciles. `github_pending` is the set of entities whose current
   state the source has yet to read and compare with the mirror: a tracked

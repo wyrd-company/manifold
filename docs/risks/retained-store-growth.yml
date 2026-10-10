@@ -11,10 +11,15 @@ relationships:
 title: Retained accounting and operational rows may grow without a bound
 description: >-
   Retention bounds eligible ended actors' event and command detail,
-  source event records, and gate evaluations. Usage, ledger rows, token
-  rows, history visits, snapshots, and other operational tables remain
-  for the life of the store. A long-running service can exhaust its disk
-  even when every configured prune run succeeds.
+  source event records, webhook delivery and redelivery records, gate
+  evaluations, closed escalations with their notifications and agent
+  questions and answers, read agent messages, and retired created project
+  records. Usage, ledger rows, token rows, history visits, snapshots,
+  thread rows, the GitHub mirror, pending inbox rows, unread and
+  undelivered messages, and the newest occurrence of each recurring
+  service escalation remain for the life of the store. A long-running
+  service can exhaust its disk even when every configured prune run
+  succeeds.
 categories: [technical]
 likelihood: 3
 impact: 3

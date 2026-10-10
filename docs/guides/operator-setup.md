@@ -370,11 +370,26 @@ it no longer needs, in days, or `forever`:
   that event is accepted as new.
 - `gateEvaluationDays`: each gate comparator evaluation. Past it, the grant
   cannot be replayed.
+- `escalationDays`: after an escalation closes, the escalation with its
+  notifications and the agent question and answer behind it. Past it, the
+  Task page no longer lists it and its answer link answers `404`. An open
+  escalation, one with a notification still to send, one whose answer has
+  not reached its agent, one whose actor still runs, and the latest
+  occurrence of a recurring service escalation are kept.
+
+The `github` entry of `sourceEventDays`, or `default` when it is absent, also
+sets how long the GitHub source keeps each webhook delivery and redelivery
+request; a row is kept until the hook's redelivery scan has passed it. A read
+agent message is removed once the histories of the actor that sent it and the
+actor that read it are removed, and the record of a T3 Code project an actor
+created once its ownership is safe to retire and its creator's history is
+removed. Thread records are kept for the life of the store, so that a late
+usage report is attributed to the right item.
 
 The service removes rows past their window about every hour, starting five
 minutes after it starts, and logs `retention-pruned` with the counts. A
-running actor's history, pending events, held tokens, and open escalations
-are always kept. A removed row is not restored when a window grows.
+running actor's history, pending events, held tokens, open escalations, unread
+messages, and pending webhook redeliveries are always kept. A removed row is not restored when a window grows.
 
 ## 11. Push usage from each environment
 

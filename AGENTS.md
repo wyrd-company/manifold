@@ -126,7 +126,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **reset** the instant at which an account's capacity starts again, closing one window and opening the next.
 - **prune run** one batched retention operation with cutoffs fixed at its start.
 - **reservation** an estimate held against a portfolio item's available balance from a task's release until settlement.
-- **retention window** how long Manifold's store keeps one kind of row it no longer needs, in whole days or `forever`, after which the service removes it: an ended actor's consumed events and commands, a source event's record, or a gate's comparator evaluation.
+- **retention window** how long Manifold's store keeps one kind of row it no longer needs, in whole days or `forever`, after which the service removes it: an ended actor's consumed events and commands, a source event's record, a webhook delivery's or redelivery's record, a gate's comparator evaluation, or a closed escalation.
 - **revision** the process repository's declared files at one commit, read-only.
 - **router** delivers an event from a source to the actors whose identity matches its topic.
 - **service** the running Manifold service

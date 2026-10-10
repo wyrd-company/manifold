@@ -1,6 +1,7 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
+    - retention
     - durable-event-delivery
     - gates
     - blueprint-loader
@@ -386,8 +387,27 @@ proposed-design:
     settled time. A service row's `kind` is any non-empty name, checked
     against `ServiceEscalationKind` in code, so a new kind changes no
     table. The one schema step creates the tables as
-    `escalations-database-schema` states. Rows are kept after an escalation ends, so the console
-    can show what was asked and how it was answered.
+    `escalations-database-schema` states. Rows are kept after an
+    escalation ends, so the console can show what was asked and how it was
+    answered, until retention removes them, as `retention` states.
+  retention: >-
+    The index exports `prunableEscalations(connection, { closedBefore,
+    after, limit })` and `pruneEscalation(connection, escalationId)` for
+    retention, as `retention` states. `prunableEscalations` lists, in id
+    order after `after`, the escalations that are closed before
+    `closedBefore`, have no `pending` notification, and, when an answered
+    service row, have their handling recorded, each with the actor it names
+    and whether it is the newest occurrence of its kind and subject.
+    `pruneEscalation` deletes the escalation's notification rows and then
+    its row in the caller's transaction, and answers `kept`, deleting
+    nothing, when the row is open or has a pending notification. A
+    removed escalation is `not-found` to `get` and `answer`, is not in
+    `list`, and its answer link answers `404`. Since the newest occurrence
+    of a subject that names no actor stays, the next occurrence of that
+    subject never reuses an id; a subject that names an actor is not
+    raised again once its actor has ended, which retention checks before it
+    removes one. The `waiting` callbacks and the taken set hold only open
+    escalations and running actors, which retention never removes.
   public-interface: |-
     `packages/service/src/escalations/index.ts` exports these names.
 
@@ -600,5 +620,11 @@ proposed-design:
     inside a caller's transaction that the caller then rolls back leaves
     no escalation and no notification row; one with a `title` publishes
     that title. Reopening a populated store keeps every escalation and
-    notification row, with the notification sequence intact. Values are
+    notification row, with the notification sequence intact. After
+    `pruneEscalation` removes the older closed occurrences of a gate
+    subject, a new failure of that gate raises the occurrence after the
+    newest, with a new id; `pruneEscalation` of an open escalation or of
+    one with a pending `close` notification answers `kept` and deletes
+    nothing; a removed escalation answers `not-found` through the API and
+    `404` through its link. Values are
     generic and never drawn from Manifold's own domain.

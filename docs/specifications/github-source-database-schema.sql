@@ -121,6 +121,10 @@ CREATE TABLE github_card_move (
   PRIMARY KEY (actor_id, invoke_id, entry_id, field_node_id, option_id)
 ) STRICT, WITHOUT ROWID;
 
+CREATE INDEX github_delivery_received ON github_delivery (received_at);
+
+CREATE INDEX github_redelivery_requested ON github_redelivery (requested_at);
+
 CREATE INDEX github_pending_requested ON github_pending (requested_at);
 
 CREATE UNIQUE INDEX github_project_owner_number

@@ -1,6 +1,7 @@
 $schema: https://refinery.systems/ontology/technical-design
 relationships:
   related-to:
+    - retention
     - agent-threads
     - escalations
     - durable-event-delivery
@@ -580,6 +581,28 @@ proposed-design:
     environment whose source is not ready within the identification bound
     answers `503` with `environment-unavailable`. An accepted, raised, or
     read call answers `200`.
+  retention: >-
+    The index exports `pruneQuestion(connection, escalationId)`,
+    `prunableMessages(connection, { readBefore, after, limit })`, and
+    `pruneMessages(connection, sequences)` for retention, as `retention`
+    states. `pruneQuestion` answers `kept` while the escalation's answer
+    row is `pending` or has no `placed_at`, so an answer still to send or
+    place keeps its question, which `placed` reads, and its escalation;
+    otherwise it deletes the question and the answer that name the
+    escalation in the caller's transaction, which retention commits with
+    the escalation's removal. A question is removed only with its closed
+    escalation, so an `escalate` call repeated in its turn finds its
+    question for as long as the escalation it returns exists.
+    `prunableMessages` lists, in sequence order after `after`, the read
+    messages with a `read_at` before `readBefore`, each with
+    `sender_actor_id` and `delivered_to`; `pruneMessages` deletes those of
+    the given sequences that are read. Retention removes a message only
+    once both actors' histories are pruned, so a `send-message` invoke
+    started again, and a `get-messages` call repeated in its turn, find
+    every row they read before. An undelivered or unread message is never
+    removed. Deleting the thread's highest read message leaves the next
+    read's position one more than the highest that remains, which is
+    still unique in the thread.
   public-interface: |-
     `packages/service/src/agent-tools/index.ts` exports exactly these
     names.

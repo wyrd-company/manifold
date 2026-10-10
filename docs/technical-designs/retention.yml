@@ -11,6 +11,9 @@ relationships:
     - gate-runtime
     - usage-intake
     - escalations
+    - agent-tools
+    - github-event-source
+    - t3code-environment-source
     - service-assembly
     - service-configuration
 terms:
@@ -25,40 +28,66 @@ terms:
   - event-source
   - stop-stage
   - wiring-part
+  - webhook-delivery
+  - redelivery
+  - message
+  - created-project
+  - unowned-usage
 objective: >-
   Keep Manifold's store file from growing with every routed event, every
-  ended actor, and every grant round, so that a service runs for months on
-  one store file, by deleting rows older than the retention window the
-  service configuration names for their kind, without breaking duplicate
-  detection inside the window, delivery replay, a grant's replay inside
-  the window, a running actor's history, or any row that an unconsumed
-  inbox row, an outstanding token, an open reservation, an open
-  escalation, or a posted call's attribution depends on.
+  ended actor, every grant round, every webhook delivery, every escalation,
+  and every agent message, so that a service runs for months on one store
+  file, by deleting rows older than the retention window the service
+  configuration names for their kind, without breaking duplicate detection
+  inside the window, delivery replay, a grant's replay inside the window, a
+  running actor's history, a redelivery GitHub can still send, an unread
+  message, an escalation that can still be answered, taken, handled, or
+  raised again, or any row that an unconsumed inbox row, an outstanding
+  token, an open reservation, an open escalation, or a posted call's
+  attribution depends on.
 background:
   current-design: >-
     History reads events from inbox rows and stores visits, event links,
     and commands. The router records accepted source events for duplicate
-    detection. Gates record comparator inputs for replay. Retention
-    removes eligible events, links, commands, and evaluations within the
-    configured windows. Snapshots, visits, usage, ledger entries, and
-    token rows stay for the life of the store.
+    detection. Gates record comparator inputs for replay. The GitHub source
+    records each accepted webhook delivery and each redelivery it asked
+    for. The escalations module keeps every escalation and its
+    notifications after it closes. The agent tools module keeps each
+    question, answer, and message. The T3 Code environment source keeps a
+    row for each thread it has seen and each T3code project an actor
+    created. Retention removes eligible rows of each of these kinds within
+    the configured windows. Snapshots, visits, usage, ledger entries,
+    token rows, the GitHub mirror, and thread rows stay for the life of the
+    store.
   problems:
     - >-
-      Event payloads and comparator inputs grow with routed events and
-      grant rounds. Rows of one module can protect rows of another:
-      a held token needs its evaluation and a running actor needs its
-      inbox and history. Age alone does not determine what is eligible.
+      Event payloads, comparator inputs, delivery records, escalations,
+      and message texts grow with routed events, grant rounds, webhook
+      deliveries, questions, and messages. Rows of one module can protect
+      rows of another: a held token needs its evaluation, a running actor
+      needs its inbox and history, an unplaced answer needs its question
+      and its escalation, and a call that reaches the service late needs
+      its thread's project. Age alone does not determine what is eligible.
 design-challenges:
   dependencies: >-
     Each module owns its tables and never reads another's. Pruning must
     still keep every row that a pending inbox row, a running actor, a held
-    token, an open reservation, an open escalation, or a posted call
+    token, an open reservation, an open escalation, a pending notification,
+    an unplaced answer, an unread message, or a posted or late call
     depends on.
-  one-actor-at-a-time: >-
+  one-unit-at-a-time: >-
     An actor's consumed inbox rows, its event links and commands, and the
     mark that they are gone must leave together, or a crash leaves an actor
     whose history holds links to events that are gone, or events with no
-    link.
+    link. An escalation, its notifications, and the agent question and
+    answer that name it must leave together, or a crash leaves an answer
+    that names an escalation that is gone.
+  replay: >-
+    A row that only marks work as done is what turns a repeat of that work
+    into a no-op: a delivery GUID, a redelivery request, an escalation
+    occurrence, a question's call key, a message id. Removing it is safe
+    only once no repeat can reach the code that reads it, and that bound
+    differs by kind.
   event-loop: >-
     `node:sqlite` is synchronous. A prune that deletes a year of rows in
     one statement holds the service's one thread for its whole length.
@@ -68,17 +97,22 @@ design-challenges:
 proposed-design:
   high-level-overview: >-
     The retention module, `packages/service/src/retention/`, runs one prune
-    prune run a fixed time after the service starts and then at a fixed
-    interval. A prune run deletes three kinds of rows, each against its own
+    run a fixed time after the service starts and then at a fixed
+    interval. A prune run deletes seven kinds of rows, each against a
     retention window from the `retention` section of the service
     configuration, as `retention-configuration` specifies: the consumed
-    inbox rows, event links, and commands of each ended actor, which share one window
-    counted from the actor's end; the source events of each event source,
-    counted from their acceptance; and the gate evaluations, counted from
-    their evaluation. The module owns no table. Each kind is deleted by the
-    module that owns its table, through a method or function that module
-    exports, so no module reads or writes another's table. The retention
-    module chooses what to delete, joins the deletes of one ended actor
+    inbox rows, event links, and commands of each ended actor, counted
+    from the actor's end; the source events of each event source, counted
+    from their acceptance; the GitHub source's delivery and redelivery
+    records, under the GitHub source's source event window; the gate
+    evaluations, counted from their evaluation; closed escalations, with
+    their notifications and agent questions and answers, counted from
+    their close; read agent messages whose sender and reader actors are
+    both pruned; and created project records whose ownership is retired
+    and whose creating actor is pruned. The module owns no table. Each kind
+    is deleted by the module that owns its table, through a function that
+    module exports, so no module reads or writes another's table. The
+    retention module chooses what to delete, joins the deletes of one unit
     into one transaction, and works in small batches with a turn of the
     event loop between them.
   public-interface: |-
@@ -101,9 +135,21 @@ proposed-design:
       readonly log: (entry: ServiceLogEntry) => void;
       /** Defaults to Date.now, setTimeout, and setImmediate. */
       readonly clock?: RetentionClock;
-      /** Called after each ended actor's prune commits. */
-      readonly probe?: (step: "actor-pruned", actorId: string) => void;
+      /** Called after each unit's transaction commits. */
+      readonly probe?: (step: PruneStep, id: string) => void;
     }
+
+    /**
+     * `actor-pruned`, `escalation-pruned`, and `project-retired` name one
+     * unit by its id; `batch-pruned` names the kind of a batch delete:
+     * `source-events`, `deliveries`, `redeliveries`, `gate-evaluations`,
+     * or `messages`.
+     */
+    export type PruneStep =
+      | "actor-pruned"
+      | "escalation-pruned"
+      | "project-retired"
+      | "batch-pruned";
 
     export interface RetentionClock {
       now(): number;
@@ -128,38 +174,134 @@ proposed-design:
       readonly inboxRows: number;
       readonly historyRows: number;
       readonly sourceEvents: number;
+      readonly deliveries: number;
+      readonly redeliveries: number;
       readonly gateEvaluations: number;
+      readonly escalations: number;
+      readonly notifications: number;
+      readonly questions: number;
+      readonly answers: number;
+      readonly messages: number;
+      readonly createdProjects: number;
     }
     ```
+  owner-functions: |-
+    Each owning module exports its prune functions from its `index.ts`.
+    Each takes the store's connection and runs in the caller's transaction
+    when there is one; a function that deletes runs its statement in a
+    transaction of its own otherwise.
+
+    ```ts
+    // router (unchanged), gates (unchanged)
+    sourceEventSources(connection): string[];
+    pruneSourceEvents(connection, { source, acceptedBefore, limit }): number;
+    pruneGateEvaluations(connection, { evaluatedBefore, keepGates, limit }): number;
+
+    // github-source
+    pruneDeliveries(connection, { receivedBefore: number, limit: number }): number;
+    pruneRedeliveries(connection, { requestedBefore: number, limit: number }): number;
+
+    // escalations
+    prunableEscalations(
+      connection,
+      { closedBefore: number, after?: string, limit: number },
+    ): PrunableEscalation[];
+    pruneEscalation(connection, escalationId: string): { notifications: number } | "kept";
+    interface PrunableEscalation {
+      readonly escalationId: string;
+      /** The raiser of a blueprint escalation, or `subject.actorId` of a service one. */
+      readonly actorId?: string;
+      /** True for the newest occurrence of a service escalation's kind and subject. */
+      readonly latestOccurrence: boolean;
+    }
+
+    // agent-tools
+    pruneQuestion(connection, escalationId: string): { questions: number; answers: number } | "kept";
+    prunableMessages(
+      connection,
+      { readBefore: number, after?: number, limit: number },
+    ): PrunableMessage[];
+    pruneMessages(connection, sequences: readonly number[]): number;
+    interface PrunableMessage {
+      readonly sequence: number;
+      readonly senderActorId: string;
+      readonly readerActorId: string;
+    }
+
+    // t3code-source, over the created-project ownership the T3 Code
+    // environment source records
+    retirableCreatedProjects(
+      connection,
+      { after?: CreatedProjectKey, limit: number },
+    ): RetirableCreatedProject[];
+    retireCreatedProject(connection, key: CreatedProjectKey): "retired" | "kept";
+    interface CreatedProjectKey { readonly environment: string; readonly projectId: string }
+    interface RetirableCreatedProject extends CreatedProjectKey {
+      /** The actor that created the project. */
+      readonly actorId: string;
+    }
+    ```
+
+    Each delete checks its own conditions again in its statement, so a row
+    that no longer meets them is kept and the function answers `kept` or
+    counts nothing for it.
   module-layout: >-
     `index.ts` re-exports the public names and nothing else.
-    `retention.ts` implements `openRetention`: the timer, the prune run, and its
-    batches. `protections.ts` holds the pure function from the open
-    escalations to the actors and gates a prune run keeps. `cutoffs.ts` holds
-    the pure function from the configuration and the time to each kind's
-    cutoff, or none for `forever`. `wiring.ts` exports the `retention`
-    part. Tests live beside the module and import only `index.ts` and the
-    `index.ts` of the store, history, router, gates, and escalations
-    modules.
+    `retention.ts` implements `openRetention`: the timer, the prune run,
+    and its order of kinds. `kinds.ts` holds one batch loop per kind.
+    `protections.ts` holds the pure function from the open escalations to
+    the actors and gates a prune run keeps, and the pure function from an
+    escalation candidate and its actor's snapshot to whether the candidate
+    may go. `cutoffs.ts` holds the pure function from the configuration
+    and the time to each kind's cutoff, or none for `forever`.
+    `wiring.ts` exports the `retention` part. Tests live beside the module
+    and import only `index.ts` and the `index.ts` of the store, history,
+    router, gates, escalations, agent tools, GitHub source, and T3 Code
+    environment source modules.
+  inventory: >-
+    Every table that grows with use is listed here with its rule.
+    "Never" names the live reference that keeps it.
+
+    | Table | Owner | Grows with | Rule | Window |
+    | --- | --- | --- | --- | --- |
+    | `inbox` (consumed rows), `history_event`, `history_command` | store, history | routed events, commands | removed with an ended actor | `historyDays` |
+    | `inbox` (pending rows) | store | events an actor has not taken | never: delivery replay drains them | none |
+    | `history_visit`, `snapshot` | history, store | state visits, actors | never: usage by visit and the completed actors list read them | none |
+    | `router_source_event` | router | accepted source events | removed per source | `sourceEventDays` |
+    | `github_delivery` | GitHub source | webhook deliveries | removed past the window once its hook's redelivery scan has passed it | `sourceEventDays.github` |
+    | `github_redelivery` | GitHub source | failed deliveries the source asked for again | removed past the window once its hook's redelivery scan has passed it | `sourceEventDays.github` |
+    | `gates_evaluation` | gates | grant rounds | removed unless a held token or an open escalation keeps it | `gateEvaluationDays` |
+    | `escalation`, `escalation_notification` | escalations | questions to a person | a closed escalation whose notifications are settled, whose actor has ended, and that is not the newest occurrence of a subject naming no actor, is removed with its notifications | `escalationDays` |
+    | `agenttool_question`, `agenttool_answer` | agent tools | agent questions | removed with their escalation, once the answer is settled and placed | `escalationDays` |
+    | `agenttool_message` | agent tools | agent messages | a read message is removed once its sender's and its reader's histories are pruned; an unread or undelivered message, never | `historyDays` |
+    | `t3_created_project` and its ownership | T3 Code environment source | projects actors create | retired once its ownership is safe to retire and its creating actor's history is pruned | `historyDays` |
+    | `t3_thread` | T3 Code environment source | threads | never: a late or later call reads its project and title, and its cursor is its replay position | none |
+    | `usage_*`, ledger | usage, ledger | calls, windows | never, as `usage-intake` states | none |
+    | `gates_token` | gates | grants | never: a reservation and its token's history name it | none |
+    | GitHub mirror tables | GitHub source | issues, items, fields, edges | never: each row's revision names the events it publishes, so a removed row would publish an id again | none |
   windows: >-
     A retention window is a number of whole days, or `forever`. A row's
     cutoff is the prune run's start time less the window's days times
     86,400,000 milliseconds, and a row is past its window when its time is
     before the cutoff. A window of `forever` deletes nothing of its kind.
-    The prune run reads the time once, so every batch of one prune run uses the same
-    cutoffs.
+    The prune run reads the time once, so every batch of one prune run uses
+    the same cutoffs.
 
     | Kind | Window | Time compared with the cutoff | Rows deleted |
     | --- | --- | --- | --- |
     | Ended actors | `historyDays` | the ended snapshot's `saved_at`, the actor's end | the actor's consumed inbox rows, and its `history_event` and `history_command` rows; its `history_visit` rows stay |
     | Source events | `sourceEventDays.<source>`, else `sourceEventDays.default` | `router_source_event.accepted_at` | the source event row |
+    | Webhook deliveries | the window of the source `github` | `github_delivery.received_at` | the delivery row |
+    | Redeliveries | the window of the source `github` | `github_redelivery.requested_at` | the redelivery row |
     | Gate evaluations | `gateEvaluationDays` | `gates_evaluation.evaluated_at` | the evaluation row |
+    | Escalations | `escalationDays` | `escalation.closed_at` | the escalation, its notification rows, and the agent question and answer that name it |
+    | Messages | `historyDays` | `agenttool_message.read_at`, and both actors' histories pruned | the message row |
+    | Created projects | `historyDays`, through the creating actor's history | the creating actor's history pruned | the created project record and the ownership the T3 Code environment source keeps for it |
   ended-actors: >-
     The unit of the history window is one ended actor, never one row: an
     actor's events and commands are pruned together once its end is past
-    the window, and a running
-    actor's inbox and history are never pruned, however old their rows
-    are. The prune run reads the candidates with
+    the window, and a running actor's inbox and history are never pruned,
+    however old their rows are. The prune run reads the candidates with
     `store.prunableEnded({ endedBefore, after, limit })`, 100 at a time,
     in end order, and for each candidate the protections do not keep runs,
     in one `store.connection.transaction`, `store.pruneEnded(actorId)` and,
@@ -174,25 +316,25 @@ proposed-design:
     postings are never pruned, and the actor usage read takes each
     visit's entry time from the history's visits, so a visit a posted call
     names is kept with the call. A visit is a few hundred bytes; the
-    event payloads are what the window removes. The actor's pending inbox rows
-    stay, since a row the actor never consumed is not part of the history
-    the window covers.
+    event payloads are what the window removes. The actor's pending inbox
+    rows stay, since a row the actor never consumed is not part of the
+    history the window covers.
   protections: >-
-    A prune run keeps what an open escalation depends on, and the deletes keep
-    the rest by their own conditions. At the start of each batch, after
-    the yield before it, the prune run reads `escalations.list({ status:
-    "open" })` and keeps every actor that an open escalation names, as the
-    raiser of a blueprint escalation or as the `actorId` of a service
-    escalation's subject, and every gate that a `comparator-failed` or
-    `stranded-token` subject names. The read and every transaction of
-    that batch run in one turn of the event loop, with no yield between
-    them, and an escalation is raised only by code on the same thread, so
-    no escalation opens between the read and the batch's last delete. An
-    escalation that opens during a yield is in the next batch's read. A
-    kept actor's events and commands are not pruned in that batch, and a
-    kept gate's evaluations are not deleted by it; a later batch or prune run
-    that finds the escalation closed prunes them. Every dependency the
-    store holds is kept as follows.
+    A prune run keeps what an open escalation depends on, and the deletes
+    keep the rest by their own conditions. At the start of each batch,
+    after the yield before it, the prune run reads `escalations.list({
+    status: "open" })` and keeps every actor that an open escalation names,
+    as the raiser of a blueprint escalation or as the `actorId` of a
+    service escalation's subject, and every gate that a
+    `comparator-failed` or `stranded-token` subject names. The read and
+    every transaction of that batch run in one turn of the event loop, with
+    no yield between them, and an escalation is raised only by code on the
+    same thread, so no escalation opens between the read and the batch's
+    last delete. An escalation that opens during a yield is in the next
+    batch's read. A kept actor's events and commands are not pruned in that
+    batch, and a kept gate's evaluations are not deleted by it; a later
+    batch or prune run that finds the escalation closed prunes them. Every
+    dependency the store holds is kept as follows.
 
     | Depends | On | Kept by |
     | --- | --- | --- |
@@ -201,12 +343,22 @@ proposed-design:
     | An ended actor's usage by visit | the visits its postings name, with their entry times | visits are never deleted |
     | An outstanding token | its token row and the evaluation that granted it | token rows are never deleted; an evaluation an unreturned token names is not deleted |
     | An open reservation | the ledger's hold, keyed by its token id | the ledger and token rows are never deleted |
-    | An open escalation | the actor or the gate its subject names | the actors and gates the prune run keeps |
+    | An open escalation | the actor or the gate its subject names; its own row, notifications, question, and answer | the actors and gates the prune run keeps; only closed escalations are pruned |
+    | A notification still to send | its escalation | an escalation with a pending notification is not pruned |
+    | An answer still to send or place | its question row, its escalation's answer, and its own row | `pruneQuestion` answers `kept` for an answer that is pending or not placed, and the escalation stays with it |
+    | A callback that can start again, or a service escalation's handling | the escalation row it reads | a blueprint escalation, or a service escalation naming an actor, is pruned only once that actor has ended; an answered service escalation is pruned only once its handling is recorded |
+    | The next occurrence of a service escalation | the newest occurrence of its kind and subject | the newest occurrence of a subject naming no actor is never pruned |
+    | A message not yet taken or read | its message row | only read messages are pruned |
+    | A webhook redelivery GitHub can still send or the scan can still ask for | the delivery and redelivery rows of its GUID | rows at or after their hook's scan cursor are not deleted |
     | A posted call's attribution | the posting's actor, item, and visit number | usage and ledger rows and history visits are never deleted |
+    | A late call's attribution | its thread's project and the project's item | thread rows are never deleted; a created project is retired only when its ownership is safe to retire |
 
     An ended actor holds no open reservation, since the save that ends it
     settles it, as `usage-intake` states, and holds no unreturned token,
-    since the same save returns them, as `gate-runtime` states.
+    since the same save returns them, as `gate-runtime` states. An actor
+    that has ended starts no callback, so an escalation it raised is never
+    read again by its raiser, and is never withdrawn again, as
+    `escalations` states for the save that ends an actor.
   source-events: >-
     For each source that `sourceEventSources(connection)` lists, a source
     whose window is not `forever` is pruned with
@@ -223,6 +375,27 @@ proposed-design:
     again after a crash, within the downtime and its shell replay; and the
     agent source can publish a `handoff` again within the turn that made
     it, and a `message` again when an invoke that sent it is restarted.
+  github-deliveries: >-
+    When the window of the source `github` is not `forever`, the prune run
+    calls `pruneDeliveries(connection, { receivedBefore, limit: 1000 })`
+    until a batch deletes fewer than 1000 rows, then
+    `pruneRedeliveries(connection, { requestedBefore, limit: 1000 })` the
+    same way, both with the cutoff of the source `github`. Each deletes the
+    rows past the cutoff whose time is also before their hook's
+    `scanned_through`, or whose hook has no scan cursor, and keeps every
+    row at or after its hook's cursor. A hook's first scan sets its cursor
+    to its own time and reads nothing older, and a redelivery scan reads
+    only attempts at or after its
+    hook's cursor, so a row before the cursor is read again only when a
+    new attempt for its GUID appears: a redelivery an operator asks for on
+    GitHub. A delivery whose row is gone that GitHub sends again is a new
+    delivery: the source queues its reconciles, reads current state, and
+    publishes only what differs from the mirror, under the revision event
+    ids the mirror keeps, so it publishes nothing a first delivery did not.
+    A failed GUID whose redelivery row is gone and that appears again
+    after the cursor is asked for once more and recorded again. GitHub
+    keeps deliveries for a few days, so past that time neither repeat can
+    reach the source. The delete changes no GitHub call.
   gate-evaluations: >-
     The prune run calls `pruneGateEvaluations(connection, { evaluatedBefore,
     keepGates, limit: 1000 })` until a batch deletes fewer than 1000 rows.
@@ -230,6 +403,78 @@ proposed-design:
     token names and those of a kept gate. A returned token whose
     evaluation is deleted keeps its row, with no evaluation, as
     `gate-runtime` states. A deleted evaluation cannot be replayed.
+  escalations: >-
+    The unit of the escalation window is one closed escalation with its
+    notifications and the agent question and answer that name it. The
+    prune run reads candidates with `prunableEscalations(connection, {
+    closedBefore, after, limit: 100 })`, in escalation id order. A
+    candidate is an escalation that is `answered` or `withdrawn`, closed
+    before the cutoff, with no `pending` notification, and, when it is a
+    service escalation that is `answered`, with its handling recorded. For
+    each candidate, in the batch's one turn, the prune run skips it when
+    the protections keep its actor, when it names an actor whose snapshot
+    is not ended, `done` or `stopped`, or when it names no actor and is
+    the newest occurrence of its kind and subject. Otherwise it runs, in
+    one `store.connection.transaction`, `pruneQuestion(connection,
+    escalationId)` and, when it does not answer `kept`,
+    `pruneEscalation(connection, escalationId)`, which deletes the
+    escalation's notification rows and then its row. `pruneQuestion`
+    answers `kept` while the escalation's answer row is `pending` or has
+    no `placed_at`, and otherwise deletes the question row and the answer
+    row that name the escalation, either of which may be absent.
+    `pruneEscalation` answers `kept`, and deletes nothing, when the row is
+    open or has a pending notification; the prune run then throws inside
+    the transaction so the question delete rolls back, and counts nothing
+    for the unit.
+
+
+    A subject that names an actor cannot be raised again once its actor
+    has ended: the held-actor and agent-question kinds name the actor, and
+    the actor host raises nothing for an ended actor. A subject that names
+    no actor, a gate, an issue, a version, or a token, can be raised again
+    at any time, and its next occurrence number is one more than the
+    newest it finds, so the newest stays and every escalation id stays
+    unique for the life of the store. Its older occurrences go.
+  messages: >-
+    A message's unit is its row. The prune run reads candidates with
+    `prunableMessages(connection, { readBefore, after, limit: 1000 })`: the
+    messages with a `read_at` before the `historyDays` cutoff, in sequence
+    order, with the actor that sent each and the actor it was delivered
+    to. It keeps every candidate whose sender's or reader's snapshot has no
+    `prunedAt`, and deletes the rest with one `pruneMessages(connection,
+    sequences)`, which deletes only rows that are read. A message is
+    pruned once both actors' events and commands are gone, so the same
+    event, which the reader's history held, and the same send command,
+    which the sender's history held, are already removed. An undelivered
+    message is never a candidate: its event waits in an inbox, and the
+    save that takes it marks the row delivered. A delivered message that
+    no turn read is never a candidate: any later turn in its thread reads
+    it.
+  created-projects: >-
+    The T3 Code environment source keeps a created project record and the
+    project's effective ownership: the item its threads' unowned usage is
+    attributed to, the operator's archive choice, and any archive
+    operation in progress. `retirableCreatedProjects` answers the records
+    whose retirement is safe: no archive operation is in progress for the
+    project, and every thread of the project resolves its item without
+    the record, so a late or later call is attributed to the same item
+    after retirement as before. The prune run reads them 100 at a time,
+    keeps each whose creating actor's snapshot has no `prunedAt`, since
+    the actor's `t3code-project-create` command is the other record of
+    the creation, and calls `retireCreatedProject(connection, key)` for
+    the rest, each in its own transaction. `retireCreatedProject` checks
+    the same conditions again and deletes the record and its ownership,
+    or answers `kept`.
+  threads: >-
+    Thread rows are never pruned. Usage intake reads a thread's project and
+    title for every call of the thread that reaches the service, however
+    late, to attribute a call no actor owns and to show unowned usage; the
+    Task page reads a thread's title, link, and state for each thread an
+    actor follows; and a thread's cursor is where the source resumes its
+    events, and the stored thread is what a returning thread's changes
+    are compared with. A thread row holds the thread's compacted state,
+    without messages, so it is one small row per thread an environment
+    has had.
   what-a-pruned-row-no-longer-shows: >-
     An ended actor past the history window answers the actors API with its
     summary, its end and output, its visits, its pending events, and
@@ -238,44 +483,80 @@ proposed-design:
     Actor page draws its timeline from the visits with their usage, and
     shows no sequence, and says that retention removed the events and
     commands. A visit's exit event keeps its type and event id, and the
-    event it names is no longer readable. A source event past its window no longer stops
-    a late duplicate from reaching an actor subscribed after its first
-    acceptance. A gate evaluation past its window cannot be replayed, and
-    the token it granted no longer names it.
+    event it names is no longer readable. A source event past its window
+    no longer stops a late duplicate from reaching an actor subscribed
+    after its first acceptance. A webhook delivery past its window that
+    GitHub sends again is reconciled again and publishes nothing new. A
+    gate evaluation past its window cannot be replayed, and the token it
+    granted no longer names it. An escalation past its window is gone from
+    the escalations API, the Task page's recent escalations, and the Actor
+    page's timeline, which labels a visit's exit with the choice id where
+    it had the choice's label; its answer link answers `404`. A message
+    past its window is gone, and its sender's and reader's histories
+    already were. A retired created project is attributed through its
+    effective ownership as before; the store no longer records which actor
+    created it.
   batches: >-
     A prune run works in batches. An actor batch is one read of up to 100
     candidate actors, the protections read, and each candidate's
-    transaction; a source event or gate evaluation batch is the
-    protections read and one delete of at most 1000 rows. Each batch runs
-    in one turn of the event loop. After each batch the prune run calls
-    `clock.yield`, so a delivery, a request, a grant round, or a new
-    escalation runs between batches. A prune run that `stop` reaches stops at
-    the next yield and resolves with what it deleted.
+    transaction; an escalation batch and a created project batch are the
+    same with their own candidates. A source event, delivery, redelivery,
+    gate evaluation, or message batch is the protections read and one
+    delete of at most 1000 rows. Each batch runs in one turn of the event
+    loop. After each batch the prune run calls `clock.yield`, so a
+    delivery, a request, a grant round, an answer, or a new escalation runs
+    between batches. A batch that reads fewer candidates than its limit is
+    the last of its kind. A prune run that `stop` reaches stops at the next
+    yield and resolves with what it deleted.
   cadence: >-
-    `start` arms the first prune run 5 minutes after it is called, so that the
-    resume drain, the sources, and the first grant rounds run first. After
-    each prune run ends, failed or not, the module arms the next prune run 60
-    minutes later. `prune` called while a prune run runs returns that prune run's
-    promise. The prune run is ordered: ended actors, then source events, then
-    gate evaluations. Windows are days long, so an hour between prune runs
-    keeps every kind within an hour of its window.
+    `start` arms the first prune run 5 minutes after it is called, so that
+    the resume drain, the sources, and the first grant rounds run first.
+    After each prune run ends, failed or not, the module arms the next
+    prune run 60 minutes later. `prune` called while a prune run runs
+    returns that prune run's promise. The prune run is ordered: ended
+    actors, source events, deliveries, redeliveries, gate evaluations,
+    escalations, messages, then created projects, so that messages and
+    created projects whose actors this prune run pruned go in the same
+    prune run. Windows are days long, so an hour between prune runs keeps
+    every kind within an hour of its window.
   logging: >-
-    A prune run that deleted any row logs `retention-pruned` at level `info`
-    with the counts of `PruneResult` as its detail. A prune run that throws
-    logs `retention-failed` at level `error` with the message, and the
-    next prune run is armed as usual; a failed prune run never stops the service.
+    A prune run that deleted any row logs `retention-pruned` at level
+    `info` with the counts of `PruneResult` as its detail. A prune run that
+    throws logs `retention-failed` at level `error` with the message, and
+    the next prune run is armed as usual; a failed prune run never stops
+    the service.
   convergence: >-
-    Each ended actor's prune is one transaction, so a crash leaves each
-    actor wholly pruned or wholly kept. `pruneEnded` changes nothing for an
-    actor already marked pruned, and `prunableEnded` does not list one, so
-    a second prune run, or a prune run after a crash, prunes only the actors the
-    first did not reach. Each source event and gate evaluation delete is
-    one statement in its own transaction; a crash rolls back at most the
-    statement it interrupts, and the next prune run deletes it again. A second
-    prune run over the same rows with the same time deletes nothing more. A
-    prune run after the windows grow deletes nothing until rows exceed the new
-    cutoffs; a prune run after they shrink deletes the rows past the shorter
-    cutoffs. Rows already deleted are never restored.
+    Each ended actor's prune, each escalation's prune, and each created
+    project's retirement is one transaction, so a crash leaves each unit
+    wholly removed or wholly kept. `pruneEnded` changes nothing for an
+    actor already marked pruned, and `prunableEnded` does not list one;
+    `prunableEscalations` and `retirableCreatedProjects` list only rows
+    that remain. A second prune run, or a prune run after a crash, prunes
+    only the units the first did not reach. Each source event, delivery,
+    redelivery, gate evaluation, and message delete is one statement in
+    its own transaction; a crash rolls back at most the statement it
+    interrupts, and the next prune run deletes it again. A second prune run
+    over the same rows with the same time deletes nothing more. A prune run
+    after the windows grow deletes nothing until rows exceed the new
+    cutoffs; a prune run after they shrink deletes the rows past the
+    shorter cutoffs. Rows already deleted are never restored.
+  repeats: >-
+    Each mutation keeps its duplicate and restart behaviour. A webhook
+    delivery repeated while its row stays is a duplicate, as now; one
+    repeated after its row is gone is reconciled and publishes nothing a
+    first delivery did not. An `escalate` call repeated in its turn finds
+    its question, which stays while its escalation does. A blueprint
+    escalation's callback started again after a restart finds its row,
+    which stays while its actor runs. A service escalation raised again
+    after an earlier occurrence closed takes the next occurrence number
+    after the newest, which stays. An answer handled after a restart
+    writes its row once, as now, and an answer never pruned before it is
+    placed is placed once. A `send-message` invoke started again finds its
+    rows, which stay while its sender runs. A `get-messages` call repeated
+    in its turn answers the same messages, which stay while their reader
+    runs. A late call of a retired project's thread posts on the same item.
+    A fresh escalation, question, message, and delivery after any prune run
+    work as on an empty store.
   errors: >-
     `openRetention` trusts its configuration, which the service
     configuration loader has validated. A SQLite error inside a batch
@@ -285,55 +566,116 @@ proposed-design:
   service-wiring: >-
     The `retention` part in `retention/wiring.ts` opens the module from the
     store, `history`, `escalations`, the configuration's `retention`
-    section, and the log, and calls `start`. It is listed after the
-    `router` part's step `router-started`, so the first prune run is armed only
-    once the router has resumed, and registers its `stop` in the `timers`
-    stop stage, so a running prune run stops before the store closes. It adds
+    section, and the log, and calls `start`. The owner functions take the
+    store's connection, so the part needs no member of the GitHub source,
+    the agent tools, or the T3 Code environment source, and no other
+    module's wiring part changes. It is listed after the `router` part's
+    step `router-started`, so the first prune run is armed only once the
+    router has resumed, and registers its `stop` in the `timers` stop
+    stage, so a running prune run stops before the store closes. It adds
     `retention` to `Service`.
+  schema: >-
+    The GitHub source adds the indexes its delete reads use to its one
+    schema step: `github_delivery_received` on `github_delivery
+    (received_at)` and `github_redelivery_requested` on
+    `github_redelivery (requested_at)`, so each batch reads only the rows
+    past the cutoff. Escalation and message candidates are read in key
+    order from an `after` key, so a prune run reads each row at most once
+    and needs no new index; the escalation's newest occurrence and pending
+    notification checks use the existing `escalation_occurrence` index
+    and the notification table's unique key. No other table changes. The
+    GitHub source's specification and SQL pair states the indexes.
   dependencies: >-
     No new third-party library.
   tests: >-
     Tests run against a real store file in a temporary directory with the
-    real store, history, router, gates, and escalations modules, a fake
-    clock, and fixture blueprints of a generic domain, from a populated
-    fixture: ended actors before and after the history cutoff, one with a
-    pending inbox row and one named by an open escalation; a running actor
-    whose consumed inbox rows and visits are all older than every cutoff;
-    source events of two sources before and after their cutoffs, one
-    source with its own window; gate evaluations before and after the
-    cutoff, one named by an unreturned token, one by a returned token, and
-    one of a gate with an open `comparator-failed` escalation. Behaviours
-    proved, each written red before green: a prune run deletes exactly the rows
-    past their windows and keeps every protected row; a window of
-    `forever` deletes nothing of its kind; an ended actor past its window
-    answers the history with its summary, end, output, pending events, and
-    `prunedAt`, every visit it held before the prune run, and no consumed
-    events or commands, stays in the completed actors list, and answers
-    the same usage by visit as before the prune run; the running actor's history answers the
-    same before and after the prune run; a source event inside its window
+    real store, history, router, gates, escalations, agent tools, GitHub
+    source, and T3 Code environment source modules, a fake clock, a fake
+    GitHub API, a fake T3 Code server, and fixture blueprints of a generic
+    domain, from a populated fixture: ended actors before and after the
+    history cutoff, one with a pending inbox row and one named by an open
+    escalation; a running actor whose consumed inbox rows and visits are
+    all older than every cutoff; source events of two sources before and
+    after their cutoffs, one source with its own window; webhook deliveries
+    and redeliveries before and after the GitHub cutoff, on two hooks, one
+    with its scan cursor before some old rows; gate evaluations before and
+    after the cutoff, one named by an unreturned token, one by a returned
+    token, and one of a gate with an open `comparator-failed` escalation;
+    open, answered, and withdrawn escalations before and after the
+    escalation cutoff, of blueprint and service raisers, one with a
+    pending `close` notification, one answered service escalation whose
+    handling is not recorded, one raised by a running actor, three closed
+    occurrences of one gate subject, and an agent question whose answer is
+    sent and not placed beside one whose answer is placed; read, delivered
+    and unread, and undelivered messages between pruned, ended, and running
+    actors; and created projects whose ownership is retirable and not,
+    with a creating actor pruned and not, and one with an archive
+    operation in progress. Behaviours proved, each written red before
+    green: a prune run deletes exactly the rows past their windows and
+    keeps every protected row; a window of `forever` deletes nothing of
+    its kind; an ended actor past its window answers the history with its
+    summary, end, output, pending events, and `prunedAt`, every visit it
+    held before the prune run, and no consumed events or commands, stays in
+    the completed actors list, and answers the same usage by visit as
+    before the prune run; the running actor's history answers the same
+    before and after the prune run; a source event inside its window
     published again is a replay, and one past it is a first acceptance
-    that reaches no actor holding its inbox row; a gate evaluation inside
-    its window replays to its recorded selection, and a deleted one throws
-    the `TypeError` `replay` states; a returned token whose evaluation was
-    deleted keeps its row; with more than 100 ended actors past the
-    window, so they take two actor batches, an escalation that the fake
-    clock's `yield` raises after the first batch, naming an ended actor past its window that a later actor
-    batch would prune and a gate whose evaluations a later evaluation batch
-    would delete, keeps that actor's events and commands and that gate's
-    evaluations for the rest of the prune run, while the batches before it
-    stand, and a prune run after the escalation closes prunes them; a second
-    prune run deletes nothing; `stop` during a
-    prune run resolves between batches; the first prune run runs 5 minutes after
-    `start` and the next 60 minutes after it ends, and a failed prune run logs
-    `retention-failed` and arms the next. A fault test, in a child Node
-    process running the service on the populated store file, advances the
-    clock past every cutoff, runs a prune run that sends itself `SIGKILL` from
-    the `actor-pruned` probe after the first actor's prune commits, and
-    the parent asserts the kill signal, starts the service again on the
-    same file, and runs prune runs to their end. It then finds that the first
-    actor is pruned once, every other ended actor past its window is
-    pruned, every pruned actor keeps every visit, delivery replay drains every pending row once, duplicate
-    detection and gate replay hold for every row inside its window, the
-    running actor's history is unchanged, and a further prune run deletes
-    nothing. Values are generic and never drawn from Manifold's own
+    that reaches no actor holding its inbox row; a webhook delivery inside
+    the window sent again is a duplicate, one past it and past its hook's
+    cursor is accepted, reconciled, and publishes nothing, and a row past
+    the window and after its hook's cursor stays; a failed GUID whose
+    redelivery row is inside the window is not asked again, and a scan
+    after its row is gone and with a new failed attempt asks once and
+    records it; a gate evaluation inside its window replays to its
+    recorded selection, and a deleted one throws the `TypeError` `replay`
+    states; a returned token whose evaluation was deleted keeps its row;
+    of the gate subject the two older occurrences go and the newest stays,
+    and a new failure raises the occurrence after it with a new id; the
+    escalation with a pending notification, the unhandled service
+    escalation, the running actor's escalation, and the escalation whose
+    answer is not placed stay with their questions and answers, and each
+    goes in a prune run after its notification settles, its handling
+    runs, its actor ends, or its answer is placed; an `escalate` call
+    repeated in its turn before the prune run and after it returns the
+    same escalation while the escalation stays; a blueprint escalation's
+    callback started again after a restart of a running actor sends the
+    recorded answer once; a fresh `escalate`, answer, and `send-message`
+    after a prune run work and are delivered once; read messages go only
+    once both actors are pruned, and a `get-messages` call repeated in a
+    running reader's turn answers the same messages before and after the
+    prune run; a late call of a thread in a retired created project, and a
+    late mapping onto it, post on the same item as before the retirement,
+    and a project with an archive operation in progress or ownership not
+    retirable stays; with more than 100 ended actors past the window, so
+    they take two actor batches, an escalation that the fake clock's
+    `yield` raises after the first batch, naming an ended actor past its
+    window that a later actor batch would prune and a gate whose
+    evaluations a later evaluation batch would delete, keeps that actor's
+    events and commands and that gate's evaluations for the rest of the
+    prune run, while the batches before it stand, and a prune run after the
+    escalation closes prunes them; an answer the fake clock's `yield`
+    places between two escalation batches lets a later batch of the same
+    prune run prune its escalation; a second prune run deletes nothing;
+    `stop` during a prune run resolves between batches; the first prune
+    run runs 5 minutes after `start` and the next 60 minutes after it
+    ends, and a failed prune run logs `retention-failed` and arms the
+    next. A fault test, in a child Node process running the service on the
+    populated store file, advances the clock past every cutoff, runs a
+    prune run that sends itself `SIGKILL` from the probe after the first
+    unit of a kind commits, once for each of `actor-pruned`,
+    `escalation-pruned`, `project-retired`, and the first `batch-pruned`
+    of deliveries and of messages. For each, the parent asserts the kill
+    signal, starts the service again on the same file holding the
+    pre-kill running actor, its followed thread, an open escalation, a
+    pending answer, an unread message, and a pending webhook reconcile,
+    and runs prune runs to their end. It then finds that each unit is
+    removed once, every other row past its window and unprotected is
+    removed, every pruned actor keeps every visit, delivery replay drains
+    every pending row once, duplicate detection and gate replay hold for
+    every row inside its window, the open escalation is answerable and its
+    answer reaches its actor once, the pending answer is sent and placed
+    once, the unread message is read once, the pending reconcile
+    publishes once, a late call posts on the item it posted on before the
+    kill, the running actor's history is unchanged, and a further prune run
+    deletes nothing. Values are generic and never drawn from Manifold's own
     domain.

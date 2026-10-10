@@ -5,6 +5,7 @@ relationships:
   realizes:
     - agent-tools
   references:
+    - retention
     - store-database-schema
     - escalations-database-schema
     - agent-tools
@@ -17,7 +18,10 @@ description: |-
   produce. The module receives the connection from the store and migrates
   its tables with `migrate("agenttool", steps)`; its owner is `agenttool`,
   so every table it creates is named `agenttool_<name>`. Times are
-  milliseconds since the Unix epoch. Rows are never deleted.
+  milliseconds since the Unix epoch. A row is deleted only by retention,
+  as `retention` states: a question and an answer with their escalation,
+  once the answer is settled and placed, and a message once it is read
+  and both its sender's and its reader's histories are pruned.
 
   Questions. `agenttool_question` holds one row per turn that escalated,
   keyed by the call key: `environment`, `environment_id`, `thread_id`, and

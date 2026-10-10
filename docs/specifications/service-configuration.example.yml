@@ -103,9 +103,11 @@ blueprintLint: {}
 retention:
   # Days after an actor ends before its consumed events and history are removed, or `forever`.
   historyDays: 90
-  # Days a source event is kept to recognise a repeated delivery, by event source.
+  # Days a source event, and for `github` a webhook delivery, is kept to recognise a repeat, by event source.
   sourceEventDays:
     # The window of every source not named here, or `forever`.
     default: 30
   # Days a gate's comparator evaluation is kept for replay, or `forever`.
   gateEvaluationDays: 30
+  # Days after an escalation closes before it and its notifications are removed, or `forever`.
+  escalationDays: 90

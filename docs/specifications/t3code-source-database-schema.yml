@@ -5,6 +5,7 @@ relationships:
   realizes:
     - t3code-environment-source
   references:
+    - retention
     - store-database-schema
     - t3code-thread-events
 description: >-
@@ -23,8 +24,9 @@ description: >-
   highest sequence of a shell item the source has handled.
 
   Threads. `t3_thread` holds one row per thread the source has seen on an
-  environment, keyed by environment and thread id, and deleted with its
-  environment. `status` is `followed` while the shell lists the thread,
+  environment, keyed by environment and thread id, and deleted only with
+  its environment, since usage intake reads its project and title for a
+  call that reaches the service at any time after. `status` is `followed` while the shell lists the thread,
   `archived` after the shell removed it and the server still has it, and
   `deleted` after the server no longer has it. `cursor` is the highest
   sequence whose effect the row holds: the last applied event, the last
@@ -43,7 +45,9 @@ description: >-
 
   Created projects. `t3_created_project` holds one row per T3code project
   that a `t3code-project-create` invoke created on an environment, keyed by
-  environment and project id, and deleted with its environment.
+  environment and project id, and deleted with its environment, or by
+  retention once the project's ownership is safe to retire and its
+  creating actor's history is pruned, as `retention` states.
   `actor_id` is the invoking actor and `item` its portfolio item at the
   invoke. The row is written once the server has accepted the
   `project.create` command, before the invoke resolves, and writing it

@@ -5,6 +5,7 @@ relationships:
   realizes:
     - escalations
   references:
+    - retention
     - store-database-schema
     - escalation-contract
 terms:
@@ -36,7 +37,13 @@ description: |-
   is the time of the first save of the asking actor after its callback
   sent the answer back; only a blueprint row has it. `handled_at` is when
   a service escalation's handling was recorded; only a service row has it.
-  Rows are never deleted.
+  A row is deleted only by retention, as `retention` states: a closed
+  escalation past its window, with its notification rows first, once no
+  notification is pending, an answered service row is handled, the actor
+  it names has ended, and it is not the newest occurrence of a subject
+  that names no actor. The newest occurrence of every such subject stays,
+  so an occurrence number, and the escalation id derived from it, is never
+  used twice.
 
   Migrations. At 0.1.0, step 1 creates the complete schema in this file.
   Schema changes edit that step in place and require a new store. After
