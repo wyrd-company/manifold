@@ -10,6 +10,42 @@ import { expect, test } from "vite-plus/test";
 import { openStore } from "../store/index.ts";
 
 const worker = new URL("./test-fixtures/crash-worker.ts", import.meta.url);
+
+function unexpectedDiagnostics(stderr: string) {
+  return stderr.replace(
+    /^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\r?\n(?:\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n)?/gm,
+    "",
+  );
+}
+
+test("child diagnostics allow only the known SQLite experimental warning", () => {
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", 'import "node:sqlite"'],
+    {
+      encoding: "utf8",
+    },
+  );
+  expect(child.error).toBeUndefined();
+  expect(child.status).toBe(0);
+  expect(unexpectedDiagnostics(child.stderr)).toBe("");
+});
+
+test.each([
+  'process.emitWarning("Unexpected diagnostic")',
+  'process.emitWarning("Unexpected diagnostic", "ExperimentalWarning")',
+  'process.emitWarning("SQLite is an experimental feature and might change at any time", "OtherWarning")',
+  'throw new Error("Unexpected child failure")',
+])("child diagnostics retain unexpected output from %s", (source) => {
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", `import "node:sqlite"; ${source}`],
+    { encoding: "utf8" },
+  );
+  expect(child.error).toBeUndefined();
+  expect(unexpectedDiagnostics(child.stderr)).not.toBe("");
+});
+
 test.each(["sent", "promise"])(
   "SIGKILL at %s resumes parallel regions, promise, and child delay exactly once",
   (mode) => {
@@ -20,9 +56,12 @@ test.each(["sent", "promise"])(
       const baseline = join(directory, "baseline.sqlite"),
         crashed = join(directory, "crashed.sqlite");
       const uninterrupted = run(baseline, "baseline");
-      expect(uninterrupted.stderr).toBe("");
+      expect(uninterrupted.error).toBeUndefined();
+      expect(unexpectedDiagnostics(uninterrupted.stderr)).toBe("");
       expect(uninterrupted.status).toBe(0);
       const killed = run(crashed, mode);
+      expect(killed.error).toBeUndefined();
+      expect(unexpectedDiagnostics(killed.stderr)).toBe("");
       expect(killed.signal).toBe("SIGKILL");
       const interrupted = openStore({ path: crashed });
       try {
@@ -34,7 +73,8 @@ test.each(["sent", "promise"])(
         interrupted.close();
       }
       const resume = run(crashed, "resume");
-      expect(resume.stderr).toBe("");
+      expect(resume.error).toBeUndefined();
+      expect(unexpectedDiagnostics(resume.stderr)).toBe("");
       expect(resume.status).toBe(0);
       const read = (path: string) => {
         const store = openStore({ path });

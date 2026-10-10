@@ -617,6 +617,22 @@ test("fresh deadlines accept the root state and never reuse deleted ids", () => 
   expect(store.dueDeadlines(100)[0]?.statePath).toBe("");
 });
 
+test("NUL-bearing deadline text round-trips through reads, repeated saves, restart and firing", () => {
+  const deadline = { ...arm(), eventName: "tick\0entry", entryId: "entry\0tail" };
+  saveWithDeadlines([deadline]);
+  const first = timerDeadline();
+  expect(first).toMatchObject(deadline);
+  saveWithDeadlines([deadline]);
+  expect(timerDeadline()).toEqual(first);
+  store.close();
+  store = openStore({ path });
+  expect(timerDeadline()).toEqual(first);
+  const fired = store.fireDeadline(first, "counter.tick")!;
+  expect(fired.payload).toEqual({ type: deadline.eventName });
+  expect(store.fireDeadline(first, "counter.tick")).toBeUndefined();
+  expect(store.pendingInbox("timer")).toEqual([fired]);
+});
+
 test("deadline retirement uses complete identities even when names contain delimiters", () => {
   const first = { ...arm(), eventName: "tick\0entry", entryId: "tail" };
   const second = { ...arm(), eventName: "tick", entryId: "entry\0tail" };
