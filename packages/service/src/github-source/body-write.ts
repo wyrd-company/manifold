@@ -30,7 +30,7 @@ export function taskWriteRecords(connection: StoreConnection) {
     row,
     sent(write: TaskFieldWrite, now: number) {
       db.prepare(
-        "INSERT INTO github_task_field_write(actor_id,invoke_id,entry_id,issue_node_id,project_node_id,field,storage,value,status,written_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+        "INSERT INTO github_task_field_write(actor_id,invoke_id,entry_id,issue_node_id,project_node_id,field,storage,value,status,written_at,sequence) VALUES(?,?,?,?,?,?,?,?,?,?,(SELECT coalesce(max(sequence),0)+1 FROM github_task_field_write)) ON CONFLICT DO NOTHING",
       ).run(
         ...key(write),
         write.issueNodeId,
@@ -71,22 +71,14 @@ export function taskWriteRecords(connection: StoreConnection) {
     attribute(issue: string, project: string, field: string, value: string | number | null) {
       const record = db
         .prepare(
-          "SELECT actor_id,status,value FROM github_task_field_write WHERE issue_node_id=? AND project_node_id=? AND field=? AND status!='refused' AND attributed=0 ORDER BY written_at DESC,actor_id LIMIT 1",
+          "SELECT actor_id,status,sequence FROM github_task_field_write WHERE issue_node_id=? AND project_node_id=? AND field=? AND value=? AND status!='refused' AND attributed=0 ORDER BY sequence DESC LIMIT 1",
         )
-        .get(issue, project, field);
+        .get(issue, project, field, JSON.stringify(value));
+      if (!record) return null;
       db.prepare(
-        "UPDATE github_task_field_write SET attributed=1 WHERE issue_node_id=? AND project_node_id=? AND field=?",
-      ).run(issue, project, field);
-      if (!record || JSON.parse(record["value"] as string) !== value) return null;
+        "UPDATE github_task_field_write SET attributed=1 WHERE issue_node_id=? AND project_node_id=? AND field=? AND sequence<=?",
+      ).run(issue, project, field, record["sequence"] as number);
       return { actorId: record["actor_id"] as string, confirmed: record["status"] === "confirmed" };
-    },
-    revision(issue: string, project: string, field: string) {
-      const row = db
-        .prepare(
-          "INSERT INTO github_task_field_revision VALUES(?,?,?,1) ON CONFLICT(issue_node_id,project_node_id,field) DO UPDATE SET revision=revision+1 RETURNING revision",
-        )
-        .get(issue, project, field)!;
-      return row["revision"] as number;
     },
   };
 }

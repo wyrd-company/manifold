@@ -53,8 +53,10 @@ description: |-
   `basis_edited_at` and `basis_body`, `original_edited_at`, the repair body, `check_state`
   (none, pending, passed or conflict), and `conflict_edited_at`. A pending
   check runs before a replay's equal-value shortcut. Attempt 2 cannot repair
-  again. `github_task_field_revision` increments each issue, Project and
-  field's event identity in the mirror transaction.
+  again. A write sequence orders attribution, which consumes writes through
+  the latest matching value and preserves newer writes. `github_issue.content_revision`
+  increments on issue content changes; Project fields use the item field-value
+  revision for task field event identity.
 
   Shared scopes. `github_scope` records each storage scope, its status,
   message and read time. `github_issue_field`, `github_issue_type`,

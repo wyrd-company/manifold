@@ -77,6 +77,7 @@ CREATE TABLE github_issue (
     CHECK (state_reason IN ('completed', 'not_planned', 'duplicate', 'reopened')),
   baselined INTEGER NOT NULL CHECK (baselined IN (0, 1)),
   revision INTEGER NOT NULL CHECK (revision >= 0),
+  content_revision INTEGER NOT NULL DEFAULT 0 CHECK (content_revision >= 0),
   present INTEGER NOT NULL DEFAULT 1 CHECK (present IN (0, 1)),
   body TEXT,
   last_edited_at INTEGER,
@@ -183,12 +184,10 @@ CREATE TABLE github_task_field_write (
  basis_edited_at INTEGER, basis_body TEXT, original_edited_at INTEGER, repair_body TEXT,
  check_state TEXT NOT NULL DEFAULT 'none' CHECK(check_state IN('none','pending','passed','conflict')),
  conflict_edited_at INTEGER, written_at INTEGER NOT NULL,
+ sequence INTEGER NOT NULL UNIQUE,
  PRIMARY KEY(actor_id,invoke_id,entry_id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX github_task_field_write_target ON github_task_field_write(issue_node_id,project_node_id,field,written_at);
-CREATE TABLE github_task_field_revision (
- issue_node_id TEXT NOT NULL, project_node_id TEXT NOT NULL, field TEXT NOT NULL, revision INTEGER NOT NULL,
- PRIMARY KEY(issue_node_id,project_node_id,field)
-) STRICT, WITHOUT ROWID;
+
 `,
 ];

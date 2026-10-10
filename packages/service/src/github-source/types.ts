@@ -76,6 +76,7 @@ export interface GitHubSourceOptions {
   readonly lifecycleField?: (projectNodeId: string) => string | undefined;
 }
 export interface TaskFieldValueWithStorage {
+  readonly storageName?: string | undefined;
   readonly storage: TaskFieldStorage["kind"];
   readonly value: TaskFieldValue;
 }

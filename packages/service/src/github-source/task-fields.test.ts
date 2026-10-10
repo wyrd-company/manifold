@@ -25,10 +25,18 @@ const write: TaskFieldWrite = {
   repositories: [],
   value: "2026-01-02",
 };
-async function setup() {
+async function setup(projectField = false) {
   const fake = await githubFake();
   cleanups.push(fake.close);
   fake.addItem("IT_A", "I_A");
+  if (projectField)
+    fake.items.get("IT_A")!.fieldValues.nodes = [
+      {
+        __typename: "ProjectV2ItemFieldNumberValue",
+        number: 1,
+        field: { id: "F_weight", name: "Weight", dataType: "NUMBER" },
+      },
+    ];
   const store = openStore({ path: ":memory:" });
   store.saveSnapshot({
     actorId: "parcel",
@@ -42,9 +50,16 @@ async function setup() {
       restore: () => ({ status: "held", reason: "test" }),
     },
   });
+  const published: import("../router/index.ts").SourceEvent[] = [];
   const options = {
     store,
-    router,
+    router: {
+      ...router,
+      publish(event: import("../router/index.ts").SourceEvent) {
+        published.push(event);
+        return router.publish(event);
+      },
+    },
     configuration: {
       apiUrl: fake.url,
       owners: { sample: { credential: "example", hooks: [] } },
@@ -68,6 +83,20 @@ async function setup() {
     },
     taskFieldBinding: () => "parcels",
     taskFieldValues: (_project: string, issue: import("./types.ts").TrackedIssue) => {
+      if (projectField) {
+        const raw = issue.items[0]!.fields["Weight"];
+        const number = raw?.kind === "number" ? raw.number : undefined;
+        return {
+          "Parcel weight": {
+            storage: "project-field" as const,
+            storageName: "Weight",
+            value:
+              number === undefined
+                ? { state: "empty" as const }
+                : { state: "set" as const, value: Math.floor(number) },
+          },
+        };
+      }
       const body = issue.content?.body ?? "";
       const due = /due: "?(\d{4}-\d{2}-\d{2})/.exec(body)?.[1];
       return {
@@ -88,6 +117,7 @@ async function setup() {
   return {
     fake,
     store,
+    published,
     get source() {
       return source;
     },
@@ -322,4 +352,38 @@ test("repair history lag keeps the same invocation pending without a third write
   await h.source.writeTaskField(write);
   await h.source.writeTaskField(write);
   expect(h.fake.log.filter((row) => row.operation === "GitHubIssueBodyWrite")).toHaveLength(2);
+});
+
+test("task field identity uses the issue content revision and only the issue topic", async () => {
+  const h = await setup();
+  h.fake.editBody("I_A", "Prose changes without changing a field.\n", false);
+  h.source.requestSweep();
+  await expect.poll(() => h.source.trackedIssue("I_A")?.content?.body).toContain("Prose changes");
+  h.fake.editBody("I_A", "---\ndue: 2026-01-02\n---\nProse.\n", false);
+  h.source.requestSweep();
+  await expect.poll(() => h.events().length).toBe(1);
+  const event = h.published.find((event) => event.event.type === "github.task-field.changed");
+  expect(event).toMatchObject({
+    eventId: "task-field:I_A:P_one:9071738f145962a6:2",
+    topics: ["github.issue.I_A"],
+  });
+});
+
+test("Project task field identity uses the raw field value revision with a declared alias", async () => {
+  const h = await setup(true);
+  h.fake.items.get("IT_A")!.fieldValues.nodes[0]!["number"] = 1.5;
+  h.source.requestSweep();
+  await expect
+    .poll(() => h.source.trackedIssue("I_A")?.items[0]?.fields["Weight"])
+    .toMatchObject({ number: 1.5 });
+  expect(h.events()).toHaveLength(0);
+  h.fake.items.get("IT_A")!.fieldValues.nodes[0]!["number"] = 2;
+  h.source.requestSweep();
+  await expect.poll(() => h.events().length).toBe(1);
+  expect(
+    h.published.find((event) => event.event.type === "github.task-field.changed"),
+  ).toMatchObject({
+    eventId: "task-field:I_A:P_one:8d29eafa99a4d3e7:2",
+    topics: ["github.issue.I_A"],
+  });
 });

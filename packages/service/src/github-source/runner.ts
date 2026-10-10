@@ -2,6 +2,7 @@
 // relationships:
 //   implements: github-event-source
 // ---
+import { createHash } from "node:crypto";
 import { taskWriteRecords, writeBody } from "./body-write.ts";
 import type { StorageScope } from "@wyrd-company/manifold-shared";
 import { trackedIssueIndex } from "./mirror.ts";
@@ -256,11 +257,20 @@ export function createRunner(
             for (const [field, value] of Object.entries(to)) {
               const old = from[field];
               if (!old || JSON.stringify(old.value) === JSON.stringify(value.value)) continue;
-              const revision = taskWrites.revision(id, project.nodeId, field);
+              const item = issue.items.find((item) => item.project.nodeId === project.nodeId);
+              const revision =
+                value.storage === "project-field"
+                  ? [...after.fields.values()].find(
+                      (row) =>
+                        row.itemId === item?.nodeId &&
+                        row.field.name === (value.storageName ?? field),
+                    )!.revision
+                  : after.issues.get(id)!.contentRevision!;
+              const digest = createHash("sha256").update(field).digest("hex").slice(0, 16);
               events.push({
                 source: "github",
-                eventId: `task-field:${id}:${project.nodeId}:${field}:${revision}`,
-                topics: [`github.issue.${id}`, `github.project.${project.nodeId}`],
+                eventId: `task-field:${id}:${project.nodeId}:${digest}:${revision}`,
+                topics: [`github.issue.${id}`],
                 event: {
                   type: "github.task-field.changed",
                   issue: {

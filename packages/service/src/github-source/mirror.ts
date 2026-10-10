@@ -149,6 +149,7 @@ export function createMirror(store: Store, now: () => number) {
                           ? null
                           : (JSON.parse(row["issue_type"] as string) as IssueContent["issueType"]),
                     },
+              contentRevision: row["content_revision"] as number,
               baselined: Boolean(row["baselined"]),
               present: Boolean(row["present"]),
               revision: row["revision"] as number,
@@ -244,7 +245,7 @@ export function createMirror(store: Store, now: () => number) {
     for (const [id, row] of after.issues) {
       if (!isDeepStrictEqual(before.issues.get(id), row))
         db.prepare(
-          "INSERT INTO github_issue (issue_node_id,repository,number,state,state_reason,baselined,revision,present,title,url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(issue_node_id) DO UPDATE SET repository=excluded.repository, number=excluded.number, state=excluded.state, state_reason=excluded.state_reason, baselined=excluded.baselined, revision=excluded.revision, present=excluded.present,title=excluded.title,url=excluded.url",
+          "INSERT INTO github_issue (issue_node_id,repository,number,state,state_reason,baselined,revision,content_revision,present,title,url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(issue_node_id) DO UPDATE SET repository=excluded.repository, number=excluded.number, state=excluded.state, state_reason=excluded.state_reason, baselined=excluded.baselined, revision=excluded.revision, content_revision=excluded.content_revision, present=excluded.present,title=excluded.title,url=excluded.url",
         ).run(
           id,
           row.issue.repository,
@@ -253,6 +254,7 @@ export function createMirror(store: Store, now: () => number) {
           row.issue.stateReason,
           Number(row.baselined),
           row.revision,
+          row.contentRevision ?? 0,
           Number(row.present),
           row.issue.title ?? null,
           row.issue.url ?? null,

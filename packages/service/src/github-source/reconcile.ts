@@ -3,6 +3,7 @@
 //   implements: github-event-source
 //   references: github-events
 // ---
+import { isDeepStrictEqual } from "node:util";
 import type {
   GitHubIssue,
   IssueContent,
@@ -16,6 +17,7 @@ import type {
 import type { SourceEvent, RoutedEvent } from "../router/index.ts";
 export interface IssueRow {
   content?: IssueContent | undefined;
+  contentRevision?: number;
   issue: GitHubIssue;
   baselined: boolean;
   present: boolean;
@@ -117,6 +119,14 @@ export function reconcileIssue(
     state.issues.set(value.nodeId, {
       issue: value,
       content: value.nodeId === id ? (observed.content ?? row?.content) : row?.content,
+      contentRevision:
+        (row?.contentRevision ?? 0) +
+        (value.nodeId === id &&
+        row?.content &&
+        observed.content &&
+        !isDeepStrictEqual(row.content, observed.content)
+          ? 1
+          : 0),
       baselined: row?.baselined ?? false,
       present: value.nodeId === id ? true : (row?.present ?? true),
       revision: (row?.revision ?? 0) + (change ? 1 : 0),

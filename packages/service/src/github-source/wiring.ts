@@ -73,7 +73,14 @@ export const githubSource = wiringPart({
         return Object.fromEntries(
           Object.entries(values).map(([name, value]) => [
             name,
-            { storage: metadata.fields[name]!.storage.kind, value },
+            {
+              storage: metadata.fields[name]!.storage.kind,
+              storageName:
+                metadata.fields[name]!.storage.kind === "project-field"
+                  ? metadata.fields[name]!.storage.name
+                  : undefined,
+              value,
+            },
           ]),
         );
       },
