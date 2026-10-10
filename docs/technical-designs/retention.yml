@@ -108,8 +108,9 @@ proposed-design:
     evaluations, counted from their evaluation; closed escalations, with
     their notifications and agent questions and answers, counted from
     their close; read agent messages whose sender and reader actors are
-    both pruned; and created project records whose ownership is retired
-    and whose creating actor is pruned. The module owns no table. Each kind
+    both pruned; and created project records whose project the server no
+    longer lists, that no thread names, and whose creating actor is
+    pruned. The module owns no table. Each kind
     is deleted by the module that owns its table, through a function that
     module exports, so no module reads or writes another's table. The
     retention module chooses what to delete, joins the deletes of one unit
@@ -228,8 +229,7 @@ proposed-design:
       readonly readerActorId: string;
     }
 
-    // t3code-source, over the created-project ownership the T3 Code
-    // environment source records
+    // t3code-source
     retirableCreatedProjects(
       connection,
       { after?: CreatedProjectKey, limit: number },
@@ -274,7 +274,7 @@ proposed-design:
     | `escalation`, `escalation_notification` | escalations | questions to a person | a closed escalation whose notifications are settled, whose actor has ended, and that is not the newest occurrence of a subject naming no actor, is removed with its notifications | `escalationDays` |
     | `agenttool_question`, `agenttool_answer` | agent tools | agent questions | removed with their escalation, once the answer is settled and placed | `escalationDays` |
     | `agenttool_message` | agent tools | agent messages | a read message is removed once its sender's and its reader's histories are pruned; an unread or undelivered message, never | `historyDays` |
-    | `t3_created_project` and its ownership | T3 Code environment source | projects actors create | retired once its ownership is safe to retire and its creating actor's history is pruned | `historyDays` |
+    | `t3_created_project` | T3 Code environment source | projects actors create | removed once its presence is `removed`, no thread row names its project, and its creating actor's history is pruned; a record whose presence is never `removed` stays | `historyDays` |
     | `t3_thread` | T3 Code environment source | threads | never: a late or later call reads its project and title, and its cursor is its replay position | none |
     | `usage_*`, ledger | usage, ledger | calls, windows | never, as `usage-intake` states | none |
     | `gates_token` | gates | grants | never: a reservation and its token's history name it | none |
@@ -296,7 +296,7 @@ proposed-design:
     | Gate evaluations | `gateEvaluationDays` | `gates_evaluation.evaluated_at` | the evaluation row |
     | Escalations | `escalationDays` | `escalation.closed_at` | the escalation, its notification rows, and the agent question and answer that name it |
     | Messages | `historyDays` | `agenttool_message.read_at`, and both actors' histories pruned | the message row |
-    | Created projects | `historyDays`, through the creating actor's history | the creating actor's history pruned | the created project record and the ownership the T3 Code environment source keeps for it |
+    | Created projects | `historyDays`, through the creating actor's history | the creating actor's history pruned | the created project record |
   ended-actors: >-
     The unit of the history window is one ended actor, never one row: an
     actor's events and commands are pruned together once its end is past
@@ -351,7 +351,7 @@ proposed-design:
     | A message not yet taken or read | its message row | only read messages are pruned |
     | A webhook redelivery GitHub can still send or the scan can still ask for | the delivery and redelivery rows of its GUID | rows at or after their hook's scan cursor are not deleted |
     | A posted call's attribution | the posting's actor, item, and visit number | usage and ledger rows and history visits are never deleted |
-    | A late call's attribution | its thread's project and the project's item | thread rows are never deleted; a created project is retired only when its ownership is safe to retire |
+    | A late call's attribution | its thread's project and the project's item | thread rows are never deleted; a created project record is deleted only when no thread row names its project |
 
     An ended actor holds no open reservation, since the save that ends it
     settles it, as `usage-intake` states, and holds no unreturned token,
@@ -451,20 +451,36 @@ proposed-design:
     no turn read is never a candidate: any later turn in its thread reads
     it.
   created-projects: >-
-    The T3 Code environment source keeps a created project record and the
-    project's effective ownership: the item its threads' unowned usage is
-    attributed to, the operator's archive choice, and any archive
-    operation in progress. `retirableCreatedProjects` answers the records
-    whose retirement is safe: no archive operation is in progress for the
-    project, and every thread of the project resolves its item without
-    the record, so a late or later call is attributed to the same item
-    after retirement as before. The prune run reads them 100 at a time,
-    keeps each whose creating actor's snapshot has no `prunedAt`, since
-    the actor's `t3code-project-create` command is the other record of
-    the creation, and calls `retireCreatedProject(connection, key)` for
-    the rest, each in its own transaction. `retireCreatedProject` checks
-    the same conditions again and deletes the record and its ownership,
-    or answers `kept`.
+    The T3 Code environment source keeps one record per created project,
+    with the project's `presence` on its environment: `unseen` until the
+    shell first lists it, `listed` while it does, and `removed` once the
+    shell has listed it and no longer does. The portfolio resolves a
+    project's item from its bindings, its association, or the record, and
+    a call reaches a project only through a thread row that names it. A
+    record is retirable when its presence is `removed` and no thread row of
+    any status names its project: no call can be attributed through it
+    again, and a binding that covers the project does not change that.
+    The store holds no archive state to protect: an archive's lasting
+    operation is the process repository save that carries the choice.
+    `retirableCreatedProjects` answers the retirable records in key order
+    after `after`, with each one's creating actor. The prune run reads them
+    100 at a time, keeps each whose creating actor's snapshot has no
+    `prunedAt`, since the actor's `t3code-project-create` command is the
+    other record of the creation, and calls `retireCreatedProject(
+    connection, key)` for the rest, each in its own transaction.
+    `retireCreatedProject` deletes the record in one statement whose
+    condition repeats the presence and thread checks, and answers `kept`
+    when it deletes nothing. A thread row written between the read and the
+    delete keeps the record, since the delete reads the thread rows itself.
+
+
+    Two records never become retirable, and retention keeps them for the
+    life of the store: a record whose project was deleted before the shell
+    first listed it stays `unseen`, since the source cannot tell it from a
+    project not yet listed; and a record of an environment no longer in
+    the service configuration keeps its last presence, since the source no
+    longer connects to it and a later configuration under the same name
+    resumes from its rows. Each is one small row per project.
   threads: >-
     Thread rows are never pruned. Usage intake reads a thread's project and
     title for every call of the thread that reaches the service, however
@@ -493,9 +509,9 @@ proposed-design:
     page's timeline, which labels a visit's exit with the choice id where
     it had the choice's label; its answer link answers `404`. A message
     past its window is gone, and its sender's and reader's histories
-    already were. A retired created project is attributed through its
-    effective ownership as before; the store no longer records which actor
-    created it.
+    already were. A retired created project had no thread that could
+    attribute a call to it; the store no longer records which actor created
+    it or the item it was created for.
   batches: >-
     A prune run works in batches. An actor batch is one read of up to 100
     candidate actors, the protections read, and each candidate's
@@ -554,7 +570,8 @@ proposed-design:
     placed is placed once. A `send-message` invoke started again finds its
     rows, which stay while its sender runs. A `get-messages` call repeated
     in its turn answers the same messages, which stay while their reader
-    runs. A late call of a retired project's thread posts on the same item.
+    runs. A late call of a kept project's thread posts on the same item, and
+    no thread row names a retired project.
     A fresh escalation, question, message, and delivery after any prune run
     work as on an empty store.
   errors: >-
@@ -608,9 +625,10 @@ proposed-design:
     occurrences of one gate subject, and an agent question whose answer is
     sent and not placed beside one whose answer is placed; read, delivered
     and unread, and undelivered messages between pruned, ended, and running
-    actors; and created projects whose ownership is retirable and not,
-    with a creating actor pruned and not, and one with an archive
-    operation in progress. Behaviours proved, each written red before
+    actors; and created projects that are `removed` with no thread, `removed`
+    with an archived thread, `listed`, and `unseen`, with a creating actor
+    pruned and not, one under a binding, and one of an environment no
+    longer configured. Behaviours proved, each written red before
     green: a prune run deletes exactly the rows past their windows and
     keeps every protected row; a window of `forever` deletes nothing of
     its kind; an ended actor past its window answers the history with its
@@ -643,10 +661,12 @@ proposed-design:
     after a prune run work and are delivered once; read messages go only
     once both actors are pruned, and a `get-messages` call repeated in a
     running reader's turn answers the same messages before and after the
-    prune run; a late call of a thread in a retired created project, and a
-    late mapping onto it, post on the same item as before the retirement,
-    and a project with an archive operation in progress or ownership not
-    retirable stays; with more than 100 ended actors past the window, so
+    prune run; only the `removed` project with no thread and a pruned
+    creator goes, the one under a binding included, and the others stay;
+    a thread row of a `removed` project's id written by the fake clock's
+    `yield` between the read and the delete keeps the record; a late call
+    of each kept project's thread, and a late mapping onto it, post on the
+    same item before and after the prune run; with more than 100 ended actors past the window, so
     they take two actor batches, an escalation that the fake clock's
     `yield` raises after the first batch, naming an ended actor past its
     window that a later actor batch would prune and a gate whose

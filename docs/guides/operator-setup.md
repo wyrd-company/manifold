@@ -382,8 +382,8 @@ sets how long the GitHub source keeps each webhook delivery and redelivery
 request; a row is kept until the hook's redelivery scan has passed it. A read
 agent message is removed once the histories of the actor that sent it and the
 actor that read it are removed, and the record of a T3 Code project an actor
-created once its ownership is safe to retire and its creator's history is
-removed. Thread records are kept for the life of the store, so that a late
+created once T3 Code no longer lists the project, no thread names it, and its
+creator's history is removed. Thread records are kept for the life of the store, so that a late
 usage report is attributed to the right item.
 
 The service removes rows past their window about every hour, starting five

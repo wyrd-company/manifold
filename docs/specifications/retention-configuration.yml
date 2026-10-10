@@ -35,8 +35,9 @@ description: >-
   history answers `prunedAt`. A running actor's history is never removed.
   A read agent message is removed once the histories of the actor that
   sent it and the actor that took it are both removed, and a created
-  project's record once its creating actor's history is removed and its
-  ownership is safe to retire, as `retention` states. Default 90.
+  project's record once its creating actor's history is removed, the
+  server no longer lists the project, and no thread names it, as
+  `retention` states. Default 90.
 
   `sourceEventDays` maps an event source's name to the window of that
   source's records of accepted source events, counted from the first

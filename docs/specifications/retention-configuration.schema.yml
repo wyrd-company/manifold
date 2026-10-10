@@ -16,7 +16,8 @@ properties:
       Days after an actor ends before retention removes its consumed inbox
       rows, its event links, and its commands. Its visits stay. A read
       agent message goes once both its actors' histories are gone, and a
-      retired created project's record once its creator's history is gone.
+      created project's record once its creator's history is gone, the
+      server no longer lists it, and no thread names it.
     $ref: "#/$defs/window"
     default: 90
   sourceEventDays:

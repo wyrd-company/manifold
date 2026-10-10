@@ -529,6 +529,21 @@ proposed-design:
     conservative, since neither can be told apart from a project that
     can still receive usage, and both are bounded by the projects the
     environment's actors created.
+  retention: >-
+    Thread rows are never removed apart from an environment reset: usage
+    intake reads a thread's project and title for any call of the thread,
+    however late, and a thread's cursor and stored state are where a
+    returning thread resumes. The index exports
+    `retirableCreatedProjects(connection, { after, limit })` and
+    `retireCreatedProject(connection, key)` for retention, as `retention`
+    states. `retirableCreatedProjects` lists, in key order after `after`,
+    each created project whose presence is `removed` and whose project no
+    thread row of any status names, with its creating actor.
+    `retireCreatedProject` deletes the record in one statement that
+    repeats both checks, or answers `kept`. No call can reach a retired
+    project, since a call reaches a project only through a thread row. A
+    record that stays `unseen`, and a record of an environment no longer
+    configured, is never retirable and stays.
   project-view: >-
     `projects(environment)` answers the T3code projects of the
     environment's shell: the projects of the last shell snapshot the

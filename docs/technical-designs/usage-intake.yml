@@ -522,9 +522,9 @@ proposed-design:
     reaches the service after that, and a late attribution or usage move
     onto it, falls in a visit as for any ended actor. Retention never
     deletes a thread row, so `threadProject` and `threadTitle` answer for
-    every call of a thread however late it arrives, and retires a created
-    project only when its threads resolve their item without it, so a call
-    of such a thread posts on the same item after the retirement as before.
+    every call of a thread however late it arrives, and removes a created
+    project's record only when no thread row names the project, so no call
+    can be attributed through a removed record.
   settlement: >-
     When a save's snapshot status is `done` or `stopped`, the save hook
     sets the actor's end time when it is unset and calls
