@@ -52,13 +52,17 @@ export function metadataRecords(connection: StoreConnection) {
         : undefined;
     },
     appliedScope(key: string): (AppliedScope & { at: number; commit: string }) | undefined {
-      const row = db.prepare("SELECT * FROM metadata_scope_applies WHERE scope_key = ?").get(key);
+      const row = db
+        .prepare(
+          "SELECT CAST(commit_id AS BLOB) AS commit_id, configuration, owned, applied_at FROM metadata_scope_applies WHERE scope_key = ?",
+        )
+        .get(key);
       return row
         ? {
             configuration: JSON.parse(row["configuration"] as string),
             owned: JSON.parse(row["owned"] as string),
             at: row["applied_at"] as number,
-            commit: row["commit_id"] as string,
+            commit: storedText(row["commit_id"]!),
           }
         : undefined;
     },

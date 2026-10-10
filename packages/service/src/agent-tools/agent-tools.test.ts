@@ -104,7 +104,8 @@ async function fixture(
     environments: new Set([environment]),
     router: () => router,
     actors: () => ({
-      followers: (_environment, requestedThread) => (requestedThread === threadId ? [follower] : []),
+      followers: (_environment, requestedThread) =>
+        requestedThread === threadId ? [follower] : [],
       issueThreads: () => [{ actorId: "parcel", environment, threadId }],
       actorOf: () => ({ manifold: { issue: "shipment" }, commit: "a".repeat(40) }),
       followedThreads: () => [threadId],

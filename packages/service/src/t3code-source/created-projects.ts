@@ -19,7 +19,7 @@ export function createdProjects(store: Store) {
     "UPDATE t3_created_project SET presence = ? WHERE environment = ? AND project_id = ? AND presence != 'removed'",
   );
   const all =
-    db.prepare(`SELECT c.environment, c.project_id AS projectId, c.actor_id AS actorId, c.item, c.presence,
+    db.prepare(`SELECT CAST(c.environment AS BLOB) AS environment, CAST(c.project_id AS BLOB) AS projectId, CAST(c.actor_id AS BLOB) AS actorId, CAST(c.item AS BLOB) AS item, c.presence,
     (SELECT count(*) FROM t3_thread t WHERE t.environment = c.environment AND t.project_id = c.project_id) AS threads
     FROM t3_created_project c ORDER BY c.environment, c.project_id`);
   function presence(environment: string, project: string, value: "listed" | "removed") {
@@ -30,7 +30,9 @@ export function createdProjects(store: Store) {
     snapshot(environment: string, projects: readonly { id: string; deletedAt?: string | null }[]) {
       const live = new Set(projects.filter((p) => !p.deletedAt).map((p) => p.id));
       const removed = new Set(projects.filter((p) => p.deletedAt).map((p) => p.id));
-      for (const record of all.all() as unknown as CreatedProjectRecord[]) {
+      for (const record of all
+        .all()
+        .map(readT3CreatedProject) as unknown as CreatedProjectRecord[]) {
         if (record.environment !== environment) continue;
         if (live.has(record.projectId)) presence(environment, record.projectId, "listed");
         else if (record.presence === "listed" || removed.has(record.projectId))
@@ -38,7 +40,9 @@ export function createdProjects(store: Store) {
       }
     },
     all() {
-      return (all.all() as unknown as Omit<CreatedProjectRecord, "retirable">[]).map((row) => ({
+      return (
+        all.all().map(readT3CreatedProject) as unknown as Omit<CreatedProjectRecord, "retirable">[]
+      ).map((row) => ({
         ...row,
         retirable: row.presence === "removed" && row.threads === 0,
       }));

@@ -110,26 +110,30 @@ export function createMirror(store: Store, now: () => number) {
   function read(): MirrorState {
     const labels = new Map<string, IssueContent["labels"][number][]>();
     for (const row of db
-      .prepare("SELECT * FROM github_issue_label ORDER BY issue_node_id,position")
+      .prepare(
+        "SELECT CAST(issue_node_id AS BLOB) AS issue_node_id, position, CAST(label_node_id AS BLOB) AS label_node_id, CAST(name AS BLOB) AS name FROM github_issue_label ORDER BY issue_node_id,position",
+      )
       .all())
-      append(labels, row["issue_node_id"] as string, {
-        nodeId: row["label_node_id"] as string,
-        name: row["name"] as string,
+      append(labels, storedText(row["issue_node_id"]!), {
+        nodeId: storedText(row["label_node_id"]!),
+        name: storedText(row["name"]!),
       });
     const values = new Map<string, IssueContent["issueFields"][number][]>();
     for (const row of db
-      .prepare("SELECT * FROM github_issue_field_value ORDER BY issue_node_id,position")
+      .prepare(
+        "SELECT CAST(issue_node_id AS BLOB) AS issue_node_id, position, CAST(field_node_id AS BLOB) AS field_node_id, CAST(name AS BLOB) AS name, value FROM github_issue_field_value ORDER BY issue_node_id,position",
+      )
       .all())
-      append(values, row["issue_node_id"] as string, {
-        fieldNodeId: row["field_node_id"] as string,
-        name: row["name"] as string,
+      append(values, storedText(row["issue_node_id"]!), {
+        fieldNodeId: storedText(row["field_node_id"]!),
+        name: storedText(row["name"]!),
         value: JSON.parse(row["value"] as string) as IssueContent["issueFields"][number]["value"],
       });
     return {
       issues: new Map(
         db
           .prepare(
-            "SELECT CAST(issue_node_id AS BLOB) AS issue_node_id, CAST(repository AS BLOB) AS repository, number, state, state_reason, baselined, revision, present, CAST(title AS BLOB) AS title, CAST(url AS BLOB) AS url FROM github_issue",
+            "SELECT CAST(issue_node_id AS BLOB) AS issue_node_id, CAST(repository AS BLOB) AS repository, number, state, state_reason, baselined, revision, present, CAST(title AS BLOB) AS title, CAST(url AS BLOB) AS url, CAST(body AS BLOB) AS body, last_edited_at, milestone, issue_type, content_revision FROM github_issue",
           )
           .all()
           .map(readGithubIssue)
@@ -375,41 +379,58 @@ export function createMirror(store: Store, now: () => number) {
     write,
     scopeConfiguration(scope: StorageScope): ScopeConfiguration | undefined {
       const key = scopeKey(scope);
-      const row = db.prepare("SELECT * FROM github_scope WHERE scope_key=?").get(key);
+      const row = db
+        .prepare(
+          "SELECT status, read_at, CAST(message AS BLOB) AS message FROM github_scope WHERE scope_key=?",
+        )
+        .get(key);
       if (!row) return;
       const status = row["status"] as ScopeConfiguration["status"];
       const readAt = row["read_at"] as number;
-      if (status !== "ready") return { scope, status, readAt, message: row["message"] as string };
+      if (status !== "ready")
+        return { scope, status, readAt, message: storedText(row["message"]!) };
+      const projections: Record<string, string> = {
+        github_issue_field:
+          "CAST(node_id AS BLOB) AS node_id, CAST(name AS BLOB) AS name, data_type, options",
+        github_issue_type:
+          "CAST(node_id AS BLOB) AS node_id, CAST(name AS BLOB) AS name, color, CAST(description AS BLOB) AS description, enabled",
+        github_label:
+          "CAST(node_id AS BLOB) AS node_id, CAST(name AS BLOB) AS name, color, CAST(description AS BLOB) AS description",
+        github_milestone:
+          "CAST(node_id AS BLOB) AS node_id, number, CAST(title AS BLOB) AS title, CAST(description AS BLOB) AS description, state",
+      };
       const rows = (table: string) =>
-        db.prepare(`SELECT * FROM ${table} WHERE scope_key=? ORDER BY position`).all(key);
+        db
+          .prepare(`SELECT ${projections[table]} FROM ${table} WHERE scope_key=? ORDER BY position`)
+          .all(key);
       return {
         scope,
         status,
         readAt,
         issueFields: rows("github_issue_field").map((row) => ({
-          nodeId: row["node_id"] as string,
-          name: row["name"] as string,
+          nodeId: storedText(row["node_id"]!),
+          name: storedText(row["name"]!),
           type: row["data_type"] as import("./types.ts").IssueFieldConfiguration["type"],
           options: JSON.parse(row["options"] as string) as ProjectFieldOption[],
         })),
         issueTypes: rows("github_issue_type").map((row) => ({
-          nodeId: row["node_id"] as string,
-          name: row["name"] as string,
+          nodeId: storedText(row["node_id"]!),
+          name: storedText(row["name"]!),
           color: row["color"] as import("./types.ts").ProjectFieldOptionColor | null,
-          description: row["description"] as string,
+          description: storedText(row["description"]!),
           enabled: Boolean(row["enabled"]),
         })),
         labels: rows("github_label").map((row) => ({
-          nodeId: row["node_id"] as string,
-          name: row["name"] as string,
+          nodeId: storedText(row["node_id"]!),
+          name: storedText(row["name"]!),
           color: row["color"] as string,
-          description: row["description"] as string,
+          description: storedText(row["description"]!),
         })),
         milestones: rows("github_milestone").map((row) => ({
-          nodeId: row["node_id"] as string,
+          nodeId: storedText(row["node_id"]!),
           number: row["number"] as number,
-          title: row["title"] as string,
-          description: row["description"] as string,
+          title: storedText(row["title"]!),
+          description: storedText(row["description"]!),
           state: row["state"] as "open" | "closed",
         })),
       };
@@ -657,6 +678,7 @@ function readGithubIssue<T>(row: T): T {
     repository: storedText(values["repository"]!),
     title: values["title"] === null ? null : storedText(values["title"]!),
     url: values["url"] === null ? null : storedText(values["url"]!),
+    body: values["body"] === null ? null : storedText(values["body"]!),
   } as T;
 }
 function readGithubProject<T>(row: T): T {

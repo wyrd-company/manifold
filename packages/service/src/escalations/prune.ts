@@ -2,6 +2,7 @@
 // relationships:
 //   implements: retention
 // ---
+import { storedText } from "../store/index.ts";
 import type { StoreConnection } from "../store/index.ts";
 export interface PrunableEscalation {
   readonly escalationId: string;
@@ -16,13 +17,13 @@ export function prunableEscalations(
   query: { closedBefore: number; after?: string; limit: number },
 ): PrunableEscalation[] {
   return connection.database
-    .prepare(`SELECT escalation_id, coalesce(actor_id,json_extract(subject,'$.actorId')) AS actor,
+    .prepare(`SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(coalesce(actor_id,json_extract(subject,'$.actorId')) AS BLOB) AS actor,
     kind IS NOT NULL AND NOT EXISTS (SELECT 1 FROM escalation newer WHERE newer.kind=escalation.kind AND newer.subject=escalation.subject AND newer.occurrence>escalation.occurrence) AS latest
     FROM escalation WHERE ${settled} AND closed_at<? AND escalation_id>? ORDER BY escalation_id LIMIT ?`)
     .all(query.closedBefore, query.after ?? "", query.limit)
     .map((row) => ({
-      escalationId: String(row["escalation_id"]),
-      ...(row["actor"] === null ? {} : { actorId: String(row["actor"]) }),
+      escalationId: storedText(row["escalation_id"]!),
+      ...(row["actor"] === null ? {} : { actorId: storedText(row["actor"]!) }),
       latestOccurrence: row["latest"] === 1,
     }));
 }

@@ -2,6 +2,8 @@
 // relationships:
 //   implements: github-event-source
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import { setFrontMatter } from "@wyrd-company/manifold-shared";
 import { GitHubWriteError } from "./types.ts";
 import type { TaskFieldWrite } from "./types.ts";
@@ -19,12 +21,24 @@ export interface BodyApi {
 export function taskWriteRecords(connection: StoreConnection) {
   const db = connection.database;
   const key = (write: TaskFieldWrite) => [write.actorId, write.invokeId, write.entryId] as const;
-  function row(write: TaskFieldWrite) {
-    return db
+  function row(write: TaskFieldWrite): Record<string, SQLOutputValue> | undefined {
+    const found = db
       .prepare(
-        "SELECT * FROM github_task_field_write WHERE actor_id=? AND invoke_id=? AND entry_id=?",
+        "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, CAST(issue_node_id AS BLOB) AS issue_node_id, CAST(project_node_id AS BLOB) AS project_node_id, CAST(field AS BLOB) AS field, storage, value, status, attributed, attempt, basis_edited_at, CAST(basis_body AS BLOB) AS basis_body, original_edited_at, CAST(repair_body AS BLOB) AS repair_body, check_state, conflict_edited_at, written_at, sequence FROM github_task_field_write WHERE actor_id=? AND invoke_id=? AND entry_id=?",
       )
       .get(...key(write));
+    if (!found) return;
+    return {
+      ...found,
+      actor_id: storedText(found["actor_id"]!),
+      invoke_id: storedText(found["invoke_id"]!),
+      entry_id: storedText(found["entry_id"]!),
+      issue_node_id: storedText(found["issue_node_id"]!),
+      project_node_id: storedText(found["project_node_id"]!),
+      field: storedText(found["field"]!),
+      basis_body: found["basis_body"] === null ? null : storedText(found["basis_body"]!),
+      repair_body: found["repair_body"] === null ? null : storedText(found["repair_body"]!),
+    };
   }
   return {
     row,
@@ -71,14 +85,17 @@ export function taskWriteRecords(connection: StoreConnection) {
     attribute(issue: string, project: string, field: string, value: string | number | null) {
       const record = db
         .prepare(
-          "SELECT actor_id,status,sequence FROM github_task_field_write WHERE issue_node_id=? AND project_node_id=? AND field=? AND value=? AND status!='refused' AND attributed=0 ORDER BY sequence DESC LIMIT 1",
+          "SELECT CAST(actor_id AS BLOB) AS actor_id,status,sequence FROM github_task_field_write WHERE issue_node_id=? AND project_node_id=? AND field=? AND value=? AND status!='refused' AND attributed=0 ORDER BY sequence DESC LIMIT 1",
         )
         .get(issue, project, field, JSON.stringify(value));
       if (!record) return null;
       db.prepare(
         "UPDATE github_task_field_write SET attributed=1 WHERE issue_node_id=? AND project_node_id=? AND field=? AND sequence<=?",
       ).run(issue, project, field, record["sequence"] as number);
-      return { actorId: record["actor_id"] as string, confirmed: record["status"] === "confirmed" };
+      return {
+        actorId: storedText(record["actor_id"]!),
+        confirmed: record["status"] === "confirmed",
+      };
     },
   };
 }

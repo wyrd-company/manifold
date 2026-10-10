@@ -2,6 +2,7 @@
 // relationships:
 //   implements: retention
 // ---
+import { storedText } from "../store/index.ts";
 import type { StoreConnection } from "../store/index.ts";
 export interface CreatedProjectKey {
   readonly environment: string;
@@ -19,7 +20,7 @@ export function retirableCreatedProjects(
 ): RetirableCreatedProject[] {
   if (!query.environments.length) return [];
   return connection.database
-    .prepare(`SELECT environment,project_id,actor_id FROM t3_created_project
+    .prepare(`SELECT CAST(environment AS BLOB) AS environment,CAST(project_id AS BLOB) AS project_id,CAST(actor_id AS BLOB) AS actor_id FROM t3_created_project
     WHERE ${retirable} AND environment IN (${query.environments.map(() => "?").join(",")})
     AND (environment,project_id)>(?,?) ORDER BY environment,project_id LIMIT ?`)
     .all(
@@ -29,9 +30,9 @@ export function retirableCreatedProjects(
       query.limit,
     )
     .map((row) => ({
-      environment: String(row["environment"]),
-      projectId: String(row["project_id"]),
-      actorId: String(row["actor_id"]),
+      environment: storedText(row["environment"]!),
+      projectId: storedText(row["project_id"]!),
+      actorId: storedText(row["actor_id"]!),
     }));
 }
 export function retireCreatedProject(

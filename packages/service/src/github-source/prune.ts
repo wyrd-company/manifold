@@ -2,6 +2,7 @@
 // relationships:
 //   implements: retention
 // ---
+import { storedText } from "../store/index.ts";
 import type { StoreConnection } from "../store/index.ts";
 export function pruneDeliveries(
   connection: StoreConnection,
@@ -43,10 +44,10 @@ export function cardMoveActors(
 ): string[] {
   return connection.database
     .prepare(
-      "SELECT DISTINCT actor_id FROM github_card_move WHERE actor_id>? ORDER BY actor_id LIMIT ?",
+      "SELECT DISTINCT CAST(actor_id AS BLOB) AS actor_id FROM github_card_move WHERE actor_id>? ORDER BY actor_id LIMIT ?",
     )
     .all(query.after ?? "", query.limit)
-    .map((row) => String(row["actor_id"]));
+    .map((row) => storedText(row["actor_id"]!));
 }
 export function pruneCardMoves(connection: StoreConnection, actorIds: readonly string[]) {
   if (!actorIds.length) return 0;

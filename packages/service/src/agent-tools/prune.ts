@@ -2,6 +2,7 @@
 // relationships:
 //   implements: retention
 // ---
+import { storedText } from "../store/index.ts";
 import type { StoreConnection } from "../store/index.ts";
 export interface PrunableMessage {
   readonly sequence: number;
@@ -37,13 +38,13 @@ export function prunableMessages(
 ): PrunableMessage[] {
   return connection.database
     .prepare(
-      "SELECT sequence,sender_actor_id,delivered_to FROM agenttool_message WHERE read_at<? AND sequence>? ORDER BY sequence LIMIT ?",
+      "SELECT sequence,CAST(sender_actor_id AS BLOB) AS sender_actor_id,CAST(delivered_to AS BLOB) AS delivered_to FROM agenttool_message WHERE read_at<? AND sequence>? ORDER BY sequence LIMIT ?",
     )
     .all(query.readBefore, query.after ?? 0, query.limit)
     .map((row) => ({
       sequence: Number(row["sequence"]),
-      senderActorId: String(row["sender_actor_id"]),
-      readerActorId: String(row["delivered_to"]),
+      senderActorId: storedText(row["sender_actor_id"]!),
+      readerActorId: storedText(row["delivered_to"]!),
     }));
 }
 export function pruneMessages(connection: StoreConnection, sequences: readonly number[]) {

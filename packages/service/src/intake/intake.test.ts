@@ -1002,9 +1002,7 @@ it.each([10, 1000])(
     withdrawals.length = 0;
     const prepare = vi.spyOn(s.store.connection.database, "prepare");
     intake.mirrorChanged();
-    expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
-      1,
-    );
+    expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(1);
     expect(withdrawals).toContain(`parcel-${size - 1}`);
     prepare.mockRestore();
     await intake.idle();
@@ -1012,9 +1010,9 @@ it.each([10, 1000])(
       expect(intake.record(`parcel-${i}`)?.attempts).toBe(changed.has(`parcel-${i}`) ? 2 : 1);
     const reconcile = vi.spyOn(s.store.connection.database, "prepare");
     intake.revisionLoaded();
-    expect(
-      reconcile.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql)),
-    ).toHaveLength(1);
+    expect(reconcile.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
+      1,
+    );
     reconcile.mockRestore();
     await intake.idle();
     const latest = mirror.read();
@@ -1051,9 +1049,7 @@ it("a record check with no unfinished records does not read the mirror", async (
   cleanup.push(() => intake.stop());
   const prepare = vi.spyOn(s.store.connection.database, "prepare");
   intake.mirrorChanged();
-  expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
-    0,
-  );
+  expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(0);
   prepare.mockRestore();
 });
 it.each(["inside\0tail", "\0leading"])(

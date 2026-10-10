@@ -1173,9 +1173,9 @@ for (const size of [10, 1000])
       for (let i = 0; i < 20; i++) f.save(`parcel-${String(i).padStart(2, "0")}`, "working");
       const prepare = vi.spyOn(f.store.connection.database, "prepare");
       await f.start();
-      expect(
-        prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql)),
-      ).toHaveLength(1);
+      expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
+        1,
+      );
       prepare.mockRestore();
       const inputs = f.rows("gates_evaluation").map(
         (row) =>
@@ -1214,9 +1214,7 @@ for (const size of [10, 1000])
         population: { id: string; criticalPath: number }[];
       };
       expect(latest.population.find((m) => m.id === "later")?.criticalPath).toBe(1);
-      expect(next.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
-        1,
-      );
+      expect(next.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(1);
       next.mockRestore();
     },
     size === 1000 ? 15000 : undefined,
@@ -1234,9 +1232,7 @@ it("a grant round with no issue identities does not read the mirror", async () =
     });
   const prepare = vi.spyOn(f.store.connection.database, "prepare");
   await f.start();
-  expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
-    0,
-  );
+  expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(0);
   prepare.mockRestore();
   const input = JSON.parse(String(f.rows("gates_evaluation")[0]?.["input"])) as {
     population: { criticalPath: number }[];

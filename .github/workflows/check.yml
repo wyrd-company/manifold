@@ -53,6 +53,40 @@ jobs:
       - name: Check
         run: task check
 
+  service-tests-floor:
+    name: Service tests (Node 24.11.0)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Reads the pnpm version from `packageManager` in package.json.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.11.0
+          cache: pnpm
+
+      - name: Setup Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+
+      - name: Install
+        run: task install
+
+      - name: Install Chromium system dependencies
+        run: pnpm --filter @wyrd-company/manifold-service exec playwright install --with-deps chromium
+
+      - name: Service tests
+        run: pnpm --filter @wyrd-company/manifold-service test
+
   smoke-selection:
     name: Select archive coverage
     runs-on: ubuntu-24.04
