@@ -15,6 +15,7 @@ relationships:
     - blueprints-api
     - t3code-environment-source
     - lint-console-edits-on-the-service
+    - declare-created-project-choices-as-bindings
 terms:
   - binding
   - portfolio-item
@@ -252,6 +253,13 @@ description: >-
     each T3code project with `id`, `title`, `workspaceRoot`, and
     `activeThreads`, the count of its threads the source follows, sorted
     by `title`, then `id`.
+  - `createdProjects`: each created project whose record is not
+    retirable and that no binding or association at that commit names, in
+    the order of `portfolio.createdProjects()`, with `environment`,
+    `project`, `actorId`, the creating actor, and `item`, the item its
+    record holds. An archive lists one under an item when `item` is the
+    item or an item under it at that commit. Empty when `bindings.yml`
+    has a finding.
 
   Before the first applied revision it answers `503`.
 
@@ -284,16 +292,33 @@ description: >-
   projects, base, message, saveId }`. `base`, `message`, and `saveId`
   have the meaning and limits of a save. `item` is the id of the
   portfolio item to archive. `projects` holds one choice for each
-  binding that is not archived and names the item or an item under it:
+  binding that is not archived and names the item or an item under it,
+  and one for each created project attached to it: a created project
+  whose record is not retirable, that no binding or association at
+  `base` names, and whose record's item is the item or an item under it.
+  A choice names its project by `binding`, or by `created: { environment,
+  project }` with `name`, the name of the T3code project binding the
+  choice declares, and holds one of three choices:
 
-  - `{ binding, choice: "move" }` sets the binding's `item` to the
-    archived item's parent, where intake places the binding's tasks by
-    the rule it uses for any binding of that item, so that a task no
-    sub-item matches lands on the parent's Other.
-  - `{ binding, choice: "reassign", item }` sets the binding's `item` to
-    `item`.
-  - `{ binding, choice: "archive" }` sets `archived: true` on the binding
-    and keeps its `item`.
+  - `choice: "move"` sets the binding's `item` to the archived item's
+    parent, where intake places the binding's tasks by the rule it uses
+    for any binding of that item, so that a task no sub-item matches
+    lands on the parent's Other.
+  - `choice: "reassign", item` sets the binding's `item` to `item`, a
+    sibling of the archived item: an item with the same parent that is
+    not the archived item, not an Other item, and not archived.
+  - `choice: "archive"` sets `archived: true` on the binding and keeps
+    its `item`.
+
+  For a created project the service adds `name` to `t3codeProjects` with
+  the project's `environment` and `project`, and an `item` by the same
+  choice: the archived item's parent, the sibling, or, with `archived:
+  true`, its record's item. The binding takes precedence over the
+  record, so the commit alone moves the project's unowned usage, and the
+  service writes nothing to the store. The console makes `name` with
+  `t3-` before the slug of the project's title, or of its id when the
+  environment's project list does not hold it, by the rule an item id is
+  made from a name, so a retried request carries the same name.
 
   The service reads `portfolio.yml` and `bindings.yml` at `base`,
   answering `400` when `revisionAt(base)` holds no revision. It sets
@@ -308,7 +333,8 @@ description: >-
   revision. It then saves both files in one commit as a save does, so
   the archive and every choice reach the branch together or not at all.
   An item already archived at `base` is archived again with no change,
-  so the request converges.
+  so the request converges, and a request for an archived item carries
+  the choices of the created projects attached to it since.
 
   It answers `422`, and writes nothing, with every finding of the two
   texts, each with its `file`, and with these findings of the request,
@@ -320,9 +346,22 @@ description: >-
     section.
   - `not-attached` (`bindings`): a choice names a binding that is
     archived, or that names neither the item nor an item under it.
-  - `duplicate-choice` (`bindings`): two choices name one binding.
+  - `duplicate-choice` (`bindings`): two choices name one binding or one
+    created project.
   - `no-parent` (`bindings`): a `move` for an item at the top level,
     whose parent is the top level, which no binding may name.
+  - `not-sibling` (`bindings`): a `reassign` names an item that is not a
+    sibling of the archived item.
+  - `not-created` (`bindings`): a `created` choice names a project the
+    store holds no record of.
+  - `not-attached` (`bindings`) also answers a `created` choice for a
+    project that a binding or association at `base` names, whose record
+    is retirable, or whose record's item is neither the item nor an item
+    under it.
+  - `name-taken` (`bindings`): a `created` choice's `name` is a binding
+    of either section at `base`, or the name of another choice.
+  - `choice-missing` (`bindings`): a created project attached to the
+    item has no choice; its message names its environment and project.
 
   A binding that is not archived, names the item or an item under it,
   and has no choice gives the lint's `archived-item` finding at that

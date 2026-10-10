@@ -365,6 +365,8 @@ proposed-design:
       recordCreatedProject(record: CreatedProject): void;
       /** The record of a created project; undefined for any other project. */
       createdProject(environment: string, projectId: string): CreatedProject | undefined;
+      /** Every created project record, ordered by environment, then project id. */
+      createdProjects(): readonly CreatedProjectRecord[];
       /** Closes every client; resolves when every environment loop has ended. */
       stop(): Promise<void>;
     }
@@ -393,6 +395,15 @@ proposed-design:
       readonly actorId: string;
       /** The creating actor's portfolio item. */
       readonly item: string;
+    }
+
+    export interface CreatedProjectRecord extends CreatedProject {
+      /** What the source has observed of the project on the environment's shell. */
+      readonly presence: "unseen" | "listed" | "removed";
+      /** The count of `t3_thread` rows, of any status, that name the project. */
+      readonly threads: number;
+      /** `presence` is `removed` and `threads` is 0: the record can attribute nothing. */
+      readonly retirable: boolean;
     }
 
     export interface EnvironmentStatus {
@@ -459,11 +470,57 @@ proposed-design:
     item. `recordCreatedProject` inserts a row keyed by environment and
     project id with the actor id and item, and leaves an existing row as
     it is; it runs synchronously in its own transaction and throws when
-    the environment has no `t3_environment` row. `createdProject` reads
-    the row synchronously and answers `undefined` for a project with
-    none. A reset of an environment whose `environmentId` changed deletes
-    its rows with the environment's other rows, since the projects they
-    name were on the other server.
+    the environment has no `t3_environment` row. The row's environment,
+    project id, actor id, and item are the project's creation provenance
+    and never change; an archive choice is declared in the process
+    repository as a binding, which takes precedence over the record, and
+    never edits the row. `recordCreatedProject` writes `presence` as
+    `listed` when the environment's in-memory project list holds the
+    project, and as `unseen` otherwise. `createdProject` reads the row
+    synchronously and answers `undefined` for a project with none.
+    `createdProjects` reads every row synchronously, with its presence
+    and its thread count, in one statement. A reset of an environment
+    whose `environmentId` changed deletes its rows with the environment's
+    other rows, since the projects they name were on the other server.
+  created-project-presence: >-
+    The source keeps what it observes of each created project on the
+    shell in the row's `presence`, as
+    `t3code-source-database-schema` states, so that whether a created
+    project can still receive usage survives a restart; the in-memory
+    project list does not. A shell snapshot sets `listed` on each row whose
+    project it lists without `deletedAt`, and `removed` on each `listed`
+    row whose project it omits or lists with `deletedAt`, and on each
+    `unseen` row whose project it lists with `deletedAt`. A
+    `project-upserted` item sets `listed` on its project's row and a
+    `project-removed` item sets `removed`. A row that is `removed` stays
+    `removed`. Each write runs in the `atomic` call that advances
+    `shell_sequence` past the item, so a kill between them replays the
+    item and writes the same value. A snapshot that omits an `unseen`
+    project leaves it, since the snapshot may have been read before the
+    server accepted the create; a project deleted before any shell item
+    listed it stays `unseen` and is never retirable.
+  created-project-retirement: >-
+    A created project record is retirable when its `presence` is
+    `removed` and no `t3_thread` row names its environment and project,
+    whatever the thread's status. Usage reaches a created project record
+    only through a thread: a call's provider session maps to a thread,
+    `threadProject` reads the thread's project from `t3_thread`, and
+    portfolio resolution reads the record of that project. While a
+    `t3_thread` row names the project, a new or late call can still
+    resolve to the record; while the project is not `removed`, T3 Code
+    can still start a thread in it. Once both are false, deleting the row
+    changes no resolution of any call, posted, pending, or still to come.
+    A binding that names the project does not make the row retirable,
+    since the operator may remove the binding and the record then
+    resolves again. The retention module deletes retirable rows in its
+    prune run, checking the predicate in the deleting statement:
+    `DELETE FROM t3_created_project AS c WHERE c.presence = 'removed' AND
+    NOT EXISTS (SELECT 1 FROM t3_thread AS t WHERE t.environment =
+    c.environment AND t.project_id = c.project_id)` over the run's batch
+    of keys, so a thread row written after the batch was chosen keeps the
+    record. The creating actor's `project-create` command stays in its
+    actor history and posted usage keeps its item in the ledger, so
+    retiring a record loses no history.
   project-view: >-
     `projects(environment)` answers the T3code projects of the
     environment's shell: the projects of the last shell snapshot the
@@ -586,4 +643,14 @@ proposed-design:
     no thread, interrupted by an identity change, saves no thread row and
     is retried after the replacement origin commits. `recordCreatedProject`
     twice keeps the first row, `createdProject` answers it and `undefined`
-    for another project, and a changed `environmentId` deletes it.
+    for another project, and a changed `environmentId` deletes it. A
+    created project's `presence` reads `unseen` when recorded before the
+    shell lists it and `listed` when recorded after; `listed` after a
+    snapshot or a `project-upserted` item; `removed` after a
+    `project-removed` item, after a snapshot that lists it with
+    `deletedAt`, and after a snapshot that omits it while `listed`; and
+    `unseen` after a snapshot that omits it while `unseen`. A source killed
+    after a `project-removed` item and started again on the same file
+    reads `removed`. `createdProjects` answers `retirable` false while a
+    thread row of any status names the project or while it is not
+    `removed`, and true once both hold.

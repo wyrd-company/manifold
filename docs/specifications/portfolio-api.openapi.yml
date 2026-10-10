@@ -279,7 +279,10 @@ components:
                   project:
                     type: string
                   via:
-                    enum: [binding, association]
+                    enum: [binding, association, created]
+                  actorId:
+                    type: string
+                    description: The creating actor; present for `via` `created`.
         activeTasks:
           type: integer
           minimum: 0

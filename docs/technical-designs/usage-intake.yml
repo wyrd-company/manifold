@@ -295,6 +295,15 @@ proposed-design:
     the session's mapping that arrives later, the thread's ownership that
     arrives later, or the operator's move. The ledger actors of unowned
     usage take actuals and reattributions only and are never settled.
+    The item of a thread's T3code project is the one resolution answers
+    at the moment the posting or the late attribution is made, from the
+    declaration in force: a binding, an association, a created project's
+    record, or `other`. An archive that declares a created project's
+    binding therefore moves the project's later unowned calls, and the
+    late attributions made after it, to the binding's item, and leaves
+    every posting made before it where it posted. An archived binding
+    keeps its item, so an archived created project's later unowned calls
+    stay on the archived item, charged to its parent and its account.
   reattributions: >-
     A reattribution is one row that attributes a posted posting again,
     with its cause, `mapping`, `ownership`, or `move`, and the actor,

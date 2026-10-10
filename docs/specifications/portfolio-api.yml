@@ -117,7 +117,11 @@ description: >-
   not archived and names the item, as `{ binding, environment, project,
   via: "binding" }`, then each T3code project that a listed GitHub
   Project binding associates, as `{ environment, project, via:
-  "association" }`. `activeTasks` counts the active snapshots whose
+  "association" }`, then each created project that
+  `portfolio.createdProjects()` resolves `via: "created"` to the item and
+  that is not retirable, as `{ environment, project, via: "created",
+  actorId }`, so an archived item lists the created projects still
+  unresolved on it. `activeTasks` counts the active snapshots whose
   `context.manifold.portfolioItem` is the item or an item under it.
   `completedTasks` counts, by the same rule, the snapshots of ended
   actors, `done` or `stopped`, that the store keeps: the actors

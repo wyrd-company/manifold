@@ -47,7 +47,25 @@ description: >-
   `actor_id` is the invoking actor and `item` its portfolio item at the
   invoke. The row is written once the server has accepted the
   `project.create` command, before the invoke resolves, and writing it
-  again leaves the first row.
+  again leaves the first row: `environment`, `project_id`, `actor_id`,
+  and `item` are the project's creation provenance and never change.
+  `presence` is what the source has observed of the project on the
+  environment's shell: `unseen` until the shell lists it, `listed` once a
+  shell snapshot or a `project-upserted` item lists it, and `removed` once
+  a `project-removed` item names it, a snapshot lists it with
+  `deletedAt`, or a snapshot omits it while it is `listed`. A snapshot
+  that omits an `unseen` project leaves it `unseen`, since the snapshot
+  may predate the create. `removed` is final. The source writes
+  `presence` in the transaction that advances `shell_sequence` past the
+  item that changed it.
+
+  Retirement. A `t3_created_project` row is retirable when its
+  `presence` is `removed` and no `t3_thread` row has its `environment`
+  and its `project_id` as `project_id`, whatever the thread's status.
+  Such a row can attribute nothing: T3 Code no longer lists the project,
+  so no new thread appears in it, and no thread the source keeps names
+  it, so no call reaches it through a thread. Deleting a retirable row
+  changes no resolution. `t3_thread_project` serves the thread check.
   At 0.1.0, step 1 creates the complete schema in this file.
   Schema changes edit that step in place and require a new store. After
   0.1.0, steps are append-only, as `store` (migrations) defines.

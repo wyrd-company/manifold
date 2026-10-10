@@ -2436,8 +2436,15 @@ proposed-design:
     otherwise awaits `revisions.save` with both files in one request and
     maps its result as a save does, a conflict with no `text`.
     `archiveItemEdit` parses both texts as `editBindings` does, sets
-    `archived: true` on the item's mapping, and sets each binding's `item`
-    or `archived`, writing both documents as `editBindings` does.
+    `archived: true` on the item's mapping, sets each binding's `item`
+    or `archived`, and adds a T3code project binding for each created
+    project's choice, writing both documents as `editBindings` does. The
+    listener passes it the created project records of
+    `options.createdProjects()`, the portfolio's `createdProjects()`
+    read at the request, so the pure edit decides which created projects
+    are attached at `base`, which choices name them, and which have
+    none. The bindings read lists the same records, less those a binding
+    or association at its commit names and those that are retirable.
     `Revisions.save` takes
     any path, so the listener's path check is what keeps every save to the
     four declaration paths. The same-site and
@@ -2504,6 +2511,8 @@ proposed-design:
       t3codeProjects(environment: string): readonly DeclarationsT3codeProject[] | undefined;
       /** The task-metadata module's planner over a declaration that is not in force. */
       planDeclaration(declaration: TaskMetadataDeclaration): readonly DeclarationImpact[];
+      /** The portfolio's `createdProjects()`: every created project's provenance, resolution, and retirement state. */
+      createdProjects(): readonly CreatedProjectOwnership[];
       /** The accounts declaration in force: usage intake's `accounts`. */
       accounts(): Readonly<Record<string, UsageAccount>>;
       readonly log: (entry: { level: "error"; path: string; error: string }) => void;
@@ -2550,8 +2559,8 @@ proposed-design:
     `members.http` with the revision follower, the process repository,
     the configured repository URL and branch, the environment names of
     service configuration, the T3 Code source's `projects`, the
-    task-metadata module's planner as `planDeclaration`, and usage
-    intake's `accounts`, read through `context.later` when usage intake's
+    task-metadata module's planner as `planDeclaration`, the portfolio's
+    `createdProjects`, and usage intake's `accounts`, read through `context.later` when usage intake's
     part starts after it. It registers no
     `context.onStop`, since it opens nothing that stop closes; the HTTP
     host closes its listeners in the `requests` stage.
@@ -2819,15 +2828,19 @@ proposed-design:
     changes, the button is disabled and the note reads "Save or discard
     your changes first.", since an archive saves from the source and not
     from the dialog's draft. When no binding that is not archived names
-    the item or an item under it, the button asks in the 400px alert
-    dialog, "Archive <title>?", with a solid error confirm button, and
+    the item or an item under it, and the portfolio read lists no project
+    `via: "created"` on the item or an item under it, the button asks in
+    the 400px alert dialog, "Archive <title>?", with a solid error confirm button, and
     sends `archiveItem` with no projects. Otherwise it opens
     `ArchiveItemDialog`, as `archive-dialog` states. Either way the
     request's message is "Archive portfolio item <id>". "Show archived
     (N)" lists each archived item whose parent is not archived, with its
     title, its lifetime cost for the selected account, its completed
     tasks, `completedTasks`, as "N completed" or a muted dash, and
-    "Restore". "Restore" removes `archived` from
+    "Restore". When the portfolio read lists projects `via: "created"`
+    on the archived item or an item under it, the row also shows "N
+    projects to resolve" in warning color and "Choose project moves",
+    which opens `ArchiveItemDialog` in its resolve form. "Restore" removes `archived` from
     the item and sets the guarantee of every allocation of the item and
     every item under it to 0, so the restored item comes back at 0% and
     never breaks the guarantee limit, and saves with "Restore portfolio
@@ -2839,11 +2852,24 @@ proposed-design:
     `fetchBindings()` under `["bindings"]` when it opens, and lists, in
     the read's order, each GitHub Project binding and then each T3code
     project binding that is not archived and names the item or an item
-    under it, from the portfolio read's `parent` links. A row shows the
+    under it, then each of the read's `createdProjects` whose `item` is
+    the item or an item under it, from the portfolio read's `parent`
+    links. A binding row shows the
     binding's name, a muted line with `owner/number` for a GitHub Project
     or `environment · project` for a T3code project, "on <title>" when
     it names an item under the archived one, and "and N associated
-    T3code projects", which follow it, when it lists any. Under it is a
+    T3code projects", which follow it, when it lists any. A created
+    project row shows the project's title from the read's environment
+    projects, or its id when the environment's list does not hold it,
+    the muted line `environment · project`, "Created by a task" with the
+    creating actor's id in muted mono, "on <title>" by the same rule, and
+    the muted mono line "Saved as binding <name>". Its `name` is `t3-`
+    followed by the slug of the title, or of the id, made as `itemId`
+    makes a slug, cut so the name has at most 64 characters, with `-2`,
+    `-3`, and so on while it equals a binding name of the read or the
+    name of another row; the pure `createdBindingName(text, names)` in
+    `archive.ts` makes it, and a row keeps its name while the dialog's
+    base stays. Under each row is a
     radio group: "Move to <parent>" (it lands on the parent's "Other"),
     shown only when the archived item has a parent; "Reassign to" with a
     select of the archived item's siblings in the bindings read's
@@ -2852,7 +2878,9 @@ proposed-design:
     No choice is preselected. The confirm button, "Archive <title>"
     (solid error), is disabled until every row has a choice and every
     "Reassign to" has a sibling. Confirm sends `archiveItem({ item,
-    projects, base, message, saveId })` with the bindings read's
+    projects, base, message, saveId })`, each binding row's choice with
+    `binding` and each created project row's with `created: {
+    environment, project }` and `name`, with the bindings read's
     `commit` as `base` and a `saveId` the dialog makes with
     `createSaveId` and keeps while its choices and base stay, so a second
     confirm or a "Try again" is the same save. A `200` closes the dialog
@@ -2865,12 +2893,25 @@ proposed-design:
     on <branch> at <short head>." and "Read again", which reads the
     bindings again, keeps the choice of each binding still listed, drops
     the others, and makes a new `saveId`. A `422` lists its findings in
-    the alert, each with its kind and file in mono and its message. A
+    the alert, each with its kind and file in mono and its message; with
+    a `choice-missing` or `not-attached` finding the dialog also reads
+    the bindings again, adds each newly attached created project without
+    a choice, drops each row no longer attached, keeps every other
+    choice, and makes a new `saveId`. A
     `502`, a `503`, or a network failure shows the message with "Try
-    again". The dialog never writes the portfolio draft, and a failed
+    again". In its resolve form, opened from an archived item's row, the
+    dialog is titled "Projects of <title>" with the muted line "Choose
+    where each project goes. Every choice is saved in one commit.", lists
+    the created projects attached to the archived item, offers "Move to
+    <parent>" only when the parent is not archived, and has the confirm
+    button "Save choices" (solid primary); it sends the same
+    `archiveItem` request with the message "Resolve projects of
+    portfolio item <id>", and a `200` closes it with the toast "Saved
+    project choices". The dialog never writes the portfolio draft, and a failed
     archive writes neither the archive nor any project choice. `archive.ts` holds the pure
-    functions that list the attached bindings from the two reads, list
-    the sibling targets, and build the request from the choices.
+    functions that list the attached bindings and created projects from
+    the two reads, list the sibling targets, make each created project's
+    binding name, and build the request from the choices.
   unowned-usage: >-
     `UnownedUsage`, in `src/screens/portfolio/`, lists the read's ledger
     actors of unowned usage for the selected account under the heading
@@ -3288,7 +3329,50 @@ proposed-design:
     unchanged; "Cancel" discards. Completed count: a task actor on
     `gamma` is active; the test sends the event that ends it, reloads,
     and reads `gamma` Completed tasks 1 and Active tasks a dash, and
-    `alpha` Completed tasks 1. The Board and Task page browser test checks the
+    `alpha` Completed tasks 1. The fixture's store also holds created
+    project records, each listed by the fixture server's shell: `p1`,
+    `p2`, and `p3` on `beta`, `p4` on `gamma`, and `p5` on `beta` that a
+    T3code project binding `bound-five` names on `beta`, each with a
+    thread no actor owns. Created projects, each red before green: the
+    archive dialog for `beta` lists `board-one`, `board-two`, and
+    `bound-five` as bindings and `p1`, `p2`, and `p3` as created projects,
+    and not `p4` or `p5` as created; the test moves `p1` to `alpha`,
+    reassigns `p2` to `gamma`, archives `p3`, and moves the bindings; the
+    one new commit adds bindings `t3-<p1 title>` on `alpha`,
+    `t3-<p2 title>` on `gamma`, and `t3-<p3 title>` on `beta` with
+    `archived: true`, and `bound-five` on `alpha`; the store's
+    `t3_created_project` rows are unchanged; a call then pushed for each
+    created project's thread posts on `alpha`, `gamma`, and `beta`, and a
+    late mapping of an earlier call of `p1`'s thread attributes it to
+    `alpha` while its posted actual stays on `beta`. Sibling and parent:
+    a request that reassigns `p2` to `delta`, which is not `beta`'s
+    sibling, answers `422` with `not-sibling`; a request for `delta`, a
+    top-level item, with a `move` answers `no-parent`; and the dialog
+    offers only `gamma` to reassign. Repeated confirm: the same request
+    sent again answers `already-saved` with no second commit. A request
+    that leaves `p3` without a choice answers `choice-missing`. A record
+    `p6` on `beta` written while the dialog is open makes confirm answer
+    `choice-missing`, and the dialog lists `p6` with no choice and keeps
+    the other choices. Refused save: with created project choices made,
+    the concurrent commit of the refused save case leaves the remote with
+    no archive commit, `GET /api/declarations/bindings` still lists the
+    created projects, and calls on their threads still post on `beta`.
+    Unresolved on an archived item: with `beta` archived by a commit that
+    edits `portfolio.yml` alone, the archived list shows `beta` with "3
+    projects to resolve"; "Choose project moves" opens the resolve form,
+    and saving choices for all three leaves the row with no warning. A
+    child process test,
+    `packages/service/src/declarations-api/archive-crash.test.ts`, runs
+    the service in a child Node process on the same fixture, as the
+    blueprint save crash test does, kills it with `SIGKILL` after the
+    archive's commit is made, after it is pushed, and after the portfolio
+    has applied it before the answer, starts it again on the same files,
+    and sends the same request: the remote holds exactly one archive
+    commit, the request answers `already-saved` or `saved`, a call then
+    pushed for `p1`'s thread posts on `alpha`, and the bindings read
+    lists no created project attached to `beta`. A kill before the
+    commit leaves the remote and the store unchanged, and the request
+    after restart saves once. The Board and Task page browser test checks the
     estimate, actual, variance, and reserved of its settled task in
     dollars, such as `$0.0177`.
   environments-route: >-

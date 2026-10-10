@@ -563,7 +563,13 @@ the actor page.
 - Under the table, "Show archived (N)" lists archived items with their
   archive date, lifetime cost, completed tasks ("N completed"), and
   "Restore". A
-  restored item comes back with a 0% allocation.
+  restored item comes back with a 0% allocation. An archived item that
+  still holds projects a task created, with no choice made for them,
+  shows "N projects to resolve" in warning color and "Choose project
+  moves" (outline), which opens the archive dialog as "Projects of
+  <name>" with the muted line "Choose where each project goes. Every
+  choice is saved in one commit." and the confirm button "Save choices"
+  (solid primary).
 
 #### Edit allocations
 
@@ -621,7 +627,12 @@ muted line "Choose where each project goes. The archive and every choice
 are saved in one commit." It lists each project: its name, a muted mono
 line (`owner/number`, or environment and project id), "on <sub-item>"
 when it is attached to a sub-item, and "and N associated T3code
-projects" when its GitHub Project has any, since they follow it. Each
+projects" when its GitHub Project has any, since they follow it. A
+T3code project that a task created and no binding names is listed after
+the bindings with its title, or its id when its environment does not
+list it, the muted line "Created by a task" with the actor in mono, and
+a muted mono line "Saved as binding <name>", the binding its choice
+adds. Each
 row has a radio group with no preselected choice: "Move to <parent>" (it
 lands on the parent's "Other"; absent for a top-level item), "Reassign
 to" a sibling picked from a select ("No sibling", disabled, when there is

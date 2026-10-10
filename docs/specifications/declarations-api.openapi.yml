@@ -262,7 +262,7 @@ components:
           schema:
             $ref: "#/components/schemas/SaveConflict"
     Invalid:
-      description: The text has lint findings, the binding edit's name is taken or missing, or an archive names an item or a binding it cannot change; nothing was written.
+      description: The text has lint findings, the binding edit's name is taken or missing, or an archive names an item, a binding, or a created project it cannot change, or leaves an attached created project without a choice; nothing was written.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -681,26 +681,54 @@ components:
                 $ref: "#/components/schemas/ProjectChoice"
       unevaluatedProperties: false
     ProjectChoice:
-      oneOf:
-        - type: object
-          additionalProperties: false
-          required: [binding, choice]
-          properties:
-            binding:
-              type: string
-            choice:
-              enum: [move, archive]
-        - type: object
-          additionalProperties: false
-          required: [binding, choice, item]
-          properties:
-            binding:
-              type: string
-            choice:
-              const: reassign
-            item:
-              type: string
-              minLength: 1
+      description: >-
+        One attached project's choice. The project is a binding by `binding`,
+        or a created project by `created` with `name`, the T3code project
+        binding the choice declares.
+      allOf:
+        - oneOf:
+            - type: object
+              required: [binding]
+              properties:
+                binding:
+                  type: string
+            - type: object
+              required: [created, name]
+              properties:
+                created:
+                  type: object
+                  additionalProperties: false
+                  required: [environment, project]
+                  properties:
+                    environment:
+                      $ref: "#/components/schemas/DeclaredName"
+                    project:
+                      type: string
+                      minLength: 1
+                name:
+                  $ref: "#/components/schemas/DeclaredName"
+        - oneOf:
+            - type: object
+              required: [choice]
+              properties:
+                choice:
+                  enum: [move, archive]
+                item: false
+            - type: object
+              required: [choice, item]
+              properties:
+                choice:
+                  const: reassign
+                item:
+                  type: string
+                  minLength: 1
+      properties:
+        binding: true
+        created: true
+        name: true
+        choice: true
+        item: true
+      unevaluatedProperties: false
     BindingSaveRequest:
       allOf:
         - $ref: "#/components/schemas/SaveFields"
@@ -809,7 +837,17 @@ components:
     BindingsResponse:
       type: object
       additionalProperties: false
-      required: [repository, commit, findings, githubProjects, t3codeProjects, items, environments]
+      required:
+        [
+          repository,
+          commit,
+          findings,
+          githubProjects,
+          t3codeProjects,
+          createdProjects,
+          items,
+          environments,
+        ]
       properties:
         repository:
           type: object
@@ -871,6 +909,24 @@ components:
                 minLength: 1
               archived:
                 type: boolean
+        createdProjects:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [environment, project, actorId, item]
+            properties:
+              environment:
+                $ref: "#/components/schemas/DeclaredName"
+              project:
+                type: string
+                minLength: 1
+              actorId:
+                type: string
+                minLength: 1
+              item:
+                type: string
+                minLength: 1
         items:
           type: array
           items:

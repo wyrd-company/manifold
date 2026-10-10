@@ -96,6 +96,48 @@ proposed-design:
     writes `portfolio.yml` and `bindings.yml` in one commit, so a save
     that fails puts neither the archive nor any choice in the declaration
     in force.
+  archiving-created-projects: >-
+    A created project is attached to an item when its record's item is the
+    item or an item under it, no binding or association names it, and its
+    record is not retirable. The archive lists it beside the bindings, by
+    environment and project id, and takes the same three choices. A
+    choice for a created project is declared as a new T3code project
+    binding in the same commit: move gives it the archived item's parent;
+    reassign, the sibling; archive, the record's item with `archived:
+    true`. The binding takes precedence over the record, as resolution
+    states, so the commit alone sets where the project's unowned usage
+    goes, and the store is not written. The record stays as it is, the
+    project's creation provenance. Every created project attached at
+    the request needs a choice, as every live binding does. A created
+    project can become attached to an item that is already archived: an
+    actor running on the item creates one after the archive, or the
+    archive was made by editing the files. Such a project still resolves
+    to the archived item, so its usage stays charged as an archived
+    item's usage is, and it is listed against the archived item until a
+    choice declares its binding. Its choice goes through the same
+    `archive-item` endpoint, which archives an archived item again with
+    no change.
+  created-project-ownership: >-
+    The effective ownership of a created project is where its unowned
+    usage goes now: its own binding's item, else its association's item,
+    else its record's item while the declaration in force declares it,
+    else the top-level Other, as resolution states. `createdProjects()`
+    answers it for every created project record with the record's
+    provenance and its retirement state, so that the console lists
+    attached projects and retention knows which records it may retire.
+    Its creation provenance, the environment, project id, creating
+    actor, and the item at creation, never changes. A posting takes the
+    item resolution answers when it is recorded, and a late attribution
+    the item resolution answers when the mapping reaches the service, as
+    `usage-intake` states, so after an archive commit is applied, new
+    unowned usage and late attributions of the project follow its
+    binding, and posted usage stays where it posted until an operator
+    moves it. An archive leaves nothing pending in the store: its one
+    durable operation is the save, identified by its `saveId`, which
+    `Revisions.save` recovers from the branch after a crash. A record is
+    retirable when T3 Code has removed the project and no thread the
+    source keeps names it, as `t3code-environment-source` states;
+    retiring it changes no resolution.
   sharing-rule: >-
     An item may reserve while its usage counted as it arrives plus the new
     reservation stays within its guarantee, or within its guarantee plus the
@@ -497,6 +539,14 @@ proposed-design:
       now?: () => number; // defaults to Date.now; passed to the ledger
       /** The item recorded for a T3code project a `t3code-project-create` invoke created; undefined for any other. */
       createdProject?: (project: { environment: string; id: string }) => { actorId: string; item: string } | undefined;
+      /** Every created project record with its retirement state; empty when absent. */
+      createdProjects?: () => readonly {
+        environment: string;
+        projectId: string;
+        actorId: string;
+        item: string;
+        retirable: boolean;
+      }[];
     }): Portfolio;
 
     export interface Portfolio {
@@ -505,7 +555,23 @@ proposed-design:
       current(): PortfolioInForce;
       githubProject(project: { owner: string; number: number }): GitHubProjectResolution | undefined;
       t3codeProject(project: { environment: string; id: string }): T3codeProjectResolution;
+      /** The effective ownership of every created project, in the order of `createdProjects`. */
+      createdProjects(): readonly CreatedProjectOwnership[];
     }
+
+    export type CreatedProjectOwnership = {
+      environment: string;
+      project: string;
+      /** Creation provenance: the creating actor and its item at creation. */
+      actorId: string;
+      createdItem: string;
+      /** Where unowned usage of the project goes now, by the declaration in force. */
+      resolution: T3codeProjectResolution;
+      /** True when its resolution is `via: "created"` and its item, or an item above it, is archived. */
+      unresolved: boolean;
+      /** The record can attribute nothing and retention may delete it. */
+      retirable: boolean;
+    };
 
     export type PortfolioApplyResult = (
       | { status: "applied"; commit: string }
@@ -814,6 +880,17 @@ proposed-design:
       resolves `via: "created"` to `beta` with the actor's id, to its
       binding's item once a revision binds it, and to `other` once a
       revision no longer declares `beta`.
+
+    - Created project ownership: with records for `p1` on `beta`, `p2` on
+      `beta` that a binding names on `alpha`, and `p3` on `beta` that is
+      retirable, `createdProjects()` answers `p1` `via: "created"` on
+      `beta`, `p2` `via: "binding"` on `alpha` with `createdItem` `beta`,
+      and `p3` with `retirable` true, each with its actor id. After a
+      revision that archives `beta` with no binding for `p1`, `p1` reads
+      `unresolved` true and still resolves to `beta`; after a revision that
+      adds an archived binding of `p1` on `beta`, it resolves `via:
+      "binding"` with `archived: true` and reads `unresolved` false; after
+      one that removes that binding, it reads `unresolved` true again.
 
     - Several projects: `alpha` holds two GitHub Projects and two T3code
       project bindings, and all four resolve to `alpha`.
