@@ -1,0 +1,40 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: Renaming an option in the declaration can clear it from every issue that holds it
+
+# GAP-EDGE: the risk schema declares no relationship-types; `related-to`
+# names the design and specification that define option identity.
+relationships:
+  related-to:
+    - task-metadata
+    - task-metadata-declaration
+    - projects-api
+
+description: >-
+  A declared option of a single-select task field, a Project field or an
+  organization issue field, has no key but its name. Apply matches a
+  declared option first by the id of the applied option of the same name
+  and then by name, so an option renamed on GitHub keeps its match, but an
+  option renamed in the declaration matches nothing. The plan then creates
+  the new name and removes the old option. The removal `requiresRemoval`,
+  so an Apply without `removeUndeclared` keeps the old option and every
+  issue keeps its value; an Apply with it removes the old option, and
+  GitHub clears it from every card and issue that holds it. A person who
+  renames an option in the declaration, in the console or as text, sees a
+  create and a removal rather than a rename.
+
+categories:
+  - technical
+
+likelihood: 3
+impact: 3
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: give a declared option an identity that a rename keeps,
+# such as a stable key or an explicit rename form, and plan a rename of the
+# matched option. The removal is made only with `removeUndeclared`, which
+# the Apply review shows.

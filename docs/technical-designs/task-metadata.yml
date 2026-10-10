@@ -605,10 +605,13 @@ proposed-design:
   shared-plan: >-
     The plan of a shared scope matches each owned entity to the scope's
     observed entities first by the node id its applied row records, then
-    by name as the storage kind compares names, so a rename on GitHub, or
-    a renamed option in the declaration, is a rename, never a removal and
-    a creation, and issues keep the label, milestone, type, or value they
-    hold. An issue field matches as a Project field does, with its options
+    by name as the storage kind compares names, so a rename on GitHub is a
+    rename, never a removal and a creation, and issues keep the label,
+    milestone, type, or value they hold. A declared option has no key but
+    its name, so an option renamed in the declaration matches no observed
+    option: the plan creates the new name and removes the old one, the
+    removal `requiresRemoval`, as a Project field's option does. An issue
+    field matches as a Project field does, with its options
     by option id and then by name; a data type that differs is a `remove`
     and a `create`, both `requiresRemoval`, since deleting an issue field
     clears its value on every issue of the organization. An owned issue
@@ -772,7 +775,10 @@ proposed-design:
     first observed field whose name is the owned field's Project field
     name. Within a matched single-select field,
     each declared option matches the same way: first by the id of the
-    applied field's option of that name, then by name. Comparing gives the
+    applied field's option of that name, then by name, so an option
+    renamed on GitHub keeps its match, and an option renamed in the
+    declaration matches nothing and plans a `create` of the new name and a
+    `remove` of the old one. Comparing gives the
     changes for the Project; each shared scope plans as shared-plan
     states, and its changes follow the Project's. (1) An owned field with
     no match is a `create`. (2) A match
