@@ -145,7 +145,7 @@ test.each([
   // task field shape
   [
     project(
-      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Weight: { type: number, storage: { kind: label } } }`,
+      `    lifecycle: { field: Stage, options: [Packed] }\n    fields: { Weight: { type: number, storage: { kind: labels } } }`,
     ),
     "schema",
   ],

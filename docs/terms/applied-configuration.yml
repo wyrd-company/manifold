@@ -7,6 +7,7 @@ relationships:
     - task-metadata
 title: Applied Configuration
 description: >-
-  A bound Project's custom fields as Manifold read them at the end of the
-  binding's last Apply, against which a plan tells drift on GitHub from a
-  change to the declaration.
+  A bound Project's custom fields, or a shared scope's issue fields, issue
+  types, labels, or milestones, as Manifold read them at the end of the
+  last Apply that reached them, against which a plan tells drift on
+  GitHub from a change to the declaration.

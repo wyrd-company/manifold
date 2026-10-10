@@ -377,6 +377,31 @@ components:
         whenChanged:
           type: string
           description: The choice as written; `revert` or `accept` in a valid draft.
+        scope:
+          description: >-
+            For a valid draft's field, where its configuration lives: the
+            Project, an organization's login, the repositories of the
+            binding's scope, or each issue's body; absent while the draft
+            has a finding at the field.
+          type: object
+          additionalProperties: false
+          required: [kind, names]
+          properties:
+            kind:
+              enum: [project, organization, repository, issue]
+            names:
+              description: >-
+                `<owner>/<number>` for the Project, the login for an
+                organization, each repository in scope for a repository
+                kind, and empty for front matter.
+              type: array
+              items:
+                type: string
+            sharedWith:
+              description: The other bindings of the draft whose fields reach the same organization or repository.
+              type: array
+              items:
+                type: string
         onGitHub:
           type: object
           additionalProperties: false
@@ -391,7 +416,7 @@ components:
         range:
           $ref: "#/components/schemas/Range"
     StorageKindName:
-      enum: [project-field]
+      enum: [project-field, issue-field, issue-type, label, milestone, front-matter]
     TaskFieldType:
       enum: [text, number, date, single-select]
     StorageKind:
@@ -409,6 +434,17 @@ components:
           type: array
           items:
             type: string
+        optionProperties:
+          description: The option properties the kind owns.
+          type: array
+          items:
+            enum: [color, description]
+        color:
+          description: The form of a color the kind owns; absent when it owns none.
+          enum: [named, hex]
+        scope:
+          description: Where the kind's configuration lives.
+          enum: [project, organization, repository, issue]
     ProjectImpact:
       type: object
       additionalProperties: false
@@ -580,6 +616,20 @@ components:
                   const: remove-field
                 location:
                   type: string
+            - type: object
+              additionalProperties: false
+              required: [kind, binding, repositories]
+              properties:
+                kind:
+                  const: set-repositories
+                binding:
+                  type: string
+                  minLength: 1
+                repositories:
+                  description: The binding's `repositories` in order; empty removes the key.
+                  type: array
+                  items:
+                    type: string
     TaskFieldEditResponse:
       allOf:
         - $ref: "#/components/schemas/Findings"

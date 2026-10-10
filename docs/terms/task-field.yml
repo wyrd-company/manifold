@@ -6,7 +6,8 @@ relationships:
     - task-metadata-declaration
 title: Task Field
 description: >-
-  A field of a bound GitHub Project's tasks that the task metadata
-  declaration declares, with its type, its storage, and what an Apply does
-  when it changes on GitHub, and whose configuration Manifold owns on the
-  Project.
+  A value of a bound GitHub Project's tasks that the task metadata
+  declaration declares, with its type, its storage kind, and what an Apply
+  does when its configuration changes on GitHub: a Project field, an
+  organization issue field or issue type, a repository label or
+  milestone, or a key of the issue body's front matter.

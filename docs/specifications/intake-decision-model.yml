@@ -39,6 +39,15 @@ description: |-
   - `fields`: the item's custom field values, keyed by field name, each a
     field value of `github-events` or `null`. A field the item has no
     value for is `null` when the mirror holds it and absent otherwise.
+  - `values`: the task field values of the issue on the Project, keyed
+    by task field name in declared order, each a task field value of
+    `github-events`, as `task-metadata` computes it from the same mirror
+    read whatever storage kind holds the field: `{ state: set, value }`,
+    `{ state: empty }`, or `{ state: invalid | unavailable, detail }`.
+    Absent when the task metadata declaration in force declares no task
+    field for the binding. A model reads a value as
+    `task.values.Effort.value`, and tells no value from an unreadable one
+    by `state`.
   - `blockedBy`, `blocking`, `subIssues`: issue references, in the
     mirror's order.
   - `parent`: the parent issue's reference, or `null`.

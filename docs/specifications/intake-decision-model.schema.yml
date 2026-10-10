@@ -54,6 +54,14 @@ $defs:
         type: object
         additionalProperties:
           $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/field-value
+      values:
+        description: >-
+          The task field values of the issue on the Project, keyed by task
+          field name, in declared order; absent when the declaration in
+          force declares no task field for the binding.
+        type: object
+        additionalProperties:
+          $ref: https://manifold.wyrd.company/schemas/github-events#/$defs/task-field-value
       blockedBy:
         type: array
         items:

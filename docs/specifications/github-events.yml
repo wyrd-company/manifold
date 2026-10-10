@@ -100,6 +100,7 @@ description: |-
   | `github.project-item.added` | `project`, `item`, `issue`, `archived`, `fields` | the Project, and the issue when `contentType` is `issue` |
   | `github.project-item.removed`, `github.project-item.archived`, `github.project-item.restored` | `project`, `item` | the Project, and the issue when `contentType` is `issue` |
   | `github.project-item.field-changed` | `project`, `item`, `field`, `from`, `to`, `movedBy`, `lifecycle` | the Project, and the issue when `contentType` is `issue` |
+  | `github.task-field.changed` | `issue`, `project`, `binding`, `field`, `storage`, `from`, `to`, `setBy` | the issue |
   | `github.project.closed`, `github.project.reopened` | `project` | the Project |
 
   `blocks` lists the node ids of the issues the mirror shows the issue
@@ -138,6 +139,28 @@ description: |-
   { "kind": "iteration", "iterationId": "e5f6a7b8", "title": "Iteration 1", "startDate": "2026-01-05", "duration": 14 }
   ```
 
+  `github.task-field.changed` carries one task field's value before and
+  after, as `task-metadata` computes it from the GitHub mirror with the
+  task metadata declaration in force, whatever storage kind holds the
+  field: a Project field, an organization issue field or issue type, a
+  repository label or milestone, or a key of the issue body's front
+  matter. A task field value is `{ "state": "set", "value": ... }`, `{
+  "state": "empty" }`, or `{ "state": "invalid" | "unavailable", "detail":
+  "..." }`, `#/$defs/task-field-value`. `field` is the task field's name,
+  `binding` the binding whose declaration names it, and `storage` its
+  storage kind. `setBy` names the task field write whose value `to` is,
+  attributed by the rules `movedBy` follows. A change of a task field
+  stored as a Project field publishes this event beside its
+  `github.project-item.field-changed`. A change of the declaration alone
+  publishes nothing.
+
+  ```json
+  { "state": "set", "value": "Heavy" }
+  { "state": "empty" }
+  { "state": "invalid", "detail": "The issue has two labels of this field: size: small and size: large." }
+  { "state": "unavailable", "detail": "example-org/annex is outside the repositories of parcels." }
+  ```
+
   Topics. An issue's topic is `github.issue.<nodeId>` and a Project's is
   `github.project.<nodeId>`. A node id holds only ASCII letters, digits,
   `_`, `-`, `=`, `+`, and `/`, so it is a topic segment as it stands; the
@@ -157,6 +180,12 @@ description: |-
   | item added, removed, archived, restored | `item:<itemNodeId>:<revision>` |
   | field value | `field:<itemNodeId>:<fieldNodeId>:<revision>` |
   | Project closed, reopened | `project:<projectNodeId>:<revision>` |
+  | task field value | `task-field:<issueNodeId>:<projectNodeId>:<field digest>:<revision>` |
+
+  A task field value's `<field digest>` is the first 16 hexadecimal
+  characters of the SHA-256 of the task field's name, and `<revision>`
+  the revision of the issue's content, or of the item's field value for
+  a Project field, that the change raised.
 
   First observation. The mirror records an entity it has not seen before
   without publishing a change for it, with three exceptions that publish:
@@ -182,5 +211,8 @@ validation-criteria: >-
   `github.project-item.field-changed` carries `movedBy` and `lifecycle`,
   and `lifecycle` is true only for the field the declaration names as
   the Project's lifecycle field. Renaming an option that an item holds
-  publishes no `field-changed` for that item. Each published
+  publishes no `field-changed` for that item. A label added to a tracked
+  issue whose Project declares a `label` task field publishes one
+  `github.task-field.changed` from `empty` to `set` with `setBy` `null`,
+  and the same change read again publishes nothing. Each published
   event's topics and event id match the tables above.

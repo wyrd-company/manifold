@@ -1076,9 +1076,13 @@ Project's page with its first Apply.
 - Apply on this page is for Projects with drift, pending changes, or never
   applied.
 - One card, "What Apply will change", with a switch "Also remove what the
-  task fields do not define" (off by default). Groups, one per storage kind;
-  Project fields is the one kind. Each group names where it applies and sums
-  its changes.
+  task fields do not define" (off by default). Groups, one per storage kind
+  and place: Project fields on the Project, issue fields and issue types per
+  organization, labels and milestones per repository. Each group names where
+  it applies and sums its changes; a group shared with other Projects says
+  so, since applying it changes theirs too. Repositories the task fields do
+  not own and issues whose front matter cannot be read are muted lines
+  under the groups.
 - A change row: a 18px mark (`+` create in success, `~` change in warning,
   `−` remove in error), the target in mono, and what happens. A change that
   undoes drift has a "Drift" badge, and a change Apply writes into the task
@@ -1115,11 +1119,15 @@ changes, with "Review impact".
   name (tooltip and label "Set by Manifold"). Its name, type, and storage
   are shown disabled, it has no "When changed on GitHub", and it has no
   remove button.
-- Selecting a row shows it in the field panel: "Stored as", whether that storage
-  can hold the type, the kind's settings (the Project field name), a
-  single-select field's options, what exists on GitHub for it, its scope,
-  and "When changed on GitHub", a two-option segmented control: Revert or
-  Accept.
+- Selecting a row shows it in the field panel: "Stored as" (Project field,
+  Issue field, Issue type, Label, Milestone, or Front matter), whether that
+  storage can hold the type, the kind's settings (a field name, an
+  organization, a label prefix, or a front matter key), a single-select
+  field's options, what exists on GitHub for it, its scope with the other
+  Projects that share it, and "When changed on GitHub", a two-option
+  segmented control: Revert or Accept, absent for front matter.
+- Each Project's group row has its repositories as chips, the repositories
+  whose labels and milestones it owns.
 - A field with a finding is an error: a red "!" on the row, red borders on
   Type and Stored as when the finding is at either, and a Problems box under
   the table.

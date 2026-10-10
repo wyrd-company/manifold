@@ -231,6 +231,59 @@ components:
           minLength: 1
         status:
           $ref: "#/components/schemas/Status"
+        fields:
+          description: >-
+            Each task field the declaration in force declares for the
+            binding, in declared order; absent when it declares none.
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskFieldEntry"
+    TaskFieldEntry:
+      type: object
+      additionalProperties: false
+      required: [name, type, storage, value]
+      properties:
+        name:
+          description: The task field's name.
+          type: string
+          minLength: 1
+        type:
+          enum: [text, number, date, single-select]
+        storage:
+          enum: [project-field, issue-field, issue-type, label, milestone, front-matter]
+        where:
+          description: >-
+            Where GitHub holds the value, one line: the Project field, the
+            organization's issue field or issue types, the repository's
+            labels or milestones, or the front matter key.
+          type: string
+        value:
+          $ref: "#/components/schemas/TaskFieldValue"
+    TaskFieldValue:
+      description: The shape of `#/$defs/task-field-value` of `github-events`.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [state, value]
+          properties:
+            state:
+              const: set
+            value:
+              type: [string, number]
+        - type: object
+          additionalProperties: false
+          required: [state]
+          properties:
+            state:
+              const: empty
+        - type: object
+          additionalProperties: false
+          required: [state, detail]
+          properties:
+            state:
+              enum: [invalid, unavailable]
+            detail:
+              type: string
     TaskActor:
       type: object
       additionalProperties: false

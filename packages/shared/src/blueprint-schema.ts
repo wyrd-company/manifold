@@ -629,6 +629,66 @@ export const blueprintSchema = {
         },
       },
     },
+    "task-field-set-input": {
+      description: "The input of `github-task-field-set`.",
+      type: "object",
+      required: ["field", "value"],
+      additionalProperties: false,
+      properties: {
+        field: {
+          description:
+            "The name of a task field the task metadata declaration declares for the actor's Project.",
+          $ref: "https://manifold.wyrd.company/schemas/task-metadata-declaration#/$defs/name",
+        },
+        value: {
+          description:
+            "The value to set: a string for text, a finite number for number, a YYYY-MM-DD string for date, an option's name for single-select; null clears the field.",
+          type: ["string", "number", "null"],
+        },
+      },
+    },
+    "task-field-set-output": {
+      description: "The output of `github-task-field-set`, once GitHub holds the value.",
+      type: "object",
+      additionalProperties: false,
+      maxProperties: 0,
+    },
+    "task-field-set-error": {
+      description: "The error a `github-task-field-set` invoke fails with.",
+      type: "object",
+      required: ["type", "kind", "message"],
+      additionalProperties: false,
+      properties: {
+        type: {
+          const: "task-field-set",
+        },
+        kind: {
+          enum: [
+            "input",
+            "identity",
+            "undeclared",
+            "value",
+            "missing",
+            "item-missing",
+            "out-of-scope",
+            "unavailable",
+            "front-matter-invalid",
+            "body-conflict",
+            "forbidden",
+            "transport",
+            "rejected",
+          ],
+        },
+        message: {
+          type: "string",
+        },
+        field: {
+          description:
+            "The `field` the write was asked for, when the input had one that is a string.",
+          type: "string",
+        },
+      },
+    },
     "actor-identity": {
       description: "The engine's identity of an actor, at `context.manifold`.",
       type: "object",
@@ -727,6 +787,7 @@ export const blueprintSchema = {
             "token-unknown",
             "lifecycle-option",
             "event-unknown",
+            "task-field-value",
           ],
         },
         location: {
@@ -752,7 +813,7 @@ export const blueprintSchema = {
         },
         name: {
           description:
-            "For `implementation-unknown`, the name referenced; for `lifecycle-option`, the `status` that is not a declared option; for `event-unknown`, the event type declared.",
+            "For `implementation-unknown`, the name referenced; for `lifecycle-option`, the `status` that is not a declared option; for `event-unknown`, the event type declared; for `task-field-value`, the task field's name.",
           type: "string",
         },
         expression: {

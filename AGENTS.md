@@ -60,7 +60,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **actual** exact usage recorded for a task actor from provider session data.
 - **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
 - **allocation** a guaranteed percentage of a parent's capacity assigned to a portfolio item.
-- **applied configuration** a bound Project's custom fields as Manifold read them at the end of the binding's last Apply, against which a plan tells drift from a change to the declaration.
+- **applied configuration** a bound Project's custom fields, or a shared scope's configuration, as Manifold read them at the end of the last Apply that reached them, against which a plan tells drift from a change to the declaration.
 - **available balance** allocation less usage counted as it arrives, per portfolio item and account.
 - **binding** a declaration in the process repository that ties a GitHub Project or a T3code project to a portfolio item.
 - **blueprint** a declarative, static schema (YAML) specifying states, transitions, and structure of a state machine.
@@ -83,13 +83,14 @@ We need to be on the same page with terminology. When communicating, use this la
 - **deadline loop** the router's one timer that fires due deadlines into their actors' inboxes and re-arms at the earliest unfired deadline.
 - **decision model** a GoRules JDM graph in the process repository whose tables, expressions, and switches are JSONata, evaluated by the Zen engine.
 - **draft** the edited text of one process repository file in the console, with the commit it is based on, kept in the browser until it is saved or discarded.
-- **drift** a change to a bound Project's owned configuration made on GitHub since Manifold last applied it, which the declaration in force does not hold.
+- **drift** a change to owned configuration, of a bound Project or a shared scope, made on GitHub since Manifold last applied it, which the declaration in force does not hold.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **epic** the issues under one root task: its sub-issue tree on GitHub, the issues outside the tree its dependencies name, and the dependencies among them.
 - **escalation** a question put to a person, with up to three choices or a free-text answer, by a blueprint state or by the service, closed by the first answer.
 - **estimate** a task's expected usage, produced by the user's process, in the account's native unit.
 - **event match** a JSONata expression over an event that decides whether a transition takes it.
 - **event source** a shared origin of events that Manifold routes to actors.
+- **front matter** the YAML block between two `---` lines at the very start of an issue's body, whose keys a task field stored as front matter reads and writes.
 - **gate** an implementation on a blueprint state that decides which waiting tasks may leave it.
 - **grant round** one synchronous comparator loop for one gate, ending when the population is empty, the comparator returns `null`, a grant or evaluation fails, or the module stops.
 - **GitHub mirror** the last state the GitHub event source read of each entity it follows, against which it compares current GitHub state.
@@ -136,11 +137,13 @@ We need to be on the same page with terminology. When communicating, use this la
 - **state machine actor** an actor running a blueprint.
 - **state visit** one run of a state machine actor's saves with the same state value and blueprint version, from the save that entered it until the next save with another value or version.
 - **stop stage** one of the ordered points at which the service's stop closes what wiring parts registered, the latest registered first within a stage.
+- **storage scope** where a task field's configuration lives: its Project, the organization of an issue field or issue type, or each repository of a binding's `repositories` for a label or milestone; an organization or repository is a shared scope, owned together by every binding that reaches it.
 - **subscription** (events) the topics an actor hears and the event types it takes, derived from its snapshot and its blueprint.
 - **T3code project** means an environment-local workspace record rooted at a directory.
 - **sweep** a periodic comparison of bound GitHub Projects and tracked issue relationships with the GitHub mirror.
 - **task** a specific piece of work that needs to be completed, documented as an issue and executed as an actor
-- **task field** a field of a bound Project's tasks that the task metadata declaration declares, whose configuration Manifold owns on the Project.
+- **task field** a value of a bound Project's tasks that the task metadata declaration declares, stored as a Project field, an organization issue field or issue type, a repository label or milestone, or a key of the issue body's front matter.
+- **task field value** one task field's value on one issue, whatever stores it: set, empty, invalid, or unavailable.
 - **thread** means the durable conversation and work history for a T3code project.
 - **thread change** a difference between two thread states, or the removal of a thread, that the T3 Code environment source publishes as one event whose id is drawn from the change itself, such as a turn id or a request id.
 - **thread state** what the T3 Code environment source keeps of a thread to decide its changes: the thread's latest turn and its state, its open approval and user-input requests, and its session's status.

@@ -8,7 +8,7 @@ export const taskMetadataDeclarationSchema = {
   $id: "https://manifold.wyrd.company/schemas/task-metadata-declaration",
   title: "Task metadata declaration",
   description:
-    "The document in `task-metadata.yml` at the root of the process repository, the task metadata schema, and the finding its lint reports. An empty document declares no Project.",
+    "The document in `task-metadata.yml` at the root of the process repository, the task metadata schema, and the finding its lint reports. An empty document declares no Project. The schema checks each storage kind's settings; the lint checks which types and option properties a kind holds, scopes, and ownership shared between bindings.",
   $defs: {
     declaration: {
       description: "The task metadata declaration.",
@@ -37,9 +37,19 @@ export const taskMetadataDeclarationSchema = {
         lifecycle: {
           $ref: "#/$defs/lifecycle-field",
         },
+        repositories: {
+          description:
+            "The repositories whose labels and milestones the binding owns: each `owner/name`, or `owner/*` for every repository of the owner that holds an issue of the Project.",
+          type: "array",
+          minItems: 1,
+          uniqueItems: true,
+          items: {
+            $ref: "#/$defs/repository-scope",
+          },
+        },
         fields: {
           description:
-            "The Project's task fields, keyed by field name, each stored as a custom field of the Project.",
+            "The Project's task fields, keyed by field name, each stored in the storage kind its `storage` names.",
           type: "object",
           propertyNames: {
             $ref: "#/$defs/name",
@@ -74,7 +84,7 @@ export const taskMetadataDeclarationSchema = {
     },
     "task-field": {
       description:
-        "A task field: a custom field of the Project that Manifold owns, of one data type.",
+        "A task field: a value of one type that each task of the Project holds in one storage kind on GitHub.",
       type: "object",
       required: ["type"],
       properties: {
@@ -83,7 +93,7 @@ export const taskMetadataDeclarationSchema = {
         },
         whenChanged: {
           description:
-            "What an Apply does with drift in this field: `revert` sets GitHub back to the declaration; `accept` writes GitHub's field into the declaration.",
+            "What an Apply does with drift in this field's configuration: `revert` sets GitHub back to the declaration; `accept` writes GitHub's configuration into the declaration. A `front-matter` field has no configuration and takes no `whenChanged`.",
           enum: ["revert", "accept"],
           default: "revert",
         },
@@ -126,19 +136,103 @@ export const taskMetadataDeclarationSchema = {
     storage: {
       description:
         "Where GitHub stores a task field: a storage kind and its settings. Absent is `{ kind: project-field }`.",
-      type: "object",
-      additionalProperties: false,
-      required: ["kind"],
-      properties: {
-        kind: {
+      oneOf: [
+        {
+          type: "object",
           description: "A custom field of the Project.",
-          const: "project-field",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: {
+            kind: {
+              const: "project-field",
+            },
+            name: {
+              description: "The Project field's name; the task field's name when absent.",
+              $ref: "#/$defs/name",
+            },
+          },
         },
-        name: {
-          description: "The Project field's name; the task field's name when absent.",
-          $ref: "#/$defs/name",
+        {
+          type: "object",
+          description: "An issue field of an organization, shared by its repositories.",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: {
+            kind: {
+              const: "issue-field",
+            },
+            name: {
+              description: "The issue field's name; the task field's name when absent.",
+              $ref: "#/$defs/name",
+            },
+            organization: {
+              description: "The organization's login; the Project's owner when absent.",
+              $ref: "#/$defs/login",
+            },
+          },
         },
-      },
+        {
+          type: "object",
+          description:
+            "The issue type of an issue, one of an organization's issue types, each option an issue type.",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: {
+            kind: {
+              const: "issue-type",
+            },
+            organization: {
+              description: "The organization's login; the Project's owner when absent.",
+              $ref: "#/$defs/login",
+            },
+          },
+        },
+        {
+          type: "object",
+          description:
+            "One label of each repository of the binding's `repositories`, each option a label named `prefix` followed by the option's name.",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: {
+            kind: {
+              const: "label",
+            },
+            prefix: {
+              description:
+                "The text before each option's name in its label's name; empty when absent.",
+              type: "string",
+              pattern: "^(?:\\S[^\\n\\r]*)?$",
+            },
+          },
+        },
+        {
+          type: "object",
+          description:
+            "The milestone of an issue, each option a milestone titled with the option's name in each repository of the binding's `repositories`.",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: {
+            kind: {
+              const: "milestone",
+            },
+          },
+        },
+        {
+          type: "object",
+          description: "A key of the YAML front matter at the start of each issue's body.",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: {
+            kind: {
+              const: "front-matter",
+            },
+            key: {
+              description: "The front matter key; the task field's name when absent.",
+              $ref: "#/$defs/name",
+            },
+          },
+        },
+      ],
     },
     option: {
       description:
@@ -156,7 +250,16 @@ export const taskMetadataDeclarationSchema = {
               $ref: "#/$defs/name",
             },
             color: {
-              $ref: "#/$defs/option-color",
+              description:
+                "A named color for a Project field, issue field, or issue type option; six lower-case hexadecimal digits for a label.",
+              oneOf: [
+                {
+                  $ref: "#/$defs/option-color",
+                },
+                {
+                  $ref: "#/$defs/label-color",
+                },
+              ],
             },
             description: {
               type: "string",
@@ -168,6 +271,22 @@ export const taskMetadataDeclarationSchema = {
     "option-color": {
       description: "A single-select option color, GitHub's color in lower case.",
       enum: ["gray", "blue", "green", "yellow", "orange", "red", "pink", "purple"],
+    },
+    "label-color": {
+      description: "A label color as GitHub's REST API writes it, without `#`.",
+      type: "string",
+      pattern: "^[0-9a-f]{6}$",
+    },
+    login: {
+      description: "An organization's login, compared without regard to case.",
+      type: "string",
+      pattern: "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$",
+    },
+    "repository-scope": {
+      description:
+        "A repository as `owner/name`, or `owner/*` for every repository of the owner that holds an issue of the Project; compared without regard to case.",
+      type: "string",
+      pattern: "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/(?:\\*|[A-Za-z0-9._-]+)$",
     },
     name: {
       description:
@@ -182,7 +301,16 @@ export const taskMetadataDeclarationSchema = {
       additionalProperties: false,
       properties: {
         kind: {
-          enum: ["syntax", "schema", "unknown-binding", "duplicate-field", "duplicate-option"],
+          enum: [
+            "syntax",
+            "schema",
+            "unknown-binding",
+            "duplicate-field",
+            "duplicate-option",
+            "storage-mismatch",
+            "storage-scope",
+            "shared-conflict",
+          ],
         },
         location: {
           description: "The RFC 6901 JSON Pointer of the failing value in the document.",

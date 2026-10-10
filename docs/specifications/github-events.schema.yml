@@ -368,6 +368,81 @@ $defs:
           metadata declaration in force declares for the item's Project,
           compared by the field's name as read.
         type: boolean
+  task-field-value:
+    description: >-
+      One task field's value on one issue, whatever storage kind holds it:
+      set with the value in the field's type, empty when the storage holds
+      none, invalid when the declaration cannot read what it holds, and
+      unavailable when the storage cannot hold a value for the issue.
+    oneOf:
+      - type: object
+        required: [state, value]
+        additionalProperties: false
+        properties:
+          state:
+            const: set
+          value:
+            description: >-
+              A string for text, a finite number for number, a
+              YYYY-MM-DD string for date, and the option's name for
+              single-select.
+            type: [string, number]
+      - type: object
+        required: [state]
+        additionalProperties: false
+        properties:
+          state:
+            const: empty
+      - type: object
+        required: [state, detail]
+        additionalProperties: false
+        properties:
+          state:
+            enum: [invalid, unavailable]
+          detail:
+            description: One English sentence naming what the storage holds or why it holds nothing for the issue.
+            type: string
+  task-field-changed-event:
+    type: object
+    required: [type, issue, project, binding, field, storage, from, to, setBy]
+    additionalProperties: false
+    properties:
+      type:
+        const: github.task-field.changed
+      issue:
+        $ref: "#/$defs/issue"
+      project:
+        $ref: "#/$defs/project"
+      binding:
+        description: The GitHub Project binding whose declaration names the task field.
+        type: string
+        minLength: 1
+      field:
+        description: The task field's name.
+        type: string
+        minLength: 1
+      storage:
+        enum: [project-field, issue-field, issue-type, label, milestone, front-matter]
+      from:
+        $ref: "#/$defs/task-field-value"
+      to:
+        $ref: "#/$defs/task-field-value"
+      setBy:
+        description: >-
+          The task field write whose value `to` is, attributed as a card
+          move's `movedBy` is; null when no write Manifold recorded or
+          attempted set it.
+        oneOf:
+          - type: "null"
+          - type: object
+            required: [actorId, confirmed]
+            additionalProperties: false
+            properties:
+              actorId:
+                type: string
+                minLength: 1
+              confirmed:
+                type: boolean
   project-event:
     type: object
     required: [type, project]
@@ -388,4 +463,5 @@ $defs:
       - $ref: "#/$defs/item-added-event"
       - $ref: "#/$defs/item-event"
       - $ref: "#/$defs/field-changed-event"
+      - $ref: "#/$defs/task-field-changed-event"
       - $ref: "#/$defs/project-event"

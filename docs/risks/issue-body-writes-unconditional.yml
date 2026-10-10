@@ -1,0 +1,39 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: A front matter write can replace a person's body edit that lands while it writes
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the design that holds the check and the recovery.
+relationships:
+  mitigated-by:
+    - github-event-source
+    - task-metadata
+
+description: >-
+  GitHub takes an issue's body whole and offers no conditional write: the
+  REST `PATCH` and the GraphQL `updateIssue` take no version, and GitHub
+  documents conditional requests for reads only. A front matter write
+  reads the body, sets one key, and writes the body back, so a person's
+  edit that GitHub takes between that read and that write is replaced.
+  The source checks the issue's edit history after each write and sets
+  the key on the replaced text when GitHub's `UserContentEdit.diff`
+  gives it; GitHub's documentation does not state that `diff` holds the
+  edit's whole text, and GitHub keeps at most 100 edits of an issue. When
+  the text cannot be recovered the write fails as `body-conflict`, the
+  replaced text stays in GitHub's edit history, and the blueprint decides
+  what to do.
+
+categories:
+  - technical
+
+likelihood: 2
+impact: 2
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: the live check of front matter writes records whether
+# `diff` holds an edit's whole text, and the fault test makes a
+# person's edit land between the read and the write.

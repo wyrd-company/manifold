@@ -3,10 +3,9 @@ $schema: https://refinery.systems/ontology/term
 # term; `references` is the best fit for the specification that defines it.
 relationships:
   references:
-    - projects-api
+    - task-metadata-declaration
     - task-metadata
-title: Drift
+title: Front Matter
 description: >-
-  A change to owned configuration, of a bound Project or of a shared
-  scope, made on GitHub since Manifold last applied it, which the
-  declaration in force does not hold.
+  The YAML block between two `---` lines at the very start of an issue's
+  body, whose keys a task field stored as front matter reads and writes.

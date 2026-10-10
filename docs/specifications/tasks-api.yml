@@ -99,9 +99,17 @@ description: |-
 
   - `actorId` and `issue`, as in a summary.
   - `projects`: one entry per bound Project the task is on,
-    `{ binding, owner, number, field, status }`, where `field` is the
-    declared lifecycle field name or absent, and `status` is as in a
-    summary.
+    `{ binding, owner, number, field, status, fields }`, where `field` is
+    the declared lifecycle field name or absent, `status` is as in a
+    summary, and `fields` is each task field the declaration in force
+    declares for the binding, in declared order, `{ name, type, storage,
+    where, value }`: the task field's name and type, its storage kind,
+    one line naming where GitHub holds it, such as `Issue field Effort of
+    example-org` or `Labels size: * in example-org/depot`, and its task
+    field value as `task-metadata` computes it from the same mirror read,
+    `set` with the value, `empty`, `invalid` with a detail, or
+    `unavailable` with a detail. `fields` is absent when the binding
+    declares no task field.
   - `portfolioItem`: as in a summary.
   - `actor`: absent when the store holds no snapshot, else `{ status,
     states, machine, blueprint, environment, savedAt }`. `status` and

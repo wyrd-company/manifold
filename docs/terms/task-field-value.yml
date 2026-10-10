@@ -1,0 +1,13 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - github-events
+    - task-metadata
+title: Task Field Value
+description: >-
+  One task field's value on one issue, whatever storage kind holds it: set
+  with a value of the field's type, empty when the storage holds none,
+  invalid when the declaration cannot read what it holds, or unavailable
+  when the storage cannot hold a value for that issue.

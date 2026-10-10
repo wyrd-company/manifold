@@ -255,12 +255,26 @@ components:
           description: The SHA-256 of the changes' canonical JSON; the same state gives the same digest.
           type: string
           pattern: "^[0-9a-f]{64}$"
+        scopes:
+          description: >-
+            Each shared scope the binding's task fields reach, in scope key
+            order; absent when they reach none.
+          type: array
+          items:
+            $ref: "#/components/schemas/ScopeStatus"
+        outside:
+          description: >-
+            Each repository holding a tracked issue of the Project that the
+            binding's `repositories` do not name, in name order; absent when
+            there is none.
+          type: array
+          items:
+            $ref: "#/components/schemas/OutsideRepository"
         frontMatter:
           description: >-
-            The issues whose front matter does not match the task fields;
-            null while no task field is stored in front matter, which holds
-            for every declaration, whose one storage kind is the Project
-            field.
+            The count of the Project's tracked issues with a front-matter
+            task field whose value is invalid; null when the binding
+            declares no task field stored in front matter.
           oneOf:
             - type: "null"
             - type: object
@@ -327,7 +341,19 @@ components:
         id:
           type: string
         storage:
-          const: project-field
+          description: The storage kind whose configuration the change sets.
+          enum:
+            - project-field
+            - issue-field
+            - issue-type
+            - label
+            - milestone
+        scope:
+          description: >-
+            For a change of a shared scope, the organization or repository
+            it applies in and the bindings that share it; absent for a
+            change of the Project.
+          $ref: "#/components/schemas/ScopeReference"
         description:
           description: One English sentence naming the target and what happens to it.
           type: string
@@ -335,13 +361,19 @@ components:
           type: object
           additionalProperties: false
           required:
-            - field
             - lifecycle
           properties:
             field:
-              description: The Project field's name, as declared for an owned field and as GitHub holds it for an undeclared one.
+              description: >-
+                The Project field's or issue field's name, as declared for an
+                owned field and as GitHub holds it for an undeclared one;
+                absent for an issue type, a label, or a milestone.
               type: string
             option:
+              description: >-
+                The option's name; for an issue type, a label, or a
+                milestone, the entity's name as GitHub names it, a label's
+                with its prefix.
               type: string
             taskField:
               description: The task field's name; absent for the lifecycle field and for an undeclared field.
@@ -372,6 +404,7 @@ components:
               - order
               - color
               - description
+              - enabled
         from:
           $ref: "#/components/schemas/Target"
         to:
@@ -380,7 +413,6 @@ components:
       type: object
       additionalProperties: false
       required:
-        - field
         - lifecycle
         - github
         - detail
@@ -388,8 +420,19 @@ components:
         taskField:
           description: The task field's name; absent for the lifecycle field.
           type: string
+        storage:
+          description: The task field's storage kind; absent for a Project field.
+          enum:
+            - issue-field
+            - issue-type
+            - label
+            - milestone
+            - front-matter
         field:
-          description: The Project field's name as declared.
+          description: >-
+            The Project field's, issue field's, or front matter key's name
+            as declared; absent for an issue type, a label, or a milestone
+            field, whose options are the entities GitHub holds.
           type: string
         lifecycle:
           type: boolean
@@ -410,6 +453,91 @@ components:
         - type: "null"
         - $ref: "#/components/schemas/Field"
         - $ref: "#/components/schemas/Option"
+        - $ref: "#/components/schemas/Entity"
+    Entity:
+      description: An issue type, a label, or a milestone.
+      type: object
+      additionalProperties: false
+      required:
+        - entity
+        - name
+        - description
+      properties:
+        entity:
+          enum:
+            - issue-type
+            - label
+            - milestone
+        name:
+          type: string
+        color:
+          description: Named for an issue type, six hexadecimal digits for a label; absent for a milestone.
+          type: string
+        description:
+          type: string
+        enabled:
+          description: For an issue type, whether GitHub offers it.
+          type: boolean
+    ScopeReference:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - name
+        - bindings
+      properties:
+        kind:
+          enum:
+            - organization
+            - repository
+        name:
+          description: The organization's login, or the repository as `owner/name`.
+          type: string
+        bindings:
+          description: The bindings whose task fields reach the scope, in declaration order.
+          type: array
+          items:
+            type: string
+    ScopeStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - scope
+        - status
+        - observedAt
+      properties:
+        scope:
+          $ref: "#/components/schemas/ScopeReference"
+        status:
+          description: >-
+            The status of the mirror's last read of the scope; `unobserved`
+            before the first.
+          enum:
+            - ready
+            - unsupported
+            - forbidden
+            - unconfigured
+            - missing
+            - unobserved
+        observedAt:
+          type:
+            - integer
+            - "null"
+        message:
+          type: string
+    OutsideRepository:
+      type: object
+      additionalProperties: false
+      required:
+        - repository
+        - issues
+      properties:
+        repository:
+          type: string
+        issues:
+          description: The tracked issues of the Project in the repository.
+          type: integer
+          minimum: 1
     Field:
       type: object
       additionalProperties: false
@@ -532,6 +660,7 @@ components:
                 - forbidden
                 - transport
                 - rejected
+                - missing
                 - declaration-unsaved
             message:
               type: string
@@ -562,6 +691,7 @@ components:
                 - declaration-pending
                 - invalid-request
                 - plan-stale
+                - scope-unavailable
                 - unobserved
                 - unavailable
                 - method-not-allowed
@@ -571,3 +701,8 @@ components:
             commit:
               description: For `declaration-pending`, the pushed accept commit that is not yet in force.
               type: string
+            scopes:
+              description: For `scope-unavailable`, each reached scope that is not ready.
+              type: array
+              items:
+                $ref: "#/components/schemas/ScopeStatus"

@@ -100,8 +100,8 @@ description: >-
   is absent. A Project key that is not a string is its text as written.
   A row holds `binding`, the Project's key; `name`, the task field's key,
   or the lifecycle `field`; `storage`, the `kind` of the field's
-  `storage`, `project-field` in a valid draft, or absent when the field
-  declares no `storage`, which stores it as the Project field of its
+  `storage`, one of the six storage kinds in a valid draft, or absent
+  when the field declares no `storage`, which stores it as the Project field of its
   name; `type`, the field's value type, `text`, `number`, `date`, or
   `single-select` in a valid draft; `settings`, the members of its
   `storage` other than `kind` whose values are strings, such as `name`;
@@ -109,14 +109,22 @@ description: >-
   as a mapping with a string `name`; `lifecycle`, true for the lifecycle
   field; `whenChanged`, `revert` or `accept` in a valid draft; `onGitHub`,
   `{ state, detail }` with `state` `present`, `missing`, or `differs`,
-  when the service has observed the Project and the text has no finding;
+  when the service has observed the Project and the scopes the field
+  reaches and the text has no finding; `scope`, for a field of a valid
+  draft, `{ kind, names, sharedWith }`: `project` with `<owner>/<number>`,
+  `organization` with the login, `repository` with each repository of
+  the binding's scope that the service knows, the named ones and those a
+  wildcard reaches, or `issue` with none for front matter, and
+  `sharedWith`, the other bindings of the draft whose fields reach the
+  same organization or repository;
   `location`, the JSON Pointer of the field's entry, or of the
   Project's `lifecycle` for the lifecycle field; and `range` by the rule
   for findings. The lifecycle field's row has `type` `single-select`,
   `storage` `project-field`, and its `options`. The answer also holds
   `storageKinds`, the table `taskFieldStorageKinds` exports from
   `packages/shared`: each storage kind with `kind`, the `types` it can
-  hold, and the names of its `settings`.
+  hold, the names of its `settings`, its `optionProperties`, the form of
+  its `color`, and its `scope`.
 
   **Impact.** A lint of `task-metadata.yml` with no finding answers
   `impact`, one entry per GitHub Project binding of `bindings.yml` at the
@@ -124,8 +132,9 @@ description: >-
   `binding`, and, when the service has observed the Project on GitHub,
   `creates`, `changes`, and `removes`, the counts of each change that the
   plan of the linted declaration against the Project's observed state
-  holds, as the Project configuration API plans an Apply. An entry with
-  no counts is a Project the service has not observed yet. The same plan
+  holds, as the Project configuration API plans an Apply, the changes of
+  every shared scope the binding reaches included. An entry with no
+  counts is a Project the service has not observed yet. The same plan
   gives each field row's `onGitHub`. Impact reads GitHub state the
   service already holds and makes no GitHub request.
 
@@ -191,6 +200,11 @@ description: >-
     than `single-select` removes `options`. On the lifecycle field,
     `name` sets the lifecycle `field` and `options` its `options`.
   - `{ kind: "remove-field", location }`: deletes the field's entry.
+  - `{ kind: "set-repositories", binding, repositories }`: writes the
+    binding's `repositories` as the list given, in order, adding the key
+    after `lifecycle` when absent, and deletes the key for an empty list.
+    `binding` is a Project key of the text as written; any other answers
+    `400`.
 
   The edit keeps every comment, and in a file in the block style the
   `yaml` package writes, every line outside the edited field stays

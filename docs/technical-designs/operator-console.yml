@@ -686,8 +686,15 @@ proposed-design:
     icon when it has a URL; and Escalations, the recent escalations, each
     with its title, its status, its answer as the choice's label or the
     text, the channel it came through, and when it closed. The right
-    column holds Fields, with each Project's lifecycle field name and
-    status and a lock icon, since Manifold sets it, and Usage, a table
+    column holds Fields: for each Project, its lifecycle field name and
+    status with a lock icon, since Manifold sets it, then each entry of
+    the Project's `fields` in order, its name and its value: the value for
+    `set`, a single-select value as a badge; "Empty" in muted text for
+    `empty`; "Cannot read" in warning text for `invalid` and "Not
+    available" in muted text for `unavailable`, each with its detail in a
+    tooltip. Hovering a field's name shows its `where` line, so the
+    operator sees where GitHub stores it. A "Task fields" link opens
+    Settings. Then Usage, a table
     with one row per account: Account, Estimate, Actual, Variance, and
     Reserved, each amount formatted in the account's unit as `amounts`
     states, the variance signed, right-aligned in tabular figures, a
@@ -2168,10 +2175,25 @@ proposed-design:
   plan-card: >-
     The plan card is "What Apply will change", with the switch "Also
     remove what the task fields do not define" in its header, off each
-    time the page opens. Its one group is Project fields, the storage kind
-    `project-field` of every change; the group's header names where its
-    changes apply, "On <owner>/<number>", and sums them: "2 to create · 1
-    to change · 1 to remove". A change row has the 18px mark (`+` create
+    time the page opens. It holds one group per storage kind and scope, in
+    plan order: Project fields "On <owner>/<number>", then for each shared
+    scope its issue fields and issue types, "Issue fields · <org>" and
+    "Issue types · <org>", and its labels and milestones, "Labels ·
+    <owner>/<name>" and "Milestones · <owner>/<name>". A shared scope's
+    group header carries a "Shared with <bindings>" muted line when other
+    bindings reach it, and the caption "Applying changes this for every
+    Project that shares it." Each group sums its changes: "2 to create · 1
+    to change · 1 to remove". A scope whose status is not `ready` shows
+    its group with a warning line naming the status and message, such as
+    "example-org is a user account: issue fields exist only on
+    organizations.", and the Apply button is disabled with the tooltip
+    "A scope cannot be applied." Under the groups, when `outside` is
+    not empty, an info line reads "N issues are in repositories the task
+    fields do not own: <owner>/<name> (N), …" with "Add to repositories"
+    (ghost), which opens Task fields with the binding selected. When
+    `frontMatter.mismatched` is above 0, a muted line reads "N issues have
+    front matter the task fields cannot read." Front matter has no group,
+    since it has no configuration. A change row has the 18px mark (`+` create
     in success, `~` change in warning, `−` remove in error), the target in
     mono, `field` or `field / option`, with a lock icon for the lifecycle
     field, and the change's `description`; a "Drift" badge when `drift`
@@ -2181,8 +2203,10 @@ proposed-design:
     does not count. With no change, the card says "Nothing to apply. The
     Project matches the task fields." The pure function
     `planGroups(changes, removeUndeclared)` in
-    `src/screens/projects/plan.ts` gives the groups by `storage`, their
-    rows and sums, and the count the Apply button names.
+    `src/screens/projects/plan.ts` gives the groups by `storage` and
+    `scope`, their rows and sums, and the count the Apply button names. A
+    row of an issue type, a label, or a milestone shows its `option` in
+    mono as the target, and a label row a 12px swatch of its color.
   apply: >-
     "Apply N changes" sends `applyProject(binding, removeUndeclared,
     digest)` with the switch's value and the digest of the plan on screen,
@@ -2212,7 +2236,9 @@ proposed-design:
     and nothing was written: an error alert in the plan card shows the
     message and "Nothing was written. Fix the task fields, or set the
     field to Revert." with a "Task fields" link and no "Try again", since
-    the same Apply answers the same. For `pending`, the changes on GitHub
+    the same Apply answers the same. For `scope-unavailable`, a warning
+    alert names each scope and its status, "Nothing was written.", and
+    "Try again", which reads the plan again. For `pending`, the changes on GitHub
     are made and the change into the task fields is pushed as the commit
     the answer names but is not yet in force: an info alert reads
     "Applied on GitHub. The task fields change is saved as <short commit>
@@ -2262,7 +2288,8 @@ proposed-design:
     red "!" on a row that a finding locates at or under it. Type is a
     select of the types the row's storage kind holds, from
     `storageKinds`, with the row's type kept as a choice; Stored as is a
-    select of the storage kinds, Project field being the one. A finding
+    select of the six storage kinds, labelled "Project field", "Issue
+    field", "Issue type", "Label", "Milestone", and "Front matter". A finding
     at the field's type or storage gives both selects a red border. The
     lifecycle field's name, Type, and Stored as are disabled, and it has
     no remove button. Selecting a row selects it in the field panel and
@@ -2271,14 +2298,27 @@ proposed-design:
     the field's name, as a text field; "Stored as", with the line "Can
     hold <type>" in success text or "Cannot hold <type>" in error text;
     the storage kind's settings from `storageKinds`, each a text field:
-    for a Project field, "Project field name", with the field's name as
-    its placeholder; the options, for a single-select field, each a text
-    field with a remove button and "Add option" under them; what exists
+    for a Project field, "Project field name", and for an issue field,
+    "Issue field name", each with the field's name as its placeholder;
+    "Organization", with the Project's owner as its placeholder, for an
+    issue field or issue type; "Label prefix", with the line "Labels are
+    named <prefix><option>", for a label; and "Front matter key", with the
+    field's name as its placeholder, for front matter; the options, for a single-select field, each a text
+    field with a remove button and "Add option" under them, and a color
+    swatch select when the kind owns a color, named colors or a hex text
+    field for a label; what exists
     on GitHub for it, from the row's `onGitHub`: "On GitHub", "Missing on
     GitHub", or "Differs on GitHub" with its detail, or "Not read from
-    GitHub yet"; its scope, "On <owner>/<number>"; and, for a task field,
-    "When changed on GitHub", a two-option segmented control, Revert or
-    Accept, Revert when the row has no `whenChanged`. The lifecycle field
+    GitHub yet"; its scope from the row's `scope`: "On <owner>/<number>",
+    "Organization <login>", "Repositories <names>", or "In each issue's
+    body", with "Shared with <bindings>" under it when `sharedWith` is not
+    empty; and, for a task field with configuration, "When changed on
+    GitHub", a two-option segmented control, Revert or Accept, Revert
+    when the row has no `whenChanged`. A front matter field has no "When
+    changed on GitHub". A Project's group row holds, beside "Add field",
+    a "Repositories" chip list with an add field, editing the binding's
+    `repositories` with a `set-repositories` edit; a `storage-scope`
+    finding gives it a red border. The lifecycle field
     has no "When changed on GitHub": its drift is always reverted. With no
     task field, a group holds its lifecycle field alone; with no Project,
     the table shows the empty state "No task fields", "Declare a bound
@@ -2293,8 +2333,9 @@ proposed-design:
     sends when it loses focus or on Enter, when its value changed. Each
     sends `editTaskFields({ text, edit })` with the draft's text and one
     edit of `declarations-api`: `add-field` with the binding, `set-field`
-    with the field's location and the changed values, or `remove-field`
-    with the location. While it runs, the table and the panel are
+    with the field's location and the changed values, `remove-field`
+    with the location, or `set-repositories` with the binding and its
+    repositories. While it runs, the table and the panel are
     disabled. A `200` answer whose request text is still the draft's text
     becomes the draft's text, as a change in the YAML tab does, and its
     findings, fields, and impact are the latest answer; the row at the

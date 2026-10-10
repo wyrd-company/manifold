@@ -379,6 +379,63 @@ description: |-
   runs again after a crash, sets the same option again and leaves one
   value. A blueprint that retries after an error enters the state again.
 
+  - `github-task-field-set`, an actor: sets one task field value of the
+    invoking actor's task, whatever storage kind
+    `task-metadata-declaration` declares for the field on the actor's
+    Project: a Project field, an organization issue field or issue type,
+    a repository label or milestone, or a key of the issue body's front
+    matter. Its input is `#/$defs/task-field-set-input`, `{ field, value
+    }`, `value` `null` clearing the field; it resolves with
+    `#/$defs/task-field-set-output`, `{}`, once GitHub holds the value,
+    and fails with `#/$defs/task-field-set-error`. The change reaches the
+    actor as `github.task-field.changed` with `setBy` the actor, as
+    `github-events` defines. A blueprint that invokes it declares its
+    input and output under `schemas.actors.github-task-field-set`.
+
+  ```yaml
+  weighing:
+    invoke:
+      id: weight
+      src: github-task-field-set
+      input:
+        field: Size
+        value: large
+      onDone: packing
+      onError: stalled
+  ```
+
+  A task field set error is a plain object with `type`
+  `task-field-set`, a `kind`, a `message`, and the `field` it was asked
+  for. The kinds:
+
+  - `input`: the input does not validate against
+    `#/$defs/task-field-set-input`.
+  - `identity`: as for a card move.
+  - `undeclared`: the actor's Project has no binding, or the declaration
+    in force declares no task field `field` for it; the lifecycle field
+    is set by `github-card-move`, never by this actor.
+  - `value`: `value` is not of the field's type, or not one of its
+    options.
+  - `missing`: GitHub does not hold the field, option, issue type, label,
+    or milestone the value needs, such as before an Apply makes it.
+  - `item-missing`: for a Project field, the issue has no item on the
+    Project.
+  - `out-of-scope`: the issue's repository is outside the repositories
+    the binding owns labels and milestones in, or, for an issue field or
+    issue type, belongs to another owner than the field's organization.
+  - `unavailable`: the field's scope cannot hold values: an organization
+    that is a user account, an owner with no credential, or a platform
+    without the storage.
+  - `front-matter-invalid`: the issue body's front matter does not parse,
+    so Manifold does not rewrite it.
+  - `body-conflict`: a person's edit of the body landed while Manifold
+    wrote it, and its text could not be kept; the body holds Manifold's
+    write and GitHub's edit history holds the person's.
+  - `forbidden`, `transport`, `rejected`: as for a card move.
+
+  A write that one state entry repeats sets the same value again and
+  leaves one value.
+
   - `t3code-project-create`, an actor: creates a T3code project on an
     environment, the invoking actor's unless the input names another, with
     a title and a workspace root rendered from Nunjucks templates, as
@@ -573,6 +630,17 @@ description: |-
       and rule 2 found nothing. An `input` that is a mapping is not
       checked; the move checks its `status` when it runs.
 
+  12. `task-field-value`: an invoke whose `src` is
+      `github-task-field-set` has a static `input` whose `field` is a
+      string that is not among the lint's `taskFields`, at that `field`;
+      or whose `field` is among them and whose `value` is a string,
+      number, or `null` that no declared type of the field takes, or a
+      string that is not among the field's options when every declared
+      type of it is `single-select`, at that `value`. The finding carries
+      `name`, the field's name. It runs only when the lint is given
+      `taskFields` and rule 2 found nothing. An `input` that is a mapping
+      is not checked; the write checks it when it runs.
+
   Findings are ordered by rule, then by location; expression findings
   keep the expression lint's order. A blueprint with no findings loads.
   Every finding fails the blueprint, except `token-potential` and
@@ -600,6 +668,11 @@ description: |-
     readonly configurationBound?: number;
     /** The declared lifecycle options rule 11 checks a literal `status` against; absent skips rule 11. */
     readonly lifecycleOptions?: ReadonlySet<string>;
+    /** The declared task fields rule 12 checks a literal `field` and `value` against, `declaredTaskFields` of the commit; absent skips rule 12. */
+    readonly taskFields?: ReadonlyMap<
+      string,
+      { readonly types: ReadonlySet<"text" | "number" | "date" | "single-select">; readonly options: ReadonlySet<string> }
+    >;
   }
   type BlueprintLint =
     | {
