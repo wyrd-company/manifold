@@ -1662,9 +1662,11 @@ proposed-design:
   scope-selection: >-
     The selection keeps its one form: a state path, a transition's
     location, or an initial marker's id, so the inspector, the Problems
-    strip, and the YAML view read it unchanged. A context node is selected
-    by its state's path and opens that state's inspector, and an edge is
-    selected by its transition's location in any view. A selection the
+    strip, and the YAML view read it unchanged. A click on a context node
+    selects its state by the state's path and opens that state's
+    inspector, and leaves the view unchanged; only its activation, a
+    double-click or `Enter`, changes the scope, as `scope-navigation`
+    states. An edge is selected by its transition's location in any view. A selection the
     canvas view does not draw changes the view to the nearest view that
     draws it, whatever set it: the Problems strip, the YAML cursor on a
     switch to the canvas, an inspector's Transitions row, an edit's
@@ -1675,9 +1677,13 @@ proposed-design:
     A selection the view draws never changes the view, and a view change
     never clears the selection. A transition the canvas draws in no view,
     one the root declares or an invoke's `onSnapshot`, leaves the view
-    unchanged, and the inspector shows it as it does without scopes. In the bundled task blueprint, with the
-    scope `active.working`, choosing a finding on `finishing` opens the
-    whole blueprint, and choosing one on `active.stalled` opens `active`.
+    unchanged, and the inspector shows it as it does without scopes. In
+    the bundled task blueprint, with the scope `active.working`, choosing
+    a finding on `active.stalled` keeps `active.working` and selects its
+    context node; choosing one on `finishing`, which `active.working` does
+    not draw and `active` draws as a context node, opens `active`; and
+    choosing one on `todo`, which only the whole blueprint draws, opens
+    the whole blueprint.
   scope-urls: >-
     The editor route's search holds the canvas view beside `view`: `scope`,
     the scope's path, absent for the whole blueprint, and `closed`, the
@@ -1836,10 +1842,10 @@ proposed-design:
     another shape.
   scope-worked-example: >-
     The bundled task blueprint, `packages/service/bundle/blueprints/task.yml`,
-    has thirteen states. At the top are `todo`, `starting`, `active`,
+    has fourteen states. At the top are `todo`, `starting`, `active`,
     `finishing`, `done`, `stopped`, and `closed`; `active` holds `working`
     and `stalled`; and `working` holds `opening`, `preparing`, `prompting`,
-    `waiting`, and `escalated`. The whole blueprint draws all thirteen,
+    `waiting`, and `escalated`. The whole blueprint draws all fourteen,
     open, with no context node, and the breadcrumb is `task`. Opening
     `active` gives the scope `active`, with the breadcrumb `task › active`:
     the frame `active` holds `working`, open with its five states, and
@@ -1894,9 +1900,10 @@ proposed-design:
     scope into its deepest existing ancestor with `missingScope`, an
     atomic scope into its parent, and drops a `closed` entry that is no
     group, and a corrected view corrects to itself; `revealSelection`
-    gives the worked example's views for a state, a transition, a context
-    node's state, and a state under a closed group, and returns the view
-    unchanged for a drawn selection; `renameInView` applied twice equals
+    gives the views of `scope-selection`'s examples for `todo` and
+    `finishing`, for a transition, and for a state under a closed group,
+    and returns the view unchanged for a drawn selection, a context
+    node's state such as `active.stalled` in `active.working` included; `renameInView` applied twice equals
     it applied once; and Undo and Redo restore each pair's views.
     `canvas-layout.ts` adds: in a scope with automatic layout no two nodes
     overlap unless one holds the other, and every context node lies
@@ -1906,7 +1913,7 @@ proposed-design:
     with no `layout` writes an entry for every state. The browser test
     `packages/service/src/blueprints-api/canvas-scope.browser.test.ts`
     opens the bundled task blueprint from a fixture process repository and
-    checks, in order: the whole blueprint shows thirteen states and no
+    checks, in order: the whole blueprint shows fourteen states and no
     context node; a double-click on `active`'s title bar opens `scope=active`
     with the worked example's nodes and the announcement; `Enter` on the
     selected `working` opens `active.working` with its five states, two
@@ -1914,12 +1921,16 @@ proposed-design:
     changing its invoke id in the inspector makes the draft, and the YAML
     view shows the whole file with that change and the fixture's comments;
     returning to the canvas keeps `active.working`; `Enter` on the context
-    node `active.stalled` opens `active` with it selected; choosing a
-    Problems strip entry on `finishing` opens the whole blueprint with it
-    selected; Back returns to `active`; closing `working` with `C` shows
-    "5 states" and the suffixed pills; renaming `working` from its inspector
-    while it is the scope moves `scope` to the new key, and Undo restores
-    the text and `scope=active.working`; a reload of a URL with `scope`
+    node `active.stalled` opens `active` with it selected; going back into
+    `active.working` and, after the YAML view writes a target that names
+    no state on `active.stalled` and on `todo`, choosing the Problems
+    strip entry on `active.stalled` keeps `active.working` with the
+    context node selected, and the entry on `todo` opens the whole
+    blueprint with it selected; Back returns to `active.working`;
+    renaming `working` from its inspector while it is the scope moves
+    `scope` to the new key, and Undo restores the text and
+    `scope=active.working`; in the whole blueprint, closing `working` with
+    `C` shows "5 states" and the suffixed pills; a reload of a URL with `scope`
     and `closed` restores the view; a URL whose `scope` names no state
     shows the info line and its ancestor; text that does not parse keeps
     the dimmed drawing and disables the scope bar; publishing from a scope

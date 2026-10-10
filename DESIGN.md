@@ -820,8 +820,7 @@ other view of the same draft, and the two are never shown side by side.
   inspector (320px) at the right. Selected paths wrap inside the panel; the
   controls do not expand its width. Under 1024px of content width the
   inspector is a sheet over the canvas from the right.
-- YAML view: the code editor, full width, always the whole file, whatever
-  scope the canvas shows.
+- YAML view: the code editor, full width.
 - Under either view: the Problems strip (below).
 
 #### Canvas
@@ -857,9 +856,9 @@ children. Edge routes and labels use root coordinates, including transitions
 that enter or leave a nested group. Label buttons stay above the group surfaces;
 clicking or keyboard-activating a label selects its transition in the inspector.
 A group's title bar starts with a 20px ghost chevron button, `ChevronDown`
-while it is open and `ChevronRight` on a closed group, that closes or opens
-the group in place, and ends with a 20px ghost "Open scope" icon button
-(`Focus`), shown on hover and on focus.
+while the group is open and `ChevronRight` on a closed group, and ends with
+a 20px ghost "Open scope" icon button (`Focus`), shown on hover and on
+focus.
 
 `TransitionEdge` draws a transition with a 1.75px semantic-color
 stroke, an arrowhead, and a label pill: 20px high, `card` surface, 1px
@@ -921,33 +920,27 @@ Middle- and right-button drags pan in either tool; the wheel continues to zoom.
 
 #### Scopes
 
-The canvas draws one scope at a time: the whole blueprint, or one compound
-or parallel state with everything nested in it. The whole blueprint is the
-scope the editor opens on. A scope is a way of looking at the blueprint; it
-never changes the draft, and Publish, the YAML view, and the Problems strip
-always hold the whole file.
+The canvas can show the whole blueprint or one compound or parallel state,
+its scope, as `docs/technical-designs/operator-console.yml` states. A scope
+looks like this:
 
-- In a scope, the scope's state is the frame: its `GroupNode`, open, with
-  every state nested in it. The frame does not move.
-- Outside the frame, a `ContextNode` stands for each state at the far end of
-  a transition that enters or leaves the scope. Its full path, in
-  `muted-foreground`, tells where that state is. A context node for an
+- The scope's state is the frame: its `GroupNode`, open, with every state
+  nested in it.
+- Outside the frame, `ContextNode`s stand for the states at the far end of
+  the transitions that enter or leave the scope. The full path, in
+  `muted-foreground`, tells where each one is. A context node for an
   ancestor of the scope has the `CornerLeftUp` icon in place of
-  `ArrowUpRight`. Transitions with both ends outside the scope are not
-  drawn in it.
+  `ArrowUpRight`.
 - A transition that enters or leaves the scope is a `TransitionEdge` like
-  any other, drawn between the state inside and the context node.
-- A group closes in place with its chevron, in any scope, the whole
-  blueprint included. A closed group shows how many states it holds, and
-  the transitions into and out of the states it hides end at it.
-- A click on the canvas background selects the scope's state, or the
-  blueprint in the whole blueprint.
+  any other, between the state inside and the context node.
+- A closed group, in any scope, is a `ClosedGroupNode` with the count of
+  the states it holds.
 
 The scope bar floats 12px under the toolbar, at the same left edge: 32px
 high, the `popover` surface, a 1px border, 8px radius. It holds:
 
-1. "Up one scope" (`CornerLeftUp`, a 28px ghost icon button, `Alt+↑` or
-   `⌥↑`), disabled in the whole blueprint.
+1. "Up one scope" (`CornerLeftUp`, a 28px ghost icon button, with its key
+   in the tooltip), disabled in the whole blueprint.
 2. The breadcrumb: the machine id in mono for the whole blueprint, then the
    key of each state down to the scope, split by 14px `ChevronRight` icons
    in `muted-foreground`. The scope is `foreground` weight 600; the others
@@ -957,14 +950,8 @@ high, the `popover` surface, a 1px border, 8px radius. It holds:
 3. "Open all groups" (`ChevronsUpDown`, ghost, after a 1px divider), shown
    while a group is closed.
 
-A compound or parallel state opens as a scope by its title bar's "Open
-scope" button, a double-click on its title bar or on its closed node,
-`Enter` while it is selected, or "Open scope" (outline, `Focus`) in its
-inspector's Basics. A context node's double-click or `Enter` opens the scope
-that holds it, with it selected. `C` closes or opens the selected group in
-place. Opening a scope fits the view to the frame and its context nodes;
-going up selects the state that was the scope and centers it. The browser's
-Back and Forward move between the scopes visited.
+The inspector of a compound or parallel state has "Open scope" (outline,
+`Focus`) at the end of Basics.
 
 #### Event picker
 
