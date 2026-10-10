@@ -18,14 +18,25 @@ description: >-
   either reuses those windows or adds a window per kind.
 considered-options:
   "1": >-
-    Prune each new kind under the window of its origin. Delivery and
-    redelivery records follow the GitHub source's `sourceEventDays`.
-    Closed escalations of ended actors, with their notifications and agent
-    answers, follow `historyDays` from their close, and a service
-    escalation follows it from its close with the newest occurrence of
-    each kind and subject kept. Read agent messages, card move records,
-    and created project records go once the actors they name are pruned.
-    Agent question rows stay, as replay guards.
+    Prune each new kind under the window of its origin, with the
+    protections that keep a row something still depends on. Delivery and
+    redelivery records follow the `github` entry of `sourceEventDays`, or
+    `default`, and a row at or after its hook's redelivery scan cursor
+    stays. A closed escalation, with its notifications and the agent
+    answer that names it, follows `historyDays` counted from its close,
+    once the actor it names has ended; it stays while a notification is
+    pending, while its answer is pending or not placed, and, for an
+    answered service escalation, until its handling is recorded, and the
+    newest occurrence of each kind and subject that names no actor stays.
+    A read message follows `historyDays` counted from its read, once the
+    histories of both the actor that sent it and the actor that read it
+    are pruned; an undelivered or unread message stays. An actor's card
+    move records go once its history is pruned. A created project record
+    goes once its project is no longer listed, no thread row names it, and
+    its creating actor's history is pruned; a record never listed, and a
+    record of an environment no longer configured, stay. Agent question
+    rows, thread rows, and token rows stay, as replay guards and
+    attribution.
   "2": >-
     Add a window per kind, such as `escalationDays`, each with its own
     default.
@@ -34,18 +45,20 @@ considered-options:
 decision-outcome:
   chosen-option: 1
   justification: >-
-    Option 1 removes each row when the record that gives it meaning is
-    removed, so a pruned actor never leaves an escalation, message, or
-    card move that names it, and an operator reasons about one window per
-    origin. It reuses approved values and adds no configuration. Option 2
-    adds keys an operator must set in step with `historyDays` to keep the
-    records consistent, with no known need for a different period. Option
-    3 leaves the rows unbounded.
+    Option 1 bounds each new kind by a window an operator already sets,
+    and removes a row only after its origin's cutoff has passed and
+    nothing still depends on it, so no repeat, answer, notification,
+    unread message, or late call loses the row it needs. It reuses
+    approved values and adds no configuration. Option 2 adds keys an
+    operator must keep in step with `historyDays` and `sourceEventDays`,
+    with no known need for a different period. Option 3 leaves the rows
+    unbounded.
 expected-outcomes:
   positive:
-    - A long-running store bounds deliveries, escalations, messages, card moves, and retired created projects.
-    - An actor's escalations, messages, and card moves stay readable for exactly as long as its history.
+    - A long-running store bounds deliveries, escalations, read messages, card moves, and retired created projects.
+    - A row stays while a pending notification, an unplaced answer, an unread message, a possible redelivery, or a late call depends on it.
     - No new retention window key or default.
   negative:
-    - An operator cannot keep escalations longer than actor history without keeping all history longer.
-    - Agent question rows, kept as replay guards, still grow.
+    - An operator cannot keep escalations or read messages longer than `historyDays` without keeping all actor history longer.
+    - Rows of one actor leave at different times, by their own cutoffs and protections, so a pruned actor's history can still be named by a kept escalation, message, or created project record.
+    - Agent question rows, thread rows, and created project records that never become retirable still grow.
