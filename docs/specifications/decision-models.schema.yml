@@ -501,3 +501,29 @@ $defs:
             type: object
             additionalProperties:
               $ref: "#/$defs/trace-entry"
+  decision-model-invoke-error:
+    description: >-
+      The error an invoke of a decision model fails with: an input that is
+      not an object, or an evaluation that resolved to an `error` record.
+    type: object
+    required:
+      - type
+      - path
+      - reason
+      - message
+    additionalProperties: false
+    properties:
+      type:
+        const: decision-model
+      path:
+        description: The invoked decision model path.
+        type: string
+      reason:
+        enum:
+          - input
+          - evaluation
+      message:
+        type: string
+      evaluation:
+        description: For `evaluation`, the evaluation record, with outcome `error`.
+        $ref: "#/$defs/decision-model-evaluation"

@@ -12,7 +12,9 @@ info:
     The declarations endpoints of Manifold's API: read, lint, and save of
     `bindings.yml`, `task-metadata.yml`, `portfolio.yml`, and
     `accounts.yml`, the edit of one task field, the read of the bindings, the save of one binding
-    as a structured edit, and the archive of one portfolio item with its projects' choices.
+    as a structured edit, the archive of one portfolio item with its projects' choices,
+    the list, read, lint, and trial evaluation of decision models, and the publication
+    of blueprints and decision models in one commit.
 security: []
 paths:
   /api/declarations/source:
@@ -218,6 +220,159 @@ paths:
           $ref: "#/components/responses/RemoteError"
         "503":
           $ref: "#/components/responses/Error"
+  /api/declarations/decision-models:
+    get:
+      operationId: listDecisionModels
+      summary: List the decision models at the latest applied revision, with the intake decision model.
+      responses:
+        "200":
+          description: The decision model files under decision-models/ and the intake decision model.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionModelList"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/decision-model:
+    get:
+      operationId: readDecisionModel
+      summary: Read one decision model file at a commit, with the findings of the set rooted there.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/DecisionModelPath"
+        - name: commit
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Commit"
+      responses:
+        "200":
+          description: The file's text at the commit, or the empty string when the commit holds none.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionModelSource"
+        "400":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/decision-model/lint:
+    post:
+      operationId: lintDecisionModel
+      summary: Lint an edited decision model text with the set it reaches, through the overlay.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecisionModelLintRequest"
+      responses:
+        "200":
+          description: The findings and warnings of the set rooted at the path.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Findings"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/decision-model/evaluate:
+    post:
+      operationId: evaluateDecisionModel
+      summary: Evaluate an edited decision model over an input, through the overlay; writes nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecisionModelEvaluateRequest"
+      responses:
+        "200":
+          description: The evaluation record, with outcome result or error.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionModelEvaluation"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/publish:
+    post:
+      operationId: publishFiles
+      summary: Commit edited blueprints and decision models to the configured branch in one commit and push it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Saved"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: A file of the request changed on the branch since the base, or the branch moved under the save.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishConflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "502":
+          $ref: "#/components/responses/RemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
 components:
   headers:
     NoStore:
@@ -285,6 +440,145 @@ components:
       pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
     DeclarationPath:
       enum: [bindings.yml, task-metadata.yml, portfolio.yml, accounts.yml]
+    DecisionModelPath:
+      description: >-
+        A process repository path ending in `.yml` that is not a blueprint
+        path, a declaration path, `prices.yml`, or `manifold.yml`.
+      type: string
+      pattern: "^(?!.*(^|/)\\.{1,2}(/|$))(?!blueprints/)(?!(bindings|task-metadata|portfolio|accounts|prices|manifold)\\.yml$)[^/\\\\]+(/[^/\\\\]+)*\\.yml$"
+    ModelText:
+      type: object
+      additionalProperties: false
+      required: [path, text]
+      properties:
+        path:
+          $ref: "#/components/schemas/DecisionModelPath"
+        text:
+          type: string
+    DecisionModelList:
+      type: object
+      additionalProperties: false
+      required: [commit, models]
+      properties:
+        commit:
+          $ref: "#/components/schemas/Commit"
+        intake:
+          $ref: "#/components/schemas/DecisionModelPath"
+        models:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, exists, intake]
+            properties:
+              path:
+                $ref: "#/components/schemas/DecisionModelPath"
+              exists:
+                type: boolean
+              intake:
+                type: boolean
+    DecisionModelSource:
+      allOf:
+        - $ref: "#/components/schemas/Findings"
+        - type: object
+          required: [path, commit, exists, text]
+          properties:
+            path:
+              $ref: "#/components/schemas/DecisionModelPath"
+            commit:
+              $ref: "#/components/schemas/Commit"
+            exists:
+              type: boolean
+            text:
+              type: string
+      unevaluatedProperties: false
+    DecisionModelLintRequest:
+      type: object
+      additionalProperties: false
+      required: [path, text]
+      properties:
+        path:
+          $ref: "#/components/schemas/DecisionModelPath"
+        text:
+          type: string
+        base:
+          $ref: "#/components/schemas/Commit"
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelText"
+    DecisionModelEvaluateRequest:
+      type: object
+      additionalProperties: false
+      required: [path, text, input]
+      properties:
+        path:
+          $ref: "#/components/schemas/DecisionModelPath"
+        text:
+          type: string
+        base:
+          $ref: "#/components/schemas/Commit"
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelText"
+        input:
+          type: object
+    DecisionModelEvaluation:
+      type: object
+      additionalProperties: false
+      required: [evaluation]
+      properties:
+        evaluation:
+          description: The `decision-model-evaluation` record of the `decision-models` schema.
+          $ref: "https://manifold.wyrd.company/schemas/decision-models#/$defs/decision-model-evaluation"
+    PublishRequest:
+      allOf:
+        - $ref: "#/components/schemas/SaveFields"
+        - type: object
+          required: [files]
+          properties:
+            files:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                additionalProperties: false
+                required: [path, text]
+                properties:
+                  path:
+                    anyOf:
+                      - type: string
+                        pattern: "^blueprints/.+\\.ya?ml$"
+                      - $ref: "#/components/schemas/DecisionModelPath"
+                  text:
+                    type: string
+      unevaluatedProperties: false
+    PublishConflict:
+      type: object
+      additionalProperties: false
+      required: [error, message, reason, head, files]
+      properties:
+        error:
+          const: conflict
+        message:
+          type: string
+        reason:
+          enum: [file-changed, branch-moved]
+        head:
+          $ref: "#/components/schemas/Commit"
+        files:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [path]
+            properties:
+              path:
+                type: string
+              text:
+                description: The file's text at the branch's head; absent when the file is not there.
+                type: string
     DeclaredName:
       type: string
       maxLength: 64
@@ -310,13 +604,17 @@ components:
       description: >-
         The declaration lint's finding, with `range` when it is in the
         linted text and has a place there, and with `file` only in an
-        answer for `portfolio.yml` or `accounts.yml` and in an archive's
-        answer. Members beyond
+        answer for `portfolio.yml` or `accounts.yml`, in an archive's
+        answer, and in a decision model or publish answer. Members beyond
         those listed are the lint's finding details.
       required: [kind, location, message]
       properties:
         file:
-          enum: [portfolio, bindings, accounts, prices]
+          description: >-
+            `portfolio`, `bindings`, `accounts`, or `prices` in an answer for
+            a declaration file or an archive; the repository path of the file
+            in a decision model or publish answer.
+          type: string
         kind:
           type: string
         location:

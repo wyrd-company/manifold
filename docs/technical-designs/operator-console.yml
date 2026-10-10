@@ -3,6 +3,7 @@ relationships:
   mitigates:
     - github-mirror-read-scale
     - shared-machine-check-contention
+    - decision-model-editor-unsupported
   related-to:
     - store
     - escalations
@@ -27,6 +28,8 @@ relationships:
     - escalation-contract
     - lint-console-edits-on-the-service
     - declarations-api
+    - decision-models
+    - process-manifest
     - bindings-declaration
     - task-metadata-declaration
     - portfolio-api
@@ -64,7 +67,9 @@ objective: >-
   state invokes as its own document, with an inspector for every node and
   edge, or as
   YAML in a view the operator toggles to, with the service's own lint
-  marking each finding as the draft changes, and publishes it as a commit
+  marking each finding as the draft changes, edits the decision models
+  its states evaluate and the intake decision model in the decision
+  model editor, and publishes the blueprint and its models as one commit
   pushed to the process repository, which the service then runs with no
   redeploy. It
   keeps GitHub in step from GitHub Projects: sees each bound Project with
@@ -192,6 +197,13 @@ design-challenges:
     form cycles GitHub's data allows. The Epics screen must show that
     shape as GitHub holds it, keep no relationship of its own, and still
     give one deterministic critical path.
+  model-in-the-draft: >-
+    A decision model is a file of its own, edited from a blueprint state
+    in a stock editor whose expression language is not Manifold's. The
+    edit must stay a draft beside the blueprint's until both publish in
+    one commit, must change only what the operator changed in the model's
+    YAML, and must not let the stock editor's language or node types into
+    a model unseen.
   browser-proof: >-
     The console is proved only when a browser renders it from the service.
     The test must run inside `task check` on a developer machine and in CI.
@@ -1276,7 +1288,8 @@ proposed-design:
   lint-as-you-type: >-
     Each change to the text starts a 300 ms wait; a change during the wait
     starts it again. When the wait ends, the editor sends `POST
-    /api/blueprints/lint` with the path and the text, and aborts the lint
+    /api/blueprints/lint` with the path, the text, the draft's base, and
+    its model drafts as `models`, and aborts the lint
     request still in flight, if any, with its `AbortController`. An answer
     is applied only when the text is still the text it was sent for, so
     the marks always belong to the text on screen. The source's own
@@ -1537,6 +1550,7 @@ proposed-design:
     document's `description`, the machine's `context` as a YAML field, the
     input, output, and context schemas, each event schema, and each actor
     schema as YAML fields with "Add event schema" and "Add actor schema",
+    the Intake group of decision-model-entry,
     and the layout, "Automatic" or "Pinned" with Automatic layout; its
     Basics hold the machine `id` and its `type`, compound or parallel, and
     it has no key and no Gate group, since a gate on the root is a lint
@@ -1576,8 +1590,10 @@ proposed-design:
   invoke-contract: >-
     An invoke shows what its `src` names: for a Manifold implementation,
     its description from the implementation catalog; for a blueprint
-    reference, the card of `reference-inspector`; for any other name,
-    "Unknown implementation" in warning text. Under it, Contract shows
+    reference, the card of `reference-inspector`; for a decision model path,
+    the model's summary and "Open decision model", as decision-model-entry
+    states; for any other name, "Unknown implementation" in warning text.
+    Under it, Contract shows
     `schemas.actors.<src>` of the blueprint: its input and its output,
     each as a table of property, type, and required, read from the
     schema's `properties` and `required`, or the schema as YAML when it is
@@ -2198,16 +2214,19 @@ proposed-design:
     four.
   blueprint-drafts: >-
     A draft is the edited text of one blueprint, with the commit it is
-    based on, kept in the browser. It lives in `localStorage` under
+    based on, and the drafts of the decision models edited from it, kept
+    in the browser. It lives in `localStorage` under
     `manifold.blueprint-draft.<path>` as JSON `{ base, baseText, text,
-    saveId?, message?, saved? }`. The editor writes the draft on each change
+    saveId?, message?, saved?, models? }`, `models` as
+    decision-model-drafts states; what this section says of the text holds
+    for each file of the draft. The editor writes the draft on each change
     to the text, and removes it when the text equals `baseText` and the
     draft has no `saved`, and when "Discard draft" is confirmed. A save
     that answers `200` does not remove the draft: it sets `saved` to the
     answer's commit and keeps `message`, so the text stays in the browser
     until the service has loaded the saved commit. A draft with `saved` is
     settled by a source read: one that answers the draft's text removes
-    the draft. When a save answer carries `blueprint`, the service holds
+    the draft. When a save answer has `loaded` true, the service holds
     the saved commit, and the source read that follows it is the file as
     the branch now holds it; when that text differs from the draft's, a
     later commit changed the file after the save, and the draft becomes an
@@ -2228,15 +2247,17 @@ proposed-design:
     holds the pure functions that read, write, and change a draft, and a
     draft that does not parse as that shape is removed and ignored.
   publish: >-
-    "Publish" is enabled when the text differs from the base text, the
-    latest lint answer is for the text on screen, and it has no finding;
-    warnings do not block it. It opens `PublishDialog`, the 480px dialog of
+    "Publish" is enabled when a file of the draft differs from its base
+    text, the latest lint answer of each file is for its text, and no file
+    has a finding; warnings do not block it. The request and the dialog's
+    files are those of decision-model-publish; for a draft whose only
+    change is the blueprint's text, they are the one file below. It opens `PublishDialog`, the 480px dialog of
     `DESIGN.md`: the file with its git status letter, `A` when the base has
     no file at the path and `M` otherwise, and its path in mono; a commit
     message field, prefilled with "Update <path>", or "Add <path>" for
     `A`; and the repository URL and branch from the list endpoint. "Commit
-    and push" sends `POST /api/blueprints/save` with the path, the base,
-    the text, the message, and the draft's `saveId`. When the draft has no
+    and push" sends `POST /api/declarations/publish` with the base, the
+    files, the message, and the draft's `saveId`. When the draft has no
     `saveId`, the editor first sets one: 16 bytes from
     `crypto.getRandomValues` as 32 lower-case hexadecimal characters,
     written to the draft before the request, so a retry of the same text
@@ -2245,11 +2266,11 @@ proposed-design:
     while the request runs. For `200`, the editor sets the draft's
     `saved` and shows "Saved as <short commit>" in a success toast for
     `saved`, "Already saved as <short commit>" for `already-saved`, and "No
-    change to save" for `unchanged`. When the answer carries `blueprint`,
+    change to save" for `unchanged`. When the answer has `loaded` true,
     the editor reads the list and the source again, and the source read
     settles the draft as blueprint-drafts states: the editor shows the new
     source with its base at the new commit, or the saved text as a draft
-    based on a later commit that changed the file. When the answer has no `blueprint`, or the source
+    based on a later commit that changed the file. When `loaded` is false, or the source
     read fails, the pending alert opens. For `422`,
     the dialog closes and the findings mark the text. For `409`, the
     dialog closes and the conflict alert opens. For `502`, `503`, a
@@ -2267,7 +2288,7 @@ proposed-design:
     the save request again, with the draft's base, text, message, and
     `saveId`; the service's follower pulls before it saves and finds the
     saved commit by its trailer even under later commits, so the answer is
-    `already-saved` with `blueprint` once the service holds the commit,
+    `already-saved` with `loaded` true once the service holds the commit,
     and the editor then reads the source, which settles the draft. A
     failed request shows its message in the alert and keeps the draft. A
     reload reopens the draft with `saved` and the same alert, and a source
@@ -2289,7 +2310,330 @@ proposed-design:
     `saveId`, so the next Publish replaces the branch's change with the
     draft's text by the operator's choice. "Discard draft" removes the
     draft after the alert dialog, and the editor reads the source again.
-    The editor never discards the draft's text on its own.
+    The editor never discards the draft's text on its own. A publication's
+    `409` names each file and its branch text, and the alert and its
+    buttons act on every file of the draft, as decision-model-publish
+    states.
+  decision-model-entry: >-
+    A state that evaluates a decision model is a state with an invoke whose
+    `src` is a decision model path, as `blueprint` specifies. Its invoke
+    card shows, in place of an implementation's description, the model's
+    summary and "Open decision model" (outline). The blueprint inspector
+    has an Intake group after Schemas: the line "Tasks start from the
+    intake decision model", the path `manifold.yml` names in mono, its
+    summary, and "Open decision model", so the model that chooses each
+    task's blueprint and input opens from the blueprint that model starts.
+    The path is the list's `intake` from `GET
+    /api/declarations/decision-models`; with no `intake`, the group reads
+    "manifold.yml names no intake decision model" in warning text. The
+    `src` combobox lists the list's paths under `decision-models/` in the
+    "Decide" group `DESIGN.md` names, each with its summary's first line
+    as its description. The model's
+    text is the draft's model text when the draft holds one, and
+    otherwise the file at the draft's base, read with `GET
+    /api/declarations/decision-model?path&commit=<base>` under
+    `["decision-model", path, base]`. Each outcome is explicit: a file at
+    the path gives the summary; no file gives "No decision model at
+    <path>" in warning text with "Create decision model" (outline), which
+    applies the starter model to the draft as a new file; a text that does
+    not parse or fails the model's `structure` check gives "Cannot read
+    this model" in error text with the first finding's message, and "Open
+    decision model" opens the dialog's YAML view; a set with findings
+    gives the summary and "N problems" in error or warning text; a read
+    that fails gives "Cannot read the model. Try again." with "Try again";
+    and an invoke whose `src` is not a static string shows nothing. The
+    blueprint lint's `decision-model` finding marks the `src` field as any
+    finding marks a field. Before the first applied revision the group and
+    the card read "Decision models open once the process repository is
+    loaded." The starter model is an input node, one JSONata decision
+    table with hit policy `first`, one input column and one output column
+    with blank fields and no rule, and an output node, joined in that
+    order, with ids from `crypto.randomUUID`.
+  decision-model-summary: >-
+    `decision-model-summary.ts` is a pure function from a model text to its
+    summary: `nodes`, the count of nodes, and `tables`, one entry per
+    JSONata decision table in node order with its node `id`, `name`,
+    `hitPolicy`, the count of `rules`, and the `name`, or else the
+    `field`, of each input column. The card shows one line per table, at
+    most three, as "<n> rules · <hit policy> · <inputs>" with the inputs in
+    mono joined by ", ", led by the table's name when the model has more
+    than one table, then "+N more tables"; a model with no table shows "<n>
+    nodes · no decision table". The summary reads the text as written,
+    so a model with findings still shows what it holds.
+  decision-model-dialog: >-
+    "Open decision model" opens `DecisionModelDialog`, the 920px dialog of
+    `DESIGN.md`, over the editor. The dialog is modal and keeps no state
+    in the URL, the canvas selection, or the canvas view, so it is
+    independent of how the canvas scopes its view. It works on its own
+    working text, the model's draft text, or the base file's, and changes
+    the blueprint draft only on "Apply to draft". Its header holds the
+    title "Decision model", the path in mono, a "N changes" badge while
+    the working text differs from the text it opened with, and the Visual
+    / YAML segmented control. Visual is `@gorules/jdm-editor`'s
+    `DecisionGraph` over the parsed working text, 560px high, its graph
+    tab and a tab per open node; a model with exactly one JSONata decision
+    table opens on that table's tab. YAML is the working text in the
+    console's CodeMirror YAML field, full width, with each finding's range
+    underlined. Both views edit the working text: a Visual change writes
+    the edited model into it as decision-model-apply states, and Visual
+    parses it again when it is shown. A working text that does not parse,
+    or that fails `structure`, disables Visual with "The editor cannot
+    draw this model. Fix it in the YAML view." and the dialog opens on
+    YAML. Under the views sit the Problems box and the Evaluate panel. The
+    footer holds "Cancel" (secondary) and "Apply to draft" (primary).
+    "Apply to draft" writes the working text to the draft as
+    decision-model-drafts states and closes the dialog; it is enabled
+    while the working text differs from the text the dialog opened with,
+    whatever its findings, so an edit is never lost to a finding. "Cancel",
+    Escape, and the close button close the dialog and leave the draft as
+    it was; with a changed working text they first ask, in the 400px alert
+    dialog, "Discard changes to <path>?", whose confirm is solid error.
+    While the draft is a pending save the dialog is read only, with
+    "Close" in place of its two buttons. The dialog's module and the
+    editor's library load with a dynamic `import()` when a dialog first
+    opens, so the Blueprints screen loads nothing of them until then.
+  decision-model-nodes: |-
+    The dialog passes `DecisionGraph` the parsed model as `value`, takes
+    each `onChange`, and gives it `customNodes` for the three custom kinds
+    of `decision-models`, so a node's `type` stays `customNode` and its
+    `content` stays `{ kind, config }`:
+
+    - `jsonataDecisionTable`: its tab, the node specification's
+      `renderTab`, is a 40px toolbar with the hit policy, a select of
+      `first` and `collect`, and "Add rule", "Add input", and "Add output"
+      (outline), over the editor's `DecisionTable` with `value` the node's
+      `config` and `onChange` writing it back. The configuration's
+      `inputs`, `outputs`, and `rules` are the table's own shape, so the
+      table edits them as they are. "Add rule" appends a rule with a new
+      `_id` and blank cells, "Add input" and "Add output" append a column
+      with a new `id`, the name "Input <n>" or "Output <n>", and a blank
+      `field`, and the column's dialog of the table edits its name and
+      field. `cellRenderer` replaces every cell with a one-line CodeMirror
+      JSONata field whose placeholder is "JSONata" and whose accessible
+      name is the column's name, "JSONata", and the rule's number, so no
+      cell is edited in Zen's language.
+    - `jsonataExpression`: its tab is one JSONata expression field over
+      `config.expression`, eight lines high.
+    - `jsonataSwitch`: its node, the specification's `renderNode`, is the
+      editor's `GraphNode` with one row per statement, each a JSONata
+      condition field and a source handle whose id is the statement's
+      `id`, a row with a blank condition labeled "Default", "Add
+      statement", and the hit policy select; removing a statement removes
+      the edges whose `sourceHandle` names it. The handles are
+      `reactflow` `Handle`s, the library instance the editor renders with.
+
+    Each custom node's card holds the node settings as `createJdmNode`
+    inputs: "Pass through" (`passThrough`), "Input field" (`inputField`),
+    "Output path" (`outputPath`), and "Loop" (`executionMode` `loop`), the
+    switch holding none. `hideLeftToolbar` hides the editor's component
+    palette, which offers stock node types Manifold does not evaluate;
+    the graph tab's toolbar has "Add node" (outline), a menu of JSONata
+    decision table, JSONata expression, JSONata switch, Decision model,
+    Input, and Output, Input disabled while the model has one, which adds
+    the node at the viewport's centre through the graph's ref. Stock
+    `inputNode`, `outputNode`, and `decisionNode` are drawn by the
+    editor. A node of another type, such as a stock `decisionTableNode`
+    in a file written by another editor, is drawn by the editor and kept,
+    and the lint's `node-unsupported` finding lists it. The dialog passes
+    no `simulate` and no `panels`, so the editor's simulator, which
+    evaluates Zen's language, and its function node editor, which loads
+    Monaco from a CDN, never mount.
+  decision-model-theme: >-
+    The dialog wraps the editor in `JdmConfigProvider` with `prefixCls`
+    `mf-jdm`, `mode` `dark` while the root element has the `dark` class
+    and `light` otherwise, and the tokens read from the root's computed
+    custom properties: `colorPrimary` from `primary`, `colorBgContainer`
+    from `card`, `colorBgElevated` from `popover`, `colorBorder` from
+    `input`, `colorText` from `foreground`, `colorTextSecondary` from
+    `muted-foreground`, `colorError` and `colorWarning` from the error and
+    warning tokens, `fontFamily` from the sans stack, `fontFamilyCode`
+    from the mono stack, and `borderRadius` 6. A `MutationObserver` on the
+    root's `class` reads them again on a theme change. The editor's colour
+    algorithm needs colour values, which the computed properties are.
+    `decision-model-dialog.css`, scoped to the dialog, sets the table's
+    column headers in the mono font and the output columns' headers and
+    cells on the `accent` surface, and the switch rows and JSONata fields
+    in the look of the inspector's expression field, so the editor reads
+    as the console in both themes.
+  decision-model-apply: >-
+    `decision-model-text.ts` holds `writeModel(text, model)`, a pure
+    function from a working text and an edited model object to a text,
+    with the `yaml` package's document model, as the inspector's edits
+    keep a blueprint's text. It walks the object against the document: a
+    scalar that changed is set in place; a mapping key the object adds is
+    appended; a key the object drops is removed only when the decision
+    model schema names it, so every property the editor does not model
+    stays; an array of objects with an `id`, or a rule's `_id`, matches
+    items by that id, recurses into each kept item, removes the items the
+    object drops, inserts the new ones, and moves items into the object's
+    order with their comments; any other array that changed is replaced.
+    A text in the block style the `yaml` package writes keeps every line
+    outside the changed nodes, and a flow-style text, such as a stock
+    editor's JSON export, keeps its style on the nodes that did not
+    change. The editor needs a `name` and a `position` on every node, so
+    the dialog fills a missing `name` with the node's `id` and a missing
+    `position` from a left-to-right layout before it shows the model,
+    remembers which it filled, and drops each filled value the operator
+    did not change before it writes, so opening and closing a model, or
+    applying it unchanged, gives back the same text byte for byte.
+  decision-model-drafts: >-
+    A blueprint draft also holds the drafts of the decision models edited
+    from it, under `models`: a map from a decision model path to `{
+    baseText, text, exists }`, where `baseText` is the file at the draft's
+    `base`, the empty string when `exists` is false. Every file of the
+    draft shares the draft's base, so the files publish as one commit
+    over one base: the dialog reads a model at the draft's base, not at
+    the latest revision. "Apply to draft" sets the path's entry, adding it
+    with the base file's text the first time, and an entry whose `text`
+    equals its `baseText` is removed. Any change to a model's text removes
+    the draft's `saveId`, as a change to the blueprint's text does. The
+    draft is the publication unit: two blueprint drafts that edit one
+    model hold two drafts of it, and the second to publish meets the
+    first's change as a conflict. The header's "Draft · N changes" counts
+    the changed lines of every file. The editor lints each model draft
+    with `POST /api/declarations/decision-model/lint`, with the draft's
+    base and the other model drafts as `models`, when the draft opens and
+    after each Apply, and lints the blueprint with its base and the model
+    drafts as `models`, so the blueprint's `decision-model` finding
+    follows the drafts. The Problems strip lists each model's findings
+    after the blueprint's, each with its file's path, and selecting one
+    opens that model's dialog at it. Publish is disabled while any file
+    has a finding.
+  decision-model-problems: >-
+    The dialog lints its working text with `POST
+    /api/declarations/decision-model/lint`, with the draft's base and the
+    draft's other model texts as `models`, on the 300 ms wait and abort
+    rule of the blueprint editor. The Problems box lists the count of
+    errors and warnings and each finding with its file when it is another
+    model, and its node's name, rule number, column name, or statement,
+    with its message; selecting one opens its node's tab and focuses the
+    cell, or in YAML moves the cursor to its range. A cell, column, or
+    condition with a finding has an error or warning border. The Evaluate
+    panel, collapsed by default, holds an Input YAML field, an object,
+    and "Evaluate" (outline), which sends `POST
+    /api/declarations/decision-model/evaluate` with the working text, the
+    base, the other model texts, and the input. A `result` record shows
+    the result as read-only YAML; an `error` record shows the error
+    detail's message with its node, rule, and column, opens the failing
+    node's tab, and borders the failing cell in error color; a `422` shows
+    "Fix the problems to evaluate." Evaluating writes nothing and leaves
+    the working text and the draft as they are.
+  decision-model-publish: >-
+    The editor publishes every changed file of its draft with `POST
+    /api/declarations/publish`: the blueprint when its text differs from
+    its base text, and each model draft, in one request with the draft's
+    base, message, and `saveId`, so one commit holds them all or none.
+    `PublishDialog` lists each file with its status letter, `A` when the
+    base holds no file at the path and `M` otherwise, blueprint first,
+    then models by path; the message is prefilled with "Update <path>"
+    for one file and "Update <blueprint path> and <n> decision models"
+    otherwise, "Add" for a single added file. The answer's `outcome`
+    gives the toast, as for a blueprint save. When `loaded` is true the
+    editor reads the blueprint's source and each model's source at the
+    answer's commit, and the reads settle the draft: when every file
+    equals its saved text the draft is removed; when a file differs, a
+    later commit changed it after the save, and the draft becomes an
+    ordinary draft based on the source's commit, each file's base text
+    the file there and its text the saved text. When `loaded` is false,
+    or a read fails, the pending alert opens, and "Load saved version"
+    sends the same publish again. A `422` closes the dialog and marks the
+    findings in their files. A `409` opens the conflict alert, naming
+    each file whose branch text differs from its base text; "Compare"
+    opens the compare dialog with a select of those files, and "Use
+    latest as base" sets the base to the head and each file's base text
+    to its branch text, the empty string with `exists` false when absent.
+    "Discard draft" removes the blueprint's and every model's draft, and
+    its alert names the changed lines of all files. The blueprint save
+    endpoint stays for automation; the editor sends every publication
+    through one path.
+  decision-model-client: >-
+    `src/api/declarations.ts` adds `fetchDecisionModels()`,
+    `fetchDecisionModel(path, commit)`, `lintDecisionModelText(request,
+    signal)`, `evaluateDecisionModel(request)`, and `publishFiles(request)`,
+    with the result mapping of the declarations client, a typed `conflict`
+    holding the publish conflict's `files`. `lintBlueprintText` takes the
+    optional `base` and `models`. Reads go through TanStack Query under
+    `["decision-models"]` and `["decision-model", path, commit]`; a
+    settled publish marks `["blueprints"]`, `["decision-models"]`, and
+    each `["blueprint-source", path]` and `["decision-model", path]` of its
+    files stale.
+  decision-model-endpoints: >-
+    In `packages/service/src/declarations-api/`, `decision-models.ts`
+    answers the list, source, lint, and evaluation, and `publish.ts` the
+    publication; the listener routes them and applies the request checks.
+    Both read through one overlay reader, a pure function from a revision's
+    `read` and the request's texts to a `read`. `DeclarationsApiOptions`
+    adds `lintBlueprint(path, text, decisionModels)`, the blueprint lint
+    with the names, configuration bound, and lifecycle options the
+    blueprints endpoints lint with, and `createDecisionModels`, which
+    the `declarations-api` wiring part takes from the members it is
+    given. The evaluation disposes its instance whether it resolves or
+    rejects. Publication calls `Revisions.save` with every file, so the
+    revision follower's one commit, push, pull, and apply is the only
+    write, and the answer's `loaded` is whether the latest applied
+    revision then holds the commit. `packages/shared`'s
+    `./declarations-api` export adds the request and answer types and
+    guards, and `./blueprints-api` the lint request's `base` and `models`.
+  decision-model-convergence: >-
+    The dialog writes nothing outside the browser until Publish, and Apply
+    writes only the draft in `localStorage`, before it closes, so a reload
+    after Apply keeps the model draft and a reload before Apply loses only
+    the open dialog's working text. A publication is one `Revisions.save`:
+    a retry with the same `saveId`, after a crash, a lost answer, or a
+    reload, answers `already-saved` with the first commit and pushes
+    nothing; a crash before the push leaves the branch as it was and the
+    draft with its `saveId`. A lint or evaluation repeated gives the same
+    answer for the same texts, except through JSONata's clock and random
+    functions.
+  decision-model-layout: >-
+    In `packages/console/src/screens/blueprints/`, `decision-model/` holds
+    `DecisionModelDialog.tsx`, `DecisionModelCard.tsx` (the summary and
+    open button the invoke card and the Intake group share),
+    `jdm-nodes.tsx` (the three custom node specifications),
+    `JsonataCell.tsx`, `jdm-theme.ts`, `decision-model-dialog.css`, and
+    the pure `decision-model-summary.ts`, `decision-model-text.ts`, and
+    `model-drafts.ts`, the draft functions for `models`. `draft.ts` keeps
+    reading a draft without `models` as a draft with none.
+  decision-model-tests: >-
+    Each behavior is red before green, through public interfaces. In
+    `packages/console`, unit tests cover `decision-model-summary.ts` on one
+    and three tables, no table, and a text with findings;
+    `decision-model-text.ts` on the multi-node fixture model of
+    `decision-models` and on the stock editor's JSON export: writing the
+    parsed object back unchanged gives the same text byte for byte, a
+    changed cell, an added and a removed rule, an added input and output
+    column, a moved rule, and a renamed column each change only their
+    nodes and keep a comment above another node, a property the editor
+    does not model stays, and a filled `name` and `position` the operator
+    did not change are not written; and the model draft functions: Apply
+    adds an entry, an entry equal to its base is removed, a change removes
+    the `saveId`, a draft written without `models` reads as one with none,
+    and a settled publish removes the draft or rebases it file by file.
+    The service tests are `declarations-api`'s and `blueprints-api`'s
+    validation criteria. The built-browser test drives the built console
+    from the service over a fixture process repository whose blueprint
+    invokes the multi-node fixture model and whose manifest names an
+    intake decision model. It opens the blueprint, selects the state, and
+    sees the summary; opens the dialog; adds a rule, edits an input cell
+    and an output cell, adds an input column and an output column, and
+    applies to the draft, after which the summary and the header's change
+    count follow; opens the dialog again, edits a cell, cancels and
+    confirms, and the draft is unchanged; evaluates an input and sees the
+    result, and an input that makes a cell fail and sees its node, rule,
+    and column; reloads and sees the model draft kept; discards the
+    draft and sees the published model; edits again, publishes, sees the
+    dialog list the blueprint and the model with their status letters,
+    and reads back, from `GET /api/declarations/decision-model` and the
+    remote branch, one commit holding both texts, after which an actor
+    started on the new commit takes `onDone` with the model's result. A
+    second test moves the model on the remote branch, publishes, sees the
+    conflict alert name the model, sees the draft kept and the branch's
+    model unchanged, compares, uses the latest as base, and publishes. A
+    third opens the Intake group's model, edits it into a `syntax` error,
+    applies, sees Publish disabled with the finding in the Problems strip,
+    and fixes it. The browser tests run in both themes, record every
+    request the page makes, and assert that none leaves the service's
+    origin, and assert that the dialog's code loads only when it opens.
   blueprints-client: >-
     `src/api/blueprints.ts` exports `fetchBlueprints()`,
     `fetchBlueprintSource(path)`, `lintBlueprintText(path, text, signal)`,
@@ -2632,8 +2976,9 @@ proposed-design:
     `src/api/declarations.ts` exports
     `fetchDeclarationSource(path)`, `lintDeclarationText(path, text,
     signal)`, `saveDeclaration(request)`, `editTaskFields(request)`,
-    `fetchBindings()`, `saveBinding(request)`, and `archiveItem(request)`,
-    for the endpoints of `declarations-api`. Each
+    `fetchBindings()`, `saveBinding(request)`, `archiveItem(request)`, and
+    the decision model functions of decision-model-client, for the
+    endpoints of `declarations-api`. Each
     sends its request without authentication headers, with `Content-Type:
     application/json` for a body, and turns the answer into a result as
     the blueprints client does: `ok` with the body, a typed `conflict` or
@@ -4960,7 +5305,7 @@ proposed-design:
     malformed removed, `saveId` kept across a reload and removed by a
     change, a `200` sets `saved` and keeps the draft, and a draft with
     `saved` is removed by a source read of its text, and becomes an
-    ordinary draft based on the source when a save answer with `blueprint`
+    ordinary draft based on the source when a save answer with `loaded` true
     is followed by a source read of other text), and `problems.ts`.
     In `packages/console`, `blueprint-edits.ts` is tested on a fixture
     blueprint with comments before, between, and after entries, a flow
@@ -5010,8 +5355,8 @@ proposed-design:
     commits a change to the same file on the remote while the editor holds
     a draft, publishes, sees the conflict alert, reloads, and still holds
     the draft's text. A third case has the fixture server accept the push
-    and refuse the next fetch once, so the save answers `saved` with no
-    `blueprint`: the editor shows the toast and the pending alert with the
+    and refuse the next fetch once, so the save answers `saved` with
+    `loaded` false: the editor shows the toast and the pending alert with the
     saved text, a reload shows the same, and "Load saved version", with
     the server healthy, answers `already-saved`, clears the alert and the
     draft, and the list shows the saved commit as the version, with one
@@ -5073,7 +5418,18 @@ proposed-design:
     the YAML library the service and the host CLI already use, whose
     document model edits a text and keeps its comments. The canvas builds
     its graph through the shared package's `./blueprint-graph` export,
-    whose validator is generated at build time. None of them
-    evaluates generated code, so the console's Content Security Policy
-    holds. Renovate keeps them current
-    with the rest.
+    whose validator is generated at build time. The decision model editor
+    adds `@gorules/jdm-editor`, the GoRules JDM editor `DESIGN.md` names,
+    MIT licensed and published by the makers of the Zen engine the
+    service evaluates models with, pinned to an exact version as the
+    engine is, since the table component it exposes and the behaviour a
+    browser check guards are not a documented contract; and `reactflow`
+    at the exact version the editor depends on, so the switch's handles
+    are the editor's own library instance. The editor brings Ant Design,
+    which renders the editor's controls inside the dialog only, and a
+    WebAssembly build of Zen's expression language, which serves only
+    Zen-language features the dialog does not use; its load fails under
+    the console's policy, which the editor tolerates, and nothing loads
+    Monaco. None of them evaluates generated code, so the console's
+    Content Security Policy holds unchanged. Renovate keeps them current
+    with the rest, and the browser test proves each update of the editor.

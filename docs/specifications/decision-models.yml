@@ -5,6 +5,9 @@ relationships:
   references:
     - expressions
     - blueprint-expressions
+    - blueprint
+    - blueprint-loader
+    - process-manifest
     - zen-jsonata
   mitigates:
     - decision-table-cell-semantics-unproven
@@ -289,6 +292,54 @@ description: |-
   only what it derived from `models`, so a restarted service rebuilds it
   from the process repository and a repeated evaluation after a crash
   evaluates afresh.
+
+  Model sets. A decision model's key is its repository-relative path, a
+  `.yml` path with the path rules of `ProcessRepositoryRevision`. The set
+  rooted at a model is that model and, through each `decisionNode`'s
+  `content.key`, every model it names, to any depth, each read once.
+  `packages/shared` exports the set lint:
+
+  ```ts
+  function lintDecisionModelSet(
+    read: (path: string) => Promise<string | undefined>,
+    root: string,
+  ): Promise<DecisionModelSetLint>;
+
+  type DecisionModelSetLint =
+    | {
+        readonly ok: true;
+        readonly models: Readonly<Record<string, unknown>>; // parsed, by path
+        readonly findings: readonly ProcessManifestFinding[]; // warnings only
+      }
+    | { readonly ok: false; readonly findings: readonly ProcessManifestFinding[] };
+  ```
+
+  It runs step 4 of the `process-manifest` lint from `root`, with the same
+  checks, kinds, locations, and order, so `ProcessManifestFinding` is
+  `process-manifest`'s `#/$defs/finding`. A root that fails the path
+  check is `model-key-invalid`, and a root with no file is
+  `model-missing`, each in the root's file at the empty pointer.
+  `lintProcessManifest` runs it from the intake decision model and
+  places a missing or invalid root at `/intake/decisionModel` in
+  `manifold.yml`. The lint reads only through `read`, and the same
+  answers give the same result.
+
+  Invoked models. A blueprint invoke whose `src` is a decision model path
+  under `decision-models/` evaluates the set rooted there, as `blueprint`
+  states. The blueprint loader lints each such set once per commit and
+  path, with the revision's `read`, and passes the error findings of each
+  path to the blueprint lint as `decisionModels`, so a version that
+  invokes a model the commit does not hold, or holds with an error, does
+  not load. A version that loads binds each invoked path as a promise
+  logic named by the path. The logic checks that its input is an object,
+  builds `createDecisionModels` over the set's models, evaluates the root
+  with the input, disposes the instance, and resolves with the
+  evaluation's `result`. An input that is not an object rejects with a
+  `decision-model-invoke-error` of reason `input`, and an `error` record
+  rejects with one of reason `evaluation` that carries the record as
+  `evaluation`, so the record names the failing node, rule, column, or
+  statement. The logic writes nothing; a restored actor's invoke
+  evaluates again over the same commit's models.
 format: json-schema
 validation-criteria: >-
   Every fixture model, finding, error detail, and evaluation record
@@ -336,4 +387,20 @@ validation-criteria: >-
   condition; a `never-boolean` warning on a switch condition; each never-boolean shape,
   and the expressions `true`, `false`, `$ > 3`, `$`, `item.value`,
   `$custom()`, `$number($)`, `true ? true : 3`, and `[true][0]` giving no
-  warning. Fixtures use a domain unrelated to Manifold.
+  warning. Set lint tests in `packages/shared` call
+  `lintDecisionModelSet` with an in-memory reader and show, for a root
+  whose `decisionNode` names a second model, both models parsed by path;
+  for an absent root, `model-missing` in the root's file at the empty
+  pointer; for a root `../x.yml`, `model-key-invalid` with no read; and
+  that `lintProcessManifest` gives the findings it gave before for each
+  manifest fixture. Service tests load a blueprint whose state invokes
+  `decision-models/parcel-quote.yml` at a commit holding the model, start
+  an actor, and assert that `onDone` takes the result an evaluation of
+  the same input gives; that a mapping input taken from context
+  evaluates; that a static input that is not an object takes `onError`
+  with reason `input`; that a failing cell takes `onError` with reason
+  `evaluation` and the record naming node, rule, and column; that an
+  actor restored while the invoke runs takes `onDone` once; and that a
+  commit whose model has a `syntax` error, or holds no model at the
+  path, loads the blueprint in `failures` with the `decision-model`
+  finding. Fixtures use a domain unrelated to Manifold.

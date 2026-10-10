@@ -13,6 +13,9 @@ relationships:
     - accounts-declaration
     - price-table
     - blueprints-api
+    - blueprint
+    - decision-models
+    - process-manifest
     - t3code-environment-source
     - lint-console-edits-on-the-service
     - declare-created-project-choices-as-bindings
@@ -28,8 +31,10 @@ description: >-
   `accounts.yml`; the edit of
   one task field in a task metadata text; the read of the bindings with
   what a binding may name; the save of one binding as a structured
-  edit; and the archive of one portfolio item, with a choice for each
-  project attached to it, in one commit.
+  edit; the archive of one portfolio item, with a choice for each
+  project attached to it, in one commit; the list, read, lint, and trial
+  evaluation of decision models; and the publication of edited
+  blueprints and decision models together in one commit.
   `docs/specifications/declarations-api.openapi.yml` is the
   machine-readable definition. The console reads and writes through them,
   and any automation may.
@@ -37,7 +42,7 @@ description: >-
   The endpoints are mounted with the HTTP host's `mount` at the prefix
   `/api/declarations` and are always served without authentication.
   Access control belongs to the deployment. A path under the prefix that
-  is not one of the seven below answers `404`. A method an endpoint does not
+  is not one of the twelve below answers `404`. A method an endpoint does not
   take answers `405` with `Allow` naming the one it takes.
 
   **Declaration paths.** A declaration path is `bindings.yml`,
@@ -53,7 +58,8 @@ description: >-
   the linted text and has a place there, by the rule `blueprints-api`
   states for a finding located by a JSON Pointer or by a line and column.
   A finding keeps its `file` only in an answer for `portfolio.yml` or
-  `accounts.yml` and in an answer of the archive. A text lints with the same functions and the same companion files as the
+  `accounts.yml`, in an answer of the archive, and in a decision model or
+  publish answer, where it is the file's repository path. A text lints with the same functions and the same companion files as the
   service's revision follower and the host CLI:
 
   - `task-metadata.yml` lints with `lintTaskMetadataDeclaration`, with
@@ -385,8 +391,94 @@ description: >-
   is `file-changed` when either file at the branch's head differs from
   `base`.
 
-  **Requests.** `lint`, `save`, `task-fields/edit`, `bindings/save`, and
-  `archive-item` take the request
+  **Decision model paths.** A decision model path is a process
+  repository path ending in `.yml`, with the path rules of
+  `ProcessRepositoryRevision`, that is not a blueprint path of
+  `blueprints-api`, not a declaration path, and not `prices.yml` or
+  `manifold.yml`. A
+  model an invoke evaluates is under `decision-models/`; the intake
+  decision model is wherever `manifold.yml` names it. A request that
+  names another path as a decision model answers `400`. Findings of
+  decision models are the findings `lintDecisionModelSet` of
+  `decision-models` gives, `process-manifest`'s finding: each holds its
+  `file`, the repository path of the model it is in, and `range` when
+  that file is the linted text.
+
+  **Overlay.** A decision model lint, an evaluation, and a publication
+  read the set at `base`, the latest applied revision when absent,
+  through a reader that answers the request's texts in place of the
+  revision's files at their paths: the request's own `path` and `text`,
+  and each entry of `models`, `{ path, text }`. A `base` the process
+  repository does not hold answers `400`, and so do two texts at one
+  path.
+
+  **Decision model list.** `GET /api/declarations/decision-models`
+  answers `200` with `commit`, the commit of the latest applied revision;
+  `intake`, the path `manifold.yml` names as the intake decision model
+  when the manifest passes steps 1 to 3 of the `process-manifest` lint,
+  and absent otherwise; and `models`, each `.yml` file under
+  `decision-models/` at that revision and the intake decision model,
+  once each, sorted by code point, each with `path`, `exists`, false for
+  an intake path the revision holds no file at, and `intake`, true for
+  the intake decision model. Before the first applied revision it
+  answers `503`.
+
+  **Decision model source.** `GET
+  /api/declarations/decision-model?path=<path>&commit=<commit>` answers
+  `200` with `path`; `commit`, the given commit, or the latest applied
+  revision's when `commit` is absent; `exists`; `text`, the file's text,
+  or the empty string when the commit holds none; and `findings` and
+  `warnings` of the set rooted at the path at that commit, an absent
+  file giving no finding. A commit the process repository does not hold
+  answers `400`. Before the first applied revision it answers `503`.
+
+  **Decision model lint.** `POST /api/declarations/decision-model/lint`
+  takes `{ path, text, base?, models? }` and answers `200` with
+  `findings` and `warnings` of the set rooted at `path`, read through the
+  overlay. It reads and writes nothing else.
+
+  **Decision model evaluation.** `POST
+  /api/declarations/decision-model/evaluate` takes `{ path, text, base?,
+  models?, input }`, where `input` is an object, and evaluates the set
+  rooted at `path`, read through the overlay, with `createDecisionModels`
+  and `input`, as intake evaluates its model, then disposes the instance.
+  It answers `200` with `evaluation`, the `decision-model-evaluation`
+  record, whose outcome is `result` or `error`. A set with an error
+  answers `422` with `findings` and `warnings`, and nothing is
+  evaluated. It writes nothing, so a repeated request evaluates again.
+
+  **Publish.** `POST /api/declarations/publish` takes `{ base, files,
+  message, saveId }`. `base`, `message`, and `saveId` have the meaning
+  and limits of a save. `files` holds one or more `{ path, text }`, at
+  most one per path, each a blueprint path of `blueprints-api` or a
+  decision model path. The service lints every file before it writes,
+  each as the revision follower will lint it at the new commit, reading
+  every other file at `base` through a reader that answers the request's
+  texts at their paths:
+
+  - a blueprint with `lintBlueprint`, as a blueprint save lints it, with
+    `decisionModels` built through that reader;
+  - a decision model with `lintDecisionModelSet` rooted at its path;
+  - and, when the intake decision model's set holds a file of the
+    request, `manifold.yml` with `lintProcessManifest`.
+
+  Any finding answers `422` with every finding and warning, each with its
+  `file`, and nothing is written. Otherwise the revision follower saves
+  every file in one commit, as `process-repository` and
+  `service-assembly` state, so the files reach the branch together or
+  not at all. The `200` answer holds `outcome`, `commit`, and `loaded` as
+  a save's answer does. A save that conflicts answers `409` with
+  `reason` and `head` as a save does and `files`, one entry per file of
+  the request with its `path` and `text`, the file's text at the
+  branch's head, absent when the file is not there; `reason` is
+  `file-changed` when any file of the request differs on the branch from
+  the file at `base`. The `502` and `503` answers are those of a save. A
+  publish that one `saveId` repeats, before or after a crash or a lost
+  answer, answers `already-saved` with the commit the first made.
+
+  **Requests.** `lint`, `save`, `task-fields/edit`, `bindings/save`,
+  `archive-item`, `decision-model/lint`, `decision-model/evaluate`, and
+  `publish` take the request
   checks of `blueprints-api`: `Content-Type: application/json` or `415`,
   the same-site checks or `403`, a body of 8 MiB at most or `413`, and a
   body that is not JSON or not of the stated shape `400` with the first
@@ -468,5 +560,28 @@ validation-criteria: >-
   `not-attached`, `duplicate-choice`, and `no-parent` answer `422`; that
   the same archive again answers `already-saved`; that an archive whose
   base `bindings.yml` changed on the branch answers `409` with no
-  `text`; and the `400`, `403`, `404`, `405`, `413`, `415`, and
+  `text`; that the decision model list holds each file under
+  `decision-models/` and the intake decision model with `intake` true,
+  and an intake path with no file with `exists` false; that the
+  decision model source of the multi-node fixture model answers its text
+  and no finding, at the latest revision and at an earlier commit, and of
+  a model with a `syntax` cell answers the finding with its `file` and
+  range; that a lint whose `models` replaces the model a `decisionNode`
+  names with a broken text answers that model's finding with its `file`;
+  that an evaluation of the multi-node fixture model answers the result
+  the service's evaluation gives for the same input, of a failing cell
+  answers an `error` record naming node, rule, and column, and of a set
+  with an error answers `422`; that a publish of a blueprint and a new
+  decision model it invokes answers `saved` with `loaded` true, the
+  remote branch holds one new commit with both files and the message,
+  and the list of `blueprints-api` then shows the blueprint loaded; that
+  the same publish again answers `already-saved`; that a publish whose
+  blueprint invokes a model neither the request nor `base` holds answers
+  `422` with the `decision-model` finding in the blueprint's `file`;
+  that a publish of an intake decision model with a `syntax` cell answers
+  `422` and the branch is unchanged; that a publish whose base model file
+  changed on the branch answers `409` `file-changed` with each file's
+  branch text and the branch unchanged; that a publish naming
+  `bindings.yml` or two entries with one path answers `400`; and the
+  `400`, `403`, `404`, `405`, `413`, `415`, and
   `503` answers. Fixtures use a domain unrelated to Manifold.

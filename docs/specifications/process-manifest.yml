@@ -88,7 +88,9 @@ description: |-
      finding of kind `decision-model`, with the decision model finding as
      `finding`, its severity as the finding's severity, and the location
      described below. `decisionNode` keys are read from a model only when
-     its `lintDecisionModel` gives no `structure` finding.
+     its `lintDecisionModel` gives no `structure` finding. This step is
+     `lintDecisionModelSet` of `decision-models`, rooted at the intake
+     decision model.
 
   Decision model finding locations. A `decision-model` finding's location
   is the RFC 6901 JSON Pointer, in the model's document, of the value the

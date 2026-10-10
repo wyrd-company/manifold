@@ -6,6 +6,7 @@ relationships:
     - blueprint-loader
   references:
     - blueprint-expressions
+    - decision-models
     - gates
     - gate-runtime
     - token-lint
@@ -284,6 +285,40 @@ description: |-
             expression: '{ "depot": context.depot }'
         onDone: delivered
         onError: sorting
+  ```
+
+  Decision models. An invoke whose `src` is a decision model path,
+  `decision-models/` followed by a path ending in `.yml`, with the path
+  rules of `ProcessRepositoryRevision`, evaluates that decision model, as
+  `decision-models` defines under Invoked models. The state is a state
+  that evaluates a decision model. The model is the process repository's
+  file at the path at the commit of the actor's blueprint version, for a
+  bundled blueprint as for a repository blueprint, with every model its
+  `decisionNode`s reach at that commit. The invoke's `input` is the
+  evaluation input, an object, static or a mapping; its `onDone` takes
+  the model's result; and its `onError` takes an error that validates
+  against `decision-models`' `#/$defs/decision-model-invoke-error`. An
+  invoke that one state entry runs again, before or after a restart,
+  evaluates again and writes nothing, so the result is the same unless
+  the model reads JSONata's clock or random functions.
+
+  ```yaml
+  states:
+    pricing:
+      invoke:
+        id: quote
+        src: decision-models/parcel-quote.yml
+        input:
+          type: expression.map
+          params:
+            expression: '{ "parcel": context.parcel }'
+        onDone:
+          target: quoted
+          actions:
+            - type: expression.assign
+              params:
+                expression: '{ "quote": event.output.quote }'
+        onError: unpriced
   ```
 
   The guard `in` is built in: `{ type: in, params: { states } }`, where
@@ -580,8 +615,9 @@ description: |-
   4. `implementation-unknown`: a reference names no implementation of its
      kind among the names the lint is given, and is not an expression
      implementation of the right kind or the guard `in`. An invoke `src` that is a blueprint
-     path is a child blueprint, never an unknown implementation; the lint
-     reads no other file. The finding carries
+     path is a child blueprint, and one that is a decision model path
+     evaluates a decision model; neither is an unknown implementation, and
+     the lint reads no other file. The finding carries
      `implementationKind` and `name`, at the reference.
   5. `machine`: XState v5 rejects the configuration when it resolves a
      state node, such as a target or an `initial` that names no state.
@@ -642,6 +678,14 @@ description: |-
       `name`, the field's name. It runs only when the lint is given
       `taskFields` and rule 2 found nothing. An `input` that is a mapping
       is not checked; the write checks it when it runs.
+  13. `decision-model`: an invoke whose `src` is a decision model path
+      that the lint's `decisionModels` does not hold, or holds with an
+      error. The finding is at that `src`, such as
+      `/machine/states/pricing/invoke/src`, and carries `name`, the path,
+      and `reason`: `missing` when the map does not hold the path, and
+      `invalid` when it holds errors, which the finding carries as
+      `modelFindings`. It runs only when the lint is given
+      `decisionModels` and rule 2 found nothing.
 
   Findings are ordered by rule, then by location; expression findings
   keep the expression lint's order. A blueprint with no findings loads.
@@ -675,6 +719,12 @@ description: |-
       string,
       { readonly types: ReadonlySet<"text" | "number" | "date" | "single-select">; readonly options: ReadonlySet<string> }
     >;
+    /**
+     * The decision models rule 13 checks an invoked path against: each path
+     * the commit holds a decision model file at, with the errors of the set
+     * rooted there, empty when it has none; absent skips rule 13.
+     */
+    readonly decisionModels?: ReadonlyMap<string, readonly ProcessManifestFinding[]>;
   }
   type BlueprintLint =
     | {
@@ -716,7 +766,11 @@ description: |-
   names against the same set the service loads with. The service and the
   host CLI pass as `lifecycleOptions` the declared options of
   `task-metadata-declaration` at the blueprint's commit, when that
-  declaration lints clean. `packages/shared` also exports
+  declaration lints clean. They pass as `decisionModels` the decision
+  model paths the blueprint invokes, each that the commit holds with the
+  error findings `lintDecisionModelSet` of `decision-models` gives for
+  the set rooted there; the console's lint passes the same over the
+  draft's model texts, as `blueprints-api` states. `packages/shared` also exports
   `agentToolDefinitions`, the name, description, and input schema of each
   agent tool, from the `agent-tools` schema asset, which the host CLI
   harness plugin serves. `parseBlueprintVersionKey` returns
@@ -791,5 +845,13 @@ validation-criteria: >-
   migration path without `from`, and one whose `context` is a bare
   `expression.map`, are each a `shape` finding. A test shows that the `github-card-move` example in
   this specification lints clean with `lifecycleOptions` holding `Packed`
-  and `github-card-move` among the actor names. Fixtures use a domain
-  unrelated to Manifold.
+  and `github-card-move` among the actor names. Lint tests show that the
+  Decision models example in this specification lints clean with no
+  `decisionModels` and with `decisionModels` holding
+  `decision-models/parcel-quote.yml` with no error, that the path
+  absent from `decisionModels` is a `decision-model` finding at
+  `/machine/states/pricing/invoke/src` with `reason` `missing`, that the
+  path held with a `syntax` error is one with `reason` `invalid` and that
+  error in `modelFindings`, and that no `decisionModels` and no actor
+  names give no `implementation-unknown` for the path. Fixtures use a
+  domain unrelated to Manifold.

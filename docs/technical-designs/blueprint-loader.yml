@@ -211,11 +211,12 @@ proposed-design:
     revision, and reads `task-metadata.yml` and `bindings.yml` at the same
     commit and lints them with `lintTaskMetadataDeclaration`, once per
     commit. It calls `lintBlueprint(path, text, names, {
-    configurationBound, lifecycleOptions })`, where `names` holds the
-    registry's keys of each kind and its `raises` declarations, and
+    configurationBound, lifecycleOptions, decisionModels })`, where `names` holds the
+    registry's keys of each kind and its `raises` declarations,
     `lifecycleOptions` is `declaredLifecycleOptions` of a clean declaration,
     absent when the declaration has findings, which the revision follower
-    reports; any finding fails the version with
+    reports, and `decisionModels` holds the sets of the decision models the
+    version invokes, as decision-models states; any finding fails the version with
     those findings and warnings, and a version that loads keeps its
     warnings and token lint result on its `LoadedBlueprint`. It calls `createBlueprintExpressions` with the
     document's `machine`, `schemas`, and `migrations`, and an `onError`
@@ -224,7 +225,8 @@ proposed-design:
     `setup` with the registry's actors and the child blueprints the version
     invokes, the registry's delays, the registry's guards with the
     expression guards, and the registry's actions with the expression
-    action, and `createMachine` with the returned machine configuration.
+    action, and the evaluation logic of each decision model it invokes,
+    and `createMachine` with the returned machine configuration.
     The shared `in` guard binding of `token-lint` turns each `in` guard
     into XState's `stateIn`. Code supplies only implementations, the child blueprints, and one
     action the loader places first in every state node's `entry`, the root
@@ -325,6 +327,23 @@ proposed-design:
     child that fails leaves its parent loaded. The child runs inside its
     parent's XState system and reports its state entries through the same
     `onStateEntry`.
+  decision-models: >-
+    An invoke whose `src` is a decision model path evaluates that model,
+    as `blueprint` specifies. Before it lints a version, the loader reads
+    the version's invoke sources from the parsed document and, for each
+    that is a decision model path, calls `lintDecisionModelSet` of
+    `decision-models` with the revision's `read`, once per commit and path
+    through the same cache as versions, and passes each path with its
+    error findings as `decisionModels`; a path whose root has no file is
+    left out, so rule 13 reports it `missing`. A version that loads binds
+    each such path as a promise logic named by the path, over that set's
+    parsed models, which evaluates as `decision-models` states under
+    Invoked models. A bundled version reads its models from the
+    repository revision at its commit, as it reads its gate's comparator.
+    The cache holds parsed models, never a `DecisionModels` instance, so
+    no engine outlives its evaluation. `createBlueprintLoader` throws a
+    `TypeError` for a registry actor named with the `decision-models/`
+    prefix, as it does for `blueprints/`.
   latest: >-
     The loader keeps no notion of the latest revision. The caller that
     pulls the process repository calls `loadRevision` with each new
@@ -423,7 +442,12 @@ proposed-design:
     `implementation-missing`; that `onStateEntry` is called for every state
     node entered, the root first, before the state's own entry actions;
     that an actor name `blueprints/a.yml` in the
-    registry throws; and that `serviceImplementations` has
+    registry throws, and so does `decision-models/a.yml`; that a version
+    invoking a decision model the commit holds clean binds its logic, and
+    one whose model is missing or has an error is in `failures` with the
+    `decision-model` finding, while a version at a later commit that
+    fixes the model loads; that two versions at one commit invoking one
+    model read it once; and that `serviceImplementations` has
     exactly the names and `raises` declarations of `manifoldImplementationNames`. A registry guard named `in` throws; a `potential` gate loads
     with its warning and token lint result, a `violation` is in `failures`,
     and a graph exceeding a bound of 10 loads with a `token-unknown` warning.

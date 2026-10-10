@@ -285,6 +285,23 @@ components:
           $ref: "#/components/schemas/BlueprintPath"
         text:
           type: string
+        base:
+          description: The commit whose decision models rule 13 reads; the latest applied revision when absent.
+          type: string
+          pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+        models:
+          description: Decision model texts that replace the files at their paths for rule 13.
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, text]
+            properties:
+              path:
+                type: string
+                pattern: "^decision-models/.+\\.yml$"
+              text:
+                type: string
     LintResponse:
       type: object
       additionalProperties: false

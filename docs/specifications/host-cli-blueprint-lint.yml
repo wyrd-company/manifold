@@ -35,6 +35,12 @@ description: >-
   does. A declaration with findings is reported on standard error as
   `task-metadata.yml: <n> findings; run manifold-host task-metadata lint`
   and ends the command with exit code 2 before any blueprint is linted.
+  With `--repository`, the command also passes as `decisionModels` the
+  sets of the decision models each blueprint invokes, linted with
+  `lintDecisionModelSet` over a reader of the checkout that treats a
+  symbolic link as no file, as `process-manifest` states for the
+  manifest lint, so rule 13 of `blueprint` reports a missing or invalid
+  invoked model; without it, rule 13 does not run.
   With `--repository` and no file argument, the command lints every
   blueprint that repository runs: each blueprint file of the checkout, and
   each blueprint Manifold bundles whose path no file of the checkout
@@ -52,7 +58,8 @@ description: >-
   `implementation-unknown` finding ends with ` (<implementationKind>
   <name>)`; a finding that names a sample ends with ` (sample <sample>)`,
   or ` (sample <sample>, event <type>)` when it names an event type; a
-  token finding ends with ` (gate <statePath>)`. The lint's warnings,
+  token finding ends with ` (gate <statePath>)`; a `decision-model`
+  finding ends with ` (<reason> <name>)`. The lint's warnings,
   `token-potential` and `token-unknown`, are reported on standard output
   in the same form, after the file's findings. A file that is not YAML or
   not a blueprint is a finding, not an error of the command. Files are
@@ -83,7 +90,9 @@ validation-criteria: >-
   blueprint without `--repository`; exit 1 with a `lifecycle-option` line
   for a bundled blueprint's path when `--repository` is given with no file
   and the checkout's declaration lacks a status that bundled blueprint
-  sets, and no line for that path when the checkout replaces it with a
+  sets; exit 1 with a `decision-model` line for a blueprint invoking a
+  decision model the checkout does not hold, and exit 0 for it without
+  `--repository`; and no line for that path when the checkout replaces it with a
   clean file; and exit 2 with no standard output for a checkout whose
   `task-metadata.yml` has a `schema` finding. For each
   token-lint fixture of `token-lint`,

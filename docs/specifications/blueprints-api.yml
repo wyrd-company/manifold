@@ -96,10 +96,17 @@ description: >-
   bundled path answers with no `commit`, and any other path answers
   `503`.
 
-  **Lint.** `POST /api/blueprints/lint` takes `{ path, text }` and answers
-  `200` with `findings`, `warnings`, and `graph` when the text has one. It
-  reads and writes nothing else. `path` names the file the findings
-  belong to and need not exist.
+  **Lint.** `POST /api/blueprints/lint` takes `{ path, text, base?,
+  models? }` and answers `200` with `findings`, `warnings`, and `graph`
+  when the text has one. `path` names the file the findings belong to and
+  need not exist. Rule 13 of `blueprint` checks each decision model the
+  text invokes in the set `lintDecisionModelSet` reads at `base`, the
+  latest applied revision when absent, through a reader that answers the
+  text of each entry of `models`, `{ path, text }` with a decision model
+  path, in place of the revision's file at that path, so that the
+  findings follow the console's model drafts. A `base` the process
+  repository does not hold answers `400`, and so do two `models` entries
+  with one path. It reads and writes nothing else.
 
   **Save.** `POST /api/blueprints/save` takes `{ path, base, text, message,
   saveId }`. `path` is a blueprint path. A save of a bundled blueprint's
@@ -183,6 +190,10 @@ validation-criteria: >-
   behind only on other files answers `saved` on top of the remote's
   commit; that a branch moved before each of the save's two pushes answers
   `409` with reason `branch-moved`, and a push refused with the branch
-  unmoved answers `502` `rejected`; that a text with a finding
+  unmoved answers `502` `rejected`; that a lint of a text invoking
+  `decision-models/a.yml` answers a `decision-model` finding with
+  `reason` `missing` when the revision holds no such file, none when
+  `models` holds a clean text at the path, and one with `reason`
+  `invalid` when `models` holds a text with a `syntax` cell; that a text with a finding
   answers `422`; and the `400`, `403`, `404`, `405`, `413`, `415`, and `503`
   answers.

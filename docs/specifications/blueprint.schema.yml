@@ -381,9 +381,13 @@ $defs:
     additionalProperties: false
     properties:
       src:
-        description: An actor implementation name, or a blueprint path that invokes a child blueprint.
+        description: >-
+          An actor implementation name, a blueprint path that invokes a
+          child blueprint, or a decision model path that evaluates a
+          decision model.
         anyOf:
           - $ref: "#/$defs/blueprint-path"
+          - $ref: "#/$defs/decision-model-path"
           - $ref: "#/$defs/implementation-name"
       id:
         type: string
@@ -404,6 +408,10 @@ $defs:
     description: The repository-relative path of a blueprint file.
     type: string
     pattern: "^blueprints/.+\\.ya?ml$"
+  decision-model-path:
+    description: The repository-relative path of a decision model file an invoke evaluates.
+    type: string
+    pattern: "^decision-models/.+\\.yml$"
   child-blueprint-error:
     description: The error an invoke of a child blueprint that cannot run fails with.
     type: object
@@ -618,6 +626,7 @@ $defs:
           - lifecycle-option
           - event-unknown
           - task-field-value
+          - decision-model
       location:
         description: The RFC 6901 JSON Pointer of the failing value in the document.
         type: string
@@ -643,8 +652,19 @@ $defs:
           For `implementation-unknown`, the name referenced; for
           `lifecycle-option`, the `status` that is not a declared option; for
           `event-unknown`, the event type declared; for `task-field-value`,
-          the task field's name.
+          the task field's name; for `decision-model`, the decision model path.
         type: string
+      reason:
+        description: For `decision-model`, `missing` or `invalid`.
+        enum:
+          - missing
+          - invalid
+      modelFindings:
+        description: For `decision-model` with `reason` `invalid`, the errors of the model set.
+        type: array
+        minItems: 1
+        items:
+          $ref: "https://manifold.wyrd.company/schemas/process-manifest#/$defs/finding"
       expression:
         type: string
       code:

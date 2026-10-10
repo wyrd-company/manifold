@@ -1033,7 +1033,8 @@ a state: Basics (key, id, description, type, initial child, and, for a
 history state, shallow or deep and its default target), Transitions, Entry
 actions, Exit actions, Invoke, Gate, Meta, Tags, and Output. The root is the
 Blueprint inspector: Basics (description, machine id, type, initial
-child), Context, Schemas, Layout, and the state groups other than Gate.
+child), Context, Schemas, Intake, Layout, and the state groups other than
+Gate.
 Groups for a transition: Trigger (event type, delay, or invoke), Target,
 Guard, Actions, and Details (reenter, description, order, meta). A group
 that the node's type does not use shows only while it holds a value. "More
@@ -1053,7 +1054,10 @@ of the properties not shown; choosing one adds its group.
   check), or "Not declared" in muted text with "Declare contract"
   (outline); `id` and `systemId` in mono; its input; and its done, error,
   and snapshot transitions as Transitions rows. Unknown names show their
-  line in warning text.
+  line in warning text. An invoke of a decision model shows the decision
+  model card in place of the description.
+- **Intake** shows "Tasks start from the intake decision model", the
+  model's path in mono, and the decision model card.
 - **Gate** shows "Add gate" (outline) with no gate. A gate shows its
   comparator path (mono), its return point, the "Reservation" switch, the
   token event type (mono), the dependencies region, and "Remove gate"
@@ -1081,7 +1085,8 @@ not parse shows the parse error under it and is not applied.
 
 The editor validates the draft as it changes. A strip under the view
 shows the count of errors (error color) and warnings (warning color) and
-lists each problem with its state path; a problem selects the node or
+lists each problem with its state path, or a decision model's problem with
+the model's path; a problem selects the node or
 edge it marks on the canvas, or its line in the YAML view. The strip
 collapses to its 36px header.
 
@@ -1112,11 +1117,51 @@ outputs as mono column headers, output columns on the `accent` surface, one
 row per rule, cells labeled "JSONata", "Add rule", "Add input", "Add output",
 and "Apply to draft".
 
+- The decision model card: one line per decision table, at most three, as
+  "12 rules · first · weight, zone" with the inputs in mono and the
+  table's name first when the model has several, then "+N more tables";
+  and "Open decision model" (outline). A model with problems adds "N
+  problems" in error or warning text. A path with no file shows "No
+  decision model at <path>" in warning text and "Create decision model"
+  (outline); a file the editor cannot read shows "Cannot read this model"
+  in error text with the first problem.
+- Dialog header: "Decision model", the path in mono, a "N changes" badge
+  (warning) while it holds unapplied changes, and a Visual / YAML
+  segmented control. Visual is the editor, 560px high, with its graph tab
+  and a tab per open node; YAML is the model in the code editor, full
+  width. When the editor cannot draw the model, Visual is disabled and an
+  info alert says "The editor cannot draw this model. Fix it in the YAML
+  view."
+- The graph tab's toolbar has "Add node" (outline): JSONata decision
+  table, JSONata expression, JSONata switch, Decision model, Input, and
+  Output. Node cards use the canvas's node look: `card` surface, 1px
+  `input` border, 8px radius, the node's name in mono (weight 600), and
+  the settings (Pass through, Input field, Output path, Loop) under it.
+- A decision table's tab has a 40px toolbar: the hit policy (a select of
+  `first` and `collect`), then "Add rule", "Add input", and "Add output"
+  (outline). Cells are one-line JSONata code fields in mono with
+  "JSONata" as the placeholder.
+- A switch's node lists its statements, each a JSONata condition field
+  with its handle on the right; a statement with a blank condition is
+  labeled "Default". "Add statement" (ghost) ends the list.
+- A cell, field, or node with a problem has an error or warning border.
+  Under the editor, a Problems box lists each problem with its node, rule,
+  and column; selecting one opens its tab and focuses the cell.
+- Evaluate, a collapsible section under Problems: an Input YAML field and
+  "Evaluate" (outline). A result shows as read-only YAML; a failure shows
+  its message with the node, rule, and column, and borders the failing
+  cell in error color.
+- Footer: "Cancel" (secondary) and "Apply to draft" (primary). Cancel with
+  unapplied changes asks first, in a 400px alert dialog, "Discard changes
+  to <path>?", with a solid error confirm. While the draft is a pending
+  save the editor is read only and the footer has "Close".
+
 #### Publish
 
 A 480px dialog: the changed files with their git status letter (A success,
-M warning) and path in mono, a commit message, and the target repository and
-branch. "Commit and push" commits and pushes.
+M warning) and path in mono, the blueprint first and then its decision
+models, a commit message, and the target repository and branch. "Commit and
+push" commits and pushes every listed file in one commit.
 
 ### GitHub Projects
 
@@ -1369,6 +1414,9 @@ with the same name as the design canvas uses:
   used by the blueprint editor and Task fields.
 - The decision model editor is `@gorules/jdm-editor`, themed with Manifold's
   tokens.
+- `DecisionModelCard`: the summary and "Open decision model" that an
+  invoke and the Intake group show.
+- `DecisionModelDialog`: the decision model editor's dialog.
 - YAML is read and written with the `yaml` package's document model, so
   that comments survive edits from the schema table.
 
