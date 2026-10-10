@@ -55,7 +55,10 @@ $defs:
         type: [string, "null"]
         minLength: 1
       tokens:
-        type: object
+        description: >-
+          The call's token counts, or null for an unmetered call, whose
+          provider records no token counts.
+        type: [object, "null"]
         additionalProperties: false
         required:
           - input
@@ -88,6 +91,15 @@ $defs:
         enum: [call, session-total]
       estimated:
         type: boolean
+    if:
+      properties:
+        tokens:
+          type: "null"
+      required: [tokens]
+    then:
+      properties:
+        granularity:
+          const: call
   unit:
     type: object
     additionalProperties: false

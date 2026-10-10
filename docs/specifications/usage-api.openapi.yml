@@ -148,7 +148,7 @@ components:
     UnownedEntry:
       type: object
       additionalProperties: false
-      required: [actor, kind, environment, lastUsedAt, pending, usage]
+      required: [actor, kind, environment, lastUsedAt, pending, unmetered, usage]
       properties:
         actor:
           $ref: "#/components/schemas/UnownedActor"
@@ -181,6 +181,10 @@ components:
         pending:
           type: integer
           minimum: 0
+        unmetered:
+          type: integer
+          minimum: 0
+          description: The number of its calls whose provider records no token counts.
         usage:
           type: array
           items:

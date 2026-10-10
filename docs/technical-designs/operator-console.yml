@@ -487,7 +487,13 @@ proposed-design:
     ```
 
     Tokens. A token total is the `total` of a usage answer's `tokens`;
-    the tooltip of a token total shows each class.
+    the tooltip of a token total shows each class. When the answer's
+    `unmetered` is above 0, the total carries "+ <unmetered> unmetered
+    calls" muted beside it, and its tooltip adds "The provider records no
+    token counts for these calls, so they have no cost."; a call with `total` null shows "Unmetered" in
+    place of its tokens. An actor whose counted calls are all unmetered
+    shows "<n> unmetered calls" in place of its token total and a muted
+    dash in place of its cost.
 
     Visits. A visit is a history `StateVisit`, with its `visit` number
     and `states`. It runs from `enteredAt` to `exitedAt`, or, when it has
@@ -3902,7 +3908,8 @@ proposed-design:
     actors of unowned usage for the selected account under the heading
     "Unowned usage" and the muted line "Usage from threads no task owns.
     Move it to the item or task it was for." It lists an entry that has
-    usage on the selected account or pending calls, in the read's order;
+    usage on the selected account, pending calls, or unmetered calls, in
+    the read's order;
     with none, the section shows the muted line "No unowned usage." alone.
     The columns, as `DESIGN.md` lays them out, are Thread, Counts on,
     Amount, Last used, and a "Move" button (outline, small). Thread is
@@ -3913,7 +3920,8 @@ proposed-design:
     the entry's usage on the account is held on, joined by ", ", from the
     portfolio read, else the item id. Amount is the sum of the entry's
     usage on the account, formatted by `amounts`, with "N calls" muted
-    under it and, when `pending` is above 0, a "N pending" muted badge.
+    under it and, when `pending` is above 0, a "N pending" muted badge,
+    and when `unmetered` is above 0, a "N unmetered" muted badge.
     Last used is "about <duration> ago" from `lastUsedAt` by the
     duration rule of the budget source cards. The first 20 entries show;
     "Show all (N)" shows the rest. A failed read shows an error alert with
@@ -4569,7 +4577,11 @@ proposed-design:
     line "<n> models in use have no price" lists each as "<provider> ·
     <model>", or "<provider> · no model name", with "<postings> calls
     waiting", and the muted line "Price them in prices.yml. Their calls
-    are charged when the price is in force."
+    are charged when the price is in force." When `unmetered` has
+    entries, a muted line "<n> models in use report no token counts"
+    lists each as "<provider> · <model>", or "<provider> · no model name",
+    with "<postings> unmetered calls", and the muted line "Their calls are
+    counted on their tasks without tokens or cost."
   account-dialog: >-
     `AccountDialog` is the 520px dialog of `DESIGN.md`, titled "Add
     account" or "Edit <name>". Its fields: Kind, a segmented control "API

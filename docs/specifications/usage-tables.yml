@@ -64,8 +64,10 @@ description: >-
   null for the ledger actors of unowned usage. The module keeps no
   visits of its own. A posting is
   `pending` with a `reason`, `unaccounted` with no `account`, `unpriced`,
-  or `no-window`, or `posted` with its `account`, its `amount` in the
-  account's unit, its `ledger_key`, and `posted_at`. A pending posting
+  `no-window`, or `unmetered` for an unmetered call, whose `base_tokens`,
+  `tokens`, and its call's `charged` are JSON null and which never posts;
+  or `posted` with its `account`, its `amount` in the account's unit, its
+  `ledger_key`, and `posted_at`. A pending posting
   changes only to `posted`, to pending with another reason and account,
   or, while its `actor` is a ledger actor of unowned usage, to the
   attribution its session's mapping or its thread's ownership gives; a

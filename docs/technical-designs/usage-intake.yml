@@ -35,6 +35,7 @@ terms:
   - reservation
   - settlement
   - state-visit
+  - unmetered-call
   - unowned-usage
   - usage-move
   - usage-unit
@@ -259,7 +260,9 @@ proposed-design:
     call record of granularity `call` whose key the environment already
     holds is replayed and writes nothing. A new one is stored with its
     tokens as the key's charged tokens, and one posting is made for it
-    with revision 1, base tokens all 0, and the call's tokens. A call
+    with revision 1, base tokens all 0, and the call's tokens. A new
+    unmetered call, whose `tokens` is null, is stored and posted as
+    `unmetered-calls` states. A call
     record of granularity `session-total` charges the high-water mark of
     its key: each token class at the greatest count any copy of the key
     has carried. A copy that carries no class above the key's charged
@@ -460,7 +463,8 @@ proposed-design:
     answers how many postings it moved, zero postings included, and the
     amount per account of every account a moved posting is on, 0 for an
     account whose moved postings are all 0. A
-    pending posting is not moved: it has counted against nothing, and
+    pending posting other than an unmetered one is not moved: it has
+    counted against nothing, and
     once it posts it is unowned usage that a later move takes. A move
     that finds nothing to move writes nothing and answers 0. After a
     move that moved a posting, the service tells the gates their input
@@ -537,6 +541,26 @@ proposed-design:
     service after its actor ended counts in the actor's actual and
     variance through its late attribution. `actorUsage(actor)` reads the
     task's estimate, actual, and variance.
+  unmetered-calls: >-
+    An unmetered call is a call record whose `tokens` is null: its
+    provider records no token counts for it, as `usage-record` defines.
+    Push stores it with charged tokens null and makes one posting with
+    revision 1, base tokens and tokens null, the attribution any call
+    gets, and the account the declaration in force gives it when the
+    posting is made, or none. The posting is pending with reason
+    `unmetered`, has no amount, and never posts: no price applies to
+    counts that do not exist, and no amount is invented for it. A copy of
+    its key is replayed. `retryPending` leaves it alone, and a late
+    attribution reattributes it as it does a pending posting. A usage
+    move takes it as it takes a posted posting of amount 0: a `move`
+    reattribution with no ledger key and no ledger write. The actor usage
+    read lists it as a call with no total and counts it as `unmetered`, so
+    an actor's actual and variance read as covering only its metered
+    calls; the unowned usage read and the portfolio read's `pricing`
+    count it the same way, so the console shows every unmetered call by
+    provider and model. The push answer counts it as `unmetered`. A
+    store holding postings that an earlier decoder made from token counts
+    derived from text keeps them; their keys replay.
   posting: >-
     A posting resolves its account, then its amount, then posts. The
     account is the one the accounts declaration in force gives the call's
@@ -567,7 +591,8 @@ proposed-design:
     pending, so no call is dropped and the tokens of a call on a model
     with no price are recorded.
   pending: >-
-    `retryPending()` resolves every pending posting again, oldest first,
+    `retryPending()` resolves every pending posting but an unmetered one
+    again, oldest first,
     in one transaction, and returns how many it posted and how many stay
     pending by reason. `apply` calls it after it accepts a declaration.
     The service calls it once at start, after it follows the head
@@ -831,6 +856,17 @@ proposed-design:
 
     - Unaccounted: a call from a provider no account names is pending
       `unaccounted`, and posts after a revision declares its account.
+
+    - Unmetered: a `cursor` call with `tokens` null on `session-1`,
+      mapped to `thread-1` of `actor-1`, is answered `unmetered`, is
+      pending `unmetered` with no amount on `actor-1` in the visit its
+      timestamp falls in, stays so after `apply` and `retryPending`, is
+      replayed when pushed again and after a service restart on the same
+      file, appears in the actor usage read as a call with no total and
+      an `unmetered` count of 1 with the actor's actual 0, and in the
+      portfolio read's `pricing.unmetered`. The same call on an unmapped
+      session is unowned usage that a move to `beta` takes with no ledger
+      write.
 
     - Replay: the same request twice answers `accepted` then `replayed`
       for every call, and the ledger holds one actual per call.

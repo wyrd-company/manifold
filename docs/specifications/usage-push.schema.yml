@@ -67,11 +67,13 @@ $defs:
       calls:
         type: object
         additionalProperties: false
-        required: [accepted, pending, replayed]
+        required: [accepted, pending, unmetered, replayed]
         properties:
           accepted:
             $ref: "#/$defs/count"
           pending:
+            $ref: "#/$defs/count"
+          unmetered:
             $ref: "#/$defs/count"
           replayed:
             $ref: "#/$defs/count"

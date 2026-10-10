@@ -179,7 +179,7 @@ components:
     Pricing:
       type: object
       additionalProperties: false
-      required: [bundledCommit, bundledModels, overrides, unpriced]
+      required: [bundledCommit, bundledModels, overrides, unpriced, unmetered]
       properties:
         bundledCommit:
           type: string
@@ -193,6 +193,24 @@ components:
           minimum: 0
           description: The number of model entries of `prices.yml` in force.
         unpriced:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [provider, model, postings]
+            properties:
+              provider:
+                enum: [claude, codex, cursor, grok, opencode]
+              model:
+                oneOf:
+                  - type: string
+                    minLength: 1
+                  - type: "null"
+              postings:
+                type: integer
+                minimum: 1
+        unmetered:
+          description: Each provider and model with calls whose provider records no token counts.
           type: array
           items:
             type: object

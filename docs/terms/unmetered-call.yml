@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the designs that define it.
+relationships:
+  references:
+    - usage-record
+    - usage-decoder
+    - usage-intake
+title: Unmetered call
+description: >-
+  A call whose provider records no token counts for it, which Manifold counts on its thread, actor, and account with no tokens and no cost.

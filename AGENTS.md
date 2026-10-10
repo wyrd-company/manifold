@@ -156,6 +156,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **trap** a configuration of a task actor holding a gate's token from which no run that keeps the token reaches the gate's return point.
 - **turn** a single, complete cycle of work executed by an agent in response to a user prompt
 - **unallocated remainder** the part of a parent's limit that no child's allocation guarantees, which its children borrow up to their ceiling.
+- **unmetered call** a call whose provider records no token counts for it, which Manifold counts on its thread, actor, and account with no tokens and no cost.
 - **unowned usage** the posted calls attributed to a thread that no actor owns, or to a provider session whose thread the service does not know.
 - **usage move** an operator's re-attribution of a posted call from unowned usage to a portfolio item or an actor, which the ledger carries to the new item in the window the call spent, keeping its account and amount.
 - **usage unit** a session, subagent, or child thread whose calls one provider session file records.

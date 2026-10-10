@@ -98,7 +98,9 @@ description: >-
     force; and `unpriced` each provider and model with postings waiting
     for a price, with `provider`, `model` (`null` for a call that named no
     model), and `postings`, the number waiting, ordered by provider, then
-    model with `null` first.
+    model with `null` first; and `unmetered` each provider and model with
+    unmetered calls, whose provider records no token counts, in the same
+    shape and order, `postings` the number of those calls.
 
   - `warnings`: the warnings of the declarations in force: the
     `lintAllocatedAccounts` warnings of `portfolio.yml` at the commit of

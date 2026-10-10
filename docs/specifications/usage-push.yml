@@ -71,14 +71,15 @@ description: |-
   the request is committed to its store, with a body of counts. `calls`
   counts the call records: `accepted`, new or grown, whose posting posted;
   `pending`, new or grown, whose posting waits for an account, a price,
-  or a ledger window; and `replayed`, already held. `threads` counts the
+  or a ledger window; `unmetered`, new calls with no token counts, whose
+  posting never posts; and `replayed`, already held. `threads` counts the
   mappings: `accepted`, new; `replayed`, held with the same thread; and
   `conflicting`, held with a different thread, which keeps the thread it
   was first recorded with. `sourceErrors` counts the source error records.
 
   ```json
   {
-    "calls": { "accepted": 1, "pending": 0, "replayed": 0 },
+    "calls": { "accepted": 1, "pending": 0, "unmetered": 0, "replayed": 0 },
     "threads": { "accepted": 1, "replayed": 0, "conflicting": 0 },
     "sourceErrors": 0
   }

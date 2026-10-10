@@ -54,6 +54,9 @@ description: |-
     counted as 0 for a posting whose provider is `codex`, whose `output`
     already counts its reasoning tokens, as `price-table` counts them.
     `cacheWriteOneHour` is part of `cacheWrite` and is not listed.
+  - `unmetered`: the number of counted calls that are unmetered calls,
+    which count in no token class and no account, so `tokens` and
+    `accounts` cover the actor's other calls only.
   - `accounts`: one entry per account with a posted counted posting,
     in account name order, `{ account, actual, unit }`. `actual` is the
     sum of their amounts in the account's native unit, and equals the
@@ -62,12 +65,12 @@ description: |-
     declares for the account, and is absent for an account it does not
     declare.
   - `visits`: one entry per state visit number that a counted posting
-    names, in visit order, `{ visit, enteredAt, tokens, accounts }`.
+    names, in visit order, `{ visit, enteredAt, tokens, unmetered, accounts }`.
     `visit` is the number of the actor's state visit, the `visit` of the
     same visit in the actor's history that `actors-api` answers, so a
     migration to a later blueprint version starts a visit here as it
     does there; `enteredAt` is that visit's `enteredAt`, an ISO 8601 UTC
-    date and time with milliseconds; `tokens` and `accounts` are as above over the postings
+    date and time with milliseconds; `tokens`, `unmetered`, and `accounts` are as above over the postings
     counted in that visit, `accounts` with `{ account, actual }` only. A
     visit with no counted posting is not listed. A counted posting that
     names no visit counts in the totals and in no visit.
@@ -78,9 +81,10 @@ description: |-
     `{ environment, threadId }`, the T3 Code thread the session that made
     the call runs on, from the session's mapping, or null when no mapping
     names one. `visit` is the visit the posting counts in, or null.
-    `total` is the posting's token total, by the rule of `tokens.total`.
-    `account` and `actual` are the posting's account and amount, both
-    null for a pending posting. Each counted posting is listed once, so a
+    `total` is the posting's token total, by the rule of `tokens.total`,
+    or null for an unmetered call, whose provider records no token
+    counts. `account` and `actual` are the posting's account and amount,
+    both null for a pending posting. Each counted posting is listed once, so a
     reader that sums a partition of `calls` counts every call once.
 
   Errors. A path under `/api/usage/actors/` with more than one segment

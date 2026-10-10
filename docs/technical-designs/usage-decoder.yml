@@ -14,8 +14,9 @@ relationships:
 objective: >-
   Turn the provider session files on one environment into calls that the
   service can price and post as actuals, each with its timestamp, model,
-  every token class, provider session id, and the usage unit that made it,
-  without spawning a process and without losing a call.
+  every token class the provider reports, provider session id, and the
+  usage unit that made it, without spawning a process, without losing a
+  call, and without presenting a count the provider did not report.
 background:
   current-design: >-
     The portfolio design states that the host CLI reads provider session
@@ -42,6 +43,10 @@ background:
     - >-
       Harnesses change their log shapes without notice, and a session file
       is read while its harness still writes it.
+    - >-
+      Cursor keeps a session that T3 Code runs in an undocumented ACP
+      session store that the library does not decode, writes no agent
+      transcript for it, and records no token counts for its calls.
 design-challenges:
   one-seam: >-
     Five providers, five layouts, and two storage kinds must sit behind one
@@ -56,6 +61,10 @@ design-challenges:
   drift: >-
     A new library release or a new harness shape must change a test result
     before it changes an actual.
+  absent-counts: >-
+    A call whose provider records no token counts must still reach its
+    thread, actor, and account, and must not carry counts that look
+    measured.
 proposed-design:
   high-level-overview: >-
     The usage decoder is one module in `packages/host-cli/src/usage/`. Its
@@ -101,12 +110,18 @@ proposed-design:
     `agent-<agent-id>.meta.json`. `codex` uses
     `@codeburn/core/providers/codex` over `<root>/sessions/**/*.jsonl` and
     `<root>/archived_sessions/**/*.jsonl`. `cursor` uses
-    `@codeburn/core/providers/cursor-agent` over
-    `<root>/projects/*/agent-transcripts/*.{txt,jsonl}` and
-    `<root>/projects/agent-transcripts/*.{txt,jsonl}`, with the row for the
-    conversation from the `conversation_summaries` table of
+    the decoder's own ACP session adapter over every
+    `<root>/acp-sessions/<session-id>/store.db`, the sessions T3 Code runs,
+    as `cursor-sessions` states, and `@codeburn/core/providers/cursor-agent`
+    over the agent transcripts of the runs Cursor makes outside the Agent
+    Client Protocol: `<root>/projects/*/agent-transcripts/<id>/<id>.{txt,jsonl}`,
+    `<root>/projects/*/agent-transcripts/<id>.{txt,jsonl}`, and
+    `<root>/projects/agent-transcripts/<id>.{txt,jsonl}`, with the row for
+    the conversation from the `conversation_summaries` table of
     `<root>/ai-tracking/ai-code-tracking.db`, or a null summary when the
-    database or row is absent. `grok` uses `@codeburn/core/providers/grok`
+    database or row is absent. The summary's integer `updatedAt` is handed
+    to the library as its decimal text. A transcript's `turn_ended` record
+    is a record type the adapter recognizes. `grok` uses `@codeburn/core/providers/grok`
     over each session directory `<root>/sessions/<cwd>/<session>/` holding
     `summary.json`, an optional `signals.json`, and `updates.jsonl`.
     `opencode` uses `@codeburn/core/providers/opencode-session` over the
@@ -165,8 +180,8 @@ proposed-design:
     source's stamp names its real path and every file the decode of that
     source reads, with each file's size and modification time in epoch
     milliseconds: the transcript and its `.meta.json` for `claude`, the
-    rollout for `codex`, the transcript and the tracking database for
-    `cursor`, the session directory's files for `grok`, and the session,
+    rollout for `codex`, the store for a `cursor` ACP session and the
+    transcript and the tracking database for a `cursor` transcript, the session directory's files for `grok`, and the session,
     message, and part files, or the database, for `opencode`; a database's
     stamp includes its `-wal` file when one exists. The decoder takes each
     stamp before it reads the source, so a file that grows during the read
@@ -199,8 +214,10 @@ proposed-design:
     `payload.source.subagent.thread_spawn.parent_thread_id`. A rollout with
     a parent is a `child-thread` unit, and one without is a `session` unit.
     `name` is `agent_nickname` and `role` is `agent_role`, read from the
-    payload, else from `thread_spawn`. `cursor`: each transcript is a
-    `session` unit whose id is the conversation id. `grok`: each session
+    payload, else from `thread_spawn`. `cursor`: each ACP session store is
+    a `session` unit whose id is the name of its directory, the session id
+    T3 Code holds, and each transcript is a `session` unit whose id is the
+    conversation id, the transcript's file stem. `grok`: each session
     directory is a `session` unit whose id is the library's session id.
     `opencode`: each session row or session file is a unit whose id is the
     session id. A session with a `parent_id` is a `subagent` unit with that
@@ -218,15 +235,59 @@ proposed-design:
     when it is empty. The timestamp is the library's timestamp written by
     `Date.prototype.toISOString`. A call whose timestamp does not parse
     takes the source's modification time and is `estimated`. A call is
-    `estimated` when the library marks its cost estimated, when its provider
-    is `cursor`, whose token counts the library derives from text length, or
-    when its timestamp came from the source. Grok and the OpenCode
+    `estimated` when the library marks its cost estimated, or when its
+    timestamp came from the source or from another record than the call's
+    own. A `cursor` call has `tokens` null: Cursor records no token counts
+    for a call, and the decoder neither derives counts from text nor
+    writes 0 for a count it does not have, so it drops the counts the
+    library derives from a transcript's text length. Its model is the
+    model Cursor names for the call, or null, and never a name the
+    library or the decoder supplies for an absent model. Grok and the OpenCode
     session-level arm report one running total for a session, so their call
     has granularity `session-total`. Every other call has granularity
     `call`. The key of a `call` record is `<provider>/<library dedup key>`.
     The key of a `session-total` record is
     `<provider>/<unit id>/session-total`, so a later decode of a grown
     session yields the same key with larger counts.
+  cursor-sessions: >-
+    An ACP session store is a SQLite database the decoder opens read-only
+    and reads one statement from, `SELECT id, data FROM blobs`; it never
+    reads the `meta` table, which holds a blob encryption key. A blob is a
+    JSON message when its data parses as a JSON object, and otherwise a
+    Protocol Buffers record, which the decoder reads with its own wire
+    reader of varint and length-delimited fields; a record that does not
+    read as wire format, or that is neither kind below, is skipped as
+    content the decoder does not need. A conversation state is a record
+    with a varint field 26, the conversation's creation time in epoch
+    milliseconds, and repeated field 1, each the 32 bytes of a message's
+    blob id. A tool record is a record whose field 2 holds a string field
+    57, a tool-call id, and varint fields 59 and 60, the tool call's start
+    and end times in epoch milliseconds. Each JSON message whose `role` is
+    `assistant` is one call, one model response. Its key is
+    `cursor/<session-id>/<blob id>`: the blob id is the hash of the
+    message's content, which never changes and does not depend on the
+    order or number of the store's other blobs, while the message's own
+    `id` repeats within a session. Its model is the first
+    `providerOptions.cursor.modelName` of its `content` parts. Its
+    timestamp is the earliest start time of the tool records whose
+    tool-call ids its `tool-call` parts hold. A call with no such tool
+    record takes the latest end time of the tool records of the calls
+    before it in the message order, else the conversation's creation
+    time, and is `estimated`. The message order is the order of the
+    conversation state with the most message references, followed by the
+    messages that only other states reference, in the order of the first
+    state, by length, that references each. A JSON message whose `role`
+    is not `system`, `user`, `assistant`, or `tool` is an `unknown-record`;
+    an assistant message whose `content` is not an array is a
+    `malformed-record` and yields no call. A store that cannot be opened,
+    or that has no `blobs` table, is `unreadable`. SQLite gives each read
+    one consistent snapshot of the store and its write-ahead log, so a
+    session Cursor still writes yields the calls committed at the read and
+    no partial record. The `firstRecord` of a store's errors is the index
+    of the blob in ascending blob id order. The store's record field
+    numbers are not documented by Cursor; the `t3code-session-mapping`
+    spike records them as measured, and the fixture store and the golden
+    output gate them.
   unpriced-models: >-
     The decoder emits every call the library decodes, whatever its model,
     including a call with no model. It holds no price table. The service
@@ -281,15 +342,24 @@ proposed-design:
     root session id, a Codex fork in `archived_sessions/` whose origin is in
     `sessions/` and which replays the origin's calls and adds calls of its
     own, a second fork whose origin file is absent, an OpenCode child
-    session in a database, a Cursor conversation with and without a summary
-    row, a Grok session, a call on a model no price table holds, a call with
+    session in a database, a Cursor ACP session store, a Cursor transcript
+    in each of the three layouts, `.txt` and `.jsonl`, with and without a
+    summary row, a Grok session, a call on a model no price table holds, a call with
     no model, a truncated file, a line that does not parse, and a record of
     an unknown type. `fixtures/expected.jsonl` holds the exact records
     `decodeUsage` yields over every fixture root. The golden test decodes
     the fixture roots and compares the records with that file, so a library
     release or an adapter change that alters any record fails it. Each
     fixture provider directory holds `shape.yml`, naming the harness
-    version whose record shapes it follows.
+    version whose record shapes it follows. The Cursor ACP session store
+    is built by the test from SQL in the fixture directory, whose JSON
+    messages hold generic text and whose records are hexadecimal
+    literals: a conversation state in two revisions, the later one
+    referencing one more message; assistant messages with one and with two
+    tool calls on two models, one with no tool call, and one with no model
+    name; tool records for each tool call; one message with an unknown
+    role and one assistant message whose content is not an array; and one
+    blob that is not wire format.
   tests: >-
     Tests drive `decodeUsage`, `defaultUsageRoots`, and `runUsageCommand`
     only, and never an adapter. The SQLite fixtures are built by the test
@@ -312,4 +382,7 @@ proposed-design:
     fixture roots and checks that its records, in order, equal
     `fixtures/expected.jsonl`, that every source is named by exactly one
     batch, and that a `skip` answering true for a source leaves its calls
-    out and its stamp's files unread.
+    out and its stamp's files unread. A Cursor test decodes the ACP fixture
+    store, adds the blobs of one more turn, decodes it again, and checks
+    that every earlier record is unchanged, that only the new turn's calls
+    are added, and that no Cursor call has token counts.

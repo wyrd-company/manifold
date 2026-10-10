@@ -26,17 +26,22 @@ description: >-
   null when it reports none. `tokens` holds every token class as a
   non-negative integer: `input`, `output`, `cacheRead`, `cacheWrite`,
   `cacheWriteOneHour`, `reasoning`, and the count `webSearchRequests`.
+  `tokens` is null for an unmetered call, a call whose provider records
+  no token counts for it; a count is never 0 in place of a count the
+  provider did not record, and never derived from the call's text.
   `cacheWriteOneHour` is the part of `cacheWrite` written with a one-hour
   lifetime and is never greater than `cacheWrite`. `speed` is `standard` or
-  `fast`. `estimated` is true when the decoder derived the token counts or
-  the timestamp rather than reading them from the provider.
+  `fast`. `estimated` is true when the decoder derived the timestamp
+  rather than reading the call's own time from the provider, or when the
+  provider marks the counts it reports as estimated.
 
   Granularity. A call record with `granularity` `call` is one model
   request; its key and counts never change. A call record with
   `granularity` `session-total` is the running total of a session whose
   provider reports no per-request counts; a later decode yields the same key
   with counts equal to or greater than before, and the latest record for a
-  key replaces the earlier ones.
+  key replaces the earlier ones. An unmetered call has granularity
+  `call`.
 
   Source error record. `type` is `source-error`. `provider` and `source`,
   the absolute path of the file, directory, or database, name the source.
@@ -57,6 +62,7 @@ validation-criteria: >-
   Every record that `decodeUsage` yields and every line that `manifold-host
   usage decode` writes validates against
   `docs/specifications/usage-record.schema.yml`. Within one decode, call
-  record keys are unique and `tokens.cacheWriteOneHour` is at most
-  `tokens.cacheWrite`. The golden fixture suite in
-  `packages/host-cli/src/usage/fixtures/` checks both.
+  record keys are unique, `tokens.cacheWriteOneHour` is at most
+  `tokens.cacheWrite`, and every `cursor` call has `tokens` null. The
+  golden fixture suite in `packages/host-cli/src/usage/fixtures/` checks
+  all three.

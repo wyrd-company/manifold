@@ -513,7 +513,11 @@ attach to items; an item can hold several of either kind. Estimated reset
 times read
 "Resets in about …". An actor that used a model with no price shows a "No
 price" warning badge in the Actors list and "No price" with the model named on
-the actor page.
+the actor page. Calls whose provider records no token counts, such as
+Cursor's, are unmetered: a usage total shows "+ N unmetered calls" muted
+beside it, an actor with only unmetered calls shows "N unmetered calls"
+and a muted dash for its cost, and such a call reads "Unmetered" in place
+of its tokens.
 
 #### Portfolio table
 
@@ -659,8 +663,9 @@ task it was for."
   mono line of the environment and thread id; "Unmapped session" with the
   environment, provider, and session id for a session), Counts on (the
   items whose usage includes it), Amount (for the selected account, with
-  "N calls" muted under it and a muted "N pending" badge while calls wait
-  for a price, an account, or a window), Last used ("about 2 hours ago"),
+  "N calls" muted under it, a muted "N pending" badge while calls wait
+  for a price, an account, or a window, and a muted "N unmetered" badge
+  for calls with no token counts), Last used ("about 2 hours ago"),
   and a "Move" button (outline, small).
 - The first 20 rows show, newest first; "Show all (N)" shows the rest.
   With nothing to list, the section shows only the muted line "No unowned
@@ -1304,7 +1309,10 @@ them.
   "LiteLLM at <short commit>" with its model count, and how many models
   `prices.yml` prices. When calls wait for a price, a warning line "N
   models in use have no price" lists each provider and model with its
-  waiting calls, and "Price them in prices.yml."
+  waiting calls, and "Price them in prices.yml." When calls report no
+  token counts, a muted line "N models in use report no token counts"
+  lists each provider and model with its unmetered calls, and "Their
+  calls are counted on their tasks without tokens or cost."
 - A subscription shows the capacity the operator declares. Its plan,
   detected windows, model caps, and granted resets are what its provider
   reports, which Manifold does not read.

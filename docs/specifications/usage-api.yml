@@ -63,6 +63,9 @@ description: |-
   - `lastUsedAt`: the time of its latest call, posted or pending.
   - `pending`: the number of its calls that wait for an account, a
     price, or a ledger window; a usage move takes them once they post.
+  - `unmetered`: the number of its unmetered calls, whose provider
+    records no token counts; they never post, and a usage move takes
+    them as calls of amount 0.
   - `usage`: its posted calls grouped by the portfolio item the ledger
     holds each on and its account, ordered by item, then account. Each
     is `{ item, account, amount, calls }`: the item id, the account, the
@@ -94,7 +97,8 @@ description: |-
   left; the target actor's actual and variance, as `GET
   /api/tasks/{actorId}` answers them, include it. Calls that are
   pending are not moved; once they post they are unowned usage that a
-  later move takes.
+  later move takes. Unmetered calls, which never post, are moved as
+  calls of amount 0, and change no balance.
 
   A move answers `200` with `{ "status": "moved", "from", "to": { actor,
   item }, "moved", "accounts" }`: the target's actor and item as
