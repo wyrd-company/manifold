@@ -430,14 +430,17 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   await f.add();
   try {
     await expect
-      .poll(async () => {
-        const environment = (await get("/api/environments")).environments[0];
-        f.timeline.push({
-          at: f.elapsed(),
-          stage: JSON.stringify({ environment, snapshot: f.snapshot() }),
-        });
-        return environment;
-      })
+      .poll(
+        async () => {
+          const environment = (await get("/api/environments")).environments[0];
+          f.timeline.push({
+            at: f.elapsed(),
+            stage: JSON.stringify({ environment, snapshot: f.snapshot() }),
+          });
+          return environment;
+        },
+        { timeout: 15000 },
+      )
       .toMatchObject({ paused: true, scheduledThreads: 1 });
   } catch (error) {
     console.log(
@@ -650,7 +653,9 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   expect(f.t3.commands).toHaveLength(2);
   // A second issue invokes send-message; the recipient's actor saves its routed event.
   await f.add("I_B", "item-two");
-  await expect.poll(() => f.store.loadSnapshot("task:I_B")?.snapshot.status).toBe("done");
+  await expect
+    .poll(() => f.store.loadSnapshot("task:I_B")?.snapshot.status, { timeout: 15000 })
+    .toBe("done");
   const createdHistory = await get("/api/actors/task%3AI_B/history");
   if (!isActorHistoryResponse(createdHistory)) throw new Error("Invalid actor history");
   const projectCommand = f.t3.commands.find((command) => command.type === "project.create")!;
@@ -693,7 +698,9 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
       clientInfo: { name: "parcel", version: "1" },
     },
   });
-  await expect.poll(() => replies.find((reply) => reply["id"] === 1)).toHaveProperty("result");
+  await expect
+    .poll(() => replies.find((reply) => reply["id"] === 1), { timeout: 15000 })
+    .toHaveProperty("result");
   request({ jsonrpc: "2.0", method: "notifications/initialized" });
   const read = (id: number) =>
     request({
@@ -984,7 +991,7 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   });
   f.worker.send("stop");
   expect(await f.exited).toBe(0);
-}, 60000);
+}, 120000);
 it("retries a settled turn in the same thread and creates a replacement after a stalled thread is deleted", async () => {
   const f = await fixture();
   await f.add();

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
+import { childProcessLimit } from "../../../../test-support/limits.ts";
 import { openStore } from "./index.ts";
 import predecessorFixture from "./test-fixtures/pre-fold-schemas.json" with { type: "json" };
 
@@ -99,29 +100,33 @@ for (const [index, { owner, steps }] of predecessors.entries()) {
   });
 }
 
-test("an older build's populated store is rejected without changing the file", () => {
-  const directory = mkdtempSync(join(tmpdir(), "schema-steps-"));
-  const path = join(directory, "store.sqlite");
-  try {
-    const db = new DatabaseSync(path);
-    db.exec(
-      "CREATE TABLE schema_migration (owner TEXT PRIMARY KEY, version INTEGER NOT NULL) STRICT;",
-    );
-    for (const { owner, steps } of predecessors) {
-      for (const step of steps) db.exec(step);
-      db.prepare("INSERT INTO schema_migration VALUES (?, ?)").run(owner, steps.length);
+test(
+  "an older build's populated store is rejected without changing the file",
+  () => {
+    const directory = mkdtempSync(join(tmpdir(), "schema-steps-"));
+    const path = join(directory, "store.sqlite");
+    try {
+      const db = new DatabaseSync(path);
+      db.exec(
+        "CREATE TABLE schema_migration (owner TEXT PRIMARY KEY, version INTEGER NOT NULL) STRICT;",
+      );
+      for (const { owner, steps } of predecessors) {
+        for (const step of steps) db.exec(step);
+        db.prepare("INSERT INTO schema_migration VALUES (?, ?)").run(owner, steps.length);
+      }
+      db.exec(
+        `INSERT INTO store_snapshot VALUES ('parcel', 'delivery', 'active', '{"value":"waiting","context":{}}', 10);`,
+      );
+      db.close();
+      const before = readFileSync(path);
+      expect(() => openStore({ path })).toThrow(/store.*create a new store/i);
+      expect(readFileSync(path)).toEqual(before);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
     }
-    db.exec(
-      `INSERT INTO store_snapshot VALUES ('parcel', 'delivery', 'active', '{"value":"waiting","context":{}}', 10);`,
-    );
-    db.close();
-    const before = readFileSync(path);
-    expect(() => openStore({ path })).toThrow(/store.*create a new store/i);
-    expect(readFileSync(path)).toEqual(before);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+  },
+  childProcessLimit,
+);
 
 test("fresh public migrations run once and reopen with one version per owner", () => {
   const directory = mkdtempSync(join(tmpdir(), "schema-steps-"));

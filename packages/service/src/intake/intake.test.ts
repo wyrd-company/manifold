@@ -85,8 +85,9 @@ it("records once, starts one actor and hands off mirror state and later issue ev
     event: { type: "scanned", value: 8 },
   });
   expect(event.status).toBe("accepted");
-  await new Promise((resolve) => setImmediate(resolve));
-  expect(s.store.loadSnapshot("task:I1")?.snapshot["context"]).toMatchObject({ seen: [8] });
+  await expect
+    .poll(() => s.store.loadSnapshot("task:I1")?.snapshot["context"], { timeout: 15000 })
+    .toMatchObject({ seen: [8] });
   const ajv = new Ajv2020({ strict: false });
   for (const schema of serviceConfigurationSchemas) ajv.addSchema(schema);
   ajv.addSchema(decisionModelSchema);

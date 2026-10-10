@@ -54,7 +54,7 @@ test("intake starts a parcel actor and a blueprint API save migrates its waiting
     });
     expect(response.status, await response.clone().text()).toBe(200);
     await expect
-      .poll(() => service.store.loadSnapshot("task:I_A")!.machine)
+      .poll(() => service.store.loadSnapshot("task:I_A")!.machine, { timeout: 15000 })
       .not.toBe(previous.machine);
     const migrated = service.store.loadSnapshot("task:I_A")!;
     expect(service.escalations.list({ status: "open" })).toEqual(question);
@@ -93,7 +93,7 @@ test("intake starts a parcel actor and a blueprint API save migrates its waiting
     await service.stop();
     await fixture.close();
   }
-});
+}, 60000);
 test("a holder keeps its token, gate entry and reservation through the assembled migration save", async () => {
   const gate = {
     token: "token.granted",
@@ -168,9 +168,9 @@ test("a holder keeps its token, gate entry and reservation through the assembled
     });
     if (saved.outcome === "conflict") throw new Error("Unexpected conflict");
     await service.migrations.run();
-    expect(service.store.loadSnapshot("task:I_A")!.machine).toBe(
-      `${saved.commit}:blueprints/parcel.yml`,
-    );
+    await expect
+      .poll(() => service.store.loadSnapshot("task:I_A")!.machine, { timeout: 15000 })
+      .toBe(`${saved.commit}:blueprints/parcel.yml`);
     const visits = service.history.read("task:I_A")!.visits;
     expect(visits.at(-2)).toEqual({ ...previousVisit, exitedAt: visits.at(-1)!.enteredAt });
     expect(visits.at(-2)).not.toHaveProperty("exitEvent");

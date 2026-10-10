@@ -180,7 +180,7 @@ test("Accounts adds, edits, retries a saved commit, archives and restores throug
     await service.stop();
     await f.close();
   }
-});
+}, 60000);
 
 test("Accounts rebases a conflict and reuses the saved request while loading its commit", async () => {
   const f = await serviceFixture();

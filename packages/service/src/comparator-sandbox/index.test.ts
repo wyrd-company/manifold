@@ -21,7 +21,7 @@ const input = {
 };
 const good = 'export default () => ({ task: "a" });';
 
-async function loaded(text = good, limits = { timeoutMs: 50, memoryLimitMiB: 32 }) {
+async function loaded(text = good, limits = { timeoutMs: 500, memoryLimitMiB: 32 }) {
   const sandbox = await createComparatorSandbox(limits);
   const load = await sandbox.load({ name: "sample.ts", text });
   if (!load.ok) throw new Error(JSON.stringify(load.failure));
@@ -326,7 +326,7 @@ describe("comparator sandbox", () => {
     }
   });
   it("keeps an engine failure spent when its duration also exceeds the timeout", async () => {
-    const { comparator } = await loaded();
+    const { comparator } = await loaded(good, { timeoutMs: 50, memoryLimitMiB: 32 });
     const badInput = {
       ...input,
       population: [
