@@ -1922,11 +1922,15 @@ proposed-design:
     view shows the whole file with that change and the fixture's comments;
     returning to the canvas keeps `active.working`; `Enter` on the context
     node `active.stalled` opens `active` with it selected; going back into
-    `active.working` and, after the YAML view writes a target that names
-    no state on `active.stalled` and on `todo`, choosing the Problems
-    strip entry on `active.stalled` keeps `active.working` with the
-    context node selected, and the entry on `todo` opens the whole
-    blueprint with it selected; Back returns to `active.working`;
+    `active.working` and, after the YAML view sets `active.stalled`'s
+    invoke `src` and `todo`'s entry action `type` to names no
+    implementation holds, so the lint marks each with
+    `implementation-unknown` and the canvas still draws the graph,
+    choosing the Problems strip entry on `active.stalled` keeps
+    `active.working` with the context node selected, and the entry on
+    `todo` opens the whole blueprint with it selected; Back returns to
+    `active.working`; the YAML view restores both names, the marks clear,
+    and the canvas keeps `active.working`;
     renaming `working` from its inspector while it is the scope moves
     `scope` to the new key, and Undo restores the text and
     `scope=active.working`; in the whole blueprint, closing `working` with
