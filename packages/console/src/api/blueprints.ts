@@ -85,11 +85,16 @@ async function request<K extends keyof Bodies>(
 export const fetchBlueprints = () => request("list", "");
 export const fetchBlueprintSource = (path: string) =>
   request("source", `/source?path=${encodeURIComponent(path)}`);
-export const lintBlueprintText = (path: string, text: string, signal: AbortSignal) =>
+export const lintBlueprintText = (
+  path: string,
+  text: string,
+  signal: AbortSignal,
+  overlay?: { base?: string; models?: readonly { path: string; text: string }[] },
+) =>
   request("lint", "/lint", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, text }),
+    body: JSON.stringify({ path, text, ...overlay }),
     signal,
   });
 export const saveBlueprint = (body: SaveBlueprintRequest) =>

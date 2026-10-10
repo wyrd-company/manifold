@@ -8,6 +8,9 @@ import git from "isomorphic-git";
 import { stringify } from "yaml";
 import { expect, test } from "vite-plus/test";
 import { serviceFixture } from "../service/test-fixtures/repository.ts";
+import { lintBlueprint, manifoldImplementationNames } from "@wyrd-company/manifold-shared";
+import { mountDeclarationsApi } from "../declarations-api/index.ts";
+import { createDecisionModels } from "../decision-models.ts";
 import { mountBlueprintsApi } from "./index.ts";
 import { mountConsole } from "../console/index.ts";
 import { consoleHost } from "../console/test-fixtures/host.ts";
@@ -184,7 +187,7 @@ test.each([false, true])(
       await page.getByRole("button", { name: "Publish", exact: true }).waitFor();
       expect(await page.getByRole("button", { name: "Load saved version" }).count()).toBe(0);
       if (later) {
-        await page.getByText(/changed this file since/).waitFor();
+        await page.getByText(/changed blueprints\/counter.yml since/).waitFor();
         expect(await page.locator(".blueprint-source .cm-content").innerText()).toContain(
           "count: 61",
         );
@@ -299,6 +302,21 @@ test("bundled blueprints list and publish as repository replacements", async () 
       ]),
     },
     log: () => {},
+  });
+  mountDeclarationsApi(host.host, {
+    revisions: service.revisions,
+    processRepository: service.processRepository,
+    repository: { url: f.remote.url, branch: "main" },
+    environments: [],
+    t3codeProjects: () => [],
+    planDeclaration: () => [],
+    log: () => {},
+    createDecisionModels,
+    lintBlueprint: (path, text, decisionModels) =>
+      lintBlueprint(path, text, manifoldImplementationNames, {
+        configurationBound: 1000,
+        decisionModels,
+      }),
   });
   const browser = await chromium.launch({ headless: true });
   try {

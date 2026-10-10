@@ -25,6 +25,7 @@
     "@codemirror/merge": "^6.12.2",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.13",
+    "@gorules/jdm-editor": "1.52.0",
     "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-router": "^1.170.0",
     "@wyrd-company/manifold-shared": "workspace:*",
@@ -34,6 +35,7 @@
     "lucide-react": "^1.52.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "reactflow": "11.11.4",
     "tailwind-merge": "^3.7.0",
     "yaml": "^2.9.1"
   },

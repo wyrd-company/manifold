@@ -23,6 +23,8 @@ const children = [
   "src/usage-visits.integration.test.ts",
   "src/migrations/crash.test.ts",
   "src/declarations-api/api.test.ts",
+  "src/declarations-api/decision-models.test.ts",
+  "src/declarations-api/decision-models.browser.test.ts",
   "src/declarations-api/archive-api.test.ts",
   "src/declarations-api/archive-usage.test.ts",
   "src/declarations-api/archive-crash.test.ts",

@@ -36,11 +36,12 @@ export function ProblemsStrip({
       {[...findings, ...warnings].map((finding) => (
         <button
           className="blueprint-finding"
-          key={`${finding.location}:${finding.kind}:${finding.message}`}
+          key={`${finding["file"] ?? ""}:${finding.location}:${finding.kind}:${finding.message}`}
           onClick={() => onSelect(finding)}
         >
           <span className="mono">{finding.kind}</span> {finding.message}{" "}
           <span className="mono muted">
+            {typeof finding["file"] === "string" ? `${finding["file"]} · ` : ""}
             {findingState(finding, states) ?? finding.location}
             {finding.range ? ` · line ${finding.range.line}` : ""}
           </span>

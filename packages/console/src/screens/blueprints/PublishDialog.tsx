@@ -9,6 +9,7 @@ export function PublishDialog({
   title = "Publish blueprint",
   width = 480,
   children,
+  files,
   publishDisabled = false,
   open,
   path,
@@ -24,6 +25,7 @@ export function PublishDialog({
   title?: string;
   width?: number;
   children?: ReactNode;
+  files?: readonly { path: string; added: boolean }[];
   publishDisabled?: boolean;
   open: boolean;
   path: string;
@@ -45,10 +47,15 @@ export function PublishDialog({
     >
       <DialogPopup style={{ width }} showCloseButton={!busy}>
         <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>Commit and push this file to the process repository.</DialogDescription>
-        <p className="mono">
-          {added ? "A" : "M"} {path}
-        </p>
+        <DialogDescription>
+          Commit and push {files && files.length > 1 ? "these files" : "this file"} to the process
+          repository.
+        </DialogDescription>
+        {(files ?? [{ path, added }]).map((file) => (
+          <p className="mono" key={file.path}>
+            {file.added ? "A" : "M"} {file.path}
+          </p>
+        ))}
         {added && title === "Publish blueprint" ? (
           <p className="muted">This file replaces the bundled blueprint.</p>
         ) : null}

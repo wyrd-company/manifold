@@ -401,3 +401,37 @@ relationships:
   transform: translateX(-50%);
   white-space: nowrap;
 }
+.invoke-source-input {
+  display: flex;
+}
+.invoke-source-input input {
+  flex: 1;
+  min-width: 0;
+}
+.invoke-source-menu {
+  z-index: 60;
+  max-height: 300px;
+  overflow: auto;
+  padding: 8px;
+  background: var(--popover);
+  color: var(--foreground);
+  border: 1px solid var(--input);
+  border-radius: 6px;
+}
+.invoke-source-menu [role="option"] {
+  padding: 6px;
+  cursor: pointer;
+}
+.invoke-source-menu [data-highlighted] {
+  background: var(--accent);
+}
+.invoke-source-menu [role="group"] {
+  margin-bottom: 8px;
+}
+.invoke-source-menu [role="option"] {
+  display: grid;
+  gap: 3px;
+}
+.invoke-source-input [aria-invalid="true"] {
+  border-color: var(--error);
+}

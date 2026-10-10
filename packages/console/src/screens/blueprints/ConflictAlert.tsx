@@ -14,7 +14,13 @@ export function CompareDialog({
   text,
   onChange,
   onClose,
+  files,
+  selected,
+  onSelect,
 }: {
+  files?: readonly string[];
+  selected?: string | undefined;
+  onSelect?: ((path: string) => void) | undefined;
   open: boolean;
   latest: string;
   text: string;
@@ -40,8 +46,9 @@ export function CompareDialog({
       },
       revertControls: "a-to-b",
     });
+    view.dom.dataset["file"] = selected ?? "";
     return () => view.destroy();
-  }, [open, latest, container]);
+  }, [open, latest, container, selected]);
   return (
     <Dialog
       open={open}
@@ -50,7 +57,21 @@ export function CompareDialog({
       }}
     >
       <DialogPopup style={{ width: 920, maxWidth: "calc(100vw - 32px)" }}>
-        <DialogTitle>Compare blueprint</DialogTitle>
+        <DialogTitle>{files?.length ? "Compare files" : "Compare blueprint"}</DialogTitle>
+        {files?.length ? (
+          <label>
+            File
+            <select
+              aria-label="Compare file"
+              value={selected}
+              onChange={(e) => onSelect?.(e.target.value)}
+            >
+              {files.map((path) => (
+                <option key={path}>{path}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <DialogDescription>Branch text on the left. Your draft on the right.</DialogDescription>
         <div className="blueprint-compare" ref={setContainer} />
       </DialogPopup>

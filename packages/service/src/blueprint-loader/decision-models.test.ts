@@ -81,6 +81,7 @@ test("model invokes evaluate at their version and restore an in-flight invoke", 
   const blueprint = loaded.blueprints.get("blueprints/quote.yml");
   expect(blueprint).toBeDefined();
   if (!blueprint) throw new Error("Missing blueprint");
+  expect(blueprint.actorKinds[path]).toBe("promise");
   const actor = createActor(blueprint.machine).start();
   const snapshot = actor.getPersistedSnapshot();
   actor.stop();

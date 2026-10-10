@@ -3,7 +3,7 @@
 //   implements: operator-console
 // ---
 import { transitionField } from "./editor-selection.ts";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useContext } from "react";
 import { parse, stringify } from "yaml";
 import { manifoldImplementationCatalog } from "@wyrd-company/manifold-shared/implementation-catalog";
 import type { BlueprintGraph } from "@wyrd-company/manifold-shared/blueprints-api";
@@ -14,6 +14,9 @@ import type { BlueprintEdit } from "./blueprint-edits.ts";
 import type { InspectorProblem } from "./ValueField.tsx";
 import { ValueField } from "./ValueField.tsx";
 import { Button } from "../../ui/button.tsx";
+import { InvokeSourceField } from "./decision-model/InvokeSourceField.tsx";
+import { DecisionModelCard, IntakeDecisionModel } from "./decision-model/DecisionModelCard.tsx";
+import { ModelDraftContext } from "./decision-model/ModelDraftContext.tsx";
 const noPaths: readonly string[] = [];
 const obj = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -91,6 +94,7 @@ export function Inspector({
   onAddTransition?: (source: string) => void;
   blueprintPaths?: readonly string[];
 }) {
+  const modelDraft = useContext(ModelDraftContext);
   const host = useRef<HTMLElement>(null);
   const document: unknown = parse(text);
   const [schemaName, setSchemaName] = useState("");
@@ -418,26 +422,34 @@ export function Inspector({
           const contract = atPointer(document, "/schemas/actors/" + pointerKey(src));
           return (
             <div className="invoke-card" key={location}>
-              <TextField
-                label="Implementation"
+              <InvokeSourceField
+                findings={fieldFindings(location + "/src")}
                 value={src}
                 disabled={disabled}
-                options={[
-                  ...manifoldImplementationCatalog
-                    .filter((item) => item.kind === "actor")
-                    .map((item) => item.name),
-                  ...blueprintPaths,
+                groups={[
+                  {
+                    label: "Implementations",
+                    items: manifoldImplementationCatalog
+                      .filter((item) => item.kind === "actor")
+                      .map((item) => item.name),
+                  },
+                  { label: "Blueprints", items: blueprintPaths },
+                  { label: "Decide", items: modelDraft?.paths ?? [] },
                 ]}
                 onChange={(next) => set(location + "/src", next)}
               />
-              <small className="muted">
-                {entry?.description ??
-                  (blueprintPaths.includes(src)
-                    ? src
-                    : src.startsWith("blueprints/")
-                      ? "Not in the process repository"
-                      : "Unknown implementation")}
-              </small>
+              {typeof invocation["src"] === "string" && /^decision-models\/.+\.yml$/.test(src) ? (
+                <DecisionModelCard path={src} />
+              ) : (
+                <small className="muted">
+                  {entry?.description ??
+                    (blueprintPaths.includes(src)
+                      ? src
+                      : src.startsWith("blueprints/")
+                        ? "Not in the process repository"
+                        : "Unknown implementation")}
+                </small>
+              )}
               {["id", "systemId"].map((key) => (
                 <TextField
                   key={key + String(invocation[key])}
@@ -784,6 +796,7 @@ export function Inspector({
           </Button>
         </section>
       ) : null}
+      {type === "root" ? <IntakeDecisionModel /> : null}
       <details>
         <summary>More properties</summary>
         {allFields
