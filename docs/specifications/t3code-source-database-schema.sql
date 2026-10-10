@@ -35,6 +35,5 @@ CREATE TABLE t3_created_project (
   PRIMARY KEY (environment, project_id)
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX t3_thread_project ON t3_thread (environment, project_id);
-
 CREATE INDEX t3_thread_followed ON t3_thread (environment, status);
+CREATE INDEX t3_thread_project ON t3_thread (environment, project_id);

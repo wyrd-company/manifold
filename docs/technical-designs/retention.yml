@@ -659,6 +659,9 @@ proposed-design:
     notification checks use the existing `escalation_occurrence` index
     and the notification table's unique key. No other table changes. The
     GitHub source's specification and SQL pair states the indexes.
+    The T3 Code environment source's one schema step and specification SQL
+    declare `t3_created_project.presence` and `t3_thread_project` on
+    `t3_thread (environment, project_id)`; retirement uses those members.
   dependencies: >-
     No new third-party library.
   tests: >-
@@ -738,7 +741,8 @@ proposed-design:
     late call
     of each kept project's thread that no actor owns, and a late mapping
     onto it, post on the project's usage item, the item's Other when it
-    has one, before and after the prune run; with more than 100 ended
+    has one, before and after the prune run, through the portfolio's
+    `createdProjects`, `t3codeProject`, and `usageItem` reads; with more than 100 ended
     actors past the window, so
     they take two actor batches, an escalation that the fake clock's
     `yield` raises after the first batch, naming an ended actor past its

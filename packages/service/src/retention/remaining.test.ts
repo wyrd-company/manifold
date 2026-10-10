@@ -568,139 +568,158 @@ test("an escalation deletion failure rolls back its answer and notifications as 
   }
 });
 
-test("kept thread mappings preserve late call attribution and late session mapping across pruning", async () => {
-  const w = await world();
-  const o = owners(w.store, w.router, w.escalations);
-  const { openUsage, usageMigrationSteps } = await import("../usage/index.ts");
-  const { readThreadProject } = await import("../t3code-source/index.ts");
-  const { lintPortfolioDeclaration } = await import("@wyrd-company/manifold-shared");
-  const { projectOwnership } = await import("./test-fixtures/project-ownership.ts");
-  try {
-    w.save("sender");
-    const db = w.store.connection.database;
-    db.exec("INSERT INTO t3_environment VALUES('station','server',0,0)");
-    o.t3code.recordCreatedProject({
-      environment: "station",
-      projectId: "project",
-      actorId: "sender",
-      item: "deliveries",
-    });
-    db.exec(
-      "UPDATE t3_created_project SET presence='removed'; INSERT INTO t3_thread(environment,thread_id,status,cursor,thread,project_id) VALUES('station','thread','archived',12,'{}','project')",
-    );
-    const lint = lintPortfolioDeclaration({
-      portfolio: "items: { deliveries: {} }",
-      bindings: undefined,
-    });
-    if (!lint.ok) throw new Error("Invalid fixture portfolio");
-    w.store.connection.migrate("usage", usageMigrationSteps);
-    const usage = openUsage({
-      connection: w.store.connection,
-      visits: w.history,
-      ledger: w.ledger,
-      portfolio: {
-        current: () => ({ commit: "portfolio", declaration: lint.declaration }),
-        t3codeProject: ({ environment, id }) => {
-          const ownership = projectOwnership(o.t3code, environment, id);
-          return ownership
-            ? { item: ownership.usageItem, via: "created", actorId: ownership.actorId }
-            : { item: "other", via: "unbound" };
+test.each([false, true])(
+  "kept thread mappings preserve late attribution across pruning (parent: %s)",
+  async (parent) => {
+    const w = await world();
+    const o = owners(w.store, w.router, w.escalations);
+    const { openUsage, usageMigrationSteps } = await import("../usage/index.ts");
+    const { readThreadProject } = await import("../t3code-source/index.ts");
+    const { memoryRevision } = await import("@wyrd-company/manifold-shared");
+    const { openPortfolio, portfolioMigrationSteps } = await import("../portfolio/index.ts");
+    const usageItem = parent ? "deliveries/other" : "deliveries";
+    try {
+      w.save("sender");
+      const db = w.store.connection.database;
+      db.exec("INSERT INTO t3_environment VALUES('station','server',0,0)");
+      o.t3code.recordCreatedProject({
+        environment: "station",
+        projectId: "project",
+        actorId: "sender",
+        item: "deliveries",
+      });
+      db.exec(
+        "UPDATE t3_created_project SET presence='removed'; INSERT INTO t3_thread(environment,thread_id,status,cursor,thread,project_id) VALUES('station','thread','archived',12,'{}','project')",
+      );
+      w.store.connection.migrate("portfolio", portfolioMigrationSteps);
+      const portfolio = openPortfolio({
+        connection: w.store.connection,
+        now: w.now,
+        createdProject: ({ environment, id }) => o.t3code.createdProject(environment, id),
+        createdProjects: () => o.t3code.createdProjects(),
+      });
+      await portfolio.apply(
+        memoryRevision("a".repeat(40), {
+          "portfolio.yml": parent
+            ? "items: { deliveries: { items: { parcels: {} } } }"
+            : "items: { deliveries: {} }",
+        }),
+      );
+      expect(portfolio.createdProjects()[0]).toMatchObject({
+        createdItem: "deliveries",
+        usageItem,
+        retirable: false,
+        resolution: { via: "created", actorId: "sender" },
+      });
+      w.store.connection.migrate("usage", usageMigrationSteps);
+      const usage = openUsage({
+        connection: w.store.connection,
+        visits: w.history,
+        ledger: portfolio.ledger,
+        portfolio,
+        threadProject: (environment, thread) =>
+          readThreadProject(w.store.connection, environment, thread),
+        environments: new Set(["station"]),
+        now: w.now,
+      });
+      portfolio.ledger.credit({
+        key: "credit",
+        account: "account",
+        window: "window",
+        opensAt: 0,
+        closesAt: 200 * day,
+        amount: 100000000,
+      });
+      expect(
+        (
+          await usage.apply({
+            commit: "accounts",
+            read: async (path) =>
+              path === "accounts.yml"
+                ? "accounts: { account: { unit: usd, kind: api, capacity: { amount: 100, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }, usage: [{ environment: station, provider: codex }] } }"
+                : "unit: usd\nmodels: { model: { standard: { input: 1, output: 1 } } }",
+          })
+        ).status,
+      ).toBe("applied");
+      const call = (
+        key: string,
+        session: string,
+      ): import("@wyrd-company/manifold-shared").UsageCall => ({
+        type: "call",
+        key,
+        provider: "codex",
+        providerSessionId: session,
+        unit: { id: session, kind: "session" },
+        timestamp: new Date(1).toISOString(),
+        model: "model",
+        tokens: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cacheWriteOneHour: 0,
+          reasoning: 0,
+          webSearchRequests: 0,
         },
-      },
-      threadProject: (environment, thread) =>
-        readThreadProject(w.store.connection, environment, thread),
-      environments: new Set(["station"]),
-      now: w.now,
-    });
-    w.ledger.credit({
-      key: "credit",
-      account: "account",
-      window: "window",
-      opensAt: 0,
-      closesAt: 200 * day,
-      amount: 100000000,
-    });
-    expect(
-      (
-        await usage.apply({
-          commit: "accounts",
-          read: async (path) =>
-            path === "accounts.yml"
-              ? "accounts: { account: { unit: usd, kind: api, capacity: { amount: 100, reset: '2026-01-01T00:00:00Z', every: { hours: 1 } }, usage: [{ environment: station, provider: codex }] } }"
-              : "unit: usd\nmodels: { model: { standard: { input: 1, output: 1 } } }",
-        })
-      ).status,
-    ).toBe("applied");
-    const call = (
-      key: string,
-      session: string,
-    ): import("@wyrd-company/manifold-shared").UsageCall => ({
-      type: "call",
-      key,
-      provider: "codex",
-      providerSessionId: session,
-      unit: { id: session, kind: "session" },
-      timestamp: new Date(1).toISOString(),
-      model: "model",
-      tokens: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        cacheWriteOneHour: 0,
-        reasoning: 0,
-        webSearchRequests: 0,
-      },
-      speed: "standard",
-      granularity: "call",
-      estimated: false,
-    });
-    const mapping = (session: string) => ({
-      provider: "codex" as const,
-      providerSessionId: session,
-      threadId: "thread",
-    });
-    usage.push({
-      environment: "station",
-      threads: [mapping("known")],
-      records: [call("before", "known")],
-    });
-    usage.push({ environment: "station", threads: [], records: [call("late", "unknown")] });
-    w.time(100 * day);
-    const r = openRetention({
-      ...w,
-      configuration: { historyDays: 90, sourceEventDays: { default: 30 }, gateEvaluationDays: 30 },
-      clock: { now: w.now, setTimer: () => () => {}, yield: (next) => setImmediate(next) },
-      log: () => {},
-    });
-    expect((await r.prune()).createdProjects).toBe(0);
-    usage.push({
-      environment: "station",
-      threads: [mapping("known"), mapping("unknown")],
-      records: [call("after", "known")],
-    });
-    expect(db.prepare("SELECT call_key,item FROM usage_postings ORDER BY call_key").all()).toEqual([
-      { call_key: "after", item: "deliveries" },
-      { call_key: "before", item: "deliveries" },
-      { call_key: "late", item: "other" },
-    ]);
-    expect(
-      db
-        .prepare("SELECT call_key,attributed_item FROM usage_attributed_postings ORDER BY call_key")
-        .all(),
-    ).toEqual([
-      { call_key: "after", attributed_item: "deliveries" },
-      { call_key: "before", attributed_item: "deliveries" },
-      { call_key: "late", attributed_item: "deliveries" },
-    ]);
-    expect(db.prepare("SELECT cursor FROM t3_thread").get()?.["cursor"]).toBe(12);
-    expect(o.t3code.createdProject("station", "project")?.item).toBe("deliveries");
-    await r.stop();
-  } finally {
-    await o.close();
-    await w.close();
-  }
-});
+        speed: "standard",
+        granularity: "call",
+        estimated: false,
+      });
+      const mapping = (session: string) => ({
+        provider: "codex" as const,
+        providerSessionId: session,
+        threadId: "thread",
+      });
+      usage.push({
+        environment: "station",
+        threads: [mapping("known")],
+        records: [call("before", "known")],
+      });
+      usage.push({ environment: "station", threads: [], records: [call("late", "unknown")] });
+      w.time(100 * day);
+      const r = openRetention({
+        ...w,
+        configuration: {
+          historyDays: 90,
+          sourceEventDays: { default: 30 },
+          gateEvaluationDays: 30,
+        },
+        clock: { now: w.now, setTimer: () => () => {}, yield: (next) => setImmediate(next) },
+        log: () => {},
+      });
+      expect((await r.prune()).createdProjects).toBe(0);
+      usage.push({
+        environment: "station",
+        threads: [mapping("known"), mapping("unknown")],
+        records: [call("after", "known")],
+      });
+      expect(
+        db.prepare("SELECT call_key,item FROM usage_postings ORDER BY call_key").all(),
+      ).toEqual([
+        { call_key: "after", item: usageItem },
+        { call_key: "before", item: usageItem },
+        { call_key: "late", item: "other" },
+      ]);
+      expect(
+        db
+          .prepare(
+            "SELECT call_key,attributed_item FROM usage_attributed_postings ORDER BY call_key",
+          )
+          .all(),
+      ).toEqual([
+        { call_key: "after", attributed_item: usageItem },
+        { call_key: "before", attributed_item: usageItem },
+        { call_key: "late", attributed_item: usageItem },
+      ]);
+      expect(db.prepare("SELECT cursor FROM t3_thread").get()?.["cursor"]).toBe(12);
+      expect(o.t3code.createdProject("station", "project")?.item).toBe("deliveries");
+      await r.stop();
+    } finally {
+      await o.close();
+      await w.close();
+    }
+  },
+);
 
 test.each([
   "deliveries",

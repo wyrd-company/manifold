@@ -1760,4 +1760,5 @@ test("a thread observed after listing a retirable project protects it at DELETE"
     .toBe("project");
   expect(retireCreatedProject(store.connection, candidates[0]!, { environments })).toBe("kept");
   expect(source.createdProject("station", "project")).toBeDefined();
-  expect(retireCreatedProject(store.connection, candidates[0]!, { environments: [] })).toBe("kept");});
+  expect(retireCreatedProject(store.connection, candidates[0]!, { environments: [] })).toBe("kept");
+});
