@@ -112,7 +112,8 @@ test.each(["fetched", "verified"] as const)(
 test.each(["headers", "pack", "close"] as const)(
   "failed %s request preserves revision and next healthy pull runs",
   async (mode) => {
-    const { remote, configuration, a } = await setup(200);
+    // Initial and recovery pulls perform healthy transport work before any stall.
+    const { remote, configuration, a } = await setup();
     const repository = await openProcessRepository({ configuration, credentials });
     await repository.pull();
     const b = await remote.commit("second");

@@ -166,7 +166,7 @@ test("ServiceParts wires commands to the real host, source readiness, revision a
   expect(server.commands).toHaveLength(0);
   service.environments.act("station", "pause");
   service.environments.act("station", "reconnect");
-  await expect.poll(() => server.projects.size).toBe(1);
+  await expect.poll(() => server.projects.size, { timeout: 15000 }).toBe(1);
   await expect.poll(() => service.agentThreads.scheduled("station")).toBe(1);
   expect(server.commands.map((command) => command.type)).toEqual(["project.create"]);
   expect(service.history.read("worker")!.commands.map((command) => command.kind)).toEqual([

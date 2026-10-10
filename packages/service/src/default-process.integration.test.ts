@@ -63,6 +63,8 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
     f.file,
     stringify({
       ...f.configuration,
+      // This fixture exercises successful grants, with finite comparator work.
+      comparatorSandbox: { timeoutMs: 500 },
       credentials: {
         ...f.configuration.credentials,
         writer: { kind: "t3code-token", tokenFile: "t3.token" },
