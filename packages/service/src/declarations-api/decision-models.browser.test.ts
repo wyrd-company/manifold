@@ -194,7 +194,7 @@ function origins(f: Awaited<ReturnType<typeof fixture>>) {
 }
 for (const dark of [false, true]) {
   test(
-    `built editor stages, evaluates, retains, discards and publishes in ${dark ? "dark" : "light"} theme under CSP`,
+    `built editor stages and retains rules and columns in ${dark ? "dark" : "light"} theme under CSP`,
     async () => {
       const f = await fixture(dark);
       const { page } = f;
@@ -225,6 +225,28 @@ for (const dark of [false, true]) {
         await page.keyboard.insertText(stringify(expanded));
         await dialog(page).getByRole("button", { name: "Apply to draft", exact: true }).click();
         await page.getByText(/2 rules · first/).waitFor();
+        await page.reload();
+        await open(page);
+        expect(
+          await dialog(page).getByLabel("Price JSONata rule 1", { exact: true }).innerText(),
+        ).toBe("8");
+        const savedModel = parse((await stored(page)).models[path].text);
+        expect(savedModel.nodes[1].content.config.inputs).toHaveLength(2);
+        expect(savedModel.nodes[1].content.config.outputs).toHaveLength(2);
+        origins(f);
+      } finally {
+        await f.close();
+      }
+    },
+    childProcessLimit,
+  );
+  test(
+    `built editor keeps staged edits through lint and evaluation failures and discard (${dark ? "dark" : "light"})`,
+    async () => {
+      const f = await fixture(dark);
+      const { page } = f;
+      try {
+        await edit(page, "8");
         await page.reload();
         await open(page);
         await page.route("**/api/declarations/decision-model/lint", (route) =>
@@ -266,6 +288,24 @@ for (const dark of [false, true]) {
           .getByRole("dialog", { name: "Discard draft?" })
           .getByRole("button", { name: "Discard draft", exact: true })
           .click();
+        await expect.poll(() => stored(page)).toBeUndefined();
+        await open(page);
+        expect(
+          await dialog(page).getByLabel("Price JSONata rule 1", { exact: true }).innerText(),
+        ).toBe("5");
+        origins(f);
+      } finally {
+        await f.close();
+      }
+    },
+    childProcessLimit,
+  );
+  test(
+    `built editor publishes blueprint and model as one commit (${dark ? "dark" : "light"})`,
+    async () => {
+      const f = await fixture(dark);
+      const { page } = f;
+      try {
         await edit(page, "8");
         // Publish both files as one commit, with the blueprint retaining its mapped invoke.
         await page.getByRole("button", { name: "YAML", exact: true }).click();
