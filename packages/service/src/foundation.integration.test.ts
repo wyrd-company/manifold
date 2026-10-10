@@ -110,8 +110,8 @@ describe("store and ledger on one database file", () => {
     });
     first.store.saveSnapshot({
       actorId: "meter-01",
-      machine: "meter",
-      snapshot: { status: "active", value: "running", context: 0 },
+      machine: "meter\0whole",
+      snapshot: { status: "active", value: "running", context: { text: "first\0last" } },
     });
     first.store.close();
 
@@ -120,9 +120,13 @@ describe("store and ledger on one database file", () => {
       .prepare("SELECT owner, version FROM schema_migration ORDER BY owner")
       .all();
     expect(versions.map((row) => row["owner"])).toEqual(["ledger", "store"]);
-    expect(second.store.findActorsInState({ machine: "meter", statePath: "running" })).toHaveLength(
-      1,
-    );
+    expect(second.store.loadSnapshot("meter-01")?.machine).toBe("meter\0whole");
+    expect(second.store.loadSnapshot("meter-01")?.snapshot["context"]).toEqual({
+      text: "first\0last",
+    });
+    expect(
+      second.store.findActorsInState({ machine: "meter\0whole", statePath: "running" }),
+    ).toHaveLength(1);
     expect(second.ledger.balance({ item: "north", account: "meter", waiting: [] })).toMatchObject({
       allocation: 60,
       outstanding: 30,

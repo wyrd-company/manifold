@@ -1,6 +1,6 @@
 // ---
 // relationships:
-//   verifies: [default-process, service-assembly, intake, gate-runtime, agent-threads, agent-tools, usage-intake, host-cli-usage, tasks-api, declarations-api, portfolio-api, projects-api, actor-history, blueprint-migration, environments-api, usage-api]
+//   verifies: [default-process, service-assembly, intake, gate-runtime, agent-threads, agent-tools, usage-intake, host-cli-usage, tasks-api, declarations-api, portfolio-api, projects-api, actor-history, blueprint-migration, environments-api, usage-api, task-metadata, decision-models, retention]
 // ---
 import { afterEach, expect, it } from "vite-plus/test";
 import { readFile, writeFile } from "node:fs/promises";
@@ -23,14 +23,71 @@ import { openStore } from "./store/index.ts";
 import { openPortfolio } from "./portfolio/index.ts";
 import { shippedBundle } from "./bundle/index.ts";
 import { childArtifacts } from "../../../test-support/child-process.ts";
+import { organizationFake } from "./github-source/test-fixtures/organization-api.ts";
+import { repositoryFixture as repositoryFieldsFixture } from "./github-repository-fields/test-fixtures/repository.ts";
+import {
+  applyModelDraft,
+  changedFiles,
+  settleModelDraft,
+} from "../../console/src/screens/blueprints/decision-model/model-drafts.ts";
+import {
+  prepareModel,
+  writeModel,
+} from "../../console/src/screens/blueprints/decision-model/decision-model-text.ts";
+import { fixtureThread } from "./t3code-source/test-fixtures/server.ts";
+import { sampleCall } from "./declarations-api/test-fixtures/usage.ts";
+import { readDraft, writeDraft } from "../../console/src/screens/blueprints/draft.ts";
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
 });
-async function fixture(refuseMove = false, crash?: "event" | "command") {
+async function fixture(
+  refuseMove = false,
+  crash?: "event" | "command",
+  extend?: (files: Map<string, string>) => void,
+  additionalStorage = false,
+) {
   const f = await serviceFixture();
   cleanup.push(f.close);
   await git.setConfig({ fs, gitdir: f.remote.gitdir, path: "http.receivepack", value: true });
+  const organization = additionalStorage ? await organizationFake(f.api) : undefined;
+  if (organization) cleanup.push(organization.close);
+  const repository = additionalStorage ? await repositoryFieldsFixture() : undefined;
+  if (repository) cleanup.push(repository.close);
+  const github = additionalStorage
+    ? await serve((request, response) => {
+        void (async () => {
+          const body = await readRequest(request);
+          const rest = request.url!.startsWith("/repos/");
+          const upstream = await fetch(
+            (rest ? repository!.apiUrl : organization!.url) + request.url,
+            {
+              method: request.method ?? "GET",
+              headers: { "content-type": "application/json" },
+              ...(request.method !== "GET" ? { body } : {}),
+            },
+          );
+          const text = await upstream.text();
+          if (!rest && text.includes('"issueFieldValues"')) {
+            const answer = JSON.parse(text);
+            for (const issue of answer.data.nodes ?? []) {
+              if (issue?.id !== "I_A") continue;
+              issue.labels.nodes = repository!.assigned().map((name) => {
+                const label = repository!.labels().find((l) => l.name === name)!;
+                return { id: label.node_id, name };
+              });
+              const number = repository!.milestone();
+              issue.milestone = number === null ? null : { id: "M_one", number, title: "Spring" };
+            }
+            response
+              .writeHead(upstream.status, { "content-type": "application/json" })
+              .end(JSON.stringify(answer));
+          } else
+            response.writeHead(upstream.status, { "content-type": "application/json" }).end(text);
+        })();
+      })
+    : undefined;
+  if (github) cleanup.push(github.close);
   const t3 = await commandServer();
   cleanup.push(t3.close);
   f.api.fields.splice(0, f.api.fields.length, {
@@ -63,6 +120,7 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
     f.file,
     stringify({
       ...f.configuration,
+      ...(github ? { github: { ...f.configuration.github, apiUrl: github.url } } : {}),
       // This fixture exercises successful grants, with finite comparator work.
       comparatorSandbox: { timeoutMs: 500 },
       credentials: {
@@ -119,6 +177,7 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
       models: { "sample-model": { standard: { input: 0.5, output: 0.5, cacheRead: 0.5 } } },
     }),
   );
+  extend?.(files);
   async function tree(prefix: string): Promise<string> {
     const names = [
       ...new Set(
@@ -302,6 +361,9 @@ async function fixture(refuseMove = false, crash?: "event" | "command") {
   }
   return {
     ...f,
+    files,
+    organization,
+    repository,
     commit,
     store,
     portfolio,
@@ -1308,3 +1370,639 @@ it("lints the UAT project-and-message blueprint with the compiled host CLI", asy
   expect(result.stdout).toBe("");
   expect(result.stderr).toBe("");
 });
+
+it("applies all five additional storage kinds from the starter, observes normalized values and preserves the issue body", async () => {
+  const fields = {
+    priority: {
+      type: "single-select",
+      storage: { kind: "issue-field", name: "Urgency", organization: "sample" },
+      options: ["Normal", "High"],
+    },
+    category: {
+      type: "single-select",
+      storage: { kind: "issue-type", organization: "sample" },
+      options: ["Request", "Return"],
+    },
+    size: {
+      type: "single-select",
+      storage: { kind: "label", prefix: "size: " },
+      options: ["Small", "Large"],
+    },
+    batch: { type: "single-select", storage: { kind: "milestone" }, options: ["Spring"] },
+    note: { type: "text", storage: { kind: "front-matter", key: "note" } },
+  };
+  const values = {
+    priority: "High",
+    category: "Request",
+    size: "Small",
+    batch: "Spring",
+    note: "first\0last",
+  };
+  const f = await fixture(
+    false,
+    undefined,
+    (files) => {
+      const metadata = parse(files.get("task-metadata.yml")!);
+      Object.assign(metadata.projects["work-board"], {
+        repositories: ["sample/records"],
+        fields: { ...metadata.projects["work-board"].fields, ...fields },
+      });
+      files.set("task-metadata.yml", stringify(metadata));
+      const intake = parse(files.get("decision-models/intake.yml")!);
+      intake.nodes[1].content.config.rules[0].blueprint = '"blueprints/fields.yml"';
+      files.set("decision-models/intake.yml", stringify(intake));
+      const names = Object.keys(values);
+      files.set(
+        "blueprints/fields.yml",
+        stringify({
+          machine: {
+            initial: names[0],
+            states: Object.fromEntries([
+              ...names.map((name, i) => [
+                name,
+                {
+                  invoke: {
+                    src: "github-task-field-set",
+                    input: { field: name, value: values[name as keyof typeof values] },
+                    onDone: names[i + 1] ?? "done",
+                  },
+                },
+              ]),
+              ["done", { type: "final" }],
+            ]),
+          },
+          schemas: { input: true, context: true, output: true, events: {} },
+        }),
+      );
+    },
+    true,
+  );
+  const body =
+    '---\n# keep this comment\nuntouched: "retained"\nnote: old\n---\n\nGeneric instructions\0continued\n';
+  f.api.editBody("I_A", body, false);
+  const get = async (path: string) => (await fetch(f.url + path)).json();
+  const post = async (path: string, body: unknown) => {
+    const response = await fetch(f.url + path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const answer = await response.json();
+    expect(response.status, JSON.stringify(answer)).toBe(200);
+    return answer;
+  };
+  await expect
+    .poll(async () => (await fetch(f.url + "/api/projects/work-board/plan")).status)
+    .toBe(200);
+  const plan = await get("/api/projects/work-board/plan");
+  expect(plan.scopes.map((s: { scope: { kind: string } }) => s.scope.kind).sort()).toEqual([
+    "organization",
+    "repository",
+  ]);
+  expect(
+    await post("/api/projects/work-board/apply", { digest: plan.digest, removeUndeclared: false }),
+  ).toMatchObject({ configuration: { state: "in-sync" } });
+  expect(f.organization!.fields.map((field) => field.name)).toEqual(["Urgency"]);
+  expect(f.organization!.types.map((type) => type.name)).toEqual(["Request", "Return"]);
+  expect(f.repository!.labels().map((label) => label.name)).toContain("size: Small");
+  await f.add();
+  await expect.poll(f.state, { timeout: 15000 }).toBe("done");
+  const task = await get("/api/tasks/task%3AI_A");
+  expect(task.task.projects[0].fields).toEqual(
+    expect.arrayContaining(
+      Object.entries(values).map(([name, value]) =>
+        expect.objectContaining({ name, value: { state: "set", value } }),
+      ),
+    ),
+  );
+  expect(f.repository!.assigned()).toEqual(["personal", "size: Small"]);
+  const updated = f.api.issues.get("I_A")!.body!;
+  expect(updated).toContain("# keep this comment");
+  expect(updated).toContain('untouched: "retained"');
+  expect(updated.slice(updated.indexOf("\n---\n"))).toBe(body.slice(body.indexOf("\n---\n")));
+  expect(parse(updated.split("---")[1]!).note).toBe(values.note);
+  await f.restart();
+  expect((await get("/api/tasks/task%3AI_A")).task.projects[0].fields).toEqual(
+    task.task.projects[0].fields,
+  );
+  expect(await post("/api/projects/work-board/apply", { removeUndeclared: false })).toMatchObject({
+    writes: 0,
+  });
+
+  // Both owners declare the same organization entity with incompatible options.
+  const bindings = parse(f.files.get("bindings.yml")!);
+  bindings.githubProjects.secondary = { ...bindings.githubProjects["work-board"], number: 2 };
+  const metadata = parse(f.files.get("task-metadata.yml")!);
+  metadata.projects.secondary = {
+    lifecycle: metadata.projects["work-board"].lifecycle,
+    fields: { priority: { ...fields.priority, options: ["Different"] } },
+  };
+  const before = {
+    project: f.api.log.length,
+    organization: f.organization!.log.length,
+    repository: f.repository!.calls.length,
+  };
+  const response = await fetch(f.url + "/api/declarations/save", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      base: f.commit,
+      saveId: "a".repeat(32),
+      message: "Conflicting sample owners",
+      path: "task-metadata.yml",
+      text: stringify(metadata),
+    }),
+  });
+  expect(response.status).toBe(422);
+  expect(await response.json()).toMatchObject({
+    findings: expect.arrayContaining([expect.objectContaining({ kind: "shared-conflict" })]),
+  });
+  expect(
+    f.api.log
+      .slice(before.project)
+      .filter((row) => /Write|Create|Update|Delete|Move|Set/.test(row.operation)),
+  ).toEqual([]);
+  expect(
+    f
+      .organization!.log.slice(before.organization)
+      .filter((row) => /Write|Update|Delete|Value/.test(row.operation)),
+  ).toEqual([]);
+  expect(
+    f.repository!.calls.slice(before.repository).filter((row) => row.method !== "GET"),
+  ).toEqual([]);
+  expect(await git.resolveRef({ fs, gitdir: f.remote.gitdir, ref: "main" })).toBe(f.commit);
+}, 60000);
+
+it("applies a JDM edit to a durable draft, publishes both files and invokes the committed model through the service", async () => {
+  const f = await fixture();
+  const path = "blueprints/quote.yml";
+  const modelPath = "decision-models/quote.yml";
+  const model = {
+    nodes: [
+      { id: "in", type: "inputNode" },
+      {
+        id: "calc",
+        type: "customNode",
+        content: { kind: "jsonataExpression", config: { expression: '{"price": size * 2}' } },
+      },
+      { id: "out", type: "outputNode" },
+    ],
+    edges: [
+      { id: "a", sourceId: "in", targetId: "calc" },
+      { id: "b", sourceId: "calc", targetId: "out" },
+    ],
+  };
+  const baseText = "# retained model comment\n" + stringify(model);
+  const prepared = prepareModel(model);
+  prepared.model.nodes[1]!.content.config.expression =
+    '{"price": size * 3, "note": "first\\u0000last"}';
+  const text = writeModel(baseText, prepared.authored(prepared.model));
+  const blueprint = stringify({
+    machine: {
+      initial: "quote",
+      context: { result: null },
+      states: {
+        quote: {
+          invoke: {
+            src: modelPath,
+            input: { size: 4 },
+            onDone: {
+              target: "done",
+              actions: {
+                type: "expression.assign",
+                params: { expression: '{"result": event.output}' },
+              },
+            },
+          },
+        },
+        done: { type: "final" },
+      },
+    },
+    schemas: {
+      input: true,
+      output: true,
+      context: true,
+      events: {},
+      actors: {
+        [modelPath]: {
+          input: { type: "object", properties: { size: { type: "number" } }, required: ["size"] },
+          output: {
+            type: "object",
+            properties: { price: { type: "number" }, note: { type: "string" } },
+            required: ["price", "note"],
+          },
+        },
+      },
+    },
+  });
+  const draft = applyModelDraft({ base: f.commit, baseText: "", text: blueprint }, modelPath, {
+    baseText: "",
+    text,
+    exists: false,
+  });
+  expect(draft.text).toBe(blueprint);
+  expect(text).toContain("# retained model comment");
+  const entries = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      entries.set(key, value);
+    },
+    removeItem: (key: string) => {
+      entries.delete(key);
+    },
+  };
+  writeDraft(storage, path, draft);
+  expect(readDraft(storage, path)).toEqual(draft);
+  const recovered = readDraft(storage, path)!;
+  const intake = parse(f.files.get("decision-models/intake.yml")!);
+  intake.nodes[1].content.config.rules[0].blueprint = '"blueprints/quote.yml"';
+  const request = {
+    base: recovered.base,
+    files: [
+      ...changedFiles(path, recovered, true).map(({ path, text }) => ({ path, text })),
+      { path: "decision-models/intake.yml", text: stringify(intake) },
+    ],
+    saveId: "b".repeat(32),
+    message: "Publish sample model",
+  };
+  const publish = () =>
+    fetch(f.url + "/api/declarations/publish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  const saved = await publish();
+  const answer = await saved.json();
+  expect(saved.status, JSON.stringify(answer)).toBe(200);
+  expect(answer).toMatchObject({ outcome: "saved", loaded: true });
+  expect(await (await publish()).json()).toMatchObject({
+    outcome: "already-saved",
+    commit: answer.commit,
+  });
+  // Drafts stay until the published sources have both been observed.
+  const pending = { ...recovered, saved: answer.commit };
+  expect(settleModelDraft(pending, { commit: answer.commit, text: blueprint }, {}, true)).toEqual(
+    pending,
+  );
+  const source = await (
+    await fetch(
+      f.url + `/api/declarations/decision-model?path=${modelPath}&commit=${answer.commit}`,
+    )
+  ).json();
+  expect(source).toMatchObject({ text, exists: true, commit: answer.commit });
+  expect(
+    settleModelDraft(
+      pending,
+      { commit: answer.commit, text: blueprint },
+      { [modelPath]: { text: source.text, exists: source.exists } },
+      true,
+    ),
+  ).toBeUndefined();
+  await f.add();
+  await expect.poll(f.snapshot, { timeout: 15000 }).toMatchObject({
+    status: "done",
+    value: "done",
+    context: { result: { price: 12, note: "first\0last" } },
+  });
+  expect(f.store.loadSnapshot("task:I_A")!.machine).toContain(answer.commit);
+  await f.restart();
+  expect(f.snapshot()).toMatchObject({ context: { result: { price: 12, note: "first\0last" } } });
+  expect(
+    (await git.log({ fs, gitdir: f.remote.gitdir, ref: "main" })).filter((row) =>
+      row.commit.message.startsWith("Publish sample model"),
+    ),
+  ).toHaveLength(1);
+}, 60000);
+
+it("checks intake records and grants a populated issue graph with one mirror read per pass", async () => {
+  const f = await fixture(false, undefined, (files) => {
+    files.set(
+      "blueprints/graph.yml",
+      stringify({
+        machine: {
+          initial: "waiting",
+          states: {
+            waiting: {
+              meta: { gate: { comparator: "comparators/graph.ts", return: "exit" } },
+              on: { token: "done" },
+            },
+            done: { type: "final" },
+          },
+        },
+        schemas: { input: true, output: true, context: true, events: {} },
+      }),
+    );
+    files.set(
+      "comparators/graph.ts",
+      "export default i => i.holders.length >= 5 ? null : { task: [...i.population].sort((a,b) => b.criticalPath-a.criticalPath || a.id.localeCompare(b.id))[0].id };",
+    );
+  });
+  await f.add();
+  await f.waiting();
+  const result = await f.requestWorker("graph", { size: 32 });
+  expect(result).toMatchObject({ intakeReads: 1, gateReads: 1, family: ["graph-2"] });
+  expect(result["records"]).toHaveLength(32);
+  expect(result["records"]).toEqual(
+    expect.arrayContaining([expect.objectContaining({ status: "failed", attempts: 1 })]),
+  );
+  expect(result["scheduled"]).toEqual([
+    "member:graph-0",
+    "member:graph-1",
+    "member:graph-3",
+    "member:graph-4",
+    "member:graph-10",
+  ]);
+  const evaluations = result["evaluations"] as {
+    population: { id: string; criticalPath: number }[];
+  }[];
+  expect(evaluations).toHaveLength(6);
+  const lengths = new Map(evaluations[0]!.population.map((p) => [p.id, p.criticalPath]));
+  expect(lengths.get("member:graph-0")).toBe(3);
+  expect(lengths.get("member:graph-1")).toBe(2);
+  expect(lengths.get("member:graph-3")).toBe(2);
+  expect(lengths.get("member:graph-4")).toBe(2);
+  expect(lengths.get("member:graph-10")).toBe(1);
+  for (const evaluation of evaluations.slice(1))
+    for (const member of evaluation.population)
+      expect(member.criticalPath).toBe(lengths.get(member.id));
+}, 60000);
+
+it("creates projects, archives with every choice, recovers an open tool operation and retains attribution after convergent pruning", async () => {
+  const f = await fixture(false, undefined, (files) => {
+    const task = parse(shippedBundle.files.get("blueprints/task.yml")!);
+    task.machine.initial = "create-one";
+    for (const [i, name] of ["one", "two", "three"].entries()) {
+      task.machine.context[name] = "";
+      task.schemas.context.properties[name] = { type: "string" };
+      task.machine.states["create-" + name] = {
+        invoke: {
+          src: "t3code-project-create",
+          input: {
+            title: "Sample " + name,
+            workspaceRoot: "/tmp/sample-" + name,
+            createWorkspaceRoot: true,
+          },
+          onDone: {
+            target: ["create-two", "create-three", "todo"][i],
+            actions: {
+              type: "expression.assign",
+              params: { expression: `{"${name}": event.output.projectId}` },
+            },
+          },
+        },
+      };
+    }
+    task.machine.states["create-one"].entry = task.machine.states.todo.entry;
+    delete task.machine.states.todo.entry;
+    task.schemas.actors["t3code-project-create"] = {
+      input: true,
+      output: {
+        type: "object",
+        properties: { projectId: { type: "string" } },
+        required: ["projectId"],
+      },
+    };
+    files.set("blueprints/task.yml", stringify(task));
+    files.set(
+      "blueprints/notice.yml",
+      stringify({
+        machine: {
+          initial: "create",
+          states: {
+            create: {
+              invoke: {
+                src: "t3code-project-create",
+                input: {
+                  title: "Sample eligible",
+                  workspaceRoot: "/tmp/sample-eligible",
+                  createWorkspaceRoot: true,
+                },
+                onDone: "done",
+              },
+            },
+            done: { type: "final" },
+          },
+        },
+        schemas: { input: true, output: true, context: true, events: {} },
+      }),
+    );
+    const portfolio = parse(files.get("portfolio.yml")!);
+    portfolio.items = {
+      group: {
+        allocations: { agents: { guarantee: 100 } },
+        items: { work: portfolio.items.work, destination: {} },
+      },
+    };
+    files.set("portfolio.yml", stringify(portfolio));
+  });
+  const post = async (path: string, body: unknown) => {
+    const response = await fetch(f.url + path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const answer = await response.json();
+    expect(response.status, JSON.stringify(answer)).toBe(200);
+    return answer;
+  };
+  const get = async (path: string) => (await fetch(f.url + path)).json();
+  await f.add();
+  await f.waiting();
+  await f.add("I_B", "item-two");
+  await expect.poll(() => f.store.loadSnapshot("task:I_B")?.snapshot.status).toBe("done");
+  const projects = [...f.t3.commands].filter((command) => command.type === "project.create");
+  expect(projects).toHaveLength(4);
+  const ids = projects.slice(0, 3).map((command) => command.projectId);
+  const eligible = projects[3]!.projectId;
+  const thread = [...f.t3.threads.values()][0]!;
+  const unowned = ids.map((projectId, i) => {
+    const thread = fixtureThread(`unowned-${i}`);
+    thread.projectId = projectId;
+    f.t3.change(thread);
+    return thread;
+  });
+  await expect
+    .poll(
+      () =>
+        f.store.connection.database
+          .prepare("SELECT count(*) n FROM t3_thread WHERE thread_id LIKE 'unowned-%'")
+          .get()?.["n"],
+    )
+    .toBe(3);
+  const seeded = await f.requestWorker("retention-fixture");
+  expect(seeded).toMatchObject({ closed: expect.any(String) });
+  const timestamp = new Date().toISOString();
+  const call = (key: string, session: string) => ({
+    ...sampleCall(key, session),
+    timestamp,
+    model: "sample-model",
+  });
+  const mapping = (session: string, threadId: string) => ({
+    provider: "codex",
+    providerSessionId: session,
+    threadId,
+  });
+  const push = (records: unknown[], threads: unknown[] = []) =>
+    post("/api/usage/push", { environment: "workstation", records, threads });
+  await push(
+    [call("before\0whole", "known"), call("late\0whole", "late")],
+    [mapping("known", unowned[0]!.id)],
+  );
+  const db = f.store.connection.database;
+  expect(
+    db.prepare("SELECT item FROM usage_postings WHERE call_key=?").get("before\0whole")?.["item"],
+  ).toBe("work");
+  const questionResponse = await f.agentCall("escalate", {
+    thread: thread.id,
+    title: "Sample question",
+    question: "First\0last?",
+    freeText: true,
+  });
+  expect(questionResponse.status).toBe(200);
+  const question = await questionResponse.json();
+  await expect.poll(f.state).toEqual({ active: { working: "escalated" } });
+  const beforeKill = f.store.loadSnapshot("task:I_A")!;
+  expect((await get(`/api/escalations/${question.escalationId}`)).question).toBe("First\0last?");
+  await f.restart();
+  expect(f.store.loadSnapshot("task:I_A")!.machine).toBe(beforeKill.machine);
+  expect(f.state()).toEqual(beforeKill.snapshot.value);
+  expect(await get(`/api/escalations/${question.escalationId}`)).toMatchObject({
+    status: "open",
+    question: "First\0last?",
+  });
+  expect(db.prepare("SELECT escalation_id FROM agenttool_question").get()?.["escalation_id"]).toBe(
+    question.escalationId,
+  );
+  expect((await get("/api/declarations/bindings")).createdProjects).toHaveLength(4);
+  const request = {
+    item: "work",
+    base: f.commit,
+    saveId: "c".repeat(32),
+    message: "Archive sample item",
+    projects: [
+      { binding: "work-board", choice: "move" },
+      ...ids.map((project, i) => ({
+        created: { environment: "workstation", project },
+        name: `created-${i}`,
+        choice: ["move", "reassign", "archive"][i],
+        ...(i === 1 ? { item: "destination" } : {}),
+      })),
+      {
+        created: { environment: "workstation", project: eligible },
+        name: "eligible",
+        choice: "archive",
+      },
+    ],
+  };
+  const archive = await post("/api/declarations/archive-item", request);
+  expect(archive.outcome).toBe("saved");
+  expect(await post("/api/declarations/archive-item", request)).toMatchObject({
+    outcome: "already-saved",
+    commit: archive.commit,
+  });
+  for (const [i, thread] of unowned.entries())
+    await push([call(`after-${i}`, `session-${i}`)], [mapping(`session-${i}`, thread.id)]);
+  await push([], [mapping("late", unowned[0]!.id)]);
+  const items = ["group/other", "destination", "work"];
+  for (const [i, item] of items.entries())
+    expect(
+      db.prepare("SELECT item FROM usage_postings WHERE call_key=?").get(`after-${i}`)?.["item"],
+    ).toBe(item);
+  expect(
+    db.prepare("SELECT item FROM usage_postings WHERE call_key=?").get("before\0whole")?.["item"],
+  ).toBe("work");
+  expect(
+    db
+      .prepare("SELECT attributed_item FROM usage_attributed_postings WHERE call_key=?")
+      .get("late\0whole")?.["attributed_item"],
+  ).toBe("group/other");
+  const beforePrune = await get("/api/usage/unowned");
+  f.t3.removeProject(eligible);
+  await expect
+    .poll(async () =>
+      (await get("/api/declarations/bindings")).createdProjects.some(
+        (p: { project: string }) => p.project === eligible,
+      ),
+    )
+    .toBe(false);
+  await f.restart(async () => {
+    // Age the real ended actor, delivery and operation rows with the service stopped.
+    db.prepare("UPDATE store_snapshot SET saved_at=1 WHERE actor_id='task:I_B'").run();
+    db.exec(
+      "INSERT INTO github_delivery VALUES('expired-delivery',99,'issues',1); INSERT INTO github_redelivery VALUES('expired-redelivery',99,1,1); INSERT INTO github_hook_scan VALUES(99,2)",
+    );
+    db.prepare("UPDATE escalation SET raised_at=1 WHERE escalation_id=?").run(
+      question.escalationId,
+    );
+  });
+  const firstPrune = await f.requestWorker("prune");
+  expect(firstPrune).toMatchObject({
+    actors: 1,
+    createdProjects: 1,
+    deliveries: 1,
+    redeliveries: 1,
+    escalations: 1,
+    answers: 1,
+    notifications: 2,
+    messages: 1,
+    cardMoves: 1,
+  });
+  expect((await get(`/api/escalations/${seeded["closed"]}`)).error).toBeDefined();
+  expect(
+    db
+      .prepare("SELECT CAST(text AS BLOB) text FROM agenttool_message")
+      .all()
+      .map((row) => Buffer.from(row["text"] as Uint8Array).toString()),
+  ).toEqual(["First\0last"]);
+  expect(db.prepare("SELECT actor_id FROM github_card_move").all()).toEqual([
+    { actor_id: "task:I_A" },
+  ]);
+  expect(f.store.loadSnapshot("task:I_A")?.historyPrunedAt).toBeUndefined();
+  expect(f.store.loadSnapshot("task:I_B")?.historyPrunedAt).toBeDefined();
+  expect(
+    db.prepare("SELECT * FROM t3_created_project WHERE project_id=?").get(eligible),
+  ).toBeUndefined();
+  expect(db.prepare("SELECT count(*) n FROM t3_created_project").get()?.["n"]).toBe(3);
+  expect(db.prepare("SELECT escalation_id FROM agenttool_question").get()?.["escalation_id"]).toBe(
+    question.escalationId,
+  );
+  expect((await get(`/api/escalations/${question.escalationId}`)).status).toBe("open");
+  expect(await get("/api/usage/unowned")).toEqual(beforePrune);
+  expect(Object.values(await f.requestWorker("prune")).every((count) => count === 0)).toBe(true);
+  await f.restart();
+  expect(await post("/api/declarations/archive-item", request)).toMatchObject({
+    outcome: "already-saved",
+    commit: archive.commit,
+  });
+  expect(Object.values(await f.requestWorker("prune")).every((count) => count === 0)).toBe(true);
+  await push(
+    [call("before\0whole", "known"), call("late\0whole", "late")],
+    [mapping("late", unowned[0]!.id)],
+  );
+  expect(
+    db
+      .prepare("SELECT count(*) n FROM usage_calls WHERE call_key IN (?,?)")
+      .get("before\0whole", "late\0whole")?.["n"],
+  ).toBe(2);
+  await push([call("after-prune", "known")]);
+  expect(
+    db.prepare("SELECT item FROM usage_postings WHERE call_key='after-prune'").get()?.["item"],
+  ).toBe("group/other");
+  const replayedQuestion = await f.agentCall("escalate", {
+    thread: thread.id,
+    title: "Sample question",
+    question: "First\0last?",
+    freeText: true,
+  });
+  expect(replayedQuestion.status).toBe(200);
+  expect(await replayedQuestion.json()).toMatchObject({ escalationId: question.escalationId });
+  await f.add("I_A", "item-one", 200);
+  expect(f.state()).toEqual(beforeKill.snapshot.value);
+  expect(f.t3.commands.filter((c) => c.type === "project.create")).toHaveLength(4);
+  expect(
+    (await git.log({ fs, gitdir: f.remote.gitdir, ref: "main" })).filter((c) =>
+      c.commit.message.startsWith("Archive sample item"),
+    ),
+  ).toHaveLength(1);
+}, 60000);
