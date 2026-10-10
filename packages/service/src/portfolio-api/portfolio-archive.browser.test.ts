@@ -448,7 +448,9 @@ test(
       });
       await page.reload();
       await page.getByRole("button", { name: "Show archived (1)", exact: true }).click();
-      await page.getByText("1 projects to resolve", { exact: true }).waitFor();
+      const warning = page.getByText("1 projects to resolve", { exact: true });
+      await warning.waitFor();
+      expect(await warning.getAttribute("class")).toBe("warning-text");
       await page.getByRole("button", { name: "Choose project moves", exact: true }).click();
       const resolve = page
         .getByRole("dialog")

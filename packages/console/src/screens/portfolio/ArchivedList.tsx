@@ -54,7 +54,7 @@ export function ArchivedList({
                   );
                 return count ? (
                   <>
-                    <span className="muted">{count} projects to resolve</span>
+                    <span className="warning-text">{count} projects to resolve</span>
                     <Button variant="outline" disabled={editing} onClick={() => onResolve(i.id)}>
                       Choose project moves
                     </Button>

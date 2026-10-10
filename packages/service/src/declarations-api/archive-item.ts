@@ -13,7 +13,7 @@ import { parseDocument } from "yaml";
 export function archiveItemEdit(
   files: { portfolio: string; bindings: string },
   request: ArchiveItemEdit,
-  createdProjects: readonly AttachedCreatedProject[] = [],
+  createdProjects: readonly (AttachedCreatedProject & { retirable?: boolean })[] = [],
 ):
   | { ok: true; portfolio: string; bindings: string }
   | { ok: false; findings: readonly DeclarationFinding[] } {
@@ -59,6 +59,7 @@ export function archiveItemEdit(
   );
   const attached = createdProjects.filter(
     (record) =>
+      !record.retirable &&
       under(record.item) &&
       !before.declaration.t3codeProjects.some(
         (b) => b.environment === record.environment && b.project === record.project,
@@ -81,9 +82,13 @@ export function archiveItemEdit(
     let path: string[];
 
     if ("created" in choice) {
-      const record = attached.find(
-        (r) => r.environment === choice.created.environment && r.project === choice.created.project,
-      );
+      const matches = (r: AttachedCreatedProject) =>
+        r.environment === choice.created.environment && r.project === choice.created.project;
+      if (!createdProjects.some(matches)) {
+        fail("not-created", "bindings", "Created project has no creation record.");
+        continue;
+      }
+      const record = attached.find(matches);
       if (!record) {
         fail("not-attached", "bindings", "Created project is not attached.");
         continue;

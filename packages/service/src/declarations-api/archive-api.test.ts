@@ -159,6 +159,20 @@ test("archive saves created choices and recovers before changed records are vali
       { binding: "board-two", choice: "archive" },
       { created: { environment: "local", project: "p1" }, name: "chosen", choice: "move" },
     ];
+    for (const [project, kind] of [
+      ["absent", "not-created"],
+      ["retired", "not-attached"],
+    ]) {
+      const refused = await post(
+        [
+          ...projects,
+          { created: { environment: "local", project }, name: "extra", choice: "archive" },
+        ],
+        "7".repeat(32),
+      );
+      expect(refused.status).toBe(422);
+      expect((await refused.json()).findings).toContainEqual(expect.objectContaining({ kind }));
+    }
     const response = await post(projects);
     expect(response.status).toBe(200);
     const saved = await response.json();

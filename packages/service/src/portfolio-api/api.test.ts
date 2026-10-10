@@ -10,7 +10,11 @@ import { isPortfolioResponse } from "@wyrd-company/manifold-shared/portfolio-api
 const text =
   "items:\n  alpha:\n    allocations:\n      acct-a: { guarantee: 50 }\n      acct-c: { guarantee: 0 }\n  beta:\n    allocations:\n      acct-a: { guarantee: 50 }\n";
 test("portfolio read uses balances and updates warnings when accounts alone change", async () => {
-  const result = lintPortfolioDeclaration({ portfolio: text, bindings: undefined });
+  const result = lintPortfolioDeclaration({
+    portfolio: text,
+    bindings:
+      "t3codeProjects:\n  workspace: {environment: local, project: bound, item: alpha}\ngithubProjects:\n  board: {owner: sample, number: 1, environment: local, item: alpha, t3codeProjects: [associated]}\n",
+  });
   if (!result.ok) throw Error("fixture");
   const h = await consoleHost();
   let declared = false;
@@ -22,7 +26,18 @@ test("portfolio read uses balances and updates warnings when accounts alone chan
   };
   const options = {
     portfolio: {
-      createdProjects: () => [],
+      createdProjects: () => [
+        {
+          environment: "local",
+          project: "created",
+          actorId: "a1",
+          createdItem: "alpha",
+          resolution: { item: "alpha", via: "created" as const, actorId: "a1" },
+          usageItem: "alpha",
+          unresolved: false,
+          retirable: false,
+        },
+      ],
       current: () => ({ commit: "a".repeat(40), declaration: result.declaration }),
       ledger: {
         balance: ({ item, account }: { item: string; account: string }) => ({
@@ -70,6 +85,13 @@ test("portfolio read uses balances and updates warnings when accounts alone chan
     };
     const first = await read();
     expect(first.at).toBe(new Date(1000).toISOString());
+    expect(
+      first.items.find((i) => i.id === "alpha")?.projects.t3code.map((p) => [p.via, p.project]),
+    ).toEqual([
+      ["binding", "bound"],
+      ["association", "associated"],
+      ["created", "created"],
+    ]);
     expect(first.warnings.map((w) => w.details?.["account"])).toEqual(["acct-c"]);
     expect(first.items.find((i) => i.id === "alpha")?.allocations[0]).toMatchObject({
       actual: 17700,

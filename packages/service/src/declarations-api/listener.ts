@@ -171,15 +171,13 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
       const edited = archiveItemEdit(
         { portfolio: portfolio ?? "", bindings: bindings ?? "" },
         request,
-        options
-          .createdProjects()
-          .filter((p) => !p.retirable && p.resolution.via === "created")
-          .map((p) => ({
-            environment: p.environment,
-            project: p.project,
-            actorId: p.actorId,
-            item: p.createdItem,
-          })),
+        options.createdProjects().map((p) => ({
+          environment: p.environment,
+          project: p.project,
+          actorId: p.actorId,
+          item: p.createdItem,
+          retirable: p.retirable,
+        })),
       );
       if (!edited.ok)
         return answer(response, 422, {

@@ -115,7 +115,7 @@ test("created choices enforce attachment, completeness, siblings and declaration
     ],
     [
       [{ created: { environment: "local", project: "absent" }, name: "chosen", choice: "archive" }],
-      "not-attached",
+      "not-created",
     ],
     [
       [{ created: { environment: "local", project: "p1" }, name: "board-one", choice: "archive" }],
@@ -199,5 +199,32 @@ test("created choices cannot duplicate an identity or a name in either binding s
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.findings).toContainEqual(expect.objectContaining({ kind: "name-taken" }));
+  }
+});
+
+test("existing created records outside attachment remain not-attached", () => {
+  for (const record of [
+    { environment: "local", project: "p1", actorId: "a1", item: "gamma" },
+    { environment: "local", project: "p1", actorId: "a1", item: "beta", retirable: true },
+    { environment: "local", project: "workspace-one", actorId: "a1", item: "beta" },
+  ]) {
+    const result = archiveItemEdit(
+      { portfolio, bindings },
+      {
+        item: "beta",
+        projects: [
+          {
+            created: { environment: record.environment, project: record.project },
+            name: "chosen",
+            choice: "archive",
+          },
+        ],
+      },
+      [record],
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw Error("Expected refusal");
+    expect(result.findings).toContainEqual(expect.objectContaining({ kind: "not-attached" }));
+    expect(result.findings.some((f) => f.kind === "not-created")).toBe(false);
   }
 });
