@@ -12,7 +12,7 @@
 -- declaration: the ledger portfolio input, the items, and the bindings.
 CREATE TABLE portfolio_declarations (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
-  commit_id TEXT NOT NULL CHECK (length(commit_id) > 0),
+  commit_id TEXT NOT NULL CHECK (commit_id <> ''),
   declaration TEXT NOT NULL CHECK (json_valid(declaration)),
   accepted_at INTEGER NOT NULL
 ) STRICT;

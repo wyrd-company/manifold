@@ -6,15 +6,15 @@
 -- Manifold's database file, migrated under the owner `tthree`.
 
 CREATE TABLE t3_environment (
-  environment TEXT NOT NULL PRIMARY KEY CHECK (length(environment) > 0),
-  environment_id TEXT NOT NULL CHECK (length(environment_id) > 0),
+  environment TEXT NOT NULL PRIMARY KEY CHECK (environment <> ''),
+  environment_id TEXT NOT NULL CHECK (environment_id <> ''),
   origin_sequence INTEGER NOT NULL CHECK (origin_sequence >= 0),
   shell_sequence INTEGER NOT NULL CHECK (shell_sequence >= origin_sequence)
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE t3_thread (
   environment TEXT NOT NULL REFERENCES t3_environment (environment) ON DELETE CASCADE,
-  thread_id TEXT NOT NULL CHECK (length(thread_id) > 0),
+  thread_id TEXT NOT NULL CHECK (thread_id <> ''),
   status TEXT NOT NULL CHECK (status IN ('followed', 'archived', 'deleted')),
   cursor INTEGER NOT NULL CHECK (cursor >= 0),
   thread TEXT NOT NULL CHECK (json_valid(thread)),
@@ -27,9 +27,9 @@ CREATE TABLE t3_thread (
 
 CREATE TABLE t3_created_project (
   environment TEXT NOT NULL REFERENCES t3_environment (environment) ON DELETE CASCADE,
-  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
-  item TEXT NOT NULL CHECK (length(item) > 0),
+  project_id TEXT NOT NULL CHECK (project_id <> ''),
+  actor_id TEXT NOT NULL CHECK (actor_id <> ''),
+  item TEXT NOT NULL CHECK (item <> ''),
   presence TEXT NOT NULL DEFAULT 'unseen'
   CHECK (presence IN ('unseen', 'listed', 'removed')),
   PRIMARY KEY (environment, project_id)

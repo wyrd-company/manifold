@@ -334,14 +334,20 @@ proposed-design:
     before the call. No constraint or query applies `length`, `GLOB`,
     `LIKE`, `instr`, or `printf` to a column whose strings may hold a NUL,
     since each reads only up to the first one: a column that must not be
-    empty is checked with `<column> <> ''`. A column whose format admits no
-    NUL, such as a hex digest or a GitHub repository name, may keep such a
-    check. The reads are the same on
+    empty is checked with `<column> <> ''`, and a length limit that a
+    boundary schema states, such as the 8000-character limit on a message,
+    stays at that boundary. A column whose format admits no NUL, such as a
+    hex digest, a generated id of fixed length, or a GitHub repository
+    name, may keep such a check. The reads are the same on
     every release, and nothing checks the Node version. The store's own
     reads name their columns, with no `SELECT *`, and cast `actor_id`,
     `machine`, `event_id`, `topic`, `state_path`, `event_name`, `entry_id`,
     `from_machine`, `to_machine`, and `message`; `status`, `kind`, and the
-    JSON columns `snapshot`, `payload`, and `detail` are read as TEXT.
+    JSON columns `snapshot`, `payload`, and `detail` are read as TEXT. Each
+    module that keeps such a column proves, through its own public
+    interface, that a string with a NUL inside and a string that starts
+    with a NUL come back whole from every read whose result is compared,
+    bound again, used as a key, or written back.
   state-paths: >-
     A state path names one state node of a snapshot's state value: the keys
     from the root to the node joined with `.`. `statePaths(value)` returns

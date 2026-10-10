@@ -14,14 +14,14 @@
 -- it, null when none did. Both are null for a visit left by a save that
 -- holds no state change and for a visit closed by the actor's end.
 CREATE TABLE history_visit (
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+  actor_id TEXT NOT NULL CHECK (actor_id <> ''),
   visit INTEGER NOT NULL CHECK (visit >= 1),
-  machine TEXT NOT NULL CHECK (length(machine) > 0),
+  machine TEXT NOT NULL CHECK (machine <> ''),
   state_value TEXT NOT NULL CHECK (json_valid(state_value)),
   entered_at INTEGER NOT NULL,
   exited_at INTEGER CHECK (exited_at >= entered_at),
-  exit_event_type TEXT CHECK (length(exit_event_type) > 0),
-  exit_event_id TEXT CHECK (length(exit_event_id) > 0),
+  exit_event_type TEXT CHECK (exit_event_type <> ''),
+  exit_event_id TEXT CHECK (exit_event_id <> ''),
   PRIMARY KEY (actor_id, visit),
   CHECK (exit_event_type IS NULL OR exited_at IS NOT NULL),
   CHECK (exit_event_id IS NULL OR exit_event_type IS NOT NULL)
@@ -32,8 +32,8 @@ CREATE TABLE history_visit (
 -- same actor and event id. `visit` is null for an event taken before the
 -- actor's first recorded visit.
 CREATE TABLE history_event (
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
-  event_id TEXT NOT NULL CHECK (length(event_id) > 0),
+  actor_id TEXT NOT NULL CHECK (actor_id <> ''),
+  event_id TEXT NOT NULL CHECK (event_id <> ''),
   visit INTEGER,
   PRIMARY KEY (actor_id, event_id),
   FOREIGN KEY (actor_id, visit) REFERENCES history_visit (actor_id, visit)
@@ -48,15 +48,15 @@ CREATE TABLE history_event (
 -- are null until the server's answer is recorded, and stay null for a
 -- command whose answer never arrived or that the server rejected.
 CREATE TABLE history_command (
-  command_id TEXT PRIMARY KEY CHECK (length(command_id) > 0),
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+  command_id TEXT PRIMARY KEY CHECK (command_id <> ''),
+  actor_id TEXT NOT NULL CHECK (actor_id <> ''),
   kind TEXT NOT NULL CHECK (kind IN ('project-create', 'thread-create', 'turn-start')),
-  invoke_id TEXT NOT NULL CHECK (length(invoke_id) > 0),
-  entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
-  environment TEXT NOT NULL CHECK (length(environment) > 0),
-  thread_id TEXT CHECK (length(thread_id) > 0),
-  project_id TEXT CHECK (length(project_id) > 0),
-  message_id TEXT CHECK (length(message_id) > 0),
+  invoke_id TEXT NOT NULL CHECK (invoke_id <> ''),
+  entry_id TEXT NOT NULL CHECK (entry_id <> ''),
+  environment TEXT NOT NULL CHECK (environment <> ''),
+  thread_id TEXT CHECK (thread_id <> ''),
+  project_id TEXT CHECK (project_id <> ''),
+  message_id TEXT CHECK (message_id <> ''),
   sent_at INTEGER NOT NULL,
   sequence INTEGER CHECK (sequence >= 0),
   accepted_at INTEGER,

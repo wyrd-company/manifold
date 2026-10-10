@@ -11,9 +11,9 @@
 -- the first save that gives it, for a row written at resume.
 CREATE TABLE gates_entry (
   entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  gate TEXT NOT NULL CHECK (length(gate) > 0),
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
-  state_entry_id TEXT CHECK (state_entry_id IS NULL OR length(state_entry_id) > 0),
+  gate TEXT NOT NULL CHECK (gate <> ''),
+  actor_id TEXT NOT NULL CHECK (actor_id <> ''),
+  state_entry_id TEXT CHECK (state_entry_id IS NULL OR state_entry_id <> ''),
   entered_at INTEGER NOT NULL,
   UNIQUE (gate, actor_id)
 ) STRICT;
@@ -21,9 +21,9 @@ CREATE TABLE gates_entry (
 -- One row per gate key: the version that declares it in the newest
 -- revision that does, and that revision's commit.
 CREATE TABLE gates_declaration (
-  gate TEXT PRIMARY KEY CHECK (length(gate) > 0),
-  version TEXT NOT NULL CHECK (length(version) > 0),
-  revision_commit TEXT NOT NULL CHECK (length(revision_commit) > 0),
+  gate TEXT PRIMARY KEY CHECK (gate <> ''),
+  version TEXT NOT NULL CHECK (version <> ''),
+  revision_commit TEXT NOT NULL CHECK (revision_commit <> ''),
   declared_at INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
 
@@ -32,8 +32,8 @@ CREATE TABLE gates_declaration (
 -- of the declaring version, whose comparator ran.
 CREATE TABLE gates_evaluation (
   evaluation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  gate TEXT NOT NULL CHECK (length(gate) > 0),
-  version TEXT NOT NULL CHECK (length(version) > 0),
+  gate TEXT NOT NULL CHECK (gate <> ''),
+  version TEXT NOT NULL CHECK (version <> ''),
   evaluated_at INTEGER NOT NULL,
   seed INTEGER NOT NULL CHECK (seed BETWEEN 0 AND 4294967295),
   input TEXT NOT NULL CHECK (json_valid(input)),
@@ -57,10 +57,10 @@ CREATE INDEX gates_evaluation_by_time ON gates_evaluation (evaluated_at, evaluat
 -- once retention has deleted the evaluation of a returned token.
 CREATE TABLE gates_token (
   token_id TEXT PRIMARY KEY CHECK (token_id = 'token:' || entry_id),
-  gate TEXT NOT NULL CHECK (length(gate) > 0),
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+  gate TEXT NOT NULL CHECK (gate <> ''),
+  actor_id TEXT NOT NULL CHECK (actor_id <> ''),
   entry_id INTEGER NOT NULL,
-  state_entry_id TEXT CHECK (state_entry_id IS NULL OR length(state_entry_id) > 0),
+  state_entry_id TEXT CHECK (state_entry_id IS NULL OR state_entry_id <> ''),
   evaluation_id INTEGER REFERENCES gates_evaluation (evaluation_id) ON DELETE SET NULL,
   granted_at INTEGER NOT NULL,
   trapped INTEGER NOT NULL DEFAULT 0 CHECK (trapped IN (0, 1)),

@@ -6,7 +6,7 @@
 -- Manifold's database file, migrated under the owner `environment`.
 
 CREATE TABLE environment_hold (
-  environment TEXT PRIMARY KEY CHECK (length(environment) > 0),
+  environment TEXT PRIMARY KEY CHECK (environment <> ''),
   paused INTEGER NOT NULL CHECK (paused IN (0, 1)),
   disconnected INTEGER NOT NULL CHECK (disconnected IN (0, 1)),
   sequence INTEGER NOT NULL CHECK (sequence >= 1),
