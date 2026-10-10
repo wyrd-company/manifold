@@ -96,7 +96,7 @@ const intake = stringify({
     { id: "two", sourceId: "nested", targetId: "out" },
   ],
 });
-async function fixture(dark: boolean) {
+async function fixture(dark: boolean, modelText = stringify(model)) {
   const f = await serviceFixture();
   await git.setConfig({
     fs,
@@ -123,7 +123,7 @@ async function fixture(dark: boolean) {
     base: f.first,
     files: [
       { path: blueprintPath, text: blueprint },
-      { path, text: stringify(model) },
+      { path, text: modelText },
       { path: "manifold.yml", text: "intake:\n  decisionModel: intake.yml\n" },
       { path: "intake.yml", text: intake },
       { path: "shared/rates.yml", text: stringify(model) },
@@ -530,28 +530,21 @@ for (const dark of [false, true])
   test(
     `visual adapters retain unsupported nodes and add JSONata nodes without loading the function editor (${dark ? "dark" : "light"})`,
     async () => {
-      const f = await fixture(dark);
+      const unsupported = {
+        ...model,
+        nodes: [
+          ...model.nodes,
+          {
+            id: "unsupported",
+            name: "Unsupported",
+            type: "functionNode",
+            content: { source: "return 1" },
+          },
+        ],
+      };
+      const f = await fixture(dark, stringify(unsupported));
       const { page } = f;
       try {
-        const unsupported = {
-          ...model,
-          nodes: [
-            ...model.nodes,
-            {
-              id: "unsupported",
-              name: "Unsupported",
-              type: "functionNode",
-              content: { source: "return 1" },
-            },
-          ],
-        };
-        await f.service.revisions.save({
-          base: f.seed,
-          files: [{ path, text: stringify(unsupported) }],
-          message: "External sample editor",
-          saveId: "4".repeat(32),
-        });
-        await page.reload();
         await open(page);
         await dialog(page).getByRole("tab").filter({ hasText: "Graph" }).click();
         await dialog(page).getByRole("button", { name: "Edit Function", exact: true }).click();
