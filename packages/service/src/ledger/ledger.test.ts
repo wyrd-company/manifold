@@ -955,3 +955,91 @@ it("archived child balances retain actuals without sharing at a live ancestor", 
     reservable: 0,
   });
 });
+
+it.each(["inside\0tail", "\0leading"])(
+  "ledger identities and window keys round-trip: %j",
+  (text) => {
+    const item = text,
+      other = `other:${text}`,
+      account = text,
+      actor = text;
+    const f = setup(
+      {
+        items: [
+          { id: item, parent: null },
+          { id: other, parent: null },
+        ],
+        allocations: [
+          { item, account, guarantee: 50 },
+          { item: other, account, guarantee: 50 },
+        ],
+      },
+      false,
+    );
+    f.ledger.credit({
+      key: `credit:${text}`,
+      account,
+      window: text,
+      opensAt: 0,
+      closesAt: 1000,
+      amount: 100,
+    });
+    f.ledger.credit({
+      key: `next:${text}`,
+      account,
+      window: `next:${text}`,
+      opensAt: 1000,
+      closesAt: 2000,
+      amount: 100,
+    });
+    expect(f.ledger.windowAt({ account, at: 0 })).toMatchObject({
+      current: { window: text, capacity: 100 },
+      next: { window: `next:${text}` },
+    });
+    f.ledger.reserve({ key: `reserve:${text}`, actor, item, account, amount: 10 });
+    f.ledger.postActual({ key: `actual:${text}`, actor, item, account, amount: 3, usedAt: 100 });
+    expect(f.ledger.balance({ item, account, waiting: [] })).toMatchObject({
+      window: text,
+      actual: 3,
+    });
+    expect(f.ledger.actorUsage(actor).accounts).toMatchObject([{ account, actual: 3 }]);
+    f.ledger.reattribute({
+      key: `reattribute:${text}`,
+      account,
+      amount: 3,
+      usedAt: 100,
+      from: { actor, item },
+      to: { actor: `other:${text}`, item: other },
+    });
+    expect(f.ledger.balance({ item: other, account, waiting: [] })).toMatchObject({
+      window: text,
+      actual: 3,
+    });
+    expect(f.ledger.totals({ account }).items).toContainEqual({ item: other, lifetime: 3 });
+    const reopened = new DatabaseSync(f.path);
+    try {
+      const ledger = createLedger({
+        connection: { database: reopened, transaction: (work) => work() },
+        portfolio: f.portfolio,
+        now: () => 0,
+      });
+      expect(ledger.windowAt({ account, at: 0 })).toMatchObject({
+        current: { window: text, capacity: 100 },
+        next: { window: `next:${text}` },
+      });
+      expect(ledger.actorUsage(`other:${text}`).accounts).toMatchObject([{ account, actual: 3 }]);
+      expect(
+        ledger.credit({
+          key: `credit:${text}`,
+          account,
+          window: text,
+          opensAt: 0,
+          closesAt: 1000,
+          amount: 100,
+        }).replayed,
+      ).toBe(true);
+    } finally {
+      reopened.close();
+    }
+  },
+);

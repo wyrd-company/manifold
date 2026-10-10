@@ -2,6 +2,8 @@
 // relationships:
 //   implements: environment-control-database-schema
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { Store } from "../store/index.ts";
 import type { EnvironmentHold } from "../t3code-source/index.ts";
 export function holdsStore(store: Store) {
@@ -13,8 +15,11 @@ export function holdsStore(store: Store) {
     read() {
       return new Map(
         database
-          .prepare("SELECT * FROM environment_hold")
+          .prepare(
+            "SELECT CAST(environment AS BLOB) AS environment, paused, disconnected, sequence, changed_at FROM environment_hold",
+          )
           .all()
+          .map(readEnvironmentHold)
           .map((row) => [
             String(row["environment"]),
             Object.freeze({
@@ -29,4 +34,10 @@ export function holdsStore(store: Store) {
       write.run(environment, Number(hold.paused), Number(hold.disconnected), hold.sequence, at);
     },
   };
+}
+
+function readEnvironmentHold<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, environment: storedText(values["environment"]!) } as T;
 }

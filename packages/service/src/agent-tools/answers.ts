@@ -2,6 +2,8 @@
 // relationships:
 //   implements: agent-tools
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { Escalation, ServiceEscalationHandler } from "../escalations/index.ts";
 import type { MessagePlacement } from "../t3code-source/index.ts";
 import { agentThreadTopic, answerMessageId, answerText, encoded } from "./calls.ts";
@@ -21,9 +23,13 @@ export function answers(options: AgentToolsOptions, signal: AbortSignal) {
   const workers = new Map<string, Promise<void>>();
   const wakes = new Set<string>();
   function placed(row: AnswerRow, turnId: string | null) {
-    const question = db
-      .prepare("SELECT environment_id FROM agenttool_question WHERE escalation_id=?")
-      .get(row.escalation_id)!;
+    const question = readQuestionEnvironment(
+      db
+        .prepare(
+          "SELECT CAST(environment_id AS BLOB) AS environment_id FROM agenttool_question WHERE escalation_id=?",
+        )
+        .get(row.escalation_id),
+    )!;
     const escalation = db
       .prepare("SELECT answer,channel FROM escalation WHERE escalation_id=?")
       .get(row.escalation_id)!;
@@ -61,11 +67,13 @@ export function answers(options: AgentToolsOptions, signal: AbortSignal) {
   async function send(environment: string) {
     while (!signal.aborted) {
       if (!running) return;
-      const row = db
-        .prepare(
-          "SELECT * FROM agenttool_answer WHERE status='pending' AND environment=? ORDER BY written_at,rowid LIMIT 1",
-        )
-        .get(environment) as unknown as AnswerRow | undefined;
+      const row = readAnswer(
+        db
+          .prepare(
+            "SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(environment AS BLOB) AS environment, CAST(thread_id AS BLOB) AS thread_id, CAST(message_id AS BLOB) AS message_id, CAST(text AS BLOB) AS text, status, sequence, CAST(error AS BLOB) AS error, written_at, settled_at, CAST(turn_id AS BLOB) AS turn_id, placed_at FROM agenttool_answer WHERE status='pending' AND environment=? ORDER BY written_at,rowid LIMIT 1",
+          )
+          .get(environment),
+      ) as unknown as AnswerRow | undefined;
       if (!row) return;
       try {
         const receipt = await options.threads.startTurn({
@@ -89,9 +97,13 @@ export function answers(options: AgentToolsOptions, signal: AbortSignal) {
               Date.now(),
               row.escalation_id,
             );
-            const fresh = db
-              .prepare("SELECT * FROM agenttool_answer WHERE escalation_id=?")
-              .get(row.escalation_id) as unknown as AnswerRow;
+            const fresh = readAnswer(
+              db
+                .prepare(
+                  "SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(environment AS BLOB) AS environment, CAST(thread_id AS BLOB) AS thread_id, CAST(message_id AS BLOB) AS message_id, CAST(text AS BLOB) AS text, status, sequence, CAST(error AS BLOB) AS error, written_at, settled_at, CAST(turn_id AS BLOB) AS turn_id, placed_at FROM agenttool_answer WHERE escalation_id=?",
+                )
+                .get(row.escalation_id),
+            ) as unknown as AnswerRow;
             if (fresh.placed_at === null) placed(fresh, null);
           });
           options.log({
@@ -141,21 +153,24 @@ export function answers(options: AgentToolsOptions, signal: AbortSignal) {
     questionHandler,
     messagePlaced(placement: MessagePlacement) {
       options.store.connection.transaction(() => {
-        const row = db
-          .prepare(
-            "SELECT * FROM agenttool_answer WHERE message_id=? AND environment=? AND thread_id=?",
-          )
-          .get(placement.messageId, placement.environment, placement.threadId) as unknown as
-          | AnswerRow
-          | undefined;
+        const row = readAnswer(
+          db
+            .prepare(
+              "SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(environment AS BLOB) AS environment, CAST(thread_id AS BLOB) AS thread_id, CAST(message_id AS BLOB) AS message_id, CAST(text AS BLOB) AS text, status, sequence, CAST(error AS BLOB) AS error, written_at, settled_at, CAST(turn_id AS BLOB) AS turn_id, placed_at FROM agenttool_answer WHERE message_id=? AND environment=? AND thread_id=?",
+            )
+            .get(placement.messageId, placement.environment, placement.threadId),
+        ) as unknown as AnswerRow | undefined;
         if (row && row.status !== "failed" && row.placed_at === null) placed(row, placement.turnId);
       });
     },
     start() {
       running = true;
       const pending = db
-        .prepare("SELECT DISTINCT environment FROM agenttool_answer WHERE status='pending'")
-        .all();
+        .prepare(
+          "SELECT DISTINCT CAST(environment AS BLOB) AS environment FROM agenttool_answer WHERE status='pending'",
+        )
+        .all()
+        .map(readAnswerEnvironment);
       for (const row of pending) wake(String(row["environment"]));
     },
     async stop() {
@@ -163,4 +178,29 @@ export function answers(options: AgentToolsOptions, signal: AbortSignal) {
       await Promise.all(workers.values());
     },
   };
+}
+
+function readQuestionEnvironment<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, environment_id: storedText(values["environment_id"]!) } as T;
+}
+function readAnswer<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    escalation_id: storedText(values["escalation_id"]!),
+    environment: storedText(values["environment"]!),
+    thread_id: storedText(values["thread_id"]!),
+    message_id: storedText(values["message_id"]!),
+    text: storedText(values["text"]!),
+    error: values["error"] === null ? null : storedText(values["error"]!),
+    turn_id: values["turn_id"] === null ? null : storedText(values["turn_id"]!),
+  } as T;
+}
+function readAnswerEnvironment<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, environment: storedText(values["environment"]!) } as T;
 }

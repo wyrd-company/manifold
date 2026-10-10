@@ -16,11 +16,11 @@ CREATE TABLE escalation (
   actor_id TEXT,
   invoke_id TEXT,
   entry_id TEXT,
-  kind TEXT CHECK (length(kind) > 0),
+  kind TEXT CHECK (kind <> ''),
   subject TEXT,
   occurrence INTEGER CHECK (occurrence > 0),
-  title TEXT NOT NULL CHECK (length(title) > 0),
-  question TEXT NOT NULL CHECK (length(question) > 0),
+  title TEXT NOT NULL CHECK (title <> ''),
+  question TEXT NOT NULL CHECK (question <> ''),
   choices TEXT NOT NULL,
   free_text INTEGER NOT NULL CHECK (free_text IN (0, 1)),
   destinations TEXT NOT NULL,
@@ -64,7 +64,7 @@ CREATE INDEX escalation_status ON escalation (status, raised_at);
 CREATE TABLE escalation_notification (
   notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
   escalation_id TEXT NOT NULL REFERENCES escalation (escalation_id),
-  destination TEXT NOT NULL CHECK (length(destination) > 0),
+  destination TEXT NOT NULL CHECK (destination <> ''),
   purpose TEXT NOT NULL CHECK (purpose IN ('ask', 'close')),
   message TEXT,
   status TEXT NOT NULL

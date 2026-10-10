@@ -2,6 +2,8 @@
 // relationships:
 //   implements: usage-intake
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import { LedgerError } from "../ledger/index.ts";
 import type {
   UsageCall,
@@ -33,13 +35,13 @@ export function resolvePosting(
   posting: Posting,
 ): "posted" | "unaccounted" | "unpriced" | "no-window" {
   const db = options.connection.database;
-  const session = db
-    .prepare(
-      "SELECT provider_instance FROM usage_sessions WHERE environment=? AND provider=? AND provider_session_id=json_extract((SELECT record FROM usage_calls WHERE environment=? AND call_key=?),'$.providerSessionId')",
-    )
-    .get(posting.environment, posting.provider, posting.environment, posting.call_key) as
-    | { provider_instance: string | null }
-    | undefined;
+  const session = readUsageSessions(
+    db
+      .prepare(
+        "SELECT CAST(provider_instance AS BLOB) AS provider_instance FROM usage_sessions WHERE environment=? AND provider=? AND provider_session_id=json_extract((SELECT record FROM usage_calls WHERE environment=? AND call_key=?),'$.providerSessionId')",
+      )
+      .get(posting.environment, posting.provider, posting.environment, posting.call_key),
+  ) as { provider_instance: string | null } | undefined;
   let account: string | undefined, fallback: string | undefined;
   for (const [name, entry] of Object.entries(declaration.accounts).filter(
     ([, entry]) => !entry.archived,
@@ -104,8 +106,11 @@ export function retryPostings(
       pending: { unaccounted: 0, unpriced: 0, noWindow: 0 },
     };
     for (const posting of options.connection.database
-      .prepare("SELECT * FROM usage_postings WHERE status='pending' ORDER BY seq")
-      .all() as Posting[]) {
+      .prepare(
+        "SELECT seq, CAST(environment AS BLOB) AS environment, CAST(call_key AS BLOB) AS call_key, revision, used_at, provider, CAST(model AS BLOB) AS model, speed, base_tokens, tokens, CAST(actor AS BLOB) AS actor, CAST(item AS BLOB) AS item, visit, CAST(account AS BLOB) AS account, amount, status, reason, CAST(ledger_key AS BLOB) AS ledger_key, posted_at FROM usage_postings WHERE status='pending' ORDER BY seq",
+      )
+      .all()
+      .map(readUsagePostings) as Posting[]) {
       const status = resolvePosting(options, declaration, now, posting);
       if (status === "posted") result.posted++;
       else result.pending[status === "no-window" ? "noWindow" : status]++;
@@ -121,19 +126,21 @@ export function postingAttribution(
   usedAt: number,
 ) {
   const db = options.connection.database;
-  const session = db
-    .prepare(
-      "SELECT thread_id FROM usage_sessions WHERE environment=? AND provider=? AND provider_session_id=?",
-    )
-    .get(environment, provider, sessionId) as { thread_id: string } | undefined;
+  const session = readUsageSessionsThreadId(
+    db
+      .prepare(
+        "SELECT CAST(thread_id AS BLOB) AS thread_id FROM usage_sessions WHERE environment=? AND provider=? AND provider_session_id=?",
+      )
+      .get(environment, provider, sessionId),
+  ) as { thread_id: string } | undefined;
   const actor = session
-    ? (db
-        .prepare(
-          "SELECT a.actor_id,a.item FROM usage_threads t JOIN usage_actors a USING(actor_id) WHERE t.environment=? AND t.thread_id=?",
-        )
-        .get(environment, session.thread_id) as
-        | { actor_id: string; item: string | null }
-        | undefined)
+    ? (readUsageThreads(
+        db
+          .prepare(
+            "SELECT CAST(a.actor_id AS BLOB) AS actor_id, CAST(a.item AS BLOB) AS item FROM usage_threads t JOIN usage_actors a USING(actor_id) WHERE t.environment=? AND t.thread_id=?",
+          )
+          .get(environment, session.thread_id),
+      ) as { actor_id: string; item: string | null } | undefined)
     : undefined;
   const visit = actor ? options.visits.visitAt(actor.actor_id, usedAt) : undefined;
   const project = session ? options.threadProject(environment, session.thread_id) : undefined;
@@ -170,13 +177,13 @@ export function pushUsage(
       sourceErrors: 0,
     };
     for (const mapping of request.threads) {
-      const previous = db
-        .prepare(
-          "SELECT thread_id,provider_instance FROM usage_sessions WHERE environment=? AND provider=? AND provider_session_id=?",
-        )
-        .get(request.environment, mapping.provider, mapping.providerSessionId) as
-        | { thread_id: string; provider_instance: string | null }
-        | undefined;
+      const previous = readUsageSessionsThreadIdProviderInstance(
+        db
+          .prepare(
+            "SELECT CAST(thread_id AS BLOB) AS thread_id, CAST(provider_instance AS BLOB) AS provider_instance FROM usage_sessions WHERE environment=? AND provider=? AND provider_session_id=?",
+          )
+          .get(request.environment, mapping.provider, mapping.providerSessionId),
+      ) as { thread_id: string; provider_instance: string | null } | undefined;
       if (previous) {
         result.threads[previous.thread_id === mapping.threadId ? "replayed" : "conflicting"]++;
       } else {
@@ -195,14 +202,10 @@ export function pushUsage(
       const sessionActor = `session:${request.environment}:${mapping.provider}:${mapping.providerSessionId}`;
       const postings = db
         .prepare(
-          "SELECT p.* FROM usage_attributed_postings p JOIN usage_calls c USING(environment,call_key) WHERE p.environment=? AND p.provider=? AND json_extract(c.record,'$.providerSessionId')=? AND p.attributed_actor=? ORDER BY p.seq",
+          "SELECT p.seq AS seq, CAST(p.environment AS BLOB) AS environment, CAST(p.call_key AS BLOB) AS call_key, p.revision AS revision, p.used_at AS used_at, p.provider AS provider, CAST(p.model AS BLOB) AS model, p.speed AS speed, p.base_tokens AS base_tokens, p.tokens AS tokens, CAST(p.actor AS BLOB) AS actor, CAST(p.item AS BLOB) AS item, p.visit AS visit, CAST(p.account AS BLOB) AS account, p.amount AS amount, p.status AS status, p.reason AS reason, CAST(p.ledger_key AS BLOB) AS ledger_key, p.posted_at AS posted_at, CAST(p.attributed_actor AS BLOB) AS attributed_actor, CAST(p.attributed_item AS BLOB) AS attributed_item, CAST(p.held_actor AS BLOB) AS held_actor, CAST(p.held_item AS BLOB) AS held_item, p.attributed_visit AS attributed_visit, p.moves AS moves FROM usage_attributed_postings p JOIN usage_calls c USING(environment,call_key) WHERE p.environment=? AND p.provider=? AND json_extract(c.record,'$.providerSessionId')=? AND p.attributed_actor=? ORDER BY p.seq",
         )
-        .all(
-          request.environment,
-          mapping.provider,
-          mapping.providerSessionId,
-          sessionActor,
-        ) as Posting[];
+        .all(request.environment, mapping.provider, mapping.providerSessionId, sessionActor)
+        .map(readUsageAttributedPostings) as Posting[];
       for (const posting of postings) {
         const attribution = postingAttribution(
           options,
@@ -298,12 +301,82 @@ export function pushUsage(
         attribution.item,
         attribution.visit,
       );
-      const posting = db
-        .prepare("SELECT * FROM usage_postings WHERE environment=? AND call_key=? AND revision=?")
-        .get(request.environment, record.key, revision) as Posting;
+      const posting = readUsagePostings(
+        db
+          .prepare(
+            "SELECT seq, CAST(environment AS BLOB) AS environment, CAST(call_key AS BLOB) AS call_key, revision, used_at, provider, CAST(model AS BLOB) AS model, speed, base_tokens, tokens, CAST(actor AS BLOB) AS actor, CAST(item AS BLOB) AS item, visit, CAST(account AS BLOB) AS account, amount, status, reason, CAST(ledger_key AS BLOB) AS ledger_key, posted_at FROM usage_postings WHERE environment=? AND call_key=? AND revision=?",
+          )
+          .get(request.environment, record.key, revision),
+      ) as Posting;
       if (resolvePosting(options, declaration, now, posting) === "posted") result.calls.accepted++;
       else result.calls.pending++;
     }
     return result;
   });
+}
+
+function readUsageSessions<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    provider_instance:
+      values["provider_instance"] === null ? null : storedText(values["provider_instance"]!),
+  } as T;
+}
+function readUsagePostings<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    environment: storedText(values["environment"]!),
+    call_key: storedText(values["call_key"]!),
+    model: values["model"] === null ? null : storedText(values["model"]!),
+    actor: storedText(values["actor"]!),
+    item: storedText(values["item"]!),
+    account: values["account"] === null ? null : storedText(values["account"]!),
+    ledger_key: values["ledger_key"] === null ? null : storedText(values["ledger_key"]!),
+  } as T;
+}
+function readUsageSessionsThreadId<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, thread_id: storedText(values["thread_id"]!) } as T;
+}
+function readUsageThreads<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    actor_id: storedText(values["actor_id"]!),
+    item: values["item"] === null ? null : storedText(values["item"]!),
+  } as T;
+}
+function readUsageSessionsThreadIdProviderInstance<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    thread_id: storedText(values["thread_id"]!),
+    provider_instance:
+      values["provider_instance"] === null ? null : storedText(values["provider_instance"]!),
+  } as T;
+}
+function readUsageAttributedPostings<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    environment: storedText(values["environment"]!),
+    call_key: storedText(values["call_key"]!),
+    model: values["model"] === null ? null : storedText(values["model"]!),
+    actor: storedText(values["actor"]!),
+    item: storedText(values["item"]!),
+    account: values["account"] === null ? null : storedText(values["account"]!),
+    ledger_key: values["ledger_key"] === null ? null : storedText(values["ledger_key"]!),
+    attributed_actor: storedText(values["attributed_actor"]!),
+    attributed_item: storedText(values["attributed_item"]!),
+    held_actor: storedText(values["held_actor"]!),
+    held_item: storedText(values["held_item"]!),
+  } as T;
 }

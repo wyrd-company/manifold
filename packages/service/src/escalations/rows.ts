@@ -2,6 +2,8 @@
 // relationships:
 //   implements: escalations-database-schema
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { SQLInputValue } from "node:sqlite";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Store } from "../store/index.ts";
@@ -52,10 +54,24 @@ export function escalationRows(
 ) {
   const db = store.connection.database;
   function rows(sql: string, ...args: SQLInputValue[]): EscalationRow[] {
-    return db.prepare(sql).all(...args) as unknown as EscalationRow[];
+    return db
+      .prepare(sql)
+      .all(...args)
+      .map((row) => ({
+        ...row,
+        escalation_id: storedText(row["escalation_id"]!),
+        actor_id: row["actor_id"] === null ? null : storedText(row["actor_id"]!),
+        invoke_id: row["invoke_id"] === null ? null : storedText(row["invoke_id"]!),
+        entry_id: row["entry_id"] === null ? null : storedText(row["entry_id"]!),
+        title: storedText(row["title"]!),
+        question: storedText(row["question"]!),
+      })) as unknown as EscalationRow[];
   }
   function row(id: string) {
-    return rows("SELECT * FROM escalation WHERE escalation_id = ?", id)[0];
+    return rows(
+      "SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(actor_id AS BLOB) AS actor_id, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, kind, subject, occurrence, CAST(title AS BLOB) AS title, CAST(question AS BLOB) AS question, choices, free_text, destinations, key_digest, status, answer, channel, raised_at, closed_at, taken_at, handled_at FROM escalation WHERE escalation_id = ?",
+      id,
+    )[0];
   }
   function decode(row: EscalationRow): Escalation {
     return {
@@ -163,9 +179,10 @@ export function escalationRows(
     const escalation = decode(row(id)!);
     const asks = db
       .prepare(
-        "SELECT destination FROM escalation_notification WHERE escalation_id=? AND purpose='ask' AND (status='sent' OR (status='pending' AND attempts>0) OR (status='failed' AND attempts>1))",
+        "SELECT CAST(destination AS BLOB) AS destination FROM escalation_notification WHERE escalation_id=? AND purpose='ask' AND (status='sent' OR (status='pending' AND attempts>0) OR (status='failed' AND attempts>1))",
       )
-      .all(id);
+      .all(id)
+      .map(readNotificationDestination);
     db.prepare(
       "UPDATE escalation_notification SET status='cancelled',message=NULL,settled_at=? WHERE escalation_id=? AND purpose='ask' AND status='pending'",
     ).run(now(), id);
@@ -194,7 +211,7 @@ export function escalationRows(
     },
     list: (status?: EscalationStatus) =>
       rows(
-        `SELECT * FROM escalation ${status ? "WHERE status=?" : ""} ORDER BY raised_at DESC, escalation_id DESC`,
+        `SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(actor_id AS BLOB) AS actor_id, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, kind, subject, occurrence, CAST(title AS BLOB) AS title, CAST(question AS BLOB) AS question, choices, free_text, destinations, key_digest, status, answer, channel, raised_at, closed_at, taken_at, handled_at FROM escalation ${status ? "WHERE status=?" : ""} ORDER BY raised_at DESC, escalation_id DESC`,
         ...(status ? [status] : []),
       ).map(decode),
     keyMatches: (id: string, key: string) => {
@@ -212,7 +229,7 @@ export function escalationRows(
     raise: (request: ServiceEscalationRequest) =>
       store.connection.transaction(() => {
         const latest = rows(
-          "SELECT * FROM escalation WHERE kind=? AND subject=? ORDER BY occurrence DESC LIMIT 1",
+          "SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(actor_id AS BLOB) AS actor_id, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, kind, subject, occurrence, CAST(title AS BLOB) AS title, CAST(question AS BLOB) AS question, choices, free_text, destinations, key_digest, status, answer, channel, raised_at, closed_at, taken_at, handled_at FROM escalation WHERE kind=? AND subject=? ORDER BY occurrence DESC LIMIT 1",
           request.kind,
           subjectOf(request.subject),
         )[0];
@@ -235,18 +252,20 @@ export function escalationRows(
       }),
     withdraw: (request: Pick<ServiceEscalationRequest, "kind" | "subject">) => {
       for (const found of rows(
-        "SELECT * FROM escalation WHERE kind=? AND subject=? AND status='open'",
+        "SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(actor_id AS BLOB) AS actor_id, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, kind, subject, occurrence, CAST(title AS BLOB) AS title, CAST(question AS BLOB) AS question, choices, free_text, destinations, key_digest, status, answer, channel, raised_at, closed_at, taken_at, handled_at FROM escalation WHERE kind=? AND subject=? AND status='open'",
         request.kind,
         subjectOf(request.subject),
       ))
         withdrawId(found.escalation_id);
     },
     due: () =>
-      db
-        .prepare(
-          "SELECT * FROM escalation_notification WHERE status='pending' AND next_attempt_at<=? ORDER BY notification_id LIMIT 1",
-        )
-        .get(now()) as unknown as NotificationRow | undefined,
+      readNotification(
+        db
+          .prepare(
+            "SELECT notification_id, CAST(escalation_id AS BLOB) AS escalation_id, CAST(destination AS BLOB) AS destination, purpose, message, status, attempts, next_attempt_at, CAST(last_error AS BLOB) AS last_error, created_at, settled_at FROM escalation_notification WHERE status='pending' AND next_attempt_at<=? ORDER BY notification_id LIMIT 1",
+          )
+          .get(now()),
+      ) as unknown as NotificationRow | undefined,
     next: () =>
       db
         .prepare(
@@ -256,3 +275,19 @@ export function escalationRows(
   };
 }
 export type EscalationRows = ReturnType<typeof escalationRows>;
+
+function readNotificationDestination<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, destination: storedText(values["destination"]!) } as T;
+}
+function readNotification<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    escalation_id: storedText(values["escalation_id"]!),
+    destination: storedText(values["destination"]!),
+    last_error: values["last_error"] === null ? null : storedText(values["last_error"]!),
+  } as T;
+}

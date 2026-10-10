@@ -2,15 +2,18 @@
 // relationships:
 //   implements: usage-intake
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { LedgerConnection } from "../ledger/index.ts";
 import type { UsagePricing } from "./types.ts";
 import type { PriceTable } from "@wyrd-company/manifold-shared";
 export function lastUsedAt(connection: LedgerConnection): Readonly<Record<string, number>> {
   const rows = connection.database
     .prepare(
-      "SELECT account, MAX(used_at) AS at FROM usage_postings WHERE account IS NOT NULL GROUP BY account",
+      "SELECT CAST(account AS BLOB) AS account, MAX(used_at) AS at FROM usage_postings WHERE account IS NOT NULL GROUP BY account",
     )
-    .all() as { account: string; at: number }[];
+    .all()
+    .map(readUsagePostings) as { account: string; at: number }[];
   return Object.fromEntries(rows.map((row) => [row.account, row.at]));
 }
 export function pricing(connection: LedgerConnection, prices: PriceTable): UsagePricing {
@@ -18,8 +21,23 @@ export function pricing(connection: LedgerConnection, prices: PriceTable): Usage
     overrides: Object.keys(prices.models).length,
     unpriced: connection.database
       .prepare(
-        "SELECT provider, model, COUNT(*) AS postings FROM usage_postings WHERE status = 'pending' AND reason = 'unpriced' GROUP BY provider, model ORDER BY provider, model",
+        "SELECT provider, CAST(model AS BLOB) AS model, COUNT(*) AS postings FROM usage_postings WHERE status = 'pending' AND reason = 'unpriced' GROUP BY provider, model ORDER BY provider, model",
       )
-      .all() as UsagePricing["unpriced"],
+      .all()
+      .map(readUsagePostingsModel) as UsagePricing["unpriced"],
   };
+}
+
+function readUsagePostings<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    account: values["account"] === null ? null : storedText(values["account"]!),
+  } as T;
+}
+function readUsagePostingsModel<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, model: values["model"] === null ? null : storedText(values["model"]!) } as T;
 }

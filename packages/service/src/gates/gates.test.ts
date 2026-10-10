@@ -69,7 +69,12 @@ const snapshot = (state = "waiting", status: "active" | "done" | "stopped" = "ac
   value: { open: { lifecycle: state, dependencies: "clear", slot: "free" } },
   context: { fields: { size: 1 }, manifold: { portfolioItem: "left", issue: "parcel-1" } },
 });
-async function fixture(source = oldest, override: Partial<GatesOptions> = {}, doc = document()) {
+async function fixture(
+  source = oldest,
+  override: Partial<GatesOptions> = {},
+  doc = document(),
+  blueprintPath = path,
+) {
   const dir = mkdtempSync(join(tmpdir(), "gates-"));
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
   const store = openStore({ path: join(dir, "store.sqlite"), now: () => 100 });
@@ -98,7 +103,7 @@ async function fixture(source = oldest, override: Partial<GatesOptions> = {}, do
     closesAt: 10000,
     amount: 1000,
   });
-  const blueprint = { key: blueprintVersionKey({ commit, path }), document: doc };
+  const blueprint = { key: blueprintVersionKey({ commit, path: blueprintPath }), document: doc };
   const versions = new Map([[blueprint.key, blueprint]]);
   const sources = new Map([[commit, source]]);
   const revisionAt = async (c: string) => ({ commit: c, read: async () => sources.get(c) });
@@ -172,7 +177,10 @@ async function fixture(source = oldest, override: Partial<GatesOptions> = {}, do
   };
   const gates = createGates(options);
   cleanup.push(() => gates.stop());
-  await gates.revision({ blueprints: new Map([[path, blueprint]]) }, await revisionAt(commit));
+  await gates.revision(
+    { blueprints: new Map([[blueprintPath, blueprint]]) },
+    await revisionAt(commit),
+  );
   for (let i = 0; i < 20; i++)
     store.saveSnapshot({
       actorId: `parcel-${String(i).padStart(2, "0")}`,
@@ -1166,7 +1174,7 @@ for (const size of [10, 1000])
       const prepare = vi.spyOn(f.store.connection.database, "prepare");
       await f.start();
       expect(
-        prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue"),
+        prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql)),
       ).toHaveLength(1);
       prepare.mockRestore();
       const inputs = f.rows("gates_evaluation").map(
@@ -1206,7 +1214,7 @@ for (const size of [10, 1000])
         population: { id: string; criticalPath: number }[];
       };
       expect(latest.population.find((m) => m.id === "later")?.criticalPath).toBe(1);
-      expect(next.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
+      expect(next.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
         1,
       );
       next.mockRestore();
@@ -1226,7 +1234,7 @@ it("a grant round with no issue identities does not read the mirror", async () =
     });
   const prepare = vi.spyOn(f.store.connection.database, "prepare");
   await f.start();
-  expect(prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
+  expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
     0,
   );
   prepare.mockRestore();
@@ -1235,3 +1243,45 @@ it("a grant round with no issue identities does not read the mirror", async () =
   };
   expect(input.population.map((m) => m.criticalPath)).toEqual(Array(20).fill(1));
 });
+it.each(["inside\0tail", "\0leading"])(
+  "gate entry, grant, token and evaluation text restore: %j",
+  async (text) => {
+    const blueprintPath = `blueprints/${text}.yml`;
+    const source = `export default i => i.holders.length ? null : { task: ${JSON.stringify(text)}, reservations: [{account: 'acct', amount: 1}] };`;
+    const f = await fixture(source, {}, document(), blueprintPath);
+    f.save(text, "waiting", ["open.lifecycle.waiting"], text);
+    await f.start();
+    expect(f.errors).toEqual([]);
+    const held = f.gates.heldTokens(text);
+    expect(held).toHaveLength(1);
+    expect(held[0]?.gate).toBe(`${blueprintPath}#open.lifecycle.waiting`);
+    expect(f.gates.tokenHolder(held[0]!.tokenId)).toBe(text);
+    const evaluation = Number(f.rows("gates_evaluation")[0]!["evaluation_id"]);
+    expect((await f.gates.replay(evaluation)).recorded).toMatchObject({
+      ok: true,
+      selection: { task: text },
+    });
+    f.gates.stop();
+    const store = openStore({ path: join(f.dir, "store.sqlite") });
+    cleanup.push(() => store.close());
+    const resumed = createGates({ ...f.options, store });
+    cleanup.push(() => resumed.stop());
+    await resumed.prepare();
+    expect(resumed.heldTokens(text)).toEqual(held);
+    expect(resumed.tokenHolder(held[0]!.tokenId)).toBe(text);
+    expect((await resumed.replay(evaluation)).recorded).toMatchObject({
+      ok: true,
+      selection: { task: text },
+    });
+    const write = {
+      actorId: text,
+      machine: f.blueprint.key,
+      snapshot: snapshot(),
+      entered: [],
+      entries: { "open.lifecycle.waiting": text },
+      activeInvokes: [],
+    };
+    resumed.saved(write);
+    expect(resumed.heldTokens(text)).toEqual(held);
+  },
+);

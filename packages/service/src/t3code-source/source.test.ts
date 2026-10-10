@@ -1762,3 +1762,33 @@ test("a thread observed after listing a retirable project protects it at DELETE"
   expect(source.createdProject("station", "project")).toBeDefined();
   expect(retireCreatedProject(store.connection, candidates[0]!, { environments: [] })).toBe("kept");
 });
+test.each(["inside\0tail", "\0leading"])(
+  "T3 environment, thread and created project text restore: %j",
+  async (text) => {
+    const f = await setup();
+    f.server.reset(text);
+    const thread = schemas.orchestrationReadModel.OrchestrationThread.parse({
+      ...fixtureThread(text),
+      projectId: text,
+      title: text,
+    });
+    f.server.baseline(thread);
+    const source = f.start();
+    await source.ready("station");
+    expect(await source.environmentId("station")).toBe(text);
+    expect(readThreadProject(f.store.connection, "station", text)).toBe(text);
+    const record = { environment: "station", projectId: text, actorId: text, item: text };
+    source.recordCreatedProject(record);
+    source.recordCreatedProject({ ...record, actorId: "later" });
+    await source.stop();
+    const store = openStore({ path: join(f.directory, "store.sqlite") });
+    cleanup.push(async () => store.close());
+    const resumed = startT3CodeSource({ ...f.options, store });
+    cleanup.push(() => resumed.stop());
+    await resumed.ready("station");
+    expect(await resumed.environmentId("station")).toBe(text);
+    expect(readThreadProject(store.connection, "station", text)).toBe(text);
+    expect(resumed.thread("station", text)?.title).toBe(text);
+    expect(resumed.createdProject("station", text)).toEqual(record);
+  },
+);

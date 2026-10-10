@@ -65,7 +65,10 @@ export function openEscalations(options: EscalationsOptions): Escalations {
         save.snapshot.status === "done" || save.snapshot.status === "stopped"
           ? []
           : save.activeInvokes;
-      for (const row of rows.rows("SELECT * FROM escalation WHERE actor_id=?", save.actorId)) {
+      for (const row of rows.rows(
+        "SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(actor_id AS BLOB) AS actor_id, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, kind, subject, occurrence, CAST(title AS BLOB) AS title, CAST(question AS BLOB) AS question, choices, free_text, destinations, key_digest, status, answer, channel, raised_at, closed_at, taken_at, handled_at FROM escalation WHERE actor_id=?",
+        save.actorId,
+      )) {
         if (sent.has(row.escalation_id) && row.status === "answered")
           store.connection.database
             .prepare("UPDATE escalation SET taken_at=COALESCE(taken_at,?) WHERE escalation_id=?")
@@ -115,7 +118,7 @@ export function openEscalations(options: EscalationsOptions): Escalations {
     ...listeners,
     start() {
       for (const row of rows.rows(
-        "SELECT * FROM escalation WHERE status='answered' AND kind IS NOT NULL AND handled_at IS NULL ORDER BY raised_at",
+        "SELECT CAST(escalation_id AS BLOB) AS escalation_id, CAST(actor_id AS BLOB) AS actor_id, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, kind, subject, occurrence, CAST(title AS BLOB) AS title, CAST(question AS BLOB) AS question, choices, free_text, destinations, key_digest, status, answer, channel, raised_at, closed_at, taken_at, handled_at FROM escalation WHERE status='answered' AND kind IS NOT NULL AND handled_at IS NULL ORDER BY raised_at",
       ))
         handle(row.escalation_id);
       sender.start();

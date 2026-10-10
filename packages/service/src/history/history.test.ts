@@ -483,3 +483,40 @@ test.each([false, true])(
     expect(history.read("other")!.commands.map((c) => c.commandId)).toEqual(["other-command"]);
   },
 );
+
+test.each(["inside\0tail", "\0leading"])(
+  "history round-trips outside text after reopen: %j",
+  (text) => {
+    save({ status: "active", value: "waiting" }, { machine: text });
+    history.commandSending({
+      ...command,
+      commandId: text,
+      threadId: text,
+      environment: text,
+      messageId: text,
+      invocation: { actorId: "parcel", invokeId: text, entryId: text },
+    });
+    save(
+      { status: "done", value: "finished" },
+      { machine: text, changedBy: { type: text, eventId: text } },
+    );
+    store.close();
+    store = openStore({ path: join(root, "state.sqlite") });
+    history = openHistory({ store, log: (entry) => logs.push(entry) });
+    expect(history.visits("parcel")[0]).toMatchObject({
+      machine: text,
+      exitEvent: { type: text, eventId: text },
+    });
+    expect(history.read("parcel")?.commands).toMatchObject([
+      {
+        commandId: text,
+        threadId: text,
+        environment: text,
+        messageId: text,
+        invokeId: text,
+        entryId: text,
+      },
+    ]);
+    expect(logs).toEqual([]);
+  },
+);

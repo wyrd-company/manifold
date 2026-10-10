@@ -3,6 +3,8 @@
 //   implements: portfolio
 //   references: [portfolio-declarations-table, portfolio-ledger]
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import {
   lintAllocatedAccounts,
   lintPortfolioDeclaration,
@@ -51,12 +53,14 @@ export function openPortfolio(options: {
   const { connection } = options;
   const now = options.now ?? Date.now;
   const latest = connection.database.prepare(
-    "SELECT commit_id, declaration FROM portfolio_declarations ORDER BY seq DESC LIMIT 1",
+    "SELECT CAST(commit_id AS BLOB) AS commit_id, declaration FROM portfolio_declarations ORDER BY seq DESC LIMIT 1",
   );
   const insert = connection.database.prepare(
     "INSERT INTO portfolio_declarations (commit_id, declaration, accepted_at) VALUES (?, ?, ?)",
   );
-  const row = latest.get() as { commit_id: string; declaration: string } | undefined;
+  const row = readPortfolioDeclarations(latest.get()) as
+    | { commit_id: string; declaration: string }
+    | undefined;
   let current: PortfolioInForce = {
     commit: row?.commit_id ?? null,
     declaration:
@@ -134,4 +138,10 @@ export function openPortfolio(options: {
     githubProject: (project) => resolution.githubProject(project),
     t3codeProject,
   };
+}
+
+function readPortfolioDeclarations<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, commit_id: storedText(values["commit_id"]!) } as T;
 }

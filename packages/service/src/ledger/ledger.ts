@@ -3,6 +3,8 @@
 //   implements: portfolio-ledger
 //   references: portfolio-ledger-tables
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import { LedgerError } from "./types.js";
 import type { Ledger, LedgerConnection, LedgerWriteResult } from "./types.js";
 import { portfolioData } from "./portfolio.js";
@@ -53,15 +55,17 @@ export function createLedger(options: {
   const operationGet = database.prepare(
     "SELECT kind, request FROM ledger_operations WHERE key = ?",
   );
-  const settlementGet = database.prepare("SELECT actor FROM ledger_settlements WHERE actor = ?");
+  const settlementGet = database.prepare(
+    "SELECT CAST(actor AS BLOB) AS actor FROM ledger_settlements WHERE actor = ?",
+  );
   const windowAt = database.prepare(
-    "SELECT window_key, opens_at, closes_at FROM ledger_windows WHERE account = ? AND opens_at <= ? ORDER BY opens_at DESC LIMIT 1",
+    "SELECT CAST(window_key AS BLOB) AS window_key, opens_at, closes_at FROM ledger_windows WHERE account = ? AND opens_at <= ? ORDER BY opens_at DESC LIMIT 1",
   );
   const windowByKey = database.prepare(
-    "SELECT window_key, opens_at, closes_at FROM ledger_windows WHERE account = ? AND window_key = ?",
+    "SELECT CAST(window_key AS BLOB) AS window_key, opens_at, closes_at FROM ledger_windows WHERE account = ? AND window_key = ?",
   );
   const windowByOpening = database.prepare(
-    "SELECT window_key FROM ledger_windows WHERE account = ? AND opens_at = ?",
+    "SELECT CAST(window_key AS BLOB) AS window_key FROM ledger_windows WHERE account = ? AND opens_at = ?",
   );
   const windowInsert = database.prepare(
     "INSERT INTO ledger_windows (account, window_key, opens_at, closes_at) VALUES (?, ?, ?, ?)",
@@ -69,7 +73,8 @@ export function createLedger(options: {
   const settlementInsert = database.prepare(
     "INSERT OR IGNORE INTO ledger_settlements (actor, at) VALUES (?, ?)",
   );
-  const entryColumns = "kind, account, window_key, item, actor, CAST(amount AS TEXT) AS amount";
+  const entryColumns =
+    "kind, CAST(account AS BLOB) AS account, CAST(window_key AS BLOB) AS window_key, CAST(item AS BLOB) AS item, CAST(actor AS BLOB) AS actor, CAST(amount AS TEXT) AS amount";
   const accountEntries = database.prepare(
     `SELECT ${entryColumns} FROM ledger_entries WHERE account = ? ORDER BY seq`,
   );
@@ -80,13 +85,18 @@ export function createLedger(options: {
     "SELECT CAST(amount AS TEXT) AS amount FROM ledger_entries WHERE operation = ? AND kind = 'move' AND amount > 0",
   );
   function load(rows: unknown[]): Entry[] {
-    return (rows as (Omit<Entry, "amount"> & { amount: string })[]).map((row) => ({
+    return (
+      (rows as Record<string, SQLOutputValue>[]).map(readLedgerEntry) as unknown as (Omit<
+        Entry,
+        "amount"
+      > & { amount: string })[]
+    ).map((row) => ({
       ...row,
       amount: BigInt(row.amount),
     }));
   }
   function window(account: string, at: number): Window | null {
-    return (windowAt.get(account, at) as Window | undefined) ?? null;
+    return (readLedgerWindows(windowAt.get(account, at)) as Window | undefined) ?? null;
   }
   function requireWindow(account: string, at: number): Window {
     const current = window(account, at);
@@ -201,7 +211,7 @@ export function createLedger(options: {
     };
   }
   const nextWindow = database.prepare(
-    "SELECT window_key, opens_at, closes_at FROM ledger_windows WHERE account = ? AND opens_at > ? ORDER BY opens_at LIMIT 1",
+    "SELECT CAST(window_key AS BLOB) AS window_key, opens_at, closes_at FROM ledger_windows WHERE account = ? AND opens_at > ? ORDER BY opens_at LIMIT 1",
   );
   const windowCapacity = database.prepare(
     "SELECT CAST(COALESCE(SUM(amount), 0) AS TEXT) AS capacity FROM ledger_entries WHERE account = ? AND window_key = ? AND kind = 'credit'",
@@ -242,7 +252,10 @@ export function createLedger(options: {
       integer(at, "at");
       return {
         current: describeWindow(account, window(account, at)),
-        next: describeWindow(account, nextWindow.get(account, at) as Window | undefined),
+        next: describeWindow(
+          account,
+          readLedgerWindows(nextWindow.get(account, at)) as Window | undefined,
+        ),
       };
     },
     setPortfolio(value) {
@@ -258,11 +271,11 @@ export function createLedger(options: {
       integer(closesAt, "closesAt");
       if (closesAt <= opensAt) invalid("closesAt", closesAt);
       return write(key, "credit", request, (at) => {
-        const prior = windowByKey.get(account, windowKey) as Window | undefined;
+        const prior = readLedgerWindows(windowByKey.get(account, windowKey)) as Window | undefined;
         if (
           prior
             ? prior.opens_at !== opensAt || prior.closes_at !== closesAt
-            : windowByOpening.get(account, opensAt)
+            : readLedgerWindows(windowByOpening.get(account, opensAt))
         )
           throw new LedgerError(
             "window-conflict",
@@ -282,7 +295,7 @@ export function createLedger(options: {
       integer(amount, "amount", 1);
       return write(key, "reserve", request, (at) => {
         knownItem(item, true);
-        if (settlementGet.get(actor))
+        if (readLedgerSettlements(settlementGet.get(actor)))
           throw new LedgerError("actor-settled", `Actor "${actor}" is settled.`, { actor });
         requireWindow(account, at);
         append("reserve", key, account, null, item, actor, amount, at);
@@ -398,7 +411,7 @@ export function createLedger(options: {
       for (const hold of foldHolds(entries))
         accounts.get(hold.account)!.outstanding += hold.outstanding;
       return {
-        settled: Boolean(settlementGet.get(actor)),
+        settled: Boolean(readLedgerSettlements(settlementGet.get(actor))),
         accounts: [...accounts].map(([account, row]) => ({
           account,
           estimate: Number(row.estimate),
@@ -408,5 +421,26 @@ export function createLedger(options: {
         })),
       };
     },
+  };
+}
+
+function readLedgerSettlements<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, actor: storedText(values["actor"]!) } as T;
+}
+function readLedgerWindows<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, window_key: storedText(values["window_key"]!) } as T;
+}
+
+function readLedgerEntry(row: Record<string, SQLOutputValue>): Record<string, SQLOutputValue> {
+  return {
+    ...row,
+    account: storedText(row["account"]!),
+    window_key: row["window_key"] === null ? null : storedText(row["window_key"]!),
+    item: row["item"] === null ? null : storedText(row["item"]!),
+    actor: row["actor"] === null ? null : storedText(row["actor"]!),
   };
 }

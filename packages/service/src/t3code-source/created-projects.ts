@@ -3,6 +3,8 @@
 //   implements: t3code-environment-source
 //   realizes: t3code-source-database-schema
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { Store } from "../store/index.ts";
 import type { CreatedProject, CreatedProjectRecord } from "./types.ts";
 export function createdProjects(store: Store) {
@@ -11,7 +13,7 @@ export function createdProjects(store: Store) {
     "INSERT INTO t3_created_project (environment, project_id, actor_id, item, presence) VALUES (?, ?, ?, ?, ?) ON CONFLICT (environment, project_id) DO NOTHING",
   );
   const select = db.prepare(
-    "SELECT environment, project_id AS projectId, actor_id AS actorId, item FROM t3_created_project WHERE environment = ? AND project_id = ?",
+    "SELECT CAST(environment AS BLOB) AS environment, CAST(project_id AS BLOB) AS projectId, CAST(actor_id AS BLOB) AS actorId, CAST(item AS BLOB) AS item FROM t3_created_project WHERE environment = ? AND project_id = ?",
   );
   const update = db.prepare(
     "UPDATE t3_created_project SET presence = ? WHERE environment = ? AND project_id = ? AND presence != 'removed'",
@@ -53,7 +55,21 @@ export function createdProjects(store: Store) {
       );
     },
     read(environment: string, projectId: string) {
-      return select.get(environment, projectId) as unknown as CreatedProject | undefined;
+      return readT3CreatedProject(select.get(environment, projectId)) as unknown as
+        | CreatedProject
+        | undefined;
     },
   };
+}
+
+function readT3CreatedProject<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    environment: storedText(values["environment"]!),
+    projectId: storedText(values["projectId"]!),
+    actorId: storedText(values["actorId"]!),
+    item: storedText(values["item"]!),
+  } as T;
 }

@@ -2,6 +2,8 @@
 // relationships:
 //   implements: [usage-intake, actor-usage-api]
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type {
   ActorUsageResponse,
   ActorTokens,
@@ -92,15 +94,20 @@ export function actorVisitUsage(
 ): ActorUsageResponse {
   const rows = options.connection.database
     .prepare(
-      `SELECT p.seq, p.provider, p.tokens, p.attributed_visit AS visit,
-         p.account, p.amount, p.status, p.used_at, p.environment, s.thread_id
-       FROM usage_attributed_postings p
-       JOIN usage_calls c ON c.environment=p.environment AND c.call_key=p.call_key
-       LEFT JOIN usage_sessions s ON s.environment=p.environment AND s.provider=p.provider
-         AND s.provider_session_id=json_extract(c.record,'$.providerSessionId')
-       WHERE p.attributed_actor=?
-       ORDER BY p.used_at, p.seq`,
+      "SELECT p.seq AS seq, p.provider AS provider, p.tokens AS tokens, p.attributed_visit AS visit, CAST(p.account AS BLOB) AS account, p.amount AS amount, p.status AS status, p.used_at AS used_at, CAST(p.environment AS BLOB) AS environment, CAST(s.thread_id AS BLOB) AS thread_id FROM usage_attributed_postings p\n       JOIN usage_calls c ON c.environment=p.environment AND c.call_key=p.call_key\n       LEFT JOIN usage_sessions s ON s.environment=p.environment AND s.provider=p.provider\n         AND s.provider_session_id=json_extract(c.record,'$.providerSessionId')\n       WHERE p.attributed_actor=?\n       ORDER BY p.used_at, p.seq",
     )
-    .all(actor) as unknown as Row[];
+    .all(actor)
+    .map(readUsageAttributedPostings) as unknown as Row[];
   return visitUsage(actor, rows, options.visits.visits(actor), units);
+}
+
+function readUsageAttributedPostings<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    account: values["account"] === null ? null : storedText(values["account"]!),
+    environment: values["environment"] === null ? null : storedText(values["environment"]!),
+    thread_id: values["thread_id"] === null ? null : storedText(values["thread_id"]!),
+  } as T;
 }

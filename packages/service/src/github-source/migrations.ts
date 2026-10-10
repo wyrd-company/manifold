@@ -12,14 +12,14 @@ export const githubSteps: readonly string[] = [
 -- under the owner \`github\`.
 
 CREATE TABLE github_delivery (
-  delivery_id TEXT PRIMARY KEY CHECK (length(delivery_id) > 0),
+  delivery_id TEXT PRIMARY KEY CHECK (delivery_id <> ''),
   hook_id INTEGER NOT NULL CHECK (hook_id > 0),
   event TEXT NOT NULL,
   received_at INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE github_redelivery (
-  delivery_id TEXT PRIMARY KEY CHECK (length(delivery_id) > 0),
+  delivery_id TEXT PRIMARY KEY CHECK (delivery_id <> ''),
   hook_id INTEGER NOT NULL CHECK (hook_id > 0),
   attempt_id INTEGER NOT NULL,
   requested_at INTEGER NOT NULL
@@ -32,7 +32,7 @@ CREATE TABLE github_hook_scan (
 
 CREATE TABLE github_pending (
   kind TEXT NOT NULL CHECK (kind IN ('issue', 'item', 'project')),
-  node_id TEXT NOT NULL CHECK (length(node_id) > 0),
+  node_id TEXT NOT NULL CHECK (node_id <> ''),
   requested_at INTEGER NOT NULL,
   generation INTEGER NOT NULL CHECK (generation > 0),
   project_node_id TEXT,
@@ -40,8 +40,8 @@ CREATE TABLE github_pending (
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE github_project (
-  project_node_id TEXT PRIMARY KEY CHECK (length(project_node_id) > 0),
-  owner TEXT NOT NULL CHECK (length(owner) > 0),
+  project_node_id TEXT PRIMARY KEY CHECK (project_node_id <> ''),
+  owner TEXT NOT NULL CHECK (owner <> ''),
   number INTEGER NOT NULL CHECK (number > 0),
   closed INTEGER NOT NULL CHECK (closed IN (0, 1)),
   revision INTEGER NOT NULL CHECK (revision >= 0),
@@ -49,7 +49,7 @@ CREATE TABLE github_project (
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE github_item (
-  item_node_id TEXT PRIMARY KEY CHECK (length(item_node_id) > 0),
+  item_node_id TEXT PRIMARY KEY CHECK (item_node_id <> ''),
   project_node_id TEXT NOT NULL,
   content_type TEXT NOT NULL
     CHECK (content_type IN ('issue', 'pull-request', 'draft-issue')),
@@ -69,7 +69,7 @@ CREATE TABLE github_field_value (
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE github_issue (
-  issue_node_id TEXT PRIMARY KEY CHECK (length(issue_node_id) > 0),
+  issue_node_id TEXT PRIMARY KEY CHECK (issue_node_id <> ''),
   repository TEXT NOT NULL CHECK (instr(repository, '/') > 1),
   number INTEGER NOT NULL CHECK (number > 0),
   state TEXT NOT NULL CHECK (state IN ('open', 'closed')),
@@ -104,10 +104,10 @@ CREATE TABLE github_sub_issue (
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE github_project_field (
-  project_node_id TEXT NOT NULL CHECK (length(project_node_id) > 0),
-  field_node_id TEXT NOT NULL CHECK (length(field_node_id) > 0),
+  project_node_id TEXT NOT NULL CHECK (project_node_id <> ''),
+  field_node_id TEXT NOT NULL CHECK (field_node_id <> ''),
   position INTEGER NOT NULL CHECK (position >= 0),
-  name TEXT NOT NULL CHECK (length(name) > 0),
+  name TEXT NOT NULL CHECK (name <> ''),
   data_type TEXT NOT NULL
     CHECK (data_type IN ('text', 'number', 'date', 'single-select', 'multi-select', 'iteration')),
   options TEXT NOT NULL CHECK (json_valid(options)),
@@ -115,12 +115,12 @@ CREATE TABLE github_project_field (
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE github_card_move (
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
-  invoke_id TEXT NOT NULL CHECK (length(invoke_id) > 0),
-  entry_id TEXT NOT NULL CHECK (length(entry_id) > 0),
-  item_node_id TEXT NOT NULL CHECK (length(item_node_id) > 0),
-  field_node_id TEXT NOT NULL CHECK (length(field_node_id) > 0),
-  option_id TEXT NOT NULL CHECK (length(option_id) > 0),
+  actor_id TEXT NOT NULL CHECK (actor_id <> ''),
+  invoke_id TEXT NOT NULL CHECK (invoke_id <> ''),
+  entry_id TEXT NOT NULL CHECK (entry_id <> ''),
+  item_node_id TEXT NOT NULL CHECK (item_node_id <> ''),
+  field_node_id TEXT NOT NULL CHECK (field_node_id <> ''),
+  option_id TEXT NOT NULL CHECK (option_id <> ''),
   state TEXT NOT NULL CHECK (state IN ('sent', 'confirmed', 'doubtful')),
   sequence INTEGER NOT NULL CHECK (sequence > 0),
   PRIMARY KEY (actor_id, invoke_id, entry_id, field_node_id, option_id)

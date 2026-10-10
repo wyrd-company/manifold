@@ -2,6 +2,8 @@
 // relationships:
 //   implements: agent-tools
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { EscalateInput } from "../escalations/index.ts";
 import { identityOf } from "../actor-host/identity.ts";
 import { agentThreadTopic, eventId, questionTitle } from "./calls.ts";
@@ -12,11 +14,13 @@ export function escalate(options: AgentToolsOptions, identity: Identity, input: 
   const result = options.store.connection.transaction(() => {
     const db = options.store.connection.database;
     const key = [identity.environment, identity.environmentId, identity.threadId, identity.turnId];
-    const existing = db
-      .prepare(
-        "SELECT escalation_id FROM agenttool_question WHERE environment=? AND environment_id=? AND thread_id=? AND turn_id=?",
-      )
-      .get(...key);
+    const existing = readAgenttoolQuestion(
+      db
+        .prepare(
+          "SELECT CAST(escalation_id AS BLOB) AS escalation_id FROM agenttool_question WHERE environment=? AND environment_id=? AND thread_id=? AND turn_id=?",
+        )
+        .get(...key),
+    );
     if (existing) return { escalationId: String(existing["escalation_id"]), replay: true };
     const actorId = options.actors().followers(identity.environment, identity.threadId)[0];
     if (!actorId) return refuse("not-followed", "No active task follows this thread.");
@@ -70,4 +74,10 @@ export function escalate(options: AgentToolsOptions, identity: Identity, input: 
     message:
       "The question was sent. End your turn now. The answer arrives as a new message in this thread.",
   };
+}
+
+function readAgenttoolQuestion<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, escalation_id: storedText(values["escalation_id"]!) } as T;
 }

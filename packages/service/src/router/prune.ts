@@ -2,11 +2,16 @@
 // relationships:
 //   implements: durable-event-delivery
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { StoreConnection } from "../store/index.ts";
 export function sourceEventSources(connection: StoreConnection): string[] {
   return connection.database
-    .prepare("SELECT DISTINCT source FROM router_source_event ORDER BY source")
+    .prepare(
+      "SELECT DISTINCT CAST(source AS BLOB) AS source FROM router_source_event ORDER BY source",
+    )
     .all()
+    .map(readRouterSourceEvent)
     .map((row) => String(row["source"]));
 }
 export function pruneSourceEvents(
@@ -22,4 +27,10 @@ export function pruneSourceEvents(
         .run(request.source, request.acceptedBefore, request.limit).changes,
     ),
   );
+}
+
+function readRouterSourceEvent<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, source: storedText(values["source"]!) } as T;
 }

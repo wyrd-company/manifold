@@ -16,7 +16,7 @@ export const usageMigrationSteps: readonly string[] = [
 -- greatest \`seq\` is in force. \`declaration\` is canonical JSON, keys sorted.
 CREATE TABLE usage_declarations (
   seq INTEGER PRIMARY KEY,
-  commit_id TEXT NOT NULL CHECK (length(commit_id) > 0),
+  commit_id TEXT NOT NULL CHECK (commit_id <> ''),
   declaration TEXT NOT NULL CHECK (json_valid(declaration)),
   accepted_at INTEGER NOT NULL
 ) STRICT;
@@ -32,10 +32,10 @@ CREATE TRIGGER usage_declarations_no_delete
 -- the host first pushed it. A later push that names another thread for
 -- the same session leaves this row.
 CREATE TABLE usage_sessions (
-  environment TEXT NOT NULL CHECK (length(environment) > 0),
-  provider TEXT NOT NULL CHECK (length(provider) > 0),
-  provider_session_id TEXT NOT NULL CHECK (length(provider_session_id) > 0),
-  thread_id TEXT NOT NULL CHECK (length(thread_id) > 0),
+  environment TEXT NOT NULL CHECK (environment <> ''),
+  provider TEXT NOT NULL CHECK (provider <> ''),
+  provider_session_id TEXT NOT NULL CHECK (provider_session_id <> ''),
+  thread_id TEXT NOT NULL CHECK (thread_id <> ''),
   provider_instance TEXT,
   recorded_at INTEGER NOT NULL,
   PRIMARY KEY (environment, provider, provider_session_id)
@@ -44,7 +44,7 @@ CREATE TABLE usage_sessions (
 -- The engine-owned identity of each actor the save hook has seen, as of
 -- its latest save, and the time its first ending save was seen.
 CREATE TABLE usage_actors (
-  actor_id TEXT PRIMARY KEY CHECK (length(actor_id) > 0),
+  actor_id TEXT PRIMARY KEY CHECK (actor_id <> ''),
   environment TEXT,
   item TEXT,
   ended_at INTEGER
@@ -52,9 +52,9 @@ CREATE TABLE usage_actors (
 
 -- The actor that owns a thread: the first actor whose save listed it.
 CREATE TABLE usage_threads (
-  environment TEXT NOT NULL CHECK (length(environment) > 0),
-  thread_id TEXT NOT NULL CHECK (length(thread_id) > 0),
-  actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
+  environment TEXT NOT NULL CHECK (environment <> ''),
+  thread_id TEXT NOT NULL CHECK (thread_id <> ''),
+  actor_id TEXT NOT NULL CHECK (actor_id <> ''),
   PRIMARY KEY (environment, thread_id)
 ) STRICT, WITHOUT ROWID;
 
@@ -63,8 +63,8 @@ CREATE TABLE usage_threads (
 -- \`charged\` is the tokens the key has charged: each class at the greatest
 -- count of any copy. \`revision\` counts the postings made for the key.
 CREATE TABLE usage_calls (
-  environment TEXT NOT NULL CHECK (length(environment) > 0),
-  call_key TEXT NOT NULL CHECK (length(call_key) > 0),
+  environment TEXT NOT NULL CHECK (environment <> ''),
+  call_key TEXT NOT NULL CHECK (call_key <> ''),
   record TEXT NOT NULL CHECK (json_valid(record)),
   charged TEXT NOT NULL CHECK (json_valid(charged)),
   revision INTEGER NOT NULL CHECK (revision >= 1),
@@ -88,8 +88,8 @@ CREATE TABLE usage_postings (
   speed TEXT NOT NULL CHECK (speed IN ('standard', 'fast')),
   base_tokens TEXT NOT NULL CHECK (json_valid(base_tokens)),
   tokens TEXT NOT NULL CHECK (json_valid(tokens)),
-  actor TEXT NOT NULL CHECK (length(actor) > 0),
-  item TEXT NOT NULL CHECK (length(item) > 0),
+  actor TEXT NOT NULL CHECK (actor <> ''),
+  item TEXT NOT NULL CHECK (item <> ''),
   visit INTEGER,
   account TEXT,
   amount INTEGER CHECK (amount >= 0),
@@ -124,8 +124,8 @@ CREATE TABLE usage_reattributions (
   seq INTEGER PRIMARY KEY,
   posting INTEGER NOT NULL REFERENCES usage_postings (seq),
   cause TEXT NOT NULL CHECK (cause IN ('mapping', 'ownership', 'move')),
-  actor TEXT NOT NULL CHECK (length(actor) > 0),
-  item TEXT NOT NULL CHECK (length(item) > 0),
+  actor TEXT NOT NULL CHECK (actor <> ''),
+  item TEXT NOT NULL CHECK (item <> ''),
   visit INTEGER,
   ledger_key TEXT UNIQUE,
   recorded_at INTEGER NOT NULL,
@@ -166,9 +166,9 @@ LEFT JOIN usage_reattributions m ON m.seq = (
 
 -- The latest source error record of each code for each source.
 CREATE TABLE usage_source_errors (
-  environment TEXT NOT NULL CHECK (length(environment) > 0),
-  provider TEXT NOT NULL CHECK (length(provider) > 0),
-  source TEXT NOT NULL CHECK (length(source) > 0),
+  environment TEXT NOT NULL CHECK (environment <> ''),
+  provider TEXT NOT NULL CHECK (provider <> ''),
+  source TEXT NOT NULL CHECK (source <> ''),
   code TEXT NOT NULL CHECK (
     code IN ('unreadable', 'truncated', 'malformed-record', 'unknown-record', 'decoder-failed')
   ),

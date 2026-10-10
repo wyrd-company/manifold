@@ -72,6 +72,13 @@ const expectedSteps = (owner: string, steps: string[]) => {
       github: "github-source-database-schema",
       metadata: "task-metadata-tables",
       usage: "usage-tables",
+      agenttool: "agent-tools-database-schema",
+      bundle: "bundle-tables",
+      environment: "environment-control-database-schema",
+      escalation: "escalations-database-schema",
+      intake: "intake-records-table",
+      ledger: "portfolio-ledger-tables",
+      portfolio: "portfolio-declarations-table",
       tthree: "t3code-source-database-schema",
     } as Record<string, string>
   )[owner];

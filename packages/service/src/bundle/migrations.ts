@@ -11,7 +11,7 @@ CREATE TABLE bundle (
 
 CREATE TABLE bundle_file (
   digest TEXT NOT NULL REFERENCES bundle (digest),
-  path TEXT NOT NULL CHECK (path GLOB 'blueprints/*'),
+  path TEXT NOT NULL CHECK (substr(CAST(path AS BLOB), 1, 11) = CAST('blueprints/' AS BLOB)),
   text TEXT NOT NULL,
   PRIMARY KEY (digest, path)
 ) STRICT;

@@ -112,3 +112,28 @@ it("refuses a digest that does not identify the supplied texts", () => {
     store.close();
   }
 });
+
+it.each(["inside\0tail", "\0leading"])("bundle file text restores byte for byte: %j", (text) => {
+  const directory = mkdtempSync(join(tmpdir(), "bundle-text-"));
+  const path = join(directory, "store.sqlite");
+  const files = new Map([[`blueprints/${text}.yml`, text]]);
+  const original = { files, digest: bundleDigest(files) };
+  let store = openStore({ path });
+  try {
+    store.connection.migrate("bundle", bundleMigrationSteps);
+    openBundles({ store, current: original });
+    openBundles({ store, current: original });
+    store.close();
+    store = openStore({ path });
+    const otherFiles = new Map([["blueprints/other.yml", "other"]]);
+    const reopened = openBundles({
+      store,
+      current: { files: otherFiles, digest: bundleDigest(otherFiles) },
+    });
+    expect(reopened.at(original.digest)).toEqual(original);
+    expect(reopened.at(original.digest)).toEqual(original);
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -2,6 +2,8 @@
 // relationships:
 //   implements: github-source-database-schema
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { StoreConnection } from "../store/index.ts";
 import type { CardMove } from "./types.ts";
 export function moveRecords(connection: StoreConnection) {
@@ -37,11 +39,13 @@ export function moveRecords(connection: StoreConnection) {
       const row =
         option === undefined
           ? undefined
-          : db
-              .prepare(
-                "SELECT * FROM github_card_move WHERE item_node_id=? AND field_node_id=? AND option_id=? ORDER BY sequence DESC LIMIT 1",
-              )
-              .get(item, field, option);
+          : readGithubCardMove(
+              db
+                .prepare(
+                  "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, CAST(item_node_id AS BLOB) AS item_node_id, CAST(field_node_id AS BLOB) AS field_node_id, CAST(option_id AS BLOB) AS option_id, state, sequence FROM github_card_move WHERE item_node_id=? AND field_node_id=? AND option_id=? ORDER BY sequence DESC LIMIT 1",
+                )
+                .get(item, field, option),
+            );
       if (!row) {
         db.prepare(
           "UPDATE github_card_move SET state='doubtful' WHERE item_node_id=? AND field_node_id=?",
@@ -54,4 +58,18 @@ export function moveRecords(connection: StoreConnection) {
       return { actorId: row["actor_id"] as string, confirmed: row["state"] === "confirmed" };
     },
   };
+}
+
+function readGithubCardMove<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    actor_id: storedText(values["actor_id"]!),
+    invoke_id: storedText(values["invoke_id"]!),
+    entry_id: storedText(values["entry_id"]!),
+    item_node_id: storedText(values["item_node_id"]!),
+    field_node_id: storedText(values["field_node_id"]!),
+    option_id: storedText(values["option_id"]!),
+  } as T;
 }

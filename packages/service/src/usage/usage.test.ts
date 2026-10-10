@@ -53,7 +53,14 @@ function currentPortfolio() {
   if (!lint.ok) throw new Error("Invalid fixture portfolio");
   return { commit: "portfolio-1", declaration: lint.declaration };
 }
-async function setup(credited = true) {
+async function setup(credited = true, identity?: string) {
+  const item = "alpha",
+    account = "acct",
+    environment = "env-one",
+    actorId = identity ?? "actor-1",
+    threadId = identity ?? "thread-1",
+    providerInstance = identity ?? "instance-1",
+    providerSessionId = identity ?? "session-1";
   const dir = mkdtempSync(join(tmpdir(), "usage-test-"));
   const path = join(dir, "store.sqlite");
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -63,14 +70,14 @@ async function setup(credited = true) {
   connection.migrate("usage", usageMigrationSteps);
   const portfolio = parseLedgerPortfolio({
     items: [
-      { id: "alpha", parent: null },
+      { id: item, parent: null },
       { id: "beta", parent: null },
       { id: "gamma", parent: null, archived: true },
       { id: "other", parent: null },
     ],
     allocations: [
-      { item: "alpha", account: "acct", guarantee: 50 },
-      { item: "beta", account: "acct", guarantee: 50 },
+      { item, account, guarantee: 50 },
+      { item: "beta", account, guarantee: 50 },
     ],
   });
   let now = 50;
@@ -79,7 +86,7 @@ async function setup(credited = true) {
   const credit = () =>
     ledger.credit({
       key: "credit-1",
-      account: "acct",
+      account,
       window: "w1",
       opensAt: 0,
       closesAt: 10000,
@@ -105,7 +112,7 @@ async function setup(credited = true) {
       }),
     },
     threadProject: () => "project-1",
-    environments: new Set(["env-one"]),
+    environments: new Set([environment]),
     inputChanged: () => {
       inputChanges++;
     },
@@ -117,14 +124,14 @@ async function setup(credited = true) {
   await apply();
   const push = (records: UsageCall[], mapped = true) =>
     usage.push({
-      environment: "env-one",
+      environment,
       threads: mapped
         ? [
             {
               provider: "codex",
-              providerSessionId: "session-1",
-              threadId: "thread-1",
-              providerInstance: "instance-1",
+              providerSessionId,
+              threadId,
+              providerInstance,
             },
           ]
         : [],
@@ -137,12 +144,12 @@ async function setup(credited = true) {
     machine = "machine-one",
   ) => {
     const write = {
-      actorId: "actor-1",
+      actorId,
       snapshot: {
         status,
         value,
         context: {
-          manifold: { environment: "env-one", portfolioItem: item, threads: ["thread-1"] },
+          manifold: { environment, portfolioItem: item, threads: [threadId] },
         },
       },
     };
@@ -375,6 +382,15 @@ it("listener validates requests before writing and returns protocol status codes
     (await post({ environment: "env-one", threads: [], records: [{ type: "call" }] })).status,
   ).toBe(400);
   expect((await post({ environment: "env-two", threads: [], records: [] })).status).toBe(422);
+  expect(
+    (
+      await post({
+        environment: "env-one",
+        threads: [],
+        records: [{ ...call(), provider: "codex\0invalid" }],
+      })
+    ).status,
+  ).toBe(400);
   expect((await fetch(url, { method: "GET" })).status).toBe(405);
   expect((await fetch(url + "-wrong")).status).toBe(404);
   expect((await fetch(url, { method: "POST", body: "{}" })).status).toBe(415);
@@ -1698,3 +1714,55 @@ it("the populated Accounts last-report read uses the covering account-time index
   ).toBe(true);
   expect(details.some((detail) => /SCAN usage_postings\b/.test(detail))).toBe(false);
 });
+
+it.each(["inside\0tail", "\0leading"])(
+  "usage identities restore through attribution, posting, moves and unowned reads: %j",
+  async (text) => {
+    const s = await setup(true, text);
+    const scopedAccounts = JSON.stringify({
+      accounts: {
+        acct: {
+          unit: "usd",
+          kind: "api",
+          capacity: { amount: 1, reset: "2026-01-01T00:00:00Z", every: { hours: 1 } },
+          usage: [{ environment: "env-one", provider: "codex", instance: text }],
+        },
+      },
+    });
+    expect((await s.apply(scopedAccounts)).status).toBe("applied");
+    s.save();
+    const record = {
+      ...call(text),
+      providerSessionId: text,
+      unit: { id: text, kind: "session" as const },
+    };
+    expect(s.push([record]).calls).toEqual({ accepted: 1, pending: 0, replayed: 0 });
+    s.restart();
+    expect(s.usage.actorUsage(text)).toMatchObject({
+      accounts: [expect.objectContaining({ account: "acct", actual: 6000000 })],
+    });
+    expect(s.push([record]).calls.replayed).toBe(1);
+    const model = `model:${text}`;
+    expect(s.push([{ ...record, key: `pending:${text}`, model }]).calls.pending).toBe(1);
+    expect(s.usage.pricing().unpriced).toContainEqual({ provider: "codex", model, postings: 1 });
+    await s.apply(accounts, prices);
+    const unmapped = {
+      ...record,
+      key: `unowned:${text}`,
+      providerSessionId: `session:${text}`,
+      unit: { id: `session:${text}`, kind: "session" as const },
+    };
+    s.push([unmapped], false);
+    s.restart();
+    const entry = s.usage.unowned().find((e) => e.kind === "session");
+    expect(entry).toMatchObject({
+      environment: "env-one",
+      provider: "codex",
+      providerSessionId: `session:${text}`,
+      usage: [expect.objectContaining({ account: "acct" })],
+    });
+    expect(s.usage.move({ from: entry!.actor, to: { actor: text } }).status).toBe("moved");
+    expect(s.usage.actorUsage(text).accounts[0]?.actual).toBe(12000000);
+    expect(s.usage.unowned()).toEqual([]);
+  },
+);

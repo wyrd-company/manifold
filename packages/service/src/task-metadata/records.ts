@@ -2,6 +2,8 @@
 // relationships:
 //   implements: task-metadata-tables
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { TaskMetadataDeclaration, TaskMetadataFinding } from "@wyrd-company/manifold-shared";
 import type { AppliedConfiguration, AppliedScope } from "./project-types.ts";
 import type { StoreConnection } from "../store/index.ts";
@@ -22,16 +24,24 @@ export function metadataRecords(connection: StoreConnection) {
     ] as string | undefined;
   return {
     commit: () =>
-      db.prepare("SELECT commit_id FROM metadata_declarations ORDER BY seq DESC LIMIT 1").get()?.[
-        "commit_id"
-      ] as string | undefined,
+      readMetadataDeclarations(
+        db
+          .prepare(
+            "SELECT CAST(commit_id AS BLOB) AS commit_id FROM metadata_declarations ORDER BY seq DESC LIMIT 1",
+          )
+          .get(),
+      )?.["commit_id"] as string | undefined,
     applied(
       binding: string,
       project: string,
     ): (AppliedConfiguration & { at: number; commit: string }) | undefined {
-      const row = db
-        .prepare("SELECT * FROM metadata_project_applies WHERE binding = ? AND project_node_id = ?")
-        .get(binding, project);
+      const row = readMetadataProjectApplies(
+        db
+          .prepare(
+            "SELECT CAST(binding AS BLOB) AS binding, CAST(project_node_id AS BLOB) AS project_node_id, CAST(commit_id AS BLOB) AS commit_id, fields, owned, applied_at FROM metadata_project_applies WHERE binding = ? AND project_node_id = ?",
+          )
+          .get(binding, project),
+      );
       return row
         ? {
             fields: JSON.parse(row["fields"] as string),
@@ -85,9 +95,13 @@ export function metadataRecords(connection: StoreConnection) {
       });
     },
     pending(binding: string, saveId: string) {
-      return db
-        .prepare("SELECT commit_id FROM metadata_pending_saves WHERE binding = ? AND save_id = ?")
-        .get(binding, saveId)?.["commit_id"] as string | undefined;
+      return readMetadataDeclarations(
+        db
+          .prepare(
+            "SELECT CAST(commit_id AS BLOB) AS commit_id FROM metadata_pending_saves WHERE binding = ? AND save_id = ?",
+          )
+          .get(binding, saveId),
+      )?.["commit_id"] as string | undefined;
     },
     savePending(binding: string, saveId: string, commit: string, at: number) {
       db.prepare(
@@ -122,4 +136,20 @@ export function metadataRecords(connection: StoreConnection) {
       ).run(commit, JSON.stringify(findings), Date.now());
     },
   };
+}
+
+function readMetadataDeclarations<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, commit_id: storedText(values["commit_id"]!) } as T;
+}
+function readMetadataProjectApplies<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    binding: storedText(values["binding"]!),
+    project_node_id: storedText(values["project_node_id"]!),
+    commit_id: storedText(values["commit_id"]!),
+  } as T;
 }

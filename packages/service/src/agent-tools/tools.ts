@@ -2,6 +2,8 @@
 // relationships:
 //   implements: agent-tools
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import { agentToolSteps } from "./migrations.ts";
 import { messages } from "./messages.ts";
 import { answers } from "./answers.ts";
@@ -20,8 +22,11 @@ export function openAgentTools(options: AgentToolsOptions): AgentTools {
       mail.saving(save);
       if (save.snapshot.status !== "done" && save.snapshot.status !== "stopped") return;
       const rows = options.store.connection.database
-        .prepare("SELECT environment,thread_id,turn_id FROM agenttool_question WHERE actor_id=?")
-        .all(save.actorId);
+        .prepare(
+          "SELECT CAST(environment AS BLOB) AS environment, CAST(thread_id AS BLOB) AS thread_id, CAST(turn_id AS BLOB) AS turn_id FROM agenttool_question WHERE actor_id=?",
+        )
+        .all(save.actorId)
+        .map(readAgenttoolQuestion);
       for (const row of rows)
         options.escalations().withdraw({
           kind: "agent-question",
@@ -38,4 +43,15 @@ export function openAgentTools(options: AgentToolsOptions): AgentTools {
       await sender.stop();
     },
   };
+}
+
+function readAgenttoolQuestion<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    environment: storedText(values["environment"]!),
+    thread_id: storedText(values["thread_id"]!),
+    turn_id: storedText(values["turn_id"]!),
+  } as T;
 }

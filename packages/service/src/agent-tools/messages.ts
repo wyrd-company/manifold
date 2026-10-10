@@ -2,6 +2,8 @@
 // relationships:
 //   implements: agent-tools
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import { fromPromise } from "xstate";
 import { agentToolsSchema, createSchemaCompiler } from "@wyrd-company/manifold-shared";
 import type { ThreadMessage } from "@wyrd-company/manifold-shared";
@@ -148,18 +150,20 @@ export function messages(options: AgentToolsOptions) {
         );
         const unread = db
           .prepare(
-            "SELECT message_id FROM agenttool_message WHERE environment=? AND thread_id=? AND delivered_at IS NOT NULL AND read_at IS NULL ORDER BY sequence",
+            "SELECT CAST(message_id AS BLOB) AS message_id FROM agenttool_message WHERE environment=? AND thread_id=? AND delivered_at IS NOT NULL AND read_at IS NULL ORDER BY sequence",
           )
-          .all(identity.environment, identity.threadId);
+          .all(identity.environment, identity.threadId)
+          .map(readMessageId);
         for (const row of unread)
           db.prepare(
             "UPDATE agenttool_message SET read_at=?,read_turn_id=?,read_position=? WHERE message_id=?",
           ).run(now(), identity.turnId, ++position, String(row["message_id"]));
         return db
           .prepare(
-            "SELECT * FROM agenttool_message WHERE environment=? AND thread_id=? AND read_turn_id=? ORDER BY read_position",
+            "SELECT sequence, CAST(message_id AS BLOB) AS message_id, CAST(environment AS BLOB) AS environment, CAST(thread_id AS BLOB) AS thread_id, CAST(sender_actor_id AS BLOB) AS sender_actor_id, CAST(sender_issue AS BLOB) AS sender_issue, CAST(text AS BLOB) AS text, sent_at, delivered_at, CAST(delivered_to AS BLOB) AS delivered_to, noticed_at, read_at, CAST(read_turn_id AS BLOB) AS read_turn_id, read_position, CAST(sender_repository AS BLOB) AS sender_repository, sender_number, CAST(sender_title AS BLOB) AS sender_title FROM agenttool_message WHERE environment=? AND thread_id=? AND read_turn_id=? ORDER BY read_position",
           )
           .all(identity.environment, identity.threadId, identity.turnId)
+          .map(readMessage)
           .map((row): ThreadMessage => ({
             messageId: String(row["message_id"]),
             from: {
@@ -203,9 +207,10 @@ export function messages(options: AgentToolsOptions) {
         if (!options.sourceReady(request.environment)) return { notice: null };
         const candidates = db
           .prepare(
-            "SELECT DISTINCT thread_id FROM agenttool_message WHERE environment=? AND delivered_at IS NOT NULL AND read_at IS NULL AND noticed_at IS NULL ORDER BY thread_id",
+            "SELECT DISTINCT CAST(thread_id AS BLOB) AS thread_id FROM agenttool_message WHERE environment=? AND delivered_at IS NOT NULL AND read_at IS NULL AND noticed_at IS NULL ORDER BY thread_id",
           )
-          .all(request.environment);
+          .all(request.environment)
+          .map(readMessageThreadId);
         const matches: string[] = [];
         for (const row of candidates) {
           const id = String(row["thread_id"]);
@@ -243,4 +248,33 @@ export function messages(options: AgentToolsOptions) {
       return { notice: noticeText(count) };
     },
   };
+}
+
+function readMessageId<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, message_id: storedText(values["message_id"]!) } as T;
+}
+function readMessage<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    message_id: storedText(values["message_id"]!),
+    environment: storedText(values["environment"]!),
+    thread_id: storedText(values["thread_id"]!),
+    sender_actor_id: storedText(values["sender_actor_id"]!),
+    sender_issue: values["sender_issue"] === null ? null : storedText(values["sender_issue"]!),
+    text: storedText(values["text"]!),
+    delivered_to: values["delivered_to"] === null ? null : storedText(values["delivered_to"]!),
+    read_turn_id: values["read_turn_id"] === null ? null : storedText(values["read_turn_id"]!),
+    sender_repository:
+      values["sender_repository"] === null ? null : storedText(values["sender_repository"]!),
+    sender_title: values["sender_title"] === null ? null : storedText(values["sender_title"]!),
+  } as T;
+}
+function readMessageThreadId<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, thread_id: storedText(values["thread_id"]!) } as T;
 }

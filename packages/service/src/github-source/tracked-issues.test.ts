@@ -158,7 +158,7 @@ test.each([10, 1000])("all tracked issues share one mirror read over %i issues",
     const tracked = [...index.values()];
     for (const table of ["issue", "project", "item", "field_value", "dependency", "sub_issue"])
       expect(
-        prepare.mock.calls.filter(([sql]) => sql === `SELECT * FROM github_${table}`),
+        prepare.mock.calls.filter(([sql]) => new RegExp(`\\bFROM github_${table}$`).test(sql)),
       ).toHaveLength(1);
     prepare.mockRestore();
     expect(source.trackedIssues()).toEqual(tracked);

@@ -3,6 +3,7 @@
 //   implements: store
 // ---
 import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "./stored-text.ts";
 import { openConnection } from "./connection.ts";
 import { storeSteps } from "./migrations.ts";
 import { statePaths } from "./state-paths.ts";
@@ -19,8 +20,8 @@ import type {
 type Row = Record<string, SQLOutputValue>;
 function readSnapshot(row: Row): StoredSnapshot {
   return {
-    actorId: row["actor_id"] as string,
-    machine: row["machine"] as string,
+    actorId: storedText(row["actor_id"]!),
+    machine: storedText(row["machine"]!),
     snapshot: JSON.parse(row["snapshot"] as string) as PersistedSnapshot,
     savedAt: row["saved_at"] as number,
     ...(row["history_pruned_at"] != null
@@ -31,9 +32,9 @@ function readSnapshot(row: Row): StoredSnapshot {
 function readInbox(row: Row): InboxRow {
   return {
     sequence: row["sequence"] as number,
-    eventId: row["event_id"] as string,
-    actorId: row["actor_id"] as string,
-    topic: row["topic"] as string,
+    eventId: storedText(row["event_id"]!),
+    actorId: storedText(row["actor_id"]!),
+    topic: storedText(row["topic"]!),
     payload: JSON.parse(row["payload"] as string) as InboxRow["payload"],
     receivedAt: row["received_at"] as number,
     consumedAt: row["consumed_at"] === null ? undefined : (row["consumed_at"] as number),
@@ -42,22 +43,22 @@ function readInbox(row: Row): InboxRow {
 function readDeadline(row: Row): DeadlineRow {
   return {
     deadlineId: row["deadline_id"] as number,
-    actorId: row["actor_id"] as string,
-    statePath: row["state_path"] as string,
-    eventName: row["event_name"] as string,
+    actorId: storedText(row["actor_id"]!),
+    statePath: storedText(row["state_path"]!),
+    eventName: storedText(row["event_name"]!),
     fireAt: row["fire_at"] as number,
-    entryId: row["entry_id"] as string,
+    entryId: storedText(row["entry_id"]!),
     firedAt: row["fired_at"] === null ? undefined : (row["fired_at"] as number),
   };
 }
 
 function readMigrationFailure(row: Row): StoredMigrationFailure {
   return {
-    actorId: String(row["actor_id"]),
-    from: String(row["from_machine"]),
-    to: String(row["to_machine"]),
+    actorId: storedText(row["actor_id"]!),
+    from: storedText(row["from_machine"]!),
+    to: storedText(row["to_machine"]!),
     kind: row["kind"] as StoredMigrationFailure["kind"],
-    message: String(row["message"]),
+    message: storedText(row["message"]!),
     detail: JSON.parse(String(row["detail"])),
     failedAt: Number(row["failed_at"]),
   };
@@ -103,7 +104,9 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
           ),
         );
         for (const row of database
-          .prepare("SELECT * FROM store_deadline WHERE actor_id = ?")
+          .prepare(
+            "SELECT deadline_id, CAST(actor_id AS BLOB) AS actor_id, CAST(state_path AS BLOB) AS state_path, CAST(event_name AS BLOB) AS event_name, fire_at, CAST(entry_id AS BLOB) AS entry_id, fired_at FROM store_deadline WHERE actor_id = ?",
+          )
           .all(actorId)) {
           const deadline = readDeadline(row);
           if (!arms.has(JSON.stringify([deadline.statePath, deadline.eventName, deadline.entryId])))
@@ -158,13 +161,17 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
     },
     migrationFailure(actorId) {
       const row = database
-        .prepare("SELECT * FROM store_migration_failure WHERE actor_id=?")
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(from_machine AS BLOB) AS from_machine, CAST(to_machine AS BLOB) AS to_machine, kind, CAST(message AS BLOB) AS message, detail, failed_at FROM store_migration_failure WHERE actor_id=?",
+        )
         .get(actorId);
       return row ? readMigrationFailure(row) : undefined;
     },
     migrationFailures(to) {
       return database
-        .prepare("SELECT * FROM store_migration_failure WHERE to_machine=? ORDER BY actor_id")
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(from_machine AS BLOB) AS from_machine, CAST(to_machine AS BLOB) AS to_machine, kind, CAST(message AS BLOB) AS message, detail, failed_at FROM store_migration_failure WHERE to_machine=? ORDER BY actor_id",
+        )
         .all(to)
         .map(readMigrationFailure);
     },
@@ -178,14 +185,16 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
     },
     activeSnapshots() {
       return database
-        .prepare("SELECT * FROM store_snapshot WHERE status = 'active' ORDER BY actor_id")
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(machine AS BLOB) AS machine, status, snapshot, saved_at, history_pruned_at FROM store_snapshot WHERE status = 'active' ORDER BY actor_id",
+        )
         .all()
         .map(readSnapshot);
     },
     endedSnapshots() {
       return database
         .prepare(
-          "SELECT * FROM store_snapshot WHERE status IN ('done', 'stopped') ORDER BY actor_id",
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(machine AS BLOB) AS machine, status, snapshot, saved_at, history_pruned_at FROM store_snapshot WHERE status IN ('done', 'stopped') ORDER BY actor_id",
         )
         .all()
         .map(readSnapshot);
@@ -193,7 +202,7 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
     prunableEnded({ endedBefore, after, limit }) {
       return database
         .prepare(
-          "SELECT actor_id, saved_at FROM store_snapshot WHERE status <> 'active' AND history_pruned_at IS NULL AND saved_at < ? AND (saved_at > ? OR (saved_at = ? AND actor_id > ?)) ORDER BY saved_at, actor_id LIMIT ?",
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, saved_at FROM store_snapshot WHERE status <> 'active' AND history_pruned_at IS NULL AND saved_at < ? AND (saved_at > ? OR (saved_at = ? AND actor_id > ?)) ORDER BY saved_at, actor_id LIMIT ?",
         )
         .all(
           endedBefore,
@@ -202,7 +211,10 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
           after?.actorId ?? "",
           limit,
         )
-        .map((row) => ({ actorId: String(row["actor_id"]), savedAt: Number(row["saved_at"]) }));
+        .map((row) => ({
+          actorId: storedText(row["actor_id"]!),
+          savedAt: Number(row["saved_at"]),
+        }));
     },
     pruneEnded(actorId) {
       return connection.transaction(() => {
@@ -221,17 +233,23 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
       });
     },
     loadSnapshot(actorId) {
-      const row = database.prepare("SELECT * FROM store_snapshot WHERE actor_id = ?").get(actorId);
+      const row = database
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(machine AS BLOB) AS machine, status, snapshot, saved_at, history_pruned_at FROM store_snapshot WHERE actor_id = ?",
+        )
+        .get(actorId);
       return row ? readSnapshot(row) : undefined;
     },
     loadErroredSnapshot(actorId) {
       const row = database
-        .prepare("SELECT * FROM store_errored_snapshot WHERE actor_id = ?")
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(machine AS BLOB) AS machine, snapshot, CAST(event_id AS BLOB) AS event_id, saved_at FROM store_errored_snapshot WHERE actor_id = ?",
+        )
         .get(actorId);
       return row
         ? {
             ...readSnapshot(row),
-            eventId: row["event_id"] === null ? undefined : (row["event_id"] as string),
+            eventId: row["event_id"] === null ? undefined : storedText(row["event_id"]!),
           }
         : undefined;
     },
@@ -240,12 +258,12 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         machine === undefined
           ? database
               .prepare(
-                "SELECT snapshot.* FROM store_snapshot_state state JOIN store_snapshot snapshot ON snapshot.actor_id = state.actor_id WHERE state.state_path = ? ORDER BY state.actor_id",
+                "SELECT CAST(snapshot.actor_id AS BLOB) AS actor_id, CAST(snapshot.machine AS BLOB) AS machine, snapshot.status, snapshot.snapshot, snapshot.saved_at, snapshot.history_pruned_at FROM store_snapshot_state state JOIN store_snapshot snapshot ON snapshot.actor_id = state.actor_id WHERE state.state_path = ? ORDER BY state.actor_id",
               )
               .all(statePath)
           : database
               .prepare(
-                "SELECT snapshot.* FROM store_snapshot_state state JOIN store_snapshot snapshot ON snapshot.actor_id = state.actor_id WHERE state.machine = ? AND state.state_path = ? ORDER BY state.actor_id",
+                "SELECT CAST(snapshot.actor_id AS BLOB) AS actor_id, CAST(snapshot.machine AS BLOB) AS machine, snapshot.status, snapshot.snapshot, snapshot.saved_at, snapshot.history_pruned_at FROM store_snapshot_state state JOIN store_snapshot snapshot ON snapshot.actor_id = state.actor_id WHERE state.machine = ? AND state.state_path = ? ORDER BY state.actor_id",
               )
               .all(machine, statePath);
       return query.map(readSnapshot);
@@ -255,7 +273,7 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
         const rows: InboxRow[] = [];
         const receivedAt = now();
         const insert = database.prepare(
-          "INSERT INTO store_inbox (event_id, actor_id, topic, payload, received_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (actor_id, event_id) DO NOTHING RETURNING *",
+          "INSERT INTO store_inbox (event_id, actor_id, topic, payload, received_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (actor_id, event_id) DO NOTHING RETURNING sequence, CAST(event_id AS BLOB) AS event_id, CAST(actor_id AS BLOB) AS actor_id, CAST(topic AS BLOB) AS topic, payload, received_at, consumed_at",
         );
         for (const actorId of actorIds) {
           const row = insert.get(
@@ -272,14 +290,16 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
     },
     actorInbox(actorId) {
       return database
-        .prepare("SELECT * FROM store_inbox WHERE actor_id = ? ORDER BY sequence")
+        .prepare(
+          "SELECT sequence, CAST(event_id AS BLOB) AS event_id, CAST(actor_id AS BLOB) AS actor_id, CAST(topic AS BLOB) AS topic, payload, received_at, consumed_at FROM store_inbox WHERE actor_id = ? ORDER BY sequence",
+        )
         .all(actorId)
         .map(readInbox);
     },
     pendingInbox(actorId) {
       return database
         .prepare(
-          "SELECT * FROM store_inbox WHERE actor_id = ? AND consumed_at IS NULL ORDER BY sequence",
+          "SELECT sequence, CAST(event_id AS BLOB) AS event_id, CAST(actor_id AS BLOB) AS actor_id, CAST(topic AS BLOB) AS topic, payload, received_at, consumed_at FROM store_inbox WHERE actor_id = ? AND consumed_at IS NULL ORDER BY sequence",
         )
         .all(actorId)
         .map(readInbox);
@@ -296,7 +316,7 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
     deliver(target, row) {
       if (row.actorId !== target.actorId) throw new TypeError("Inbox row belongs to another actor");
       const current = database
-        .prepare("SELECT * FROM store_inbox WHERE sequence = ?")
+        .prepare("SELECT consumed_at FROM store_inbox WHERE sequence = ?")
         .get(row.sequence);
       if (current?.["consumed_at"] !== null) return "already-consumed";
       target.send(row);
@@ -320,7 +340,7 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
       while (true) {
         const row = database
           .prepare(
-            "SELECT * FROM store_inbox WHERE actor_id = ? AND consumed_at IS NULL ORDER BY sequence LIMIT 1",
+            "SELECT sequence, CAST(event_id AS BLOB) AS event_id, CAST(actor_id AS BLOB) AS actor_id, CAST(topic AS BLOB) AS topic, payload, received_at, consumed_at FROM store_inbox WHERE actor_id = ? AND consumed_at IS NULL ORDER BY sequence LIMIT 1",
           )
           .get(target.actorId);
         if (!row) return { delivered, erroredAt: undefined };
@@ -340,7 +360,7 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
     dueDeadlines(at) {
       return database
         .prepare(
-          "SELECT * FROM store_deadline WHERE fired_at IS NULL AND fire_at <= ? ORDER BY fire_at, actor_id",
+          "SELECT deadline_id, CAST(actor_id AS BLOB) AS actor_id, CAST(state_path AS BLOB) AS state_path, CAST(event_name AS BLOB) AS event_name, fire_at, CAST(entry_id AS BLOB) AS entry_id, fired_at FROM store_deadline WHERE fired_at IS NULL AND fire_at <= ? ORDER BY fire_at, actor_id",
         )
         .all(at)
         .map(readDeadline);
@@ -349,7 +369,7 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
       return connection.transaction(() => {
         const row = database
           .prepare(
-            "UPDATE store_deadline SET fired_at = ? WHERE deadline_id = ? AND fired_at IS NULL RETURNING *",
+            "UPDATE store_deadline SET fired_at = ? WHERE deadline_id = ? AND fired_at IS NULL RETURNING deadline_id, CAST(actor_id AS BLOB) AS actor_id, CAST(state_path AS BLOB) AS state_path, CAST(event_name AS BLOB) AS event_name, fire_at, CAST(entry_id AS BLOB) AS entry_id, fired_at",
           )
           .get(now(), deadline.deadlineId);
         if (!row) return undefined;
@@ -357,9 +377,9 @@ export function openStore({ path, now = Date.now, probe }: StoreOptions): Store 
           {
             eventId: `deadline:${deadline.deadlineId}`,
             topic,
-            payload: { type: row["event_name"] as string },
+            payload: { type: storedText(row["event_name"]!) },
           },
-          [row["actor_id"] as string],
+          [storedText(row["actor_id"]!)],
         )[0];
       });
     },

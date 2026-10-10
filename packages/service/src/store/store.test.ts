@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
-import { openStore } from "./index.ts";
+import { openStore, storedText } from "./index.ts";
 import type { Store, DeliveryTarget, SnapshotWrite, DeadlineArm } from "./index.ts";
 
 let directory: string;
@@ -714,3 +714,77 @@ test.each(["done", "stopped"] as const)(
     expect(store.migrationFailure(failure.actorId)).toBeUndefined();
   },
 );
+
+test.each(["inside\0tail", "\0leading"])(
+  "outside text round-trips through every Store read: %j",
+  (text) => {
+    const actorId = text,
+      machine = text,
+      statePath = text;
+    const deadline = { statePath, eventName: text, entryId: text, fireAt: 100 };
+    const write = { actorId, machine, snapshot: snapshot(text), deadlines: [deadline] };
+    store.saveSnapshot(write);
+    const saved = store.loadSnapshot(actorId)!;
+    expect(saved).toMatchObject({ actorId, machine, snapshot: { value: text } });
+    expect(store.activeSnapshots()).toContainEqual(saved);
+    expect(store.findActorsInState({ machine, statePath })).toEqual([saved]);
+    expect(store.findActorsInState({ statePath })).toEqual([saved]);
+    const row = store.writeInbox({ eventId: text, topic: text, payload: { type: text } }, [
+      actorId,
+    ])[0]!;
+    expect(row).toMatchObject({ actorId, eventId: text, topic: text });
+    expect(store.pendingInbox(actorId)).toEqual([row]);
+    expect(store.actorInbox(actorId)).toEqual([row]);
+    store.saveSnapshot({ actorId, machine, snapshot: { status: "error" }, eventId: text });
+    expect(store.loadErroredSnapshot(actorId)).toMatchObject({ actorId, machine, eventId: text });
+    const failure = {
+      actorId,
+      from: machine,
+      to: text,
+      kind: "no-path" as const,
+      message: text,
+      detail: { text },
+    };
+    expect(store.recordMigrationFailure(failure)).toBe("recorded");
+    expect(store.recordMigrationFailure(failure)).toBe("unchanged");
+    expect(store.migrationFailure(actorId)).toMatchObject(failure);
+    expect(store.migrationFailures(text)).toEqual([store.migrationFailure(actorId)]);
+    const first = store.dueDeadlines(100).find((d) => d.actorId === actorId)!;
+    expect(first).toMatchObject({ actorId, ...deadline });
+    store.saveSnapshot(write);
+    store.close();
+    store = openStore({ path });
+    expect(store.loadSnapshot(actorId)).toEqual(saved);
+    expect(store.dueDeadlines(100)).toContainEqual(first);
+    const fired = store.fireDeadline(first, text)!;
+    expect(fired).toMatchObject({ actorId, topic: text, payload: { type: text } });
+    const received: unknown[] = [];
+    expect(
+      store.drain({ actorId, send: (event) => received.push(event.payload), persist: () => write })
+        .delivered,
+    ).toBe(2);
+    expect(received).toEqual([{ type: text }, { type: text }]);
+    expect(
+      store.drain({
+        actorId,
+        send() {
+          throw new Error("duplicate");
+        },
+        persist: () => write,
+      }).delivered,
+    ).toBe(0);
+    store.saveSnapshot({ actorId, machine, snapshot: { status: "done", value: text } });
+    const ended = store.loadSnapshot(actorId)!;
+    expect(store.endedSnapshots()).toContainEqual(ended);
+    expect(store.prunableEnded({ endedBefore: Date.now() + 1, limit: 100 })).toContainEqual({
+      actorId,
+      savedAt: ended.savedAt,
+    });
+  },
+);
+
+test("storedText accepts UTF-8 bytes and rejects TEXT, numbers and null", () => {
+  expect(storedText(Buffer.from("\0text☃\0tail", "utf8"))).toBe("\0text☃\0tail");
+  expect(storedText(new Uint8Array())).toBe("");
+  for (const value of ["text", 1, null]) expect(() => storedText(value)).toThrow(TypeError);
+});

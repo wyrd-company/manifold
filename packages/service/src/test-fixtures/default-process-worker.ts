@@ -69,7 +69,7 @@ process.on("message", (message) => {
       let mirrorReads = 0;
       const prepare = database.prepare;
       database.prepare = function (sql) {
-        if (measuring && sql === "SELECT * FROM github_issue") mirrorReads++;
+        if (measuring && /\bFROM github_issue$/.test(sql)) mirrorReads++;
         return prepare.call(this, sql);
       };
       try {

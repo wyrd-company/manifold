@@ -11,8 +11,8 @@ export const routerSteps: readonly string[] = [
 -- beside the store's tables and migrated under the owner \`router\`.
 
 CREATE TABLE router_source_event (
-  source TEXT NOT NULL CHECK (length(source) > 0),
-  event_id TEXT NOT NULL CHECK (length(event_id) > 0),
+  source TEXT NOT NULL CHECK (source <> ''),
+  event_id TEXT NOT NULL CHECK (event_id <> ''),
   accepted_at INTEGER NOT NULL,
   PRIMARY KEY (source, event_id)
 ) STRICT, WITHOUT ROWID;

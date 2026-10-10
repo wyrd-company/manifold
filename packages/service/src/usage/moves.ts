@@ -2,6 +2,8 @@
 // relationships:
 //   implements: [usage-intake, usage-api]
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import { isUnownedActor } from "@wyrd-company/manifold-shared/usage-api";
 import type { UsageMoveRequest, UsageMoveResponse } from "@wyrd-company/manifold-shared/usage-api";
 import { LedgerError } from "../ledger/index.ts";
@@ -29,9 +31,11 @@ export function moveUsage(
     else {
       const actor = isUnownedActor(to.actor)
         ? undefined
-        : (db.prepare("SELECT item FROM usage_actors WHERE actor_id=?").get(to.actor) as
-            | { item: string | null }
-            | undefined);
+        : (readUsageActors(
+            db
+              .prepare("SELECT CAST(item AS BLOB) AS item FROM usage_actors WHERE actor_id=?")
+              .get(to.actor),
+          ) as { item: string | null } | undefined);
       if (!actor)
         throw new UsageMoveError(
           "unknown-actor",
@@ -52,9 +56,10 @@ export function moveUsage(
     }
     const postings = db
       .prepare(
-        "SELECT seq,held_actor,held_item,account,amount,used_at,moves FROM usage_attributed_postings WHERE status='posted' AND attributed_actor=? ORDER BY seq",
+        "SELECT seq, CAST(held_actor AS BLOB) AS held_actor, CAST(held_item AS BLOB) AS held_item, CAST(account AS BLOB) AS account, amount, used_at, moves FROM usage_attributed_postings WHERE status='posted' AND attributed_actor=? ORDER BY seq",
       )
-      .all(from) as {
+      .all(from)
+      .map(readUsageAttributedPostings) as {
       seq: number;
       held_actor: string;
       held_item: string;
@@ -109,4 +114,20 @@ export function moveUsage(
   });
   if (result.moved) options.inputChanged?.();
   return result;
+}
+
+function readUsageActors<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, item: values["item"] === null ? null : storedText(values["item"]!) } as T;
+}
+function readUsageAttributedPostings<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    held_actor: storedText(values["held_actor"]!),
+    held_item: storedText(values["held_item"]!),
+    account: values["account"] === null ? null : storedText(values["account"]!),
+  } as T;
 }

@@ -3,7 +3,9 @@
 //   verifies: agent-tools
 // ---
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { openStore } from "../store/index.ts";
@@ -27,6 +29,7 @@ afterEach(async () => {
 });
 async function fixture(
   options: {
+    identity?: string;
     declared?: boolean;
     rejected?: boolean;
     available?: boolean;
@@ -38,6 +41,10 @@ async function fixture(
     }) => Promise<void>;
   } = {},
 ) {
+  const environment = "station";
+  const threadId = options.identity ?? "thread.a";
+  const turnId = options.identity ?? "turn-a";
+  const environmentId = options.identity ?? "server-a";
   const notifications: { title: string; click?: string }[] = [];
   const ntfy = await serve((req, res) => {
     void readRequest(req).then((body) => {
@@ -48,7 +55,11 @@ async function fixture(
   closing.push(ntfy.close);
   let issue: { repository: string; number: number; title?: string } | undefined;
   const issueReads: string[] = [];
-  const store = openStore({ path: ":memory:" });
+  const directory =
+    options.identity === undefined ? undefined : mkdtempSync(join(tmpdir(), "agent-text-"));
+  if (directory) closing.push(async () => rmSync(directory, { recursive: true, force: true }));
+  const path = directory ? join(directory, "store.sqlite") : ":memory:";
+  const store = openStore({ path });
   let schema: "declared" | "unavailable" | "undeclared" = "declared";
   const validate = new Ajv2020({ allErrors: true }).compile({
     type: "object",
@@ -70,7 +81,7 @@ async function fixture(
     store,
     host: {
       subscription: () => ({
-        topics: [agentThreadTopic("station", "thread.a")],
+        topics: [agentThreadTopic(environment, threadId)],
         events:
           options.declared === false
             ? []
@@ -86,17 +97,17 @@ async function fixture(
   let holdReads = false;
   let readSignal: AbortSignal | undefined;
   let follower = "parcel";
-  let turn = "turn-a";
+  let turn = turnId;
   const toolOptions = {
     store,
     configuration: { identifyTimeoutMs: 500 },
-    environments: new Set(["station"]),
+    environments: new Set([environment]),
     router: () => router,
     actors: () => ({
-      followers: (_environment, threadId) => (threadId === "thread.a" ? [follower] : []),
-      issueThreads: () => [{ actorId: "parcel", environment: "station", threadId: "thread.a" }],
+      followers: (_environment, requestedThread) => (requestedThread === threadId ? [follower] : []),
+      issueThreads: () => [{ actorId: "parcel", environment, threadId }],
       actorOf: () => ({ manifold: { issue: "shipment" }, commit: "a".repeat(40) }),
-      followedThreads: () => ["thread.a"],
+      followedThreads: () => [threadId],
       eventSchema: () =>
         schema === "declared" ? { status: schema, validate } : { status: schema },
     }),
@@ -109,9 +120,9 @@ async function fixture(
             finishRead = resolve;
           });
         return schemas.orchestrationReadModel.OrchestrationThread.parse({
-          ...fixtureThread("thread.a"),
+          ...fixtureThread(threadId),
           session: {
-            threadId: "thread.a",
+            threadId: threadId,
             status: "running",
             providerName: "codex",
             runtimeMode: "full-access",
@@ -155,7 +166,7 @@ async function fixture(
     },
     environmentId: async () => {
       if (options.available === false) throw new Error("Unavailable");
-      return "server-a";
+      return environmentId;
     },
     escalations: () => escalations,
     log: () => {},
@@ -194,13 +205,15 @@ async function fixture(
   const call = async (tool: string, args: unknown, meta: unknown = { callId: "call-a" }) => {
     const response = await fetch(http.url + "/api/agent-tools/calls", {
       method: "POST",
-      body: JSON.stringify({ environment: "station", tool, arguments: args, meta }),
+      body: JSON.stringify({ environment: environment, tool, arguments: args, meta }),
     });
     const body: unknown = await response.json();
     expect(isAgentToolCallResponse(body)).toBe(true);
     return { status: response.status, body };
   };
   return {
+    toolOptions,
+    path,
     notifications,
     issueReads,
     issue(value: typeof issue, nodeId: string | undefined = "I_PARCEL") {
@@ -836,3 +849,52 @@ test("pruned agent question replays after reopen for a later follower, while a f
   expect(f.escalations.answer(id, { text: "Old answer" }, "api")).toEqual({ status: "not-found" });
   expect(f.escalations.get(freshId)?.status).toBe("open");
 });
+test.each(["inside\0tail", "\0leading"])(
+  "agent question and answer identities round-trip: %j",
+  async (text) => {
+    const f = await fixture({ identity: text });
+    const first = await f.call("escalate", { question: text, freeText: true });
+    expect(first.status).toBe(200);
+    const id = (first.body as { escalationId: string }).escalationId;
+    expect((await f.call("escalate", { question: text, freeText: true })).body).toMatchObject({
+      escalationId: id,
+      replay: true,
+    });
+    f.escalations.answer(id, { text }, "api");
+    await eventually(() => expect(f.sent).toHaveLength(1));
+    expect(f.sent[0]).toMatchObject({ environment: "station", threadId: text });
+    expect(f.sent[0]!.text).toContain(text);
+    await f.tools.stop();
+    const reopened = openStore({ path: f.path });
+    const router = startRouter({
+      store: reopened,
+      host: {
+        subscription: () => ({
+          topics: [agentThreadTopic("station", text)],
+          events: ["agent.escalation.answered"],
+        }),
+        restore: () => ({ status: "held", reason: "fixture" }),
+      },
+    });
+    const tools = openAgentTools({ ...f.toolOptions, store: reopened, router: () => router });
+    closing.push(async () => {
+      await tools.stop();
+      router.stop();
+      reopened.close();
+    });
+    tools.messagePlaced({
+      environment: "station",
+      threadId: text,
+      messageId: f.sent[0]!.messageId,
+      placement: "joined",
+      turnId: text,
+    });
+    expect(reopened.pendingInbox("parcel").map((row) => row.payload)).toContainEqual(
+      expect.objectContaining({
+        type: "agent.escalation.answered",
+        threadId: text,
+        answer: { text },
+      }),
+    );
+  },
+);

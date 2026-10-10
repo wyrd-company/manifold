@@ -17,7 +17,7 @@ export const intakeMigrationSteps: readonly string[] = [
 -- over, and is decided again at a later commit, at a change of the issue,
 -- or when its digest is cleared for a retry.
 CREATE TABLE intake_record (
-  issue_node_id TEXT PRIMARY KEY CHECK (length(issue_node_id) > 0),
+  issue_node_id TEXT PRIMARY KEY CHECK (issue_node_id <> ''),
   status TEXT NOT NULL CHECK (status IN ('failed', 'recorded', 'started')),
   commit_id TEXT NOT NULL CHECK (length(commit_id) = 40),
   binding TEXT,

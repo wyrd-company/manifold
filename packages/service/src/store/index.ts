@@ -29,3 +29,5 @@ export type {
 export type { MigrationFailureWrite, StoredMigrationFailure } from "./types.ts";
 
 export type { PrunableActor, PrunableQuery, PruneOutcome } from "./types.ts";
+
+export { storedText } from "./stored-text.ts";

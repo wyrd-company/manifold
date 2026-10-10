@@ -22,14 +22,14 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
 });
-async function fixture(joined = false) {
+async function fixture(joined = false, threadId = "conversation") {
   const directory = await mkdtemp(join(tmpdir(), "agent-tool-recovery-"));
   cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const token = join(directory, "token");
   await writeFile(token, "fixture-token");
   const server = await fakeServer();
   cleanup.push(() => server.close());
-  const base = fixtureThread("conversation");
+  const base = fixtureThread(threadId);
   const thread = schemas.orchestrationReadModel.OrchestrationThread.parse({
     ...base,
     latestTurn: {
@@ -852,3 +852,27 @@ test("a mirror issue with an empty title sends only its repository and number", 
   expect(read).toHaveProperty("messages.0.from.task", { repository: "sample/records", number: 7 });
   expect(read["message"]).toContain("from task sample/records#7, sent ");
 });
+
+test.each(["inside\0tail", "\0leading"])(
+  "agent message text and thread restore through public delivery: %j",
+  async (text) => {
+    const f = await fixture(true, text);
+    const config = {
+      ...f.config,
+      recipientThreads: [text],
+      senderTask: { repository: "sample/records", number: 1, title: text },
+    };
+    const service = await recoveryService(config);
+    await service.send({ environment: "station", threadId: text }, text, text, text);
+    await expect.poll(() => service.snapshot()["context"]).toMatchObject({ messages: 1 });
+    await service.stop();
+    const resumed = await recoveryService(config);
+    cleanup.push(() => resumed.stop());
+    const read = await resumed.call("get-messages", { thread: text });
+    expect(read).toMatchObject({
+      status: "read",
+      messages: [{ text, from: { actorId: text, task: { title: text } } }],
+    });
+    expect(await resumed.call("get-messages", { thread: text })).toEqual(read);
+  },
+);

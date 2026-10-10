@@ -2,6 +2,8 @@
 // relationships:
 //   implements: intake-records-table
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { Store } from "../store/index.ts";
 import type { IntakeRecord, IntakeStartFailure } from "./types.ts";
 const columns = [
@@ -68,11 +70,23 @@ export function records(store: Store) {
   });
   return {
     get(id: string) {
-      const row = db.prepare("SELECT * FROM intake_record WHERE issue_node_id=?").get(id);
+      const row = readIntakeRecord(
+        db
+          .prepare(
+            "SELECT CAST(issue_node_id AS BLOB) AS issue_node_id, status, CAST(commit_id AS BLOB) AS commit_id, CAST(binding AS BLOB) AS binding, CAST(project_node_id AS BLOB) AS project_node_id, CAST(project_owner AS BLOB) AS project_owner, project_number, CAST(environment AS BLOB) AS environment, CAST(blueprint_path AS BLOB) AS blueprint_path, CAST(blueprint_version AS BLOB) AS blueprint_version, CAST(portfolio_item AS BLOB) AS portfolio_item, CAST(portfolio_commit AS BLOB) AS portfolio_commit, CAST(actor_id AS BLOB) AS actor_id, failure, evaluation, attempts, start_failure, start_attempts, created_at, updated_at, CAST(issue_digest AS BLOB) AS issue_digest FROM intake_record WHERE issue_node_id=?",
+          )
+          .get(id),
+      );
       return row ? decode(row) : undefined;
     },
     unfinished() {
-      return db.prepare("SELECT * FROM intake_record WHERE status <> 'started'").all().map(decode);
+      return db
+        .prepare(
+          "SELECT CAST(issue_node_id AS BLOB) AS issue_node_id, status, CAST(commit_id AS BLOB) AS commit_id, CAST(binding AS BLOB) AS binding, CAST(project_node_id AS BLOB) AS project_node_id, CAST(project_owner AS BLOB) AS project_owner, project_number, CAST(environment AS BLOB) AS environment, CAST(blueprint_path AS BLOB) AS blueprint_path, CAST(blueprint_version AS BLOB) AS blueprint_version, CAST(portfolio_item AS BLOB) AS portfolio_item, CAST(portfolio_commit AS BLOB) AS portfolio_commit, CAST(actor_id AS BLOB) AS actor_id, failure, evaluation, attempts, start_failure, start_attempts, created_at, updated_at, CAST(issue_digest AS BLOB) AS issue_digest FROM intake_record WHERE status <> 'started'",
+        )
+        .all()
+        .map(readIntakeRecord)
+        .map(decode);
     },
     retry(id: string) {
       db.prepare(
@@ -81,8 +95,11 @@ export function records(store: Store) {
     },
     pending() {
       return db
-        .prepare("SELECT issue_node_id FROM intake_record WHERE status='recorded'")
+        .prepare(
+          "SELECT CAST(issue_node_id AS BLOB) AS issue_node_id FROM intake_record WHERE status='recorded'",
+        )
         .all()
+        .map(readIntakeRecordIssueNodeId)
         .map((r) => r["issue_node_id"] as string);
     },
     decide(r: IntakeRecord) {
@@ -138,4 +155,34 @@ export function records(store: Store) {
       );
     },
   };
+}
+
+function readIntakeRecord<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    issue_node_id: storedText(values["issue_node_id"]!),
+    commit_id: storedText(values["commit_id"]!),
+    binding: values["binding"] === null ? null : storedText(values["binding"]!),
+    project_node_id:
+      values["project_node_id"] === null ? null : storedText(values["project_node_id"]!),
+    project_owner: values["project_owner"] === null ? null : storedText(values["project_owner"]!),
+    environment: values["environment"] === null ? null : storedText(values["environment"]!),
+    blueprint_path:
+      values["blueprint_path"] === null ? null : storedText(values["blueprint_path"]!),
+    blueprint_version:
+      values["blueprint_version"] === null ? null : storedText(values["blueprint_version"]!),
+    portfolio_item:
+      values["portfolio_item"] === null ? null : storedText(values["portfolio_item"]!),
+    portfolio_commit:
+      values["portfolio_commit"] === null ? null : storedText(values["portfolio_commit"]!),
+    actor_id: storedText(values["actor_id"]!),
+    issue_digest: values["issue_digest"] === null ? null : storedText(values["issue_digest"]!),
+  } as T;
+}
+function readIntakeRecordIssueNodeId<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, issue_node_id: storedText(values["issue_node_id"]!) } as T;
 }

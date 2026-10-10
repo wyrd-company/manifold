@@ -3,6 +3,8 @@
 //   implements: t3code-environment-source
 //   realizes: t3code-source-database-schema
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { OrchestrationThread } from "@wyrd-company/t3code-client";
 import { emptyAttribution } from "./state.ts";
 import type { TurnAttribution } from "./state.ts";
@@ -41,9 +43,13 @@ export function persistence(store: Store, environment: string) {
     environment() {
       return read(
         () =>
-          db
-            .prepare("SELECT * FROM t3_environment WHERE environment = ?")
-            .get(environment) as unknown as EnvironmentRow | undefined,
+          readT3Environment(
+            db
+              .prepare(
+                "SELECT CAST(environment AS BLOB) AS environment, CAST(environment_id AS BLOB) AS environment_id, origin_sequence, shell_sequence FROM t3_environment WHERE environment = ?",
+              )
+              .get(environment),
+          ) as unknown as EnvironmentRow | undefined,
       );
     },
     reset() {
@@ -66,8 +72,11 @@ export function persistence(store: Store, environment: string) {
       return read(
         () =>
           db
-            .prepare("SELECT * FROM t3_thread WHERE environment = ?")
+            .prepare(
+              "SELECT CAST(environment AS BLOB) AS environment, CAST(thread_id AS BLOB) AS thread_id, status, cursor, thread, CAST(project_id AS BLOB) AS project_id, attribution FROM t3_thread WHERE environment = ?",
+            )
             .all(environment)
+            .map(readT3Thread)
             .map((row) => ({
               ...row,
               thread: JSON.parse(String(row["thread"])),
@@ -77,9 +86,13 @@ export function persistence(store: Store, environment: string) {
     },
     row(id: string) {
       return read(() => {
-        const row = db
-          .prepare("SELECT * FROM t3_thread WHERE environment = ? AND thread_id = ?")
-          .get(environment, id);
+        const row = readT3Thread(
+          db
+            .prepare(
+              "SELECT CAST(environment AS BLOB) AS environment, CAST(thread_id AS BLOB) AS thread_id, status, cursor, thread, CAST(project_id AS BLOB) AS project_id, attribution FROM t3_thread WHERE environment = ? AND thread_id = ?",
+            )
+            .get(environment, id),
+        );
         return row
           ? ({
               ...row,
@@ -110,4 +123,24 @@ export function persistence(store: Store, environment: string) {
       );
     },
   };
+}
+
+function readT3Environment<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    environment: storedText(values["environment"]!),
+    environment_id: storedText(values["environment_id"]!),
+  } as T;
+}
+function readT3Thread<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    environment: storedText(values["environment"]!),
+    thread_id: storedText(values["thread_id"]!),
+    project_id: values["project_id"] === null ? null : storedText(values["project_id"]!),
+  } as T;
 }

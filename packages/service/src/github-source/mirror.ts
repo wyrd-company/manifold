@@ -6,6 +6,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { scopeKey } from "@wyrd-company/manifold-shared";
 import type { StorageScope } from "@wyrd-company/manifold-shared";
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { Store } from "../store/index.ts";
 import type {
   GitHubProject,
@@ -126,8 +128,11 @@ export function createMirror(store: Store, now: () => number) {
     return {
       issues: new Map(
         db
-          .prepare("SELECT * FROM github_issue")
+          .prepare(
+            "SELECT CAST(issue_node_id AS BLOB) AS issue_node_id, CAST(repository AS BLOB) AS repository, number, state, state_reason, baselined, revision, present, CAST(title AS BLOB) AS title, CAST(url AS BLOB) AS url FROM github_issue",
+          )
           .all()
+          .map(readGithubIssue)
           .map((row) => [
             row["issue_node_id"] as string,
             {
@@ -158,8 +163,11 @@ export function createMirror(store: Store, now: () => number) {
       ),
       projects: new Map(
         db
-          .prepare("SELECT * FROM github_project")
+          .prepare(
+            "SELECT CAST(project_node_id AS BLOB) AS project_node_id, CAST(owner AS BLOB) AS owner, number, closed, revision, fields_read_at FROM github_project",
+          )
           .all()
+          .map(readGithubProject)
           .map((row) => [
             row["project_node_id"] as string,
             {
@@ -175,8 +183,11 @@ export function createMirror(store: Store, now: () => number) {
       ),
       items: new Map(
         db
-          .prepare("SELECT * FROM github_item")
+          .prepare(
+            "SELECT CAST(item_node_id AS BLOB) AS item_node_id, CAST(project_node_id AS BLOB) AS project_node_id, content_type, CAST(content_node_id AS BLOB) AS content_node_id, present, archived, revision FROM github_item",
+          )
           .all()
+          .map(readGithubItem)
           .map((row) => [
             row["item_node_id"] as string,
             {
@@ -194,8 +205,11 @@ export function createMirror(store: Store, now: () => number) {
       ),
       fields: new Map(
         db
-          .prepare("SELECT * FROM github_field_value")
+          .prepare(
+            "SELECT CAST(item_node_id AS BLOB) AS item_node_id, CAST(field_node_id AS BLOB) AS field_node_id, CAST(field_name AS BLOB) AS field_name, value, revision FROM github_field_value",
+          )
           .all()
+          .map(readGithubFieldValue)
           .map((row) => [
             edgeKey(row["item_node_id"] as string, row["field_node_id"] as string),
             {
@@ -211,8 +225,11 @@ export function createMirror(store: Store, now: () => number) {
       ),
       dependencies: new Map(
         db
-          .prepare("SELECT * FROM github_dependency")
+          .prepare(
+            "SELECT CAST(blocked_node_id AS BLOB) AS blocked_node_id, CAST(blocking_node_id AS BLOB) AS blocking_node_id, present, revision FROM github_dependency",
+          )
           .all()
+          .map(readGithubDependency)
           .map((row) => [
             edgeKey(row["blocked_node_id"] as string, row["blocking_node_id"] as string),
             {
@@ -225,8 +242,11 @@ export function createMirror(store: Store, now: () => number) {
       ),
       subIssues: new Map(
         db
-          .prepare("SELECT * FROM github_sub_issue")
+          .prepare(
+            "SELECT CAST(parent_node_id AS BLOB) AS parent_node_id, CAST(sub_issue_node_id AS BLOB) AS sub_issue_node_id, present, revision FROM github_sub_issue",
+          )
           .all()
+          .map(readGithubSubIssue)
           .map((row) => [
             edgeKey(row["parent_node_id"] as string, row["sub_issue_node_id"] as string),
             {
@@ -337,8 +357,11 @@ export function createMirror(store: Store, now: () => number) {
   }
   const fieldRows = (projectId: string): ProjectFieldRow[] =>
     db
-      .prepare("SELECT * FROM github_project_field WHERE project_node_id=? ORDER BY position")
+      .prepare(
+        "SELECT CAST(project_node_id AS BLOB) AS project_node_id, CAST(field_node_id AS BLOB) AS field_node_id, position, CAST(name AS BLOB) AS name, data_type, options FROM github_project_field WHERE project_node_id=? ORDER BY position",
+      )
       .all(projectId)
+      .map(readGithubProjectField)
       .map((row) => ({
         projectNodeId: row["project_node_id"] as string,
         fieldNodeId: row["field_node_id"] as string,
@@ -448,9 +471,13 @@ export function createMirror(store: Store, now: () => number) {
       );
     },
     projectByNumber(owner: string, number: number): GitHubProject | undefined {
-      const row = db
-        .prepare("SELECT * FROM github_project WHERE owner=? COLLATE NOCASE AND number=?")
-        .get(owner, number);
+      const row = readGithubProject(
+        db
+          .prepare(
+            "SELECT CAST(project_node_id AS BLOB) AS project_node_id, CAST(owner AS BLOB) AS owner, number, closed, revision, fields_read_at FROM github_project WHERE owner=? COLLATE NOCASE AND number=?",
+          )
+          .get(owner, number),
+      );
       if (!row) return undefined;
       return {
         nodeId: row["project_node_id"] as string,
@@ -549,8 +576,11 @@ export function createMirror(store: Store, now: () => number) {
     },
     pending(): Pending[] {
       return db
-        .prepare("SELECT * FROM github_pending ORDER BY requested_at, kind, node_id")
+        .prepare(
+          "SELECT kind, CAST(node_id AS BLOB) AS node_id, requested_at, generation, CAST(project_node_id AS BLOB) AS project_node_id FROM github_pending ORDER BY requested_at, kind, node_id",
+        )
         .all()
+        .map(readGithubPending)
         .map((row) => ({
           kind: row["kind"] as Pending["kind"],
           nodeId: row["node_id"] as string,
@@ -616,4 +646,83 @@ export function createMirror(store: Store, now: () => number) {
       );
     },
   };
+}
+
+function readGithubIssue<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    issue_node_id: storedText(values["issue_node_id"]!),
+    repository: storedText(values["repository"]!),
+    title: values["title"] === null ? null : storedText(values["title"]!),
+    url: values["url"] === null ? null : storedText(values["url"]!),
+  } as T;
+}
+function readGithubProject<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    project_node_id: storedText(values["project_node_id"]!),
+    owner: storedText(values["owner"]!),
+  } as T;
+}
+function readGithubItem<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    item_node_id: storedText(values["item_node_id"]!),
+    project_node_id: storedText(values["project_node_id"]!),
+    content_node_id: storedText(values["content_node_id"]!),
+  } as T;
+}
+function readGithubFieldValue<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    item_node_id: storedText(values["item_node_id"]!),
+    field_node_id: storedText(values["field_node_id"]!),
+    field_name: storedText(values["field_name"]!),
+  } as T;
+}
+function readGithubDependency<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    blocked_node_id: storedText(values["blocked_node_id"]!),
+    blocking_node_id: storedText(values["blocking_node_id"]!),
+  } as T;
+}
+function readGithubSubIssue<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    parent_node_id: storedText(values["parent_node_id"]!),
+    sub_issue_node_id: storedText(values["sub_issue_node_id"]!),
+  } as T;
+}
+function readGithubProjectField<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    project_node_id: storedText(values["project_node_id"]!),
+    field_node_id: storedText(values["field_node_id"]!),
+    name: storedText(values["name"]!),
+  } as T;
+}
+function readGithubPending<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    node_id: storedText(values["node_id"]!),
+    project_node_id:
+      values["project_node_id"] === null ? null : storedText(values["project_node_id"]!),
+  } as T;
 }

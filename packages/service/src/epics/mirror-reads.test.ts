@@ -58,7 +58,7 @@ test.each([10, 1000])(
         expect(response.status).toBe(200);
         await response.json();
         expect(
-          prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue"),
+          prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql)),
           path,
         ).toHaveLength(1);
       }
@@ -66,15 +66,15 @@ test.each([10, 1000])(
       const tracked = f.github.trackedIssues();
       prepare.mockClear();
       const shared = f.tasks.list(tracked);
-      expect(
-        prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue"),
-      ).toHaveLength(0);
+      expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
+        0,
+      );
       expect(shared).toEqual(f.tasks.list());
       prepare.mockClear();
       expect(f.tasks.list([]).projects.every((p) => p.tasks.length === 0)).toBe(true);
-      expect(
-        prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue"),
-      ).toHaveLength(0);
+      expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
+        0,
+      );
       prepare.mockRestore();
     } finally {
       await server.close();

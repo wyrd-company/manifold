@@ -11,6 +11,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   memoryRevision,
+  lintPortfolioDeclaration,
   intakeDecisionModelSchema,
   githubEventsSchema,
   serviceConfigurationSchemas,
@@ -1001,7 +1002,7 @@ it.each([10, 1000])(
     withdrawals.length = 0;
     const prepare = vi.spyOn(s.store.connection.database, "prepare");
     intake.mirrorChanged();
-    expect(prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
+    expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
       1,
     );
     expect(withdrawals).toContain(`parcel-${size - 1}`);
@@ -1012,7 +1013,7 @@ it.each([10, 1000])(
     const reconcile = vi.spyOn(s.store.connection.database, "prepare");
     intake.revisionLoaded();
     expect(
-      reconcile.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue"),
+      reconcile.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql)),
     ).toHaveLength(1);
     reconcile.mockRestore();
     await intake.idle();
@@ -1050,8 +1051,60 @@ it("a record check with no unfinished records does not read the mirror", async (
   cleanup.push(() => intake.stop());
   const prepare = vi.spyOn(s.store.connection.database, "prepare");
   intake.mirrorChanged();
-  expect(prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
+  expect(prepare.mock.calls.filter(([sql]) => /\bFROM github_issue$/.test(sql))).toHaveLength(
     0,
   );
   prepare.mockRestore();
 });
+it.each(["inside\0tail", "\0leading"])(
+  "intake identities and blueprint version restore: %j",
+  async (text) => {
+    const directory = mkdtempSync(join(tmpdir(), "intake-text-"));
+    cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
+    const path = join(directory, "store.sqlite");
+    const blueprintPath = `blueprints/${text}.yml`;
+    const source = files(JSON.stringify({ blueprint: blueprintPath, portfolioItem: "beta" }));
+    const revisionFiles = { ...source, [blueprintPath]: source["blueprints/parcel.yml"] };
+    const tracked = issue(text);
+    const s = await setup(path, revisionFiles, {}, first, [tracked]);
+    const parsed = lintPortfolioDeclaration({
+      portfolio: stringify({ items: { beta: {} } }),
+      bindings: stringify({
+        githubProjects: {
+          first: { owner: "example-org", number: 1, environment: "env-one", item: "beta" },
+        },
+      }),
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw Error("Invalid fixture portfolio");
+    s.setCurrent({
+      ...s.current()!,
+      portfolio: { commit: first, declaration: parsed.declaration },
+    });
+    s.intake.discovered([text]);
+    await s.intake.idle();
+    expect(s.errors).toEqual([]);
+    expect(s.intake.record(text)).toMatchObject({
+      issueNodeId: text,
+      actorId: `task:${text}`,
+      environment: "env-one",
+      binding: "first",
+      portfolioItem: "beta",
+      blueprintVersion: `${first}:${blueprintPath}`,
+      status: "started",
+    });
+    await s.close();
+    const resumed = await setup(path, revisionFiles, {}, first, [tracked]);
+    cleanup.push(() => resumed.close());
+    expect(resumed.intake.record(text)).toMatchObject({
+      actorId: `task:${text}`,
+      environment: "env-one",
+      binding: "first",
+      portfolioItem: "beta",
+      blueprintVersion: `${first}:${blueprintPath}`,
+    });
+    resumed.intake.discovered([text]);
+    await resumed.intake.idle();
+    expect(resumed.host.starts).toEqual([]);
+  },
+);

@@ -25,14 +25,29 @@ const move = {
   field: "Stage",
   option: "Packed",
 };
-async function setup() {
+async function setup(identity?: string) {
   const clock = new FakeClock();
   const fake = await githubFake();
   cleanups.push(fake.close);
-  fake.addItem("IT_A", "I_A");
+  const projectId = "P_one",
+    owner = identity ?? "sample",
+    issueId = "I_A",
+    field = identity ?? "Stage";
+  fake.project.id = projectId;
+  fake.project.owner.login = identity ?? owner;
+  if (identity !== undefined) {
+    fake.issues.set(issueId, {
+      ...fake.issues.get("I_A")!,
+      id: issueId,
+      repository: { nameWithOwner: `${owner}/records` },
+      title: identity,
+    });
+    fake.fields[0]!.name = field;
+  }
+  fake.addItem("IT_A", issueId);
   fake.items.get("IT_A")!.fieldValues.nodes = [
     {
-      field: { id: "F_stage", name: "Stage", dataType: "SINGLE_SELECT" },
+      field: { id: "F_stage", name: field, dataType: "SINGLE_SELECT" },
       optionId: "O_sorting",
       name: "Sorting",
     },
@@ -54,14 +69,14 @@ async function setup() {
   const secretFile = join(directory, "hook.secret");
   writeFileSync(secretFile, "synthetic-secret");
   const writes: ProjectFieldWrite[] = [];
-  let lifecycle = "Stage";
+  let lifecycle = field;
   const options = {
     store,
     router,
     clock,
     configuration: {
       apiUrl: fake.url,
-      owners: { sample: { credential: "example", hooks: [] } },
+      owners: { [owner]: { credential: "example", hooks: [] } },
       sweepIntervalMs: 900000,
       redeliveryIntervalMs: 60000,
       requestTimeoutMs: 100,
@@ -74,14 +89,14 @@ async function setup() {
         installationToken: async () => new SecretValue("example", "synthetic-token"),
       }),
     },
-    boundProjects: () => [{ owner: "sample", number: 1 }],
+    boundProjects: () => [{ owner, number: 1 }],
     processRepository: {
       url: "https://example.test/sample/process.git",
       branch: "main",
       pull: async () => ({ kind: "unchanged" as const, commit: "a".repeat(40) }),
     },
     probeFieldWrite: (write: ProjectFieldWrite) => writes.push(write),
-    lifecycleField: (id: string) => (id === "P_one" ? lifecycle : undefined),
+    lifecycleField: (id: string) => (id === projectId ? lifecycle : undefined),
   };
   let source = startGitHubSource(options);
   cleanups.push(async () => {
@@ -90,7 +105,7 @@ async function setup() {
     store.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  await expect.poll(() => source.trackedIssue("I_A")?.items.length).toBe(1);
+  await expect.poll(() => source.trackedIssue(issueId)?.items.length).toBe(1);
   const fieldEvents = () =>
     store.connection.database
       .prepare(
@@ -99,6 +114,8 @@ async function setup() {
       .all()
       .map((row) => JSON.parse(row["payload"] as string));
   return {
+    options,
+    directory,
     fake,
     get source() {
       return source;
@@ -413,3 +430,36 @@ test("stop rejects a queued field write with a transport error", async () => {
   await rejected;
   await stopped;
 });
+
+test.each(["inside\0tail", "\0leading"])(
+  "GitHub mirror, fields, pending nodes and card move text restore: %j",
+  async (text) => {
+    const f = await setup(text);
+    expect(f.source.trackedIssue("I_A")).toMatchObject({
+      issue: { nodeId: "I_A" },
+      projects: [{ nodeId: "P_one", owner: text }],
+    });
+    expect(f.source.projectFields("P_one")?.fields[0]?.name).toBe(text);
+    await f.source.moveCard({
+      ...move,
+      actorId: text,
+      invokeId: text,
+      entryId: text,
+      issueNodeId: "I_A",
+      projectNodeId: "P_one",
+      field: text,
+    });
+    await expect.poll(() => f.fieldEvents().length).toBe(1);
+    expect(f.fieldEvents()[0]).toMatchObject({ movedBy: { actorId: text, confirmed: true } });
+    await f.source.stop();
+    const store = openStore({ path: join(f.directory, "store.sqlite") });
+    const source = startGitHubSource({ ...f.options, store });
+    cleanups.push(async () => {
+      await source.stop();
+      store.close();
+    });
+    await expect.poll(() => source.trackedIssue("I_A")?.items.length).toBe(1);
+    expect(source.projectFields("P_one")?.fields[0]?.name).toBe(text);
+    expect(source.trackedIssue("I_A")?.projects[0]?.owner).toBe(text);
+  },
+);

@@ -2,15 +2,18 @@
 // relationships:
 //   implements: [usage-intake, usage-api]
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import { isUnownedActor } from "@wyrd-company/manifold-shared/usage-api";
 import type { UnownedEntry } from "@wyrd-company/manifold-shared/usage-api";
 import type { UsageOptions } from "./types.ts";
 export function unownedUsage(options: UsageOptions): UnownedEntry[] {
   const rows = options.connection.database
     .prepare(
-      "SELECT attributed_actor,environment,provider,json_extract(c.record,'$.providerSessionId') AS session,used_at,status,held_item,account,amount FROM usage_attributed_postings p JOIN usage_calls c USING(environment,call_key) ORDER BY used_at DESC,p.seq DESC",
+      "SELECT CAST(attributed_actor AS BLOB) AS attributed_actor, CAST(environment AS BLOB) AS environment, provider, CAST(json_extract(c.record,'$.providerSessionId') AS BLOB) AS session, used_at, status, CAST(held_item AS BLOB) AS held_item, CAST(account AS BLOB) AS account, amount FROM usage_attributed_postings p JOIN usage_calls c USING(environment,call_key) ORDER BY used_at DESC,p.seq DESC",
     )
-    .all() as {
+    .all()
+    .map(readUsageAttributedPostings) as {
     attributed_actor: string;
     environment: string;
     provider: string;
@@ -61,4 +64,17 @@ export function unownedUsage(options: UsageOptions): UnownedEntry[] {
   return [...entries.values()].sort(
     (a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt) || a.actor.localeCompare(b.actor),
   );
+}
+
+function readUsageAttributedPostings<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    attributed_actor: storedText(values["attributed_actor"]!),
+    environment: storedText(values["environment"]!),
+    session: storedText(values["session"]!),
+    held_item: storedText(values["held_item"]!),
+    account: values["account"] === null ? null : storedText(values["account"]!),
+  } as T;
 }

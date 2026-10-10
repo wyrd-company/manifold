@@ -5,6 +5,7 @@
 import { createActor, createMachine, assign } from "xstate";
 import { afterEach, expect, test } from "vite-plus/test";
 import { fixture, request } from "./test-support.ts";
+import { openStore } from "../store/index.ts";
 import type { PersistedSnapshot } from "../store/index.ts";
 import { openEscalations } from "./index.ts";
 const cleanups: (() => Promise<void>)[] = [];
@@ -227,3 +228,68 @@ test("unknown destinations fail only their notification and service withdrawal i
   expect(f.module.get(escalation.id)?.status).toBe("withdrawn");
   actor.stop();
 });
+
+test.each(["inside\0tail", "\0leading"])(
+  "escalation invocation and notification text restore: %j",
+  async (text) => {
+    const configuration = {
+      destinations: {
+        default: {
+          server: "http://localhost",
+          topic: "questions",
+          posture: "open" as const,
+          priority: 4,
+        },
+      },
+      requestTimeoutMs: 30000,
+      retryIntervalMs: 60000,
+    };
+    const invocationOf = () => ({ actorId: text, invokeId: text, entryId: text });
+    const f = fixture({ configuration, invocationOf });
+    cleanups.push(f.close);
+    const actor = createActor(
+      createMachine({
+        initial: "asking",
+        states: {
+          asking: {
+            invoke: {
+              src: f.module.escalate,
+              input: { title: text, question: text, freeText: true, destinations: ["default"] },
+            },
+          },
+        },
+      }),
+    ).start();
+    const initial = f.module.list({})[0]!;
+    actor.stop();
+    await f.module.stop();
+    const store = openStore({ path: f.path });
+    const notifications: string[] = [];
+    const resumed = openEscalations({
+      store,
+      configuration,
+      invocationOf,
+      tokenFile: () => "",
+      handlers: {},
+      fetch: async (_url, options) => {
+        notifications.push(String(options?.body));
+        return new Response("{}", { status: 200 });
+      },
+    });
+    cleanups.push(async () => {
+      await resumed.stop();
+      store.close();
+    });
+    expect(resumed.get(initial.id)).toMatchObject({
+      raiser: { actorId: text, invokeId: text, entryId: text },
+      title: text,
+      question: text,
+      destinations: ["default"],
+    });
+    resumed.start();
+    await expect.poll(() => notifications.length).toBe(1);
+    expect(JSON.parse(notifications[0]!)).toMatchObject({ title: text, message: text });
+    expect(resumed.answer(initial.id, { text }, "api").status).toBe("answered");
+    expect(resumed.get(initial.id)?.answer?.value).toEqual({ text });
+  },
+);

@@ -2,6 +2,8 @@
 // relationships:
 //   implements: actor-history
 // ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
 import type { ActorHistory, StateVisit } from "@wyrd-company/manifold-shared/actors-api";
 import type { Store } from "../store/index.ts";
 import type { SaveHook } from "../actor-host/index.ts";
@@ -111,9 +113,13 @@ export function openHistory({ store, log, now = Date.now }: HistoryOptions): His
           pending.delete(id);
         else apply(write);
       }
-      const previous = db
-        .prepare("SELECT * FROM history_visit WHERE actor_id=? ORDER BY visit DESC LIMIT 1")
-        .get(save.actorId) as unknown as VisitRow | undefined;
+      const previous = readHistoryVisit(
+        db
+          .prepare(
+            "SELECT CAST(actor_id AS BLOB) AS actor_id, visit, CAST(machine AS BLOB) AS machine, state_value, entered_at, exited_at, CAST(exit_event_type AS BLOB) AS exit_event_type, CAST(exit_event_id AS BLOB) AS exit_event_id FROM history_visit WHERE actor_id=? ORDER BY visit DESC LIMIT 1",
+          )
+          .get(save.actorId),
+      ) as unknown as VisitRow | undefined;
       const change = visitChange(previous, save),
         at = now();
       if (save.eventId)
@@ -145,8 +151,11 @@ export function openHistory({ store, log, now = Date.now }: HistoryOptions): His
     visits(actorId) {
       return (
         db
-          .prepare("SELECT * FROM history_visit WHERE actor_id=? ORDER BY visit")
-          .all(actorId) as unknown as VisitRow[]
+          .prepare(
+            "SELECT CAST(actor_id AS BLOB) AS actor_id, visit, CAST(machine AS BLOB) AS machine, state_value, entered_at, exited_at, CAST(exit_event_type AS BLOB) AS exit_event_type, CAST(exit_event_id AS BLOB) AS exit_event_id FROM history_visit WHERE actor_id=? ORDER BY visit",
+          )
+          .all(actorId)
+          .map(readHistoryVisit) as unknown as VisitRow[]
       ).map(stateVisit);
     },
     visitAt(actorId, at) {
@@ -174,20 +183,60 @@ export function openHistory({ store, log, now = Date.now }: HistoryOptions): His
       const snapshot = store.loadSnapshot(actorId);
       if (!snapshot) return undefined;
       const visits = db
-        .prepare("SELECT * FROM history_visit WHERE actor_id=? ORDER BY visit")
-        .all(actorId) as unknown as VisitRow[];
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, visit, CAST(machine AS BLOB) AS machine, state_value, entered_at, exited_at, CAST(exit_event_type AS BLOB) AS exit_event_type, CAST(exit_event_id AS BLOB) AS exit_event_id FROM history_visit WHERE actor_id=? ORDER BY visit",
+        )
+        .all(actorId)
+        .map(readHistoryVisit) as unknown as VisitRow[];
       const links = new Map(
         db
           .prepare(
-            "SELECT event_id,visit FROM history_event WHERE actor_id=? AND visit IS NOT NULL",
+            "SELECT CAST(event_id AS BLOB) AS event_id, visit FROM history_event WHERE actor_id=? AND visit IS NOT NULL",
           )
           .all(actorId)
+          .map(readHistoryEvent)
           .map((row) => [row["event_id"] as string, row["visit"] as number]),
       );
       const commands = db
-        .prepare("SELECT * FROM history_command WHERE actor_id=? ORDER BY sent_at,command_id")
-        .all(actorId) as unknown as CommandRow[];
+        .prepare(
+          "SELECT CAST(command_id AS BLOB) AS command_id, CAST(actor_id AS BLOB) AS actor_id, kind, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, CAST(environment AS BLOB) AS environment, CAST(thread_id AS BLOB) AS thread_id, CAST(project_id AS BLOB) AS project_id, CAST(message_id AS BLOB) AS message_id, sent_at, sequence, accepted_at FROM history_command WHERE actor_id=? ORDER BY sent_at,command_id",
+        )
+        .all(actorId)
+        .map(readHistoryCommand) as unknown as CommandRow[];
       return assembleHistory(snapshot, visits, store.actorInbox(actorId), links, commands);
     },
   };
+}
+
+function readHistoryVisit<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    actor_id: storedText(values["actor_id"]!),
+    machine: storedText(values["machine"]!),
+    exit_event_type:
+      values["exit_event_type"] === null ? null : storedText(values["exit_event_type"]!),
+    exit_event_id: values["exit_event_id"] === null ? null : storedText(values["exit_event_id"]!),
+  } as T;
+}
+function readHistoryEvent<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, event_id: storedText(values["event_id"]!) } as T;
+}
+function readHistoryCommand<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    command_id: storedText(values["command_id"]!),
+    actor_id: storedText(values["actor_id"]!),
+    invoke_id: storedText(values["invoke_id"]!),
+    entry_id: storedText(values["entry_id"]!),
+    environment: storedText(values["environment"]!),
+    thread_id: values["thread_id"] === null ? null : storedText(values["thread_id"]!),
+    project_id: values["project_id"] === null ? null : storedText(values["project_id"]!),
+    message_id: values["message_id"] === null ? null : storedText(values["message_id"]!),
+  } as T;
 }
