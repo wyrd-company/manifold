@@ -22,6 +22,7 @@ test("portfolio read uses balances and updates warnings when accounts alone chan
   };
   const options = {
     portfolio: {
+      createdProjects: () => [],
       current: () => ({ commit: "a".repeat(40), declaration: result.declaration }),
       ledger: {
         balance: ({ item, account }: { item: string; account: string }) => ({
@@ -90,6 +91,7 @@ test("read failure answers JSON and logs the path", async () => {
   try {
     mountPortfolioApi(h.host, {
       portfolio: {
+        createdProjects: () => [],
         current: () => {
           throw Error("synthetic failure");
         },

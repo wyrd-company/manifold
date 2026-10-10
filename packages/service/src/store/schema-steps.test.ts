@@ -70,6 +70,7 @@ const expectedSteps = (owner: string, steps: string[]) => {
       gates: "gates-database-schema",
       history: "history-database-schema",
       usage: "usage-tables",
+      tthree: "t3code-source-database-schema",
     } as Record<string, string>
   )[owner];
   return specification

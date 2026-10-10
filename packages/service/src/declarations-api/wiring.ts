@@ -19,6 +19,7 @@ export const declarationsApiPart = wiringPart({
       processRepository: DeclarationsApiOptions["processRepository"];
       configuration: ServiceConfiguration;
       t3code: T3CodeSource;
+      portfolio: import("../portfolio/types.ts").Portfolio;
       taskMetadata: TaskMetadata;
       log: (entry: ServiceLogEntry) => void;
     },
@@ -26,6 +27,7 @@ export const declarationsApiPart = wiringPart({
   ): Record<never, never> {
     mountDeclarationsApi(members.http, {
       revisions: members.revisions,
+      createdProjects: members.portfolio.createdProjects,
       processRepository: members.processRepository,
       repository: {
         url: members.configuration.processRepository.url,

@@ -35,8 +35,12 @@ CREATE TABLE t3_created_project (
   project_id TEXT NOT NULL CHECK (length(project_id) > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) > 0),
   item TEXT NOT NULL CHECK (length(item) > 0),
+  presence TEXT NOT NULL DEFAULT 'unseen'
+  CHECK (presence IN ('unseen', 'listed', 'removed')),
   PRIMARY KEY (environment, project_id)
 ) STRICT, WITHOUT ROWID;
+
+CREATE INDEX t3_thread_project ON t3_thread (environment, project_id);
 
 CREATE INDEX t3_thread_followed ON t3_thread (environment, status);
 `,

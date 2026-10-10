@@ -148,6 +148,15 @@ export async function bindingsAnswer(
     ? {}
     : ((parseDocument(bindings ?? "").toJS() ?? {}) as BindingsDocument);
   return {
+    createdProjects: options
+      .createdProjects()
+      .filter((p) => !p.retirable && p.resolution.via === "created")
+      .map((p) => ({
+        environment: p.environment,
+        project: p.project,
+        actorId: p.actorId,
+        item: p.createdItem,
+      })),
     repository: options.repository,
     commit: revision.commit,
     findings: bindingLint.findings,

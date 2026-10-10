@@ -14,7 +14,7 @@ import type { DeclarationResult } from "../../api/declarations.ts";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../../ui/dialog.tsx";
 import { Button } from "../../ui/button.tsx";
 import { createSaveId } from "../blueprints/draft.ts";
-import { attachedBindings, siblingTargets, archiveRequest } from "./archive.ts";
+import { attachedBindings, siblingTargets, archiveRequest, archiveRowKey } from "./archive.ts";
 import type { ArchiveChoices } from "./archive.ts";
 export function ArchiveItemDialog({
   item,
@@ -33,9 +33,32 @@ export function ArchiveItemDialog({
     [busy, setBusy] = useState(false),
     [result, setResult] = useState<DeclarationResult<SaveDeclarationResponse>>();
   const bindings = query.data?.kind === "ok" ? query.data.body : undefined;
-  const attached = bindings ? attachedBindings(read, bindings, item.id) : [];
+  const [rowNames, setRowNames] = useState<{ base: string; names: Record<string, string> }>({
+    base: "",
+    names: {},
+  });
+  const retained = bindings?.commit === rowNames.base ? rowNames.names : {};
+  const attached = bindings ? attachedBindings(read, bindings, item.id, retained) : [];
+  if (bindings) {
+    const nextNames = {
+      ...retained,
+      ...Object.fromEntries(
+        attached
+          .filter((row) => row.kind === "created")
+          .map((row) => [archiveRowKey(row), row.name]),
+      ),
+    };
+    if (
+      rowNames.base !== bindings.commit ||
+      Object.entries(nextNames).some(([key, name]) => rowNames.names[key] !== name)
+    ) {
+      setRowNames({ base: bindings.commit, names: nextNames });
+      if (rowNames.base && rowNames.base !== bindings.commit) setSaveId(createSaveId());
+    }
+  }
   const siblings = bindings ? siblingTargets(read, bindings, item.id) : [];
   const parent = read.items.find((i) => i.id === item.parent);
+  const resolving = item.archived;
   const candidate =
     bindings && !bindings.findings.length
       ? archiveRequest(item.id, attached, choices, bindings.commit, saveId)
@@ -43,7 +66,10 @@ export function ArchiveItemDialog({
   const request = candidate?.projects.every(
     (choice) => choice.choice !== "reassign" || siblings.some((item) => item.id === choice.item),
   )
-    ? candidate
+    ? candidate && {
+        ...candidate,
+        message: resolving ? `Resolve projects of portfolio item ${item.id}` : candidate.message,
+      }
     : undefined;
   function choose(name: string, choice: ArchiveChoices[string]) {
     setChoices((previous) => ({ ...previous, [name]: choice }));
@@ -56,17 +82,31 @@ export function ArchiveItemDialog({
     const answer = await archiveItem(request);
     setBusy(false);
     if (answer.kind === "ok") onSaved(request, answer.body);
-    else setResult(answer);
+    else {
+      setResult(answer);
+      if (
+        answer.kind === "invalid" &&
+        answer.body.findings.some((f) => f.kind === "choice-missing" || f.kind === "not-attached")
+      )
+        await readAgain(false);
+    }
   }
-  async function readAgain() {
+  async function readAgain(clearResult = true) {
     const fresh = await query.refetch();
     if (fresh.data?.kind === "ok") {
-      const names = new Set(attachedBindings(read, fresh.data.body, item.id).map((b) => b.name));
+      const names = new Set(
+        attachedBindings(
+          read,
+          fresh.data.body,
+          item.id,
+          fresh.data.body.commit === rowNames.base ? rowNames.names : {},
+        ).map(archiveRowKey),
+      );
       setChoices((previous) =>
         Object.fromEntries(Object.entries(previous).filter(([name]) => names.has(name))),
       );
       setSaveId(createSaveId());
-      setResult(undefined);
+      if (clearResult) setResult(undefined);
     }
   }
   return (
@@ -77,9 +117,14 @@ export function ArchiveItemDialog({
       }}
     >
       <DialogPopup style={{ width: 480 }} showCloseButton={!busy}>
-        <DialogTitle>Archive {item.title}</DialogTitle>
+        <DialogTitle>
+          {resolving ? "Projects of" : "Archive"} {item.title}
+        </DialogTitle>
         <DialogDescription>
-          Choose where each project goes. The archive and every choice are saved in one commit.
+          Choose where each project goes.{" "}
+          {resolving
+            ? "Every choice is saved in one commit."
+            : "The archive and every choice are saved in one commit."}
         </DialogDescription>
         {query.isPending ? <p role="status">Loading projects…</p> : null}
         {query.data?.kind === "failed" ? (
@@ -97,7 +142,15 @@ export function ArchiveItemDialog({
         ) : null}
         {attached.map((binding) => (
           <fieldset key={binding.name} className="portfolio-archive-project" disabled={busy}>
-            <legend>{binding.name}</legend>
+            <legend>{binding.kind === "created" ? binding.title : binding.name}</legend>
+            {binding.kind === "created" ? (
+              <>
+                <p className="muted">
+                  Created by a task <span className="mono">{binding.actorId}</span>
+                </p>
+                <p className="muted mono">Saved as binding {binding.name}</p>
+              </>
+            ) : null}
             <p className="muted">
               {binding.kind === "github"
                 ? `${binding.owner}/${binding.number}`
@@ -113,13 +166,13 @@ export function ArchiveItemDialog({
                 and {binding.t3codeProjects.length} associated T3code projects
               </p>
             ) : null}
-            {parent ? (
+            {parent && !parent.archived ? (
               <label>
                 <input
                   type="radio"
                   name={binding.name}
-                  checked={choices[binding.name]?.choice === "move"}
-                  onChange={() => choose(binding.name, { choice: "move" })}
+                  checked={choices[archiveRowKey(binding)]?.choice === "move"}
+                  onChange={() => choose(archiveRowKey(binding), { choice: "move" })}
                 />
                 Move to {parent.title}
               </label>
@@ -129,17 +182,19 @@ export function ArchiveItemDialog({
                 type="radio"
                 name={binding.name}
                 disabled={!siblings.length}
-                checked={choices[binding.name]?.choice === "reassign"}
-                onChange={() => choose(binding.name, { choice: "reassign", item: "" })}
+                checked={choices[archiveRowKey(binding)]?.choice === "reassign"}
+                onChange={() => choose(archiveRowKey(binding), { choice: "reassign", item: "" })}
               />
               Reassign to
             </label>
             <select
               aria-label={`Reassign ${binding.name} to`}
-              disabled={busy || !siblings.length || choices[binding.name]?.choice !== "reassign"}
-              value={selectedTarget(choices[binding.name])}
+              disabled={
+                busy || !siblings.length || choices[archiveRowKey(binding)]?.choice !== "reassign"
+              }
+              value={selectedTarget(choices[archiveRowKey(binding)])}
               onChange={(event) =>
-                choose(binding.name, { choice: "reassign", item: event.target.value })
+                choose(archiveRowKey(binding), { choice: "reassign", item: event.target.value })
               }
             >
               <option value="">Choose a sibling</option>
@@ -154,8 +209,8 @@ export function ArchiveItemDialog({
               <input
                 type="radio"
                 name={binding.name}
-                checked={choices[binding.name]?.choice === "archive"}
-                onChange={() => choose(binding.name, { choice: "archive" })}
+                checked={choices[archiveRowKey(binding)]?.choice === "archive"}
+                onChange={() => choose(archiveRowKey(binding), { choice: "archive" })}
               />
               Archive project
             </label>
@@ -191,11 +246,11 @@ export function ArchiveItemDialog({
             Cancel
           </Button>
           <Button
-            className="portfolio-confirm-archive"
+            className={resolving ? undefined : "portfolio-confirm-archive"}
             disabled={!request || busy || result?.kind === "conflict"}
             onClick={() => void submit()}
           >
-            Archive {item.title}
+            {resolving ? "Save choices" : `Archive ${item.title}`}
           </Button>
         </div>
       </DialogPopup>

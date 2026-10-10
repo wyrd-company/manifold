@@ -141,6 +141,7 @@ export interface Revisions {
   /** Queues the apply of the current commit; resolves when it is applied. */
   follow(): Promise<void>;
   save(request: SaveRequest): Promise<SavedRevision>;
+  findSave(request: Pick<SaveRequest, "base" | "saveId">): Promise<string | undefined>;
 }
 
 export type SavedRevision =

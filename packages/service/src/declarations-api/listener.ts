@@ -136,6 +136,15 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
         save = body;
       }
     }
+    if (archive) {
+      const saved = await options.revisions.findSave(archive);
+      if (saved)
+        return answer(response, 200, {
+          outcome: "already-saved",
+          commit: saved,
+          loaded: options.revisions.latest() !== undefined,
+        });
+    }
     const latest = options.revisions.latest();
     const revision = latest ? await options.processRepository.revisionAt(latest.commit) : undefined;
     if (!revision) return fail(503, "unavailable", "No applied process repository revision.");
@@ -162,6 +171,15 @@ export function mountDeclarationsApi(host: HttpHost, options: DeclarationsApiOpt
       const edited = archiveItemEdit(
         { portfolio: portfolio ?? "", bindings: bindings ?? "" },
         request,
+        options
+          .createdProjects()
+          .filter((p) => !p.retirable && p.resolution.via === "created")
+          .map((p) => ({
+            environment: p.environment,
+            project: p.project,
+            actorId: p.actorId,
+            item: p.createdItem,
+          })),
       );
       if (!edited.ok)
         return answer(response, 422, {

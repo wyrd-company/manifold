@@ -193,7 +193,9 @@ export async function projectsHost(host = "127.0.0.1") {
   });
   let saveAttempts = 0;
   mountDeclarationsApi(server.host, {
+    createdProjects: () => [],
     revisions: {
+      findSave: async () => undefined,
       latest: service.revisions.latest,
       save: (request) => {
         saveAttempts++;

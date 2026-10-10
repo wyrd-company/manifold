@@ -1680,3 +1680,59 @@ test("identity replacement interrupts a project write without creating a thread 
   await source.ready("station");
   expect(f.store.connection.database.prepare("SELECT * FROM t3_thread").all()).toEqual([]);
 });
+
+test("created project presence follows shell events and survives source restart", async () => {
+  const f = await setup();
+  let source = f.start();
+  await source.ready("station");
+  await expect
+    .poll(() => f.server.requests.some((r) => r.tag === "orchestration.subscribeShell"))
+    .toBe(true);
+  source.recordCreatedProject({
+    environment: "station",
+    projectId: "created",
+    actorId: "a1",
+    item: "alpha",
+  });
+  expect(source.createdProjects()[0]?.presence).toBe("unseen");
+  f.server.project({
+    id: "created",
+    title: "Sample",
+    workspaceRoot: "/sample",
+    defaultModelSelection: null,
+    deletedAt: null,
+    scripts: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await expect.poll(() => source.createdProjects()[0]?.presence).toBe("listed");
+  f.server.removeProject("created");
+  await expect.poll(() => source.createdProjects()[0]?.presence).toBe("removed");
+  await source.stop();
+  source = f.start();
+  await source.ready("station");
+  expect(source.createdProjects()[0]).toMatchObject({ presence: "removed", retirable: true });
+});
+
+test("a created record written after the shell lists it starts listed", async () => {
+  const f = await setup();
+  f.server.projects.set("p1", {
+    id: "p1",
+    title: "Sample",
+    workspaceRoot: "/sample",
+    defaultModelSelection: null,
+    deletedAt: null,
+    scripts: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const source = f.start();
+  await source.ready("station");
+  source.recordCreatedProject({
+    environment: "station",
+    projectId: "p1",
+    actorId: "a1",
+    item: "alpha",
+  });
+  expect(source.createdProjects()[0]).toMatchObject({ presence: "listed", retirable: false });
+});

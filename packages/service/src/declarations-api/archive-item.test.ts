@@ -64,3 +64,140 @@ test("missing choices and invalid targets are linted together with the archived 
     );
   }
 });
+
+test("created project choices become bindings without changing creation provenance", () => {
+  const records = ["p1", "p2", "p3"].map((project) => ({
+    environment: "local",
+    project,
+    actorId: "a1",
+    item: "beta",
+  }));
+  const result = archiveItemEdit(
+    { portfolio, bindings: "" },
+    {
+      item: "beta",
+      projects: [
+        { created: { environment: "local", project: "p1" }, name: "t3-first", choice: "move" },
+        {
+          created: { environment: "local", project: "p2" },
+          name: "t3-second",
+          choice: "reassign",
+          item: "gamma",
+        },
+        { created: { environment: "local", project: "p3" }, name: "t3-third", choice: "archive" },
+      ],
+    },
+    records,
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw Error(JSON.stringify(result.findings));
+  expect(parse(result.bindings).t3codeProjects).toEqual({
+    "t3-first": { environment: "local", project: "p1", item: "alpha" },
+    "t3-second": { environment: "local", project: "p2", item: "gamma" },
+    "t3-third": { environment: "local", project: "p3", item: "beta", archived: true },
+  });
+  expect(records.every((r) => r.item === "beta")).toBe(true);
+});
+test("created choices enforce attachment, completeness, siblings and declaration names", () => {
+  const record = { environment: "local", project: "p1", actorId: "a1", item: "beta" };
+  for (const [projects, kind] of [
+    [[], "choice-missing"],
+    [
+      [
+        {
+          created: { environment: "local", project: "p1" },
+          name: "chosen",
+          choice: "reassign",
+          item: "delta",
+        },
+      ],
+      "not-sibling",
+    ],
+    [
+      [{ created: { environment: "local", project: "absent" }, name: "chosen", choice: "archive" }],
+      "not-attached",
+    ],
+    [
+      [{ created: { environment: "local", project: "p1" }, name: "board-one", choice: "archive" }],
+      "name-taken",
+    ],
+  ] as const) {
+    const result = archiveItemEdit({ portfolio, bindings }, { item: "beta", projects }, [record]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw Error("Expected refusal");
+    expect(result.findings).toContainEqual(expect.objectContaining({ kind }));
+  }
+});
+test("archive of a created project on an Other binds its parent", () => {
+  const result = archiveItemEdit(
+    { portfolio, bindings: "" },
+    {
+      item: "alpha",
+      projects: [
+        { created: { environment: "local", project: "p1" }, name: "chosen", choice: "archive" },
+      ],
+    },
+    [{ environment: "local", project: "p1", actorId: "a1", item: "alpha/other" }],
+  );
+  expect(result.ok).toBe(true);
+  if (result.ok)
+    expect(parse(result.bindings).t3codeProjects.chosen).toMatchObject({
+      item: "alpha",
+      archived: true,
+    });
+});
+
+test("a created project on a top-level item cannot move up", () => {
+  const result = archiveItemEdit(
+    { portfolio, bindings: "" },
+    {
+      item: "delta",
+      projects: [
+        { created: { environment: "local", project: "p1" }, name: "chosen", choice: "move" },
+      ],
+    },
+    [{ environment: "local", project: "p1", actorId: "a1", item: "delta" }],
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.findings).toContainEqual(expect.objectContaining({ kind: "no-parent" }));
+});
+test("created choices cannot duplicate an identity or a name in either binding section", () => {
+  const records = ["p1", "p2"].map((project) => ({
+    environment: "local",
+    project,
+    actorId: "a1",
+    item: "beta",
+  }));
+  const first = {
+    created: { environment: "local", project: "p1" },
+    name: "chosen",
+    choice: "archive" as const,
+  };
+  const duplicate = archiveItemEdit(
+    { portfolio, bindings: "" },
+    { item: "beta", projects: [first, { ...first, name: "second" }] },
+    records,
+  );
+  expect(duplicate.ok).toBe(false);
+  if (!duplicate.ok)
+    expect(duplicate.findings).toContainEqual(
+      expect.objectContaining({ kind: "duplicate-choice" }),
+    );
+  for (const bindings of [
+    "githubProjects:\n  chosen: {owner: sample, number: 1, environment: local, item: gamma}\n",
+    "t3codeProjects:\n  chosen: {environment: local, project: p3, item: gamma}\n",
+  ]) {
+    const result = archiveItemEdit(
+      { portfolio, bindings },
+      {
+        item: "beta",
+        projects: [first, { ...first, created: { environment: "local", project: "p2" } }],
+      },
+      records,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.findings).toContainEqual(expect.objectContaining({ kind: "name-taken" }));
+  }
+});

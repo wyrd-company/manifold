@@ -14,6 +14,7 @@ import type { LedgerBalance, LedgerTotals } from "../ledger/index.ts";
 import type { StoredSnapshot } from "../store/index.ts";
 export function portfolioRead(input: {
   portfolio: PortfolioInForce;
+  createdProjects?: readonly import("../portfolio/types.ts").CreatedProjectOwnership[];
   accounts: Readonly<Record<string, UsageAccount>>;
   balances: ReadonlyMap<string, ReadonlyMap<string, LedgerBalance>>;
   totals: ReadonlyMap<string, LedgerTotals>;
@@ -115,6 +116,16 @@ export function portfolioRead(input: {
         .filter((p) => !p.archived && p.item === item.id)
         .map((p) => ({ binding: p.name, owner: p.owner, number: p.number })),
       t3code: [
+        ...(input.createdProjects ?? [])
+          .filter(
+            (p) => !p.retirable && p.resolution.via === "created" && p.createdItem === item.id,
+          )
+          .map((p) => ({
+            environment: p.environment,
+            project: p.project,
+            actorId: p.actorId,
+            via: "created" as const,
+          })),
         ...declaration.t3codeProjects
           .filter((p) => !p.archived && p.item === item.id)
           .map((p) => ({

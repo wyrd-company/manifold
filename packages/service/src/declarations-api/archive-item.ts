@@ -6,12 +6,14 @@ import { lintPortfolioDeclaration } from "@wyrd-company/manifold-shared";
 type ItemDocument = { readonly items?: Record<string, ItemDocument> };
 import type {
   ArchiveItemEdit,
+  AttachedCreatedProject,
   DeclarationFinding,
 } from "@wyrd-company/manifold-shared/declarations-api";
 import { parseDocument } from "yaml";
 export function archiveItemEdit(
   files: { portfolio: string; bindings: string },
   request: ArchiveItemEdit,
+  createdProjects: readonly AttachedCreatedProject[] = [],
 ):
   | { ok: true; portfolio: string; bindings: string }
   | { ok: false; findings: readonly DeclarationFinding[] } {
@@ -52,34 +54,97 @@ export function archiveItemEdit(
   const document = portfolio.toJS() as { items: Record<string, ItemDocument> };
   portfolio.setIn([...itemPath(document.items, ["items"])!, "archived"], true);
   const seen = new Set<string>();
+  const names = new Set(
+    [...before.declaration.githubProjects, ...before.declaration.t3codeProjects].map((b) => b.name),
+  );
+  const attached = createdProjects.filter(
+    (record) =>
+      under(record.item) &&
+      !before.declaration.t3codeProjects.some(
+        (b) => b.environment === record.environment && b.project === record.project,
+      ) &&
+      !before.declaration.githubProjects.some(
+        (b) => b.environment === record.environment && b.t3codeProjects.includes(record.project),
+      ),
+  );
+  const identity = (environment: string, project: string) => JSON.stringify([environment, project]);
   for (const choice of request.projects) {
-    if (seen.has(choice.binding)) {
-      fail("duplicate-choice", "bindings", `Duplicate choice for ${choice.binding}.`);
+    const key =
+      "binding" in choice
+        ? choice.binding
+        : identity(choice.created.environment, choice.created.project);
+    if (seen.has(key)) {
+      fail("duplicate-choice", "bindings", `Duplicate choice for ${key}.`);
       continue;
     }
-    seen.add(choice.binding);
-    const section = before.declaration.githubProjects.some(
-      (binding) => binding.name === choice.binding,
-    )
-      ? "githubProjects"
-      : "t3codeProjects";
-    const binding = before.declaration[section].find((binding) => binding.name === choice.binding);
-    if (!binding) {
-      fail("name-missing", "bindings", `Unknown binding ${choice.binding}.`);
-      continue;
+    seen.add(key);
+    let path: string[];
+
+    if ("created" in choice) {
+      const record = attached.find(
+        (r) => r.environment === choice.created.environment && r.project === choice.created.project,
+      );
+      if (!record) {
+        fail("not-attached", "bindings", "Created project is not attached.");
+        continue;
+      }
+      if (names.has(choice.name)) {
+        fail("name-taken", "bindings", `Binding ${choice.name} already exists.`);
+        continue;
+      }
+      names.add(choice.name);
+      path = ["t3codeProjects", choice.name];
+      const declared = before.declaration.items.find((i) => i.id === record.item)!;
+      const original = declared.other ? declared.parent! : record.item;
+      bindings.setIn(
+        path,
+        bindings.createNode({
+          environment: record.environment,
+          project: record.project,
+          item: original,
+        }),
+      );
+    } else {
+      const section = before.declaration.githubProjects.some((b) => b.name === choice.binding)
+        ? "githubProjects"
+        : "t3codeProjects";
+      const binding = before.declaration[section].find((b) => b.name === choice.binding);
+      if (!binding) {
+        fail("name-missing", "bindings", `Unknown binding ${choice.binding}.`);
+        continue;
+      }
+      if (binding.archived || !under(binding.item)) {
+        fail("not-attached", "bindings", `Binding ${choice.binding} is not attached.`);
+        continue;
+      }
+      path = [section, choice.binding];
     }
-    if (binding.archived || !under(binding.item)) {
-      fail("not-attached", "bindings", `Binding ${choice.binding} is not attached.`);
-      continue;
-    }
-    const path = [section, choice.binding];
     if (choice.choice === "archive") bindings.setIn([...path, "archived"], true);
     else if (choice.choice === "move") {
-      if (item.parent === null)
-        fail("no-parent", "bindings", "A top-level item has no parent binding target.");
-      else bindings.setIn([...path, "item"], item.parent);
-    } else bindings.setIn([...path, "item"], choice.item);
+      const parent = before.declaration.items.find((i) => i.id === item.parent);
+      if (!parent || parent.archived)
+        fail("no-parent", "bindings", "No live parent binding target.");
+      else bindings.setIn([...path, "item"], parent.id);
+    } else {
+      const sibling = before.declaration.items.find((i) => i.id === choice.item);
+      if (
+        !sibling ||
+        sibling.id === item.id ||
+        sibling.parent !== item.parent ||
+        sibling.other ||
+        sibling.archived
+      )
+        fail("not-sibling", "bindings", "Expected a live sibling item.");
+      else bindings.setIn([...path, "item"], sibling.id);
+    }
   }
+  for (const record of attached)
+    if (!seen.has(identity(record.environment, record.project)))
+      fail(
+        "choice-missing",
+        "bindings",
+        `Choose where ${record.environment} · ${record.project} goes.`,
+      );
   const edited = { portfolio: portfolio.toString(), bindings: bindings.toString() };
   const lint = lintPortfolioDeclaration(edited);
   if (!lint.ok) findings.push(...lint.findings);

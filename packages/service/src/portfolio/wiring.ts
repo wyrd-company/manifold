@@ -24,6 +24,7 @@ export const portfolio = wiringPart({
     const source = context.later(t3codeSource);
     const basePortfolio = openPortfolio({
       connection: store.connection,
+      createdProjects: () => source.current()?.t3code.createdProjects() ?? [],
       createdProject: (project) =>
         source.current()?.t3code.createdProject(project.environment, project.id),
     });

@@ -31,6 +31,7 @@ export async function actorWorld() {
     ledger: f.ledger,
     portfolio: {
       current: () => ({ commit: revision.commit, declaration: portfolio.declaration }),
+      usageItem: (item: string) => item,
       t3codeProject: () => ({ item: "other", via: "unbound" }),
     },
     threadProject: () => undefined,

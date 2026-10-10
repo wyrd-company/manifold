@@ -43,6 +43,7 @@ const source = {
   impact: [{ binding: "shipping", creates: 1, changes: 0, removes: 0 }],
 };
 const bindings = {
+  createdProjects: [{ environment: "local", project: "p1", actorId: "a1", item: "alpha" }],
   repository: { url: "https://example.invalid/process.git", branch: "main" },
   commit,
   findings: [],

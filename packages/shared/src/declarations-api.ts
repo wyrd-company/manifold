@@ -60,10 +60,24 @@ export interface SharingPreview {
     readonly allWaiting: number;
   }[];
 }
-export type ArchiveProjectChoice =
-  | { readonly binding: string; readonly choice: "move" }
-  | { readonly binding: string; readonly choice: "archive" }
-  | { readonly binding: string; readonly choice: "reassign"; readonly item: string };
+export interface AttachedCreatedProject {
+  readonly environment: string;
+  readonly project: string;
+  readonly actorId: string;
+  readonly item: string;
+}
+export type ArchiveProjectChoice = (
+  | { readonly binding: string }
+  | {
+      readonly created: { readonly environment: string; readonly project: string };
+      readonly name: string;
+    }
+) &
+  (
+    | { readonly choice: "move" }
+    | { readonly choice: "archive" }
+    | { readonly choice: "reassign"; readonly item: string }
+  );
 export interface ArchiveItemEdit {
   readonly item: string;
   readonly projects: readonly ArchiveProjectChoice[];
@@ -184,6 +198,7 @@ export interface EnvironmentProject {
   readonly activeThreads: number;
 }
 export interface BindingsResponse {
+  readonly createdProjects: readonly AttachedCreatedProject[];
   readonly repository: { readonly url: string; readonly branch: string };
   readonly commit: string;
   readonly findings: readonly DeclarationFinding[];
@@ -308,6 +323,9 @@ export function isBindingsResponse(v: unknown): v is BindingsResponse {
     repository: (r) => shape(r, { url: string, branch: string }),
     commit,
     findings: array(finding),
+    createdProjects: array((p) =>
+      shape(p, { environment: name, project: nonempty, actorId: nonempty, item: nonempty }),
+    ),
     githubProjects: array((b) =>
       shape(b, {
         name,

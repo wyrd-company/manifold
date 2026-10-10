@@ -22,6 +22,7 @@ export interface PortfolioApiOptions {
   pricing(): UsagePricing;
   readonly portfolio: {
     current(): PortfolioInForce;
+    createdProjects(): readonly import("../portfolio/types.ts").CreatedProjectOwnership[];
     readonly ledger: Pick<Ledger, "balance" | "windowAt" | "totals">;
   };
   accounts(): Readonly<Record<string, UsageAccount>>;
@@ -93,6 +94,7 @@ export function mountPortfolioApi(host: HttpHost, options: PortfolioApiOptions):
         200,
         portfolioRead({
           portfolio,
+          createdProjects: options.portfolio.createdProjects(),
           accounts,
           lastUsedAt: options.lastUsedAt(),
           pricing: {

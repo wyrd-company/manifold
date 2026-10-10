@@ -291,7 +291,11 @@ test.each(["project-sending", "t3code-project-create", "thread-create", "turn-st
       expect(server.projects.size).toBe(1);
       const db = new DatabaseSync(config.path);
       try {
-        expect(db.prepare("SELECT * FROM t3_created_project").all()).toEqual([]);
+        expect(
+          db
+            .prepare("SELECT environment, project_id, actor_id, item FROM t3_created_project")
+            .all(),
+        ).toEqual([]);
       } finally {
         db.close();
       }
@@ -328,7 +332,11 @@ test.each(["project-sending", "t3code-project-create", "thread-create", "turn-st
       expect(server.commands.filter((c) => c.type === "project.create")).toHaveLength(2);
       const db = new DatabaseSync(config.path);
       try {
-        expect(db.prepare("SELECT * FROM t3_created_project").all()).toEqual([
+        expect(
+          db
+            .prepare("SELECT environment, project_id, actor_id, item FROM t3_created_project")
+            .all(),
+        ).toEqual([
           {
             environment: "station",
             project_id: [...server.projects.keys()][0],

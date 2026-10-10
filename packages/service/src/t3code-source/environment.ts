@@ -28,6 +28,7 @@ import {
 import { retryDelay } from "./retry.ts";
 import { needsSubscription, canClose } from "./follow.ts";
 import { sourceEvent, threadTopic } from "./events.ts";
+import { createdProjects } from "./created-projects.ts";
 import { persistence, SourceDefect } from "./persistence.ts";
 import type { T3CodeSourceOptions, EnvironmentStatus, T3CodeProjectView } from "./types.ts";
 export function environmentLoop(
@@ -42,6 +43,7 @@ export function environmentLoop(
   let platform: "darwin" | "linux" | "windows" | "unknown" = "unknown";
   const configuration = options.environments[environment]!;
   const stored = persistence(options.store, environment);
+  const records = createdProjects(options.store);
   const status: {
     environment: string;
     state: EnvironmentStatus["state"];
@@ -369,6 +371,7 @@ export function environmentLoop(
                 );
           });
         }
+        stored.atomic(() => records.snapshot(environment, model.projects));
         lifetime.signal.throwIfAborted();
         onReady();
         const cursor = stored.environment()!.shell_sequence;
@@ -412,6 +415,7 @@ export function environmentLoop(
                       thread.projectId,
                     );
                   }
+                records.snapshot(environment, item.snapshot.projects);
                 stored.shell(item.snapshot.snapshotSequence);
               });
               for (const thread of item.snapshot.threads) {
@@ -449,7 +453,14 @@ export function environmentLoop(
                   ];
                 } else projects = projects.filter((project) => project.id !== item.projectId);
               }
-              stored.atomic(() => stored.shell(item.sequence));
+              stored.atomic(() => {
+                records.presence(
+                  environment,
+                  item.kind === "project-upserted" ? item.project.id : item.projectId,
+                  item.kind === "project-upserted" ? "listed" : "removed",
+                );
+                stored.shell(item.sequence);
+              });
             }
             count();
           }

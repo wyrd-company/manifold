@@ -56,6 +56,7 @@ const usage = openUsage({
   ledger,
   portfolio: {
     current: () => ({ commit: null, declaration }),
+    usageItem: (item: string) => item,
     t3codeProject: () => ({ item: "beta", via: "binding", binding: "sample", archived: false }),
   },
   threadProject: () => "project-1",

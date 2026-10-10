@@ -15,7 +15,9 @@ const files = {
 };
 const revision = memoryRevision("a".repeat(40), files);
 const options: DeclarationsApiOptions = {
+  createdProjects: () => [],
   revisions: {
+    findSave: async () => undefined,
     latest: () => undefined,
     save: async () => {
       throw new Error("Unexpected save");

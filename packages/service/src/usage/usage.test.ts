@@ -96,6 +96,7 @@ async function setup(credited = true) {
     ledger,
     portfolio: {
       current: currentPortfolio,
+      usageItem: (item: string) => item,
       t3codeProject: () => ({
         item: "beta" as const,
         via: "binding" as const,
@@ -542,6 +543,7 @@ it("rolls back the entire request when a ledger write fails, and contains listen
     },
     portfolio: {
       current: currentPortfolio,
+      usageItem: (item: string) => item,
       t3codeProject: () => ({ item: "other", via: "unbound" }),
     },
     threadProject: () => undefined,
@@ -585,6 +587,7 @@ it("falls back to other with missing project and ignores malformed identity memb
     ledger: s.ledger,
     portfolio: {
       current: currentPortfolio,
+      usageItem: (item: string) => item,
       t3codeProject: () => ({
         item: "beta",
         via: "binding",
@@ -633,6 +636,7 @@ it("a failed settlement rolls back ownership and visits with the actor save", as
     },
     portfolio: {
       current: currentPortfolio,
+      usageItem: (item: string) => item,
       t3codeProject: () => ({ item: "other", via: "unbound" }),
     },
     threadProject: () => undefined,
@@ -691,6 +695,7 @@ it("the save hook itself rolls back when settlement fails", async () => {
     },
     portfolio: {
       current: currentPortfolio,
+      usageItem: (item: string) => item,
       t3codeProject: () => ({ item: "other", via: "unbound" }),
     },
     threadProject: () => undefined,
@@ -888,6 +893,7 @@ it("rolls back late attribution and mapping when a later call fails, then replay
     },
     portfolio: {
       current: currentPortfolio,
+      usageItem: (item: string) => item,
       t3codeProject: () => ({ item: "other", via: "unbound" }),
     },
     threadProject: () => undefined,
@@ -1116,7 +1122,7 @@ it.each([false, true])(
     host.host.mount("/api/tasks", tasks.requestListener);
     host.host.mount("/api/usage", s.usage.listener);
     mountPortfolioApi(host.host, {
-      portfolio: { current: currentPortfolio, ledger: s.ledger },
+      portfolio: { current: currentPortfolio, ledger: s.ledger, createdProjects: () => [] },
       accounts: s.usage.accounts,
       lastUsedAt: s.usage.lastUsedAt,
       pricing: s.usage.pricing,
@@ -1353,6 +1359,7 @@ it("move and unowned listener failures are contained and roll the entire move ba
     },
     portfolio: {
       current: currentPortfolio,
+      usageItem: (item: string) => item,
       t3codeProject: () => ({ item: "other", via: "unbound" }),
     },
     threadProject: () => {

@@ -94,7 +94,15 @@ export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource {
   });
   const records = createdProjects(options.store);
   const source: T3CodeSource = {
-    recordCreatedProject: records.record,
+    recordCreatedProject: (record) =>
+      records.record(
+        record,
+        environments
+          .find((e) => e.status.environment === record.environment)
+          ?.projects()
+          ?.some((p) => p.id === record.projectId) ?? false,
+      ),
+    createdProjects: records.all,
     createdProject: records.read,
     async platform(name, signal) {
       await source.ready(name, signal);

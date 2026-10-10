@@ -36,6 +36,13 @@ const emptyDeclaration: PortfolioDeclaration = {
 export function openPortfolio(options: {
   connection: LedgerConnection;
   now?: () => number;
+  createdProjects?: () => readonly {
+    environment: string;
+    projectId: string;
+    actorId: string;
+    item: string;
+    retirable: boolean;
+  }[];
   createdProject?: (project: {
     environment: string;
     id: string;
@@ -84,8 +91,40 @@ export function openPortfolio(options: {
     serialized = next;
     return { status: "applied", commit: revision.commit, warnings };
   }
+  function t3codeProject(project: { environment: string; id: string }) {
+    const declared = resolution.t3codeProject(project);
+    if (declared.via !== "unbound") return declared;
+    const created = options.createdProject?.(project);
+    if (created && current.declaration.items.some((item) => item.id === created.item))
+      return { item: created.item, via: "created" as const, actorId: created.actorId };
+    return declared;
+  }
+  function usageItem(item: string) {
+    return current.declaration.items.some((row) => row.id === `${item}/other`)
+      ? `${item}/other`
+      : item;
+  }
+  function archived(id: string): boolean {
+    const item = current.declaration.items.find((item) => item.id === id);
+    return !!item && (item.archived || (item.parent !== null && archived(item.parent)));
+  }
   return {
     ledger,
+    usageItem,
+    createdProjects: () =>
+      (options.createdProjects?.() ?? []).map((record) => {
+        const resolved = t3codeProject({ environment: record.environment, id: record.projectId });
+        return {
+          environment: record.environment,
+          project: record.projectId,
+          actorId: record.actorId,
+          createdItem: record.item,
+          resolution: resolved,
+          usageItem: usageItem(resolved.item),
+          unresolved: resolved.via === "created" && archived(resolved.item),
+          retirable: record.retirable,
+        };
+      }),
     apply(revision) {
       const operation = pending.then(() => apply(revision));
       pending = operation.catch(() => undefined);
@@ -93,13 +132,6 @@ export function openPortfolio(options: {
     },
     current: () => current,
     githubProject: (project) => resolution.githubProject(project),
-    t3codeProject(project) {
-      const declared = resolution.t3codeProject(project);
-      if (declared.via !== "unbound") return declared;
-      const created = options.createdProject?.(project);
-      if (created && current.declaration.items.some((item) => item.id === created.item))
-        return { item: created.item, via: "created", actorId: created.actorId };
-      return declared;
-    },
+    t3codeProject,
   };
 }

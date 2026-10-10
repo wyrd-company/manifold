@@ -26,10 +26,22 @@ export type T3codeProjectResolution =
   | { item: string; via: "binding" | "association"; binding: string; archived: boolean }
   | { item: string; via: "created"; actorId: string }
   | { item: "other"; via: "unbound" };
+export type CreatedProjectOwnership = {
+  environment: string;
+  project: string;
+  actorId: string;
+  createdItem: string;
+  resolution: T3codeProjectResolution;
+  usageItem: string;
+  unresolved: boolean;
+  retirable: boolean;
+};
 export interface Portfolio {
   readonly ledger: Ledger;
   apply(revision: ProcessRepositoryRevision): Promise<PortfolioApplyResult>;
   current(): PortfolioInForce;
+  usageItem(item: string): string;
+  createdProjects(): readonly CreatedProjectOwnership[];
   githubProject(project: { owner: string; number: number }): GitHubProjectResolution | undefined;
   t3codeProject(project: { environment: string; id: string }): T3codeProjectResolution;
 }

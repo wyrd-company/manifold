@@ -139,7 +139,11 @@ export async function overviewWorld() {
   mountPortfolioApi(server.host, {
     lastUsedAt: () => ({}),
     pricing: () => ({ overrides: 0, unpriced: [] }),
-    portfolio: { current: () => ({ commit: null, declaration: declaration.declaration }), ledger },
+    portfolio: {
+      current: () => ({ commit: null, declaration: declaration.declaration }),
+      ledger,
+      createdProjects: () => [],
+    },
     accounts: () =>
       Object.fromEntries(
         ["acct-a", "acct-b"].map((name) => [

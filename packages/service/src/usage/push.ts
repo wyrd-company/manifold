@@ -145,10 +145,12 @@ export function postingAttribution(
     ...(actor ? { actor: actor.actor_id, ...(actor.item ? { actorItem: actor.item } : {}) } : {}),
     ...(project
       ? {
-          projectItem: options.portfolio.t3codeProject({
-            environment,
-            id: project,
-          }).item,
+          projectItem: options.portfolio.usageItem(
+            options.portfolio.t3codeProject({
+              environment,
+              id: project,
+            }).item,
+          ),
         }
       : {}),
     ...(visit ? { visit } : {}),

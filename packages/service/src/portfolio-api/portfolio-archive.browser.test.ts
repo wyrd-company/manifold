@@ -107,8 +107,22 @@ test("refused archive applies the concurrent binding commit without any archive 
   const f = await archiveFixture(),
     browser = await chromium.launch({ headless: true });
   try {
+    f.service.store.connection.database.exec(
+      "INSERT INTO t3_environment VALUES ('local', 'server', 0, 0)",
+    );
+    f.service.t3code.recordCreatedProject({
+      environment: "local",
+      projectId: "p1",
+      actorId: "a1",
+      item: "beta",
+    });
     const page = await browser.newPage(),
       dialog = await openArchive(page, f.url);
+    await dialog
+      .locator("fieldset")
+      .filter({ has: page.getByText("p1", { exact: true }) })
+      .getByLabel("Archive project", { exact: true })
+      .check();
     const concurrent = await f.concurrentBinding();
     const refusing = page.waitForResponse((r) => r.url().endsWith("/archive-item"));
     await dialog.getByRole("button", { name: "Archive beta", exact: true }).click();
@@ -124,6 +138,13 @@ test("refused archive applies the concurrent binding commit without any archive 
     expect(await git.resolveRef({ fs, gitdir: f.fixture.remote.gitdir, ref: "main" })).toBe(
       concurrent,
     );
+    expect(
+      (await fetch(f.url + "/api/declarations/bindings").then((r) => r.json())).createdProjects,
+    ).toContainEqual({ environment: "local", project: "p1", actorId: "a1", item: "beta" });
+    expect(f.service.portfolio.t3codeProject({ environment: "local", id: "p1" })).toMatchObject({
+      via: "created",
+      item: "beta",
+    });
     const read = (await fetch(f.url + "/api/portfolio").then((r) => r.json())) as PortfolioResponse;
     expect(read.commit).toBe(concurrent);
     expect(read.items.find((i) => i.id === "beta")).toMatchObject({
@@ -288,6 +309,176 @@ test("item dialog previews candidate allocations and guards unsaved archive acti
     expect(await page.getByRole("button", { name: "Archive item", exact: true }).isEnabled()).toBe(
       true,
     );
+  } finally {
+    await browser.close();
+    await f.close();
+  }
+});
+
+test("built archive lists created projects, saves all choices and resolves an archived item", async () => {
+  const f = await archiveFixture(),
+    browser = await chromium.launch({ headless: true });
+  try {
+    const db = f.service.store.connection.database;
+    db.exec("INSERT INTO t3_environment VALUES ('local', 'server', 0, 0)");
+    for (const projectId of ["p1", "p2", "p3"])
+      f.service.t3code.recordCreatedProject({
+        environment: "local",
+        projectId,
+        actorId: "a1",
+        item: "beta",
+      });
+    f.service.t3code.recordCreatedProject({
+      environment: "local",
+      projectId: "p4",
+      actorId: "a1",
+      item: "gamma",
+    });
+    f.service.t3code.recordCreatedProject({
+      environment: "local",
+      projectId: "p5",
+      actorId: "a1",
+      item: "beta",
+    });
+    await f.service.revisions.save({
+      base: f.base,
+      saveId: "e".repeat(32),
+      message: "Bind sample project",
+      files: [
+        {
+          path: "bindings.yml",
+          text:
+            (await f.service.processRepository.current()!.read("bindings.yml")) +
+            "t3codeProjects:\n  bound-five: {environment: local, project: p5, item: beta}\n",
+        },
+      ],
+    });
+    const page = await browser.newPage(),
+      dialog = await openArchive(page, f.url);
+    expect(await dialog.getByText("local · p4", { exact: true }).count()).toBe(0);
+    expect(await dialog.getByText("p5", { exact: true }).count()).toBe(0);
+    expect(await dialog.getByText("Created by a task", { exact: false }).count()).toBe(3);
+    await dialog
+      .locator("fieldset")
+      .filter({ has: page.getByText("bound-five", { exact: true }) })
+      .getByLabel("Move to alpha", { exact: true })
+      .check();
+    for (const [project, choice] of [
+      ["p1", "Move to alpha"],
+      ["p2", "Reassign to"],
+      ["p3", "Archive project"],
+    ]) {
+      const row = dialog
+        .locator("fieldset")
+        .filter({ has: page.getByText(project!, { exact: true }) });
+      await row.getByLabel(choice!, { exact: true }).check();
+    }
+    await dialog.getByLabel("Reassign t3-p2 to").selectOption("gamma");
+    f.service.t3code.recordCreatedProject({
+      environment: "local",
+      projectId: "p6",
+      actorId: "a1",
+      item: "beta",
+    });
+    const rejected = page.waitForResponse((r) => r.url().endsWith("/archive-item"));
+    await dialog.getByRole("button", { name: "Archive beta", exact: true }).click();
+    expect((await rejected).status()).toBe(422);
+    await dialog.getByText("local · p6", { exact: true }).waitFor();
+    expect(
+      await dialog.getByRole("button", { name: "Archive beta", exact: true }).isDisabled(),
+    ).toBe(true);
+    await dialog
+      .locator("fieldset")
+      .filter({ has: page.getByText("p6", { exact: true }) })
+      .getByLabel("Archive project", { exact: true })
+      .check();
+    const saving = page.waitForResponse((r) => r.url().endsWith("/archive-item"));
+    await dialog.getByRole("button", { name: "Archive beta", exact: true }).click();
+    const savedResponse = await saving;
+    expect(savedResponse.status()).toBe(200);
+    await page.getByRole("status").filter({ hasText: "Archived beta" }).waitFor();
+    expect(f.service.portfolio.createdProjects().find((p) => p.project === "p1")).toMatchObject({
+      createdItem: "beta",
+      usageItem: "alpha/other",
+    });
+    f.service.t3code.recordCreatedProject({
+      environment: "local",
+      projectId: "p7",
+      actorId: "a1",
+      item: "beta",
+    });
+    const retry = await fetch(f.url + "/api/declarations/archive-item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: savedResponse.request().postData(),
+    });
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({
+      outcome: "already-saved",
+      commit: (await savedResponse.json()).commit,
+    });
+    await page.reload();
+    await page.getByRole("button", { name: "Show archived (1)", exact: true }).click();
+    await page.getByText("1 projects to resolve", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Choose project moves", exact: true }).click();
+    const resolve = page
+      .getByRole("dialog")
+      .filter({ has: page.getByRole("heading", { name: "Projects of beta", exact: true }) });
+    await resolve.getByLabel("Archive project", { exact: true }).check();
+    await resolve.getByRole("button", { name: "Save choices", exact: true }).click();
+    await page.getByRole("status").filter({ hasText: "Saved project choices" }).waitFor();
+    expect(f.service.portfolio.createdProjects().find((p) => p.project === "p7")?.unresolved).toBe(
+      false,
+    );
+  } finally {
+    await browser.close();
+    await f.close();
+  }
+});
+
+test("built archive preserves a created project's Other through an archived parent binding", async () => {
+  const f = await archiveFixture(),
+    browser = await chromium.launch({ headless: true });
+  try {
+    const current = f.service.processRepository.current()!;
+    await f.service.revisions.save({
+      base: current.commit,
+      saveId: "f".repeat(32),
+      message: "Declare sample sub-item",
+      files: [
+        {
+          path: "portfolio.yml",
+          text: (await current.read("portfolio.yml"))!.replace(
+            "      beta:\n",
+            "      beta:\n        items:\n          child: {}\n",
+          ),
+        },
+      ],
+    });
+    f.service.store.connection.database.exec(
+      "INSERT INTO t3_environment VALUES ('local', 'server', 0, 0)",
+    );
+    f.service.t3code.recordCreatedProject({
+      environment: "local",
+      projectId: "p8",
+      actorId: "a1",
+      item: "beta/other",
+    });
+    const page = await browser.newPage(),
+      dialog = await openArchive(page, f.url);
+    await dialog.getByText("local · p8", { exact: true }).waitFor();
+    for (const radio of await dialog.getByLabel("Archive project", { exact: true }).all())
+      await radio.check();
+    await dialog.getByRole("button", { name: "Archive beta", exact: true }).click();
+    await page.getByRole("status").filter({ hasText: "Archived beta" }).waitFor();
+    expect(
+      f.service.portfolio.current().declaration.t3codeProjects.find((p) => p.project === "p8"),
+    ).toMatchObject({ item: "beta", archived: true });
+    expect(f.service.portfolio.createdProjects().find((p) => p.project === "p8")).toMatchObject({
+      createdItem: "beta/other",
+      usageItem: "beta/other",
+      unresolved: false,
+    });
   } finally {
     await browser.close();
     await f.close();

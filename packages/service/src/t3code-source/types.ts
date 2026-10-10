@@ -64,12 +64,18 @@ export interface CreatedProject {
   readonly actorId: string;
   readonly item: string;
 }
+export interface CreatedProjectRecord extends CreatedProject {
+  readonly presence: "unseen" | "listed" | "removed";
+  readonly threads: number;
+  readonly retirable: boolean;
+}
 export interface T3CodeSource {
   platform(
     environment: string,
     signal?: AbortSignal,
   ): Promise<"darwin" | "linux" | "windows" | "unknown">;
   recordCreatedProject(record: CreatedProject): void;
+  createdProjects(): readonly CreatedProjectRecord[];
   createdProject(environment: string, projectId: string): CreatedProject | undefined;
   projects(environment: string): readonly T3CodeProjectView[] | undefined;
   thread(environment: string, threadId: string): ThreadView | undefined;

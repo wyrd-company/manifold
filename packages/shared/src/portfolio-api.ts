@@ -67,7 +67,8 @@ export interface PortfolioItem {
       binding?: string;
       environment: string;
       project: string;
-      via: "binding" | "association";
+      via: "binding" | "association" | "created";
+      readonly actorId?: string;
     }[];
   };
   readonly activeTasks: number;
@@ -169,8 +170,12 @@ export function isPortfolioResponse(v: unknown): v is PortfolioResponse {
                 t3code: array((v) =>
                   shape(
                     v,
-                    { environment: string, project: string, via: oneOf("binding", "association") },
-                    { binding: string },
+                    {
+                      environment: string,
+                      project: string,
+                      via: oneOf("binding", "association", "created"),
+                    },
+                    { binding: string, actorId: string },
                   ),
                 ),
               }),

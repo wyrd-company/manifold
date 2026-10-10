@@ -183,6 +183,11 @@ export function createRevisions(options: {
   }
   return {
     latest: () => latest,
+    findSave: (request) =>
+      enqueue(async () => {
+        await pullAndApply();
+        return options.repository.findSave(request);
+      }),
     save: (request) => enqueue(() => save(request)),
     current: () => current,
     follow: () => enqueue(apply),

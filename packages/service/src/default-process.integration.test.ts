@@ -964,9 +964,17 @@ it("runs the starter acceptance scenario through recovery, plugin messages, Proj
   expect(await get("/api/tasks/task%3AI_A")).toMatchObject({
     task: { usage: { settled: true, accounts: [{ actual: 18, variance: 8 }] } },
   });
+  const attachedCreated = (await get("/api/declarations/bindings")).createdProjects;
   const archive = await post("/api/declarations/archive-item", {
     item: "work",
-    projects: [{ binding: "work-board", choice: "archive" }],
+    projects: [
+      { binding: "work-board", choice: "archive" },
+      ...attachedCreated.map((p: { environment: string; project: string }, i: number) => ({
+        created: { environment: p.environment, project: p.project },
+        name: `sample-created-${i + 1}`,
+        choice: "archive",
+      })),
+    ],
     base: saved.commit,
     message: "Archive sample portfolio",
     saveId: "3".repeat(32),

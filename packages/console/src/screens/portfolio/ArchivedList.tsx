@@ -11,11 +11,13 @@ export function ArchivedList({
   account,
   editing,
   onRestore,
+  onResolve,
 }: {
   read: PortfolioResponse;
   account: string;
   editing: boolean;
   onRestore: (id: string) => void;
+  onResolve: (id: string) => void;
 }) {
   const [shown, setShown] = useState(false),
     items = read.items.filter(
@@ -39,6 +41,26 @@ export function ArchivedList({
                 value={i.allocations.find((a) => a.account === account)?.lifetime ?? 0}
                 unit={unit}
               />
+              {(() => {
+                function under(id: string): boolean {
+                  const row = read.items.find((r) => r.id === id);
+                  return id === i.id || (!!row?.parent && under(row.parent));
+                }
+                const count = read.items
+                  .filter((r) => under(r.id))
+                  .reduce(
+                    (n, r) => n + r.projects.t3code.filter((p) => p.via === "created").length,
+                    0,
+                  );
+                return count ? (
+                  <>
+                    <span className="muted">{count} projects to resolve</span>
+                    <Button variant="outline" disabled={editing} onClick={() => onResolve(i.id)}>
+                      Choose project moves
+                    </Button>
+                  </>
+                ) : null;
+              })()}
               {!editing ? (
                 <Button variant="outline" onClick={() => onRestore(i.id)}>
                   Restore

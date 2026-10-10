@@ -6,6 +6,7 @@ import { expect, test } from "vite-plus/test";
 import { projectRows, t3codeRows } from "./rows.ts";
 import type { BindingsResponse } from "@wyrd-company/manifold-shared/declarations-api";
 const bindings: BindingsResponse = {
+  createdProjects: [],
   repository: { url: "https://example.test/process", branch: "main" },
   commit: "a".repeat(40),
   findings: [],

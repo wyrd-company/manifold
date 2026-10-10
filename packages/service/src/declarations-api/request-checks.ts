@@ -110,17 +110,30 @@ export function archiveRequest(
     typeof value["item"] === "string" &&
     value["item"].length > 0 &&
     Array.isArray(value["projects"]) &&
-    value["projects"].every(
-      (choice: unknown) =>
-        record(choice) &&
-        typeof choice["binding"] === "string" &&
-        choice["binding"].length > 0 &&
+    value["projects"].every((choice: unknown) => {
+      if (!record(choice)) return false;
+      const target =
+        "binding" in choice
+          ? typeof choice["binding"] === "string" &&
+            choice["binding"].length > 0 &&
+            !("created" in choice) &&
+            !("name" in choice)
+          : record(choice["created"]) &&
+            keys(choice["created"], ["environment", "project"]) &&
+            name(choice["created"]["environment"]) &&
+            typeof choice["created"]["project"] === "string" &&
+            choice["created"]["project"].length > 0 &&
+            name(choice["name"]);
+      const targetKeys = "binding" in choice ? ["binding"] : ["created", "name"];
+      return (
+        target &&
         (choice["choice"] === "reassign"
-          ? keys(choice, ["binding", "choice", "item"]) &&
+          ? keys(choice, [...targetKeys, "choice", "item"]) &&
             typeof choice["item"] === "string" &&
             choice["item"].length > 0
-          : keys(choice, ["binding", "choice"]) &&
-            (choice["choice"] === "move" || choice["choice"] === "archive")),
-    )
+          : keys(choice, [...targetKeys, "choice"]) &&
+            (choice["choice"] === "move" || choice["choice"] === "archive"))
+      );
+    })
   );
 }

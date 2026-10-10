@@ -19,6 +19,8 @@ const children = [
   "src/migrations/crash.test.ts",
   "src/declarations-api/api.test.ts",
   "src/declarations-api/archive-api.test.ts",
+  "src/declarations-api/archive-usage.test.ts",
+  "src/declarations-api/archive-crash.test.ts",
   "src/declarations-api/accounts.browser.test.ts",
   "src/declarations-api/projects.browser.test.ts",
   "src/portfolio-api/portfolio.browser.test.ts",

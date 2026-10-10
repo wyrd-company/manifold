@@ -40,6 +40,7 @@ import { BudgetSourceCards } from "./BudgetSourceCards.tsx";
 import { PortfolioTable } from "./PortfolioTable.tsx";
 import { ProblemsList } from "./ProblemsList.tsx";
 import { StatusBar } from "./StatusBar.tsx";
+import { ArchiveItemDialog } from "./ArchiveItemDialog.tsx";
 import { ArchivedList } from "./ArchivedList.tsx";
 import { EditItemDialog } from "./EditItemDialog.tsx";
 import { draftRead, changedGuaranteeParents } from "./preview.ts";
@@ -94,6 +95,7 @@ export function PortfolioContent() {
     [dialog, setDialog] = useState<{ item?: PortfolioItem; before: PortfolioDraft | undefined }>(),
     [discard, setDiscard] = useState(false),
     [autoSave, setAutoSave] = useState<string>(),
+    [resolving, setResolving] = useState<string>(),
     [pendingArchive, setPendingArchive] = useState<ArchiveItemRequest>();
   const source = sourceQuery.data?.kind === "ok" ? sourceQuery.data.body : undefined;
   useEffect(() => {
@@ -468,11 +470,25 @@ export function PortfolioContent() {
             read={display}
             account={selected}
             editing={!!draft}
+            onResolve={setResolving}
             onRestore={(id) => {
               edit({ kind: "restore", item: id });
               setAutoSave(`Restore portfolio item ${id}`);
             }}
           />
+          {resolving && display.items.find((i) => i.id === resolving) ? (
+            <ArchiveItemDialog
+              item={display.items.find((i) => i.id === resolving)!}
+              read={display}
+              onClose={() => setResolving(undefined)}
+              onSaved={(request, answer) => {
+                setResolving(undefined);
+                setToast("Saved project choices");
+                if (!answer.loaded) setPendingArchive(request);
+                void client.invalidateQueries();
+              }}
+            />
+          ) : null}
           {read ? <UnownedUsage read={read} account={selected} /> : null}
           {dialog ? (
             <EditItemDialog

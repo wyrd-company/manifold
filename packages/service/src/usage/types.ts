@@ -61,7 +61,7 @@ export type UsageOptions = {
   connection: LedgerConnection;
   visits: Pick<import("../history/index.ts").History, "visits" | "visitAt">;
   ledger: Pick<Ledger, "postActual" | "settle" | "actorUsage" | "reattribute">;
-  portfolio: Pick<Portfolio, "t3codeProject" | "current">;
+  portfolio: Pick<Portfolio, "t3codeProject" | "current" | "usageItem">;
   threadProject(environment: string, threadId: string): string | undefined;
   threadTitle?(environment: string, threadId: string): string | undefined;
   inputChanged?: () => void;

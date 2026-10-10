@@ -53,6 +53,7 @@ const usage = openUsage({
       if (!lint.ok) throw new Error("Invalid fixture portfolio");
       return { commit: "portfolio-1", declaration: lint.declaration };
     },
+    usageItem: (item: string) => item,
     t3codeProject: () => ({ item: "other", via: "unbound" }),
   },
   threadProject: () => undefined,

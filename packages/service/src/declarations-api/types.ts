@@ -22,10 +22,11 @@ export interface DeclarationImpact {
   }[];
 }
 export interface DeclarationsApiOptions {
-  readonly revisions: Pick<Revisions, "latest" | "save">;
+  readonly revisions: Pick<Revisions, "latest" | "save" | "findSave">;
   readonly processRepository: Pick<ProcessRepository, "revisionAt">;
   readonly repository: { readonly url: string; readonly branch: string };
   readonly environments: readonly string[];
+  createdProjects(): readonly import("../portfolio/types.ts").CreatedProjectOwnership[];
   t3codeProjects(environment: string): readonly DeclarationsT3codeProject[] | undefined;
   planDeclaration(declaration: TaskMetadataDeclaration): readonly DeclarationImpact[];
   readonly log: (entry: { level: "error"; path: string; error: string }) => void;

@@ -29,7 +29,7 @@ githubProjects:
   board-one: { owner: sample, number: 1, environment: local, item: beta, t3codeProjects: [workspace-one] }
   board-two: { owner: sample, number: 2, environment: local, item: beta }
 `;
-export async function archiveFixture() {
+export async function archiveFixture(withUsage = false) {
   const fixture = await serviceFixture();
   await fixture.commit(50, {
     accounts: {
@@ -37,16 +37,27 @@ export async function archiveFixture() {
         "acct-a": {
           unit: "usd",
           kind: "api",
+          ...(withUsage ? { usage: [{ environment: "local", provider: "codex" }] } : {}),
           capacity: { amount: 10, reset: "2026-01-01T00:00:00Z", every: { days: 1 } },
         },
       },
     },
   });
   await git.setConfig({ fs, gitdir: fixture.remote.gitdir, path: "http.receivepack", value: true });
+  if (withUsage) await fs.writeFile(fixture.directory + "/environment.token", "synthetic-token");
   await fs.writeFile(
     fixture.file,
     stringify({
       ...fixture.configuration,
+      ...(withUsage
+        ? {
+            credentials: {
+              ...fixture.configuration.credentials,
+              environment: { kind: "t3code-token", tokenFile: "environment.token" },
+            },
+            environments: { local: { url: "http://127.0.0.1:1", credential: "environment" } },
+          }
+        : {}),
       processRepository: {
         ...fixture.configuration.processRepository,
         commitAuthor: { name: "Example", email: "example@example.test" },
