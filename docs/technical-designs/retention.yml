@@ -665,8 +665,9 @@ proposed-design:
     creator goes, the one under a binding included, and the others stay;
     a thread row of a `removed` project's id written by the fake clock's
     `yield` between the read and the delete keeps the record; a late call
-    of each kept project's thread, and a late mapping onto it, post on the
-    same item before and after the prune run; with more than 100 ended actors past the window, so
+    of each kept project's thread that no actor owns, and a late mapping
+    onto it, post on the project's usage item, the item's Other when it
+    has one, before and after the prune run; with more than 100 ended actors past the window, so
     they take two actor batches, an escalation that the fake clock's
     `yield` raises after the first batch, naming an ended actor past its
     window that a later actor batch would prune and a gate whose
