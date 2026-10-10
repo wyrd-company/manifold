@@ -193,7 +193,7 @@ export async function setup(
   intake = startIntake({
     escalations,
     store,
-    tracked: { trackedIssue: (id) => tracked.get(id), trackedIssueIds: () => [...tracked.keys()] },
+    tracked: { trackedIssue: (id) => tracked.get(id), trackedIssueIndex: () => new Map(tracked) },
     blueprints: loader,
     current: () => current,
     actors: host.host,

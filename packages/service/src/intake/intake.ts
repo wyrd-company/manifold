@@ -2,7 +2,7 @@
 // relationships:
 //   implements: intake
 // ---
-import type { GitHubIssue } from "../github-source/index.ts";
+import type { GitHubIssue, TrackedIssueIndex } from "../github-source/index.ts";
 import { ActorStartError } from "../actor-host/index.ts";
 import { parseBlueprintVersionKey } from "@wyrd-company/manifold-shared";
 import { IntakeError } from "./types.ts";
@@ -279,10 +279,11 @@ export function startIntake(options: IntakeOptions): Intake {
           if (wakeRequested && !stopped) wake();
         });
   }
-  function checkRecords() {
+  function checkRecords(index?: TrackedIssueIndex) {
     const basis = options.current();
     for (const record of rows.unfinished()) {
-      const issue = options.tracked.trackedIssue(record.issueNodeId);
+      index ??= options.tracked.trackedIssueIndex();
+      const issue = index.get(record.issueNodeId);
       if (!issue) withdraw(record.issueNodeId);
       else if (
         record.status === "failed" &&
@@ -294,7 +295,8 @@ export function startIntake(options: IntakeOptions): Intake {
   }
   function reconcile() {
     const basis = options.current();
-    for (const id of options.tracked.trackedIssueIds()) {
+    const index = options.tracked.trackedIssueIndex();
+    for (const id of index.keys()) {
       const record = rows.get(id);
       if (
         !record ||
@@ -304,7 +306,7 @@ export function startIntake(options: IntakeOptions): Intake {
         queued.add(id);
     }
     for (const id of rows.pending()) queued.add(id);
-    checkRecords();
+    checkRecords(index);
     wake();
   }
   reconcile();

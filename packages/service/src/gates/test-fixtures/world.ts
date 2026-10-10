@@ -153,7 +153,7 @@ export async function world(
       }),
     },
     lintTokens: () => ({ gates: [], configurations: 0, configurationKey: () => "" }),
-    trackedIssue: () => undefined,
+    trackedIssueIndex: () => new Map(),
     escalations,
     clock: { now: () => 100 },
     seed: () => 7,

@@ -16,6 +16,7 @@ export type {
   GatePortfolio,
   GateTokenLint,
   GateTrackedIssue,
+  GateTrackedIssueIndex,
   GateEscalations,
   GateStrandedEscalation,
   GateEvaluationResult,

@@ -21,7 +21,7 @@ if (step === "snapshot") {
     escalations: s.escalations,
     tracked: {
       trackedIssue: (id) => s.tracked.get(id),
-      trackedIssueIds: () => [...s.tracked.keys()],
+      trackedIssueIndex: () => new Map(s.tracked),
     },
     blueprints: s.loader,
     current: s.current,

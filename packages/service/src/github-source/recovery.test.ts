@@ -1069,7 +1069,7 @@ test("mirror notifications rerun gate critical paths on a transitive close, trac
       current: () => ({ declaration: { ledger: { items: [{ id: "left" }], allocations: [] } } }),
     },
     lintTokens: () => ({ gates: [], configurations: 0, configurationKey: () => "" }),
-    trackedIssue: s.source.trackedIssue,
+    trackedIssueIndex: s.source.trackedIssueIndex,
     escalations: {
       raise: () => {
         throw new Error("No traps in this fixture");

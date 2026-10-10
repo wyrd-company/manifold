@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   memoryRevision,
@@ -27,6 +27,9 @@ import { createDecisionModels } from "../decision-models.ts";
 import { startIntake } from "./index.ts";
 import type { IntakeOptions } from "./index.ts";
 import { setup, files, issue, first, second, portfolio } from "./test-fixtures/fixture.ts";
+import { trackedMirror } from "../github-source/test-fixtures/tracked-mirror.ts";
+import { records } from "./records.ts";
+import { issueDigest } from "./inputs.ts";
 const cleanup: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
@@ -431,7 +434,7 @@ it("preserves the recorded version and item through input-invalid and unavailabl
     escalations: s.escalations,
     tracked: {
       trackedIssue: (id: string) => s.tracked.get(id),
-      trackedIssueIds: () => [...s.tracked.keys()],
+      trackedIssueIndex: () => new Map(s.tracked),
     },
     current: s.current,
     actors: s.host.host,
@@ -715,7 +718,7 @@ it("reconcile at startup takes an already tracked population", async () => {
     escalations: s.escalations,
     tracked: {
       trackedIssue: (id) => s.tracked.get(id),
-      trackedIssueIds: () => [...s.tracked.keys()],
+      trackedIssueIndex: () => new Map(s.tracked),
     },
     blueprints: s.loader,
     current: s.current,
@@ -746,7 +749,7 @@ it("checks again for an existing snapshot after the recorded version awaits", as
     escalations: s.escalations,
     tracked: {
       trackedIssue: (id) => s.tracked.get(id),
-      trackedIssueIds: () => [...s.tracked.keys()],
+      trackedIssueIndex: () => new Map(s.tracked),
     },
     current: s.current,
     actors: s.host.host,
@@ -809,7 +812,7 @@ it("uses an existing snapshot without reading an unavailable recorded version", 
     escalations: s.escalations,
     tracked: {
       trackedIssue: (id) => s.tracked.get(id),
-      trackedIssueIds: () => [...s.tracked.keys()],
+      trackedIssueIndex: () => new Map(s.tracked),
     },
     current: s.current,
     actors: s.host.host,
@@ -932,4 +935,121 @@ it("records identity errors and host ActorStartError as input-invalid", async ()
       },
     },
   });
+});
+
+it.each([10, 1000])(
+  "record checks and reconciles share one mirror read with %i unfinished records",
+  async (size) => {
+    const s = await fixture(files("false"));
+    s.intake.discovered(["I1"]);
+    await s.intake.idle();
+    const template = s.intake.record("I1")!;
+    await s.intake.stop();
+    const { mirror, bound } = trackedMirror(s.store, size);
+    const index = new Map(mirror.trackedIssues(bound).map((t) => [t.issue.nodeId, t]));
+    const rows = records(s.store);
+    for (const [id, tracked] of index)
+      rows.decide({
+        ...template,
+        issueNodeId: id,
+        actorId: `task:${id}`,
+        issueDigest: issueDigest(tracked),
+        ...(Number(id.slice(7)) % 5 === 0
+          ? {
+              status: "recorded",
+              failure: null,
+              blueprintPath: "blueprints/absent.yml",
+              portfolioItem: "beta",
+              blueprintVersion: first + ":blueprints/absent.yml",
+            }
+          : {}),
+      });
+    const tracked = {
+      trackedIssue: (id: string) => mirror.trackedIssue(id, bound),
+      trackedIssueIndex: () => mirror.trackedIssueIndex(bound),
+    };
+    const withdrawals: string[] = [];
+    const intake = startIntake({
+      store: s.store,
+      tracked,
+      current: s.current,
+      blueprints: s.loader,
+      actors: s.host.host,
+      escalations: {
+        raise: s.escalations.raise,
+        withdraw: (q) => {
+          withdrawals.push(String(q.subject["issue"]));
+          s.escalations.withdraw(q);
+        },
+      },
+    });
+    cleanup.push(() => intake.stop());
+    await intake.idle();
+    const before = mirror.read(),
+      after = mirror.read();
+    const changed = new Set<string>();
+    for (let i = 1; i < size - 1; i++)
+      if (i % 5 !== 0 && i % 2 === 0) {
+        changed.add(`parcel-${i}`);
+        const row = after.issues.get(`parcel-${i}`)!;
+        row.issue = { ...row.issue, title: "Changed parcel" };
+      }
+    after.items.get(`parcel-${size - 1}`)!.present = false;
+    mirror.write(before, after);
+    withdrawals.length = 0;
+    const prepare = vi.spyOn(s.store.connection.database, "prepare");
+    intake.mirrorChanged();
+    expect(prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
+      1,
+    );
+    expect(withdrawals).toContain(`parcel-${size - 1}`);
+    prepare.mockRestore();
+    await intake.idle();
+    for (let i = 0; i < size; i++)
+      expect(intake.record(`parcel-${i}`)?.attempts).toBe(changed.has(`parcel-${i}`) ? 2 : 1);
+    const reconcile = vi.spyOn(s.store.connection.database, "prepare");
+    intake.revisionLoaded();
+    expect(
+      reconcile.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue"),
+    ).toHaveLength(1);
+    reconcile.mockRestore();
+    await intake.idle();
+    const latest = mirror.read();
+    const row = latest.issues.get("parcel-1")!;
+    row.issue = { ...row.issue, title: "Next check" };
+    mirror.write(after, latest);
+    intake.mirrorChanged();
+    await intake.idle();
+    expect(intake.record("parcel-1")?.attempts).toBe(2);
+    expect(intake.record(`parcel-${size - 1}`)).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      issueDigest: issueDigest(index.get(`parcel-${size - 1}`)!),
+    });
+  },
+  60000,
+);
+
+it("a record check with no unfinished records does not read the mirror", async () => {
+  const s = await fixture();
+  await s.intake.stop();
+  const { mirror, bound } = trackedMirror(s.store, 10);
+  const intake = startIntake({
+    store: s.store,
+    current: () => undefined,
+    blueprints: s.loader,
+    actors: s.host.host,
+    escalations: s.escalations,
+    tracked: {
+      trackedIssue: (id) => mirror.trackedIssue(id, bound),
+      trackedIssueIndex: () => mirror.trackedIssueIndex(bound),
+    },
+  });
+  cleanup.push(() => intake.stop());
+  const prepare = vi.spyOn(s.store.connection.database, "prepare");
+  intake.mirrorChanged();
+  expect(prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
+    0,
+  );
+  prepare.mockRestore();
 });

@@ -144,12 +144,14 @@ test.each([10, 1000])("all tracked issues share one mirror read over %i issues",
       },
     });
     const prepare = vi.spyOn(store.connection.database, "prepare");
-    const tracked = source.trackedIssues();
+    const index = source.trackedIssueIndex();
+    const tracked = [...index.values()];
     for (const table of ["issue", "project", "item", "field_value", "dependency", "sub_issue"])
       expect(
         prepare.mock.calls.filter(([sql]) => sql === `SELECT * FROM github_${table}`),
       ).toHaveLength(1);
     prepare.mockRestore();
+    expect(source.trackedIssues()).toEqual(tracked);
     const ids = Array.from({ length: size }, (_, i) => `parcel-${i}`).sort();
     expect([...trackedIssueIndex(after, bound).keys()]).toEqual(ids);
     expect(tracked.map((t) => t.issue.nodeId)).toEqual(ids);
@@ -179,6 +181,8 @@ test.each([10, 1000])("all tracked issues share one mirror read over %i issues",
       ids.filter((id) => id !== "parcel-0"),
     );
     expect(mirror.trackedIssue("parcel-0", bound)).toBeUndefined();
+    expect(index.has("parcel-0")).toBe(true);
+    expect(source.trackedIssueIndex().has("parcel-0")).toBe(false);
   } finally {
     await source?.stop();
     router.stop();

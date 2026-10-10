@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServiceEscalationRequest } from "../escalations/index.ts";
-import { afterEach, expect, it } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { blueprintVersionKey } from "@wyrd-company/manifold-shared";
 import type { BlueprintDocument } from "@wyrd-company/manifold-shared";
 import { openStore } from "../store/index.ts";
@@ -15,6 +15,8 @@ import type { ComparatorLoad } from "../comparator-sandbox/index.ts";
 import { createComparatorSandbox } from "../comparator-sandbox/index.ts";
 import { createGates, gatesMigrationSteps } from "./index.ts";
 import type { GateSave, GateTokenLint, GatesOptions } from "./index.ts";
+
+import { trackedMirror } from "../github-source/test-fixtures/tracked-mirror.ts";
 
 const cleanup: (() => void)[] = [];
 afterEach(() => {
@@ -143,7 +145,7 @@ async function fixture(source = oldest, override: Partial<GatesOptions> = {}, do
       }),
     },
     lintTokens: () => lint,
-    trackedIssue: () => undefined,
+    trackedIssueIndex: () => new Map(),
     escalations: {
       raise: (e) => {
         raised.push(e);
@@ -557,7 +559,7 @@ it("updates critical paths without a waiting actor save and terminates dependenc
     ],
     ["parcel-3", { issue: { nodeId: "parcel-3", state: "open" }, blocking: [] }],
   ]);
-  const f = await fixture(`export default i=>null`, { trackedIssue: (id) => graph.get(id) });
+  const f = await fixture(`export default i=>null`, { trackedIssueIndex: () => new Map(graph) });
   await f.start();
   const length = () =>
     JSON.parse(String(f.rows("gates_evaluation").at(-1)?.["input"])).population[0].criticalPath;
@@ -1113,4 +1115,112 @@ it("reads a token holder before and after return, and no holder for an unknown t
   f.save("parcel-00", "shipped", [], "entry-1", "done");
   expect(f.rows("gates_token")[0]!["returned_at"]).not.toBeNull();
   expect(f.gates.tokenHolder(token)).toBe("parcel-00");
+});
+
+it.each([10, 1000])(
+  "one mirror read supplies every evaluation of a grant round with %i issues",
+  async (size) => {
+    const f = await fixture(
+      `export default i => i.holders.length >= 5 ? null : {task: [...i.population].sort((a,b) => b.criticalPath-a.criticalPath || a.id.localeCompare(b.id))[0].id};`,
+      {},
+      document("exit", false),
+    );
+    const { mirror, bound } = trackedMirror(f.store, size);
+    f.options.trackedIssueIndex = () => mirror.trackedIssueIndex(bound);
+    const before = mirror.read(),
+      after = mirror.read();
+    for (const [from, to] of [
+      ["parcel-1", "parcel-0"],
+      ["parcel-2", "parcel-1"],
+      ["parcel-4", "parcel-3"],
+      ["parcel-3", "parcel-4"],
+      ["parcel-9", "parcel-0"],
+    ])
+      after.dependencies.set(`${from}:${to}`, { from: from!, to: to!, present: true, revision: 0 });
+    after.items.get("parcel-9")!.present = false;
+    mirror.write(before, after);
+    for (let i = 0; i < size + 2; i++)
+      f.store.saveSnapshot({
+        actorId: `member-${String(i).padStart(4, "0")}`,
+        machine: f.blueprint.key,
+        snapshot: {
+          ...snapshot(),
+          context: {
+            manifold: {
+              portfolioItem: "left",
+              ...(i === size ? {} : { issue: i === size + 1 ? "unknown" : `parcel-${i}` }),
+            },
+          },
+        },
+      });
+    // Existing fixture members name parcel-1; move them out of the population.
+    for (let i = 0; i < 20; i++) f.save(`parcel-${String(i).padStart(2, "0")}`, "working");
+    const prepare = vi.spyOn(f.store.connection.database, "prepare");
+    await f.start();
+    expect(prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
+      1,
+    );
+    prepare.mockRestore();
+    const inputs = f.rows("gates_evaluation").map(
+      (row) =>
+        JSON.parse(String(row["input"])) as {
+          population: { id: string; criticalPath: number }[];
+        },
+    );
+    expect(inputs).toHaveLength(6);
+    for (const input of inputs.slice(1))
+      for (const member of input.population)
+        expect(member.criticalPath).toBe(
+          inputs[0]!.population.find((m) => m.id === member.id)!.criticalPath,
+        );
+    const lengths = new Map(inputs[0]!.population.map((m) => [m.id, m.criticalPath]));
+    for (let i = 0; i < size + 2; i++)
+      expect(lengths.get(`member-${String(i).padStart(4, "0")}`)).toBe(
+        i === 0 ? 3 : [1, 3, 4].includes(i) ? 2 : 1,
+      );
+    expect(f.scheduled).toEqual([
+      "member-0000",
+      "member-0001",
+      "member-0003",
+      "member-0004",
+      "member-0002",
+    ]);
+    const changed = mirror.read();
+    const row = changed.issues.get("parcel-2")!;
+    row.issue = { ...row.issue, state: "closed" };
+    mirror.write(after, changed);
+    f.store.saveSnapshot({ actorId: "later", machine: f.blueprint.key, snapshot: snapshot() });
+    // The comparator keeps the next population waiting once five tokens are held.
+    f.gates.inputChanged();
+    const next = vi.spyOn(f.store.connection.database, "prepare");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const latest = JSON.parse(String(f.rows("gates_evaluation").at(-1)?.["input"])) as {
+      population: { id: string; criticalPath: number }[];
+    };
+    expect(latest.population.find((m) => m.id === "later")?.criticalPath).toBe(1);
+    expect(next.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(1);
+    next.mockRestore();
+  },
+);
+
+it("a grant round with no issue identities does not read the mirror", async () => {
+  const f = await fixture("export default i=>null");
+  const { mirror, bound } = trackedMirror(f.store, 10);
+  f.options.trackedIssueIndex = () => mirror.trackedIssueIndex(bound);
+  for (let i = 0; i < 20; i++)
+    f.store.saveSnapshot({
+      actorId: `parcel-${String(i).padStart(2, "0")}`,
+      machine: f.blueprint.key,
+      snapshot: { ...snapshot(), context: { manifold: { portfolioItem: "left" } } },
+    });
+  const prepare = vi.spyOn(f.store.connection.database, "prepare");
+  await f.start();
+  expect(prepare.mock.calls.filter(([sql]) => sql === "SELECT * FROM github_issue")).toHaveLength(
+    0,
+  );
+  prepare.mockRestore();
+  const input = JSON.parse(String(f.rows("gates_evaluation")[0]?.["input"])) as {
+    population: { criticalPath: number }[];
+  };
+  expect(input.population.map((m) => m.criticalPath)).toEqual(Array(20).fill(1));
 });

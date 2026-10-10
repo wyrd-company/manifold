@@ -9,7 +9,6 @@ import type { GateVersion, GatesOptions, GateInput } from "./types.ts";
 import type { GateTables } from "./tables.ts";
 import { record, statePaths } from "./declaration.ts";
 import { canonicalJson, compareText } from "./values.ts";
-import { criticalPaths } from "./critical-path.ts";
 export function itemOf(snapshot: PersistedSnapshot | undefined): string {
   const item = record(record(snapshot?.["context"])["manifold"])["portfolioItem"];
   return typeof item === "string" ? item : "other";
@@ -30,7 +29,7 @@ export function gateInput(
   views: ReadonlyMap<string, GateVersion>,
   gate: string,
   time: number,
-  critical = criticalPaths(options.trackedIssue),
+  critical: (id: string | undefined) => number,
 ): GateInput {
   const statePath = gate.slice(gate.lastIndexOf("#") + 1),
     holders = tables.holders(gate),

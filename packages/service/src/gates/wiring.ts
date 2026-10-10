@@ -5,7 +5,7 @@
 import { lintTokens, manifoldImplementationNames } from "@wyrd-company/manifold-shared";
 import { createComparatorSandbox } from "../comparator-sandbox/index.ts";
 import { createGates } from "./index.ts";
-import { createMirror } from "../github-source/mirror.ts";
+import { createMirror, trackedIssueIndex } from "../github-source/mirror.ts";
 import { wiringPart } from "../service/wiring.ts";
 import type { Service } from "../service/types.ts";
 import type { Gates } from "./index.ts";
@@ -51,15 +51,17 @@ export const gates = wiringPart({
               names: manifoldImplementationNames,
               configurationBound: configuration.blueprintLint.configurationBound,
             }),
-          trackedIssue: (nodeId) =>
-            githubMirror.trackedIssue(
-              nodeId,
+          trackedIssueIndex: () => {
+            const state = githubMirror.read();
+            return trackedIssueIndex(
+              state,
               new Map(
-                [...githubMirror.read().projects.values()]
+                [...state.projects.values()]
                   .filter((row) => portfolio.githubProject(row.project))
                   .map((row) => [row.project.nodeId, row.project]),
               ),
-            ),
+            );
+          },
           onError: (error) => log({ level: "error", event: "gate-error", message: error.message }),
         });
     context.onStop("timers", () => gates.stop());

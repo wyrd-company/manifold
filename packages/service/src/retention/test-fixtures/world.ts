@@ -54,7 +54,7 @@ export async function world(path = ":memory:") {
       read: async () => "export default () => null;",
     }),
     lintTokens: () => ({ gates: [], configurations: 1, configurationKey: () => "waiting" }),
-    trackedIssue: () => undefined,
+    trackedIssueIndex: () => new Map(),
     portfolio: {
       ledger,
       current: () => ({

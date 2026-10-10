@@ -16,6 +16,7 @@ import type {
   GateDeclaration,
   GateEvaluationResult,
   GateInput,
+  GateTrackedIssueIndex,
 } from "./types.ts";
 import { gateTables } from "./tables.ts";
 import { declarations } from "./declaration.ts";
@@ -160,8 +161,12 @@ export function createGates(options: GatesOptions): Gates {
     const loaded = comparators.get(gate);
     if (!loaded) return;
     options.store.connection.transaction(() => bootstrap(gate));
+    let index: GateTrackedIssueIndex | undefined;
     const at = now(),
-      critical = criticalPaths(options.trackedIssue);
+      critical = criticalPaths((id) => {
+        index ??= options.trackedIssueIndex();
+        return index.get(id);
+      });
     // A probe or schedule callback can stop the module during a grant round.
     // eslint-disable-next-line no-unmodified-loop-condition
     while (!stopped) {

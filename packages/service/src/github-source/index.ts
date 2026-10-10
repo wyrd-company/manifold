@@ -18,6 +18,7 @@ export type {
   GitHubIssue,
   GitHubProject,
   TrackedIssue,
+  TrackedIssueIndex,
   TrackedItem,
   GitHubFieldValue,
   ProjectFields,

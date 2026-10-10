@@ -67,6 +67,7 @@ export interface GitHubSource {
   trackedIssue(nodeId: string): TrackedIssue | undefined;
   trackedIssueIds(): readonly string[];
   trackedIssues(): readonly TrackedIssue[];
+  trackedIssueIndex(): TrackedIssueIndex;
   stop(): Promise<void>;
 }
 export interface ProjectFields {
@@ -243,3 +244,6 @@ export class GitHubWriteError extends Error {
     this.status = status;
   }
 }
+
+/** The tracked issues of one mirror read, keyed by node id. */
+export interface TrackedIssueIndex extends ReadonlyMap<string, TrackedIssue> {}

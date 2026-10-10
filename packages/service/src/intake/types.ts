@@ -4,7 +4,7 @@
 // ---
 import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
 import type { LoadedBlueprint, RevisionLoad, VersionLoad } from "../blueprint-loader/index.ts";
-import type { GitHubProject, TrackedIssue } from "../github-source/index.ts";
+import type { GitHubProject, TrackedIssue, TrackedIssueIndex } from "../github-source/index.ts";
 import type { PortfolioInForce } from "../portfolio/index.ts";
 import type { JsonValue, Store } from "../store/index.ts";
 import type { Escalations } from "../escalations/index.ts";
@@ -35,7 +35,7 @@ export interface IntakeOptions {
 
 export interface TrackedIssues {
   trackedIssue(nodeId: string): TrackedIssue | undefined;
-  trackedIssueIds(): readonly string[];
+  trackedIssueIndex(): TrackedIssueIndex;
 }
 
 export interface IntakeRevision {

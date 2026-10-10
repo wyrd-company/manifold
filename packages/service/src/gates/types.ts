@@ -44,6 +44,7 @@ export interface GateTrackedIssue {
   readonly issue: { readonly nodeId: string; readonly state: "open" | "closed" };
   readonly blocking: readonly { readonly nodeId: string; readonly state: "open" | "closed" }[];
 }
+export interface GateTrackedIssueIndex extends ReadonlyMap<string, GateTrackedIssue> {}
 export type GateEscalations = Pick<Escalations, "raise" | "withdraw">;
 export type GateStrandedEscalation = Pick<Escalation, "raiser" | "answer">;
 export interface GatesOptions {
@@ -53,7 +54,7 @@ export interface GatesOptions {
   readonly sandbox: ComparatorSandbox;
   readonly portfolio: GatePortfolio;
   lintTokens(document: BlueprintDocument): GateTokenLint;
-  trackedIssue(nodeId: string): GateTrackedIssue | undefined;
+  trackedIssueIndex(): GateTrackedIssueIndex;
   readonly escalations: GateEscalations;
   readonly clock?: { now(): number };
   readonly seed?: () => number;

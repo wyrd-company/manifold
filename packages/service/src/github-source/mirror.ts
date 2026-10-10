@@ -8,6 +8,7 @@ import type {
   GitHubProject,
   GitHubIssue,
   TrackedIssue,
+  TrackedIssueIndex,
   TrackedItem,
   ObservedField,
   ProjectField,
@@ -30,7 +31,10 @@ function append<T>(groups: Map<string, T[]>, key: string, value: T) {
   if (group) group.push(value);
   else groups.set(key, [value]);
 }
-export function trackedIssueIndex(state: MirrorState, bound: ReadonlyMap<string, GitHubProject>) {
+export function trackedIssueIndex(
+  state: MirrorState,
+  bound: ReadonlyMap<string, GitHubProject>,
+): TrackedIssueIndex {
   const items = new Map<string, TrackedItem[]>();
   const projects = new Map<string, Map<string, GitHubProject>>();
   const fields = new Map<string, [string, ObservedField["value"]][]>();
@@ -411,6 +415,9 @@ export function createMirror(store: Store, now: () => number) {
         .map((row) => (row.from === id ? row.to : row.from));
       for (const neighbor of new Set(neighbors))
         if (isTracked(state, bound, neighbor)) this.enqueue("issue", neighbor);
+    },
+    trackedIssueIndex(bound: ReadonlyMap<string, GitHubProject>): TrackedIssueIndex {
+      return trackedIssueIndex(read(), bound);
     },
     trackedIssueIds(bound: ReadonlyMap<string, GitHubProject>) {
       return [...trackedIssueIndex(read(), bound).keys()];
