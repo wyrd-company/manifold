@@ -46,8 +46,9 @@ description: >-
   Created projects. `t3_created_project` holds one row per T3code project
   that a `t3code-project-create` invoke created on an environment, keyed by
   environment and project id, and deleted with its environment, or by
-  retention once its presence is `removed`, no `t3_thread` row names its
-  project, and its creating actor's history is pruned, as `retention`
+  retention once its environment is in the service configuration, its
+  presence is `removed`, no `t3_thread` row names its project, and its
+  creating actor's history is pruned, as `retention`
   states.
   `actor_id` is the invoking actor and `item` its portfolio item at the
   invoke. The row is written once the server has accepted the

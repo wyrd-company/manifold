@@ -582,17 +582,20 @@ proposed-design:
     answers `503` with `environment-unavailable`. An accepted, raised, or
     read call answers `200`.
   retention: >-
-    The index exports `pruneQuestion(connection, escalationId)`,
+    The index exports `pruneAnswer(connection, escalationId)`,
     `prunableMessages(connection, { readBefore, after, limit })`, and
     `pruneMessages(connection, sequences)` for retention, as `retention`
-    states. `pruneQuestion` answers `kept` while the escalation's answer
-    row is `pending` or has no `placed_at`, so an answer still to send or
-    place keeps its question, which `placed` reads, and its escalation;
-    otherwise it deletes the question and the answer that name the
-    escalation in the caller's transaction, which retention commits with
-    the escalation's removal. A question is removed only with its closed
-    escalation, so an `escalate` call repeated in its turn finds its
-    question for as long as the escalation it returns exists.
+    states. `pruneAnswer` answers `kept` while the escalation's answer row
+    is `pending` or has no `placed_at`, so an answer still to send or place
+    keeps itself and its escalation; otherwise it deletes the answer row in
+    the caller's transaction, which retention commits with the
+    escalation's removal. Question rows are never deleted: `identify`
+    matches a call against the thread's activity whatever turn it was, so
+    an old `escalate` call can identify its turn after its asking actor
+    ended and another actor follows the thread, and the question row keyed
+    by that call is what answers it as a replay instead of raising a new
+    question for the later actor. `placed` reads the question of an
+    unplaced answer, which is never removed.
     `prunableMessages` lists, in sequence order after `after`, the read
     messages with a `read_at` before `readBefore`, each with
     `sender_actor_id` and `delivered_to`; `pruneMessages` deletes those of

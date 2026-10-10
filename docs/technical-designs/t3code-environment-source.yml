@@ -534,13 +534,15 @@ proposed-design:
     intake reads a thread's project and title for any call of the thread,
     however late, and a thread's cursor and stored state are where a
     returning thread resumes. The index exports
-    `retirableCreatedProjects(connection, { after, limit })` and
-    `retireCreatedProject(connection, key)` for retention, as `retention`
-    states. `retirableCreatedProjects` lists, in key order after `after`,
-    each created project whose presence is `removed` and whose project no
+    `retirableCreatedProjects(connection, { environments, after, limit })`
+    and `retireCreatedProject(connection, key, { environments })` for
+    retention, as `retention` states. `environments` is the environment
+    names the service configuration declares. `retirableCreatedProjects`
+    lists, in key order after `after`, each created project of one of
+    those environments whose presence is `removed` and whose project no
     thread row of any status names, with its creating actor.
     `retireCreatedProject` deletes the record in one statement that
-    repeats both checks, or answers `kept`. No call can reach a retired
+    repeats all three checks, or answers `kept`. No call can reach a retired
     project, since a call reaches a project only through a thread row. A
     record that stays `unseen`, and a record of an environment no longer
     configured, is never retirable and stays.

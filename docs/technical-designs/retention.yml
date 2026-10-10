@@ -79,8 +79,8 @@ design-challenges:
     An actor's consumed inbox rows, its event links and commands, and the
     mark that they are gone must leave together, or a crash leaves an actor
     whose history holds links to events that are gone, or events with no
-    link. An escalation, its notifications, and the agent question and
-    answer that name it must leave together, or a crash leaves an answer
+    link. An escalation, its notifications, and the agent answer that
+    names it must leave together, or a crash leaves an answer
     that names an escalation that is gone.
   replay: >-
     A row that only marks work as done is what turns a repeat of that work
@@ -106,7 +106,7 @@ proposed-design:
     from their acceptance; the GitHub source's delivery and redelivery
     records, under the GitHub source's source event window; the gate
     evaluations, counted from their evaluation; closed escalations, with
-    their notifications and agent questions and answers, counted from
+    their notifications and agent answers, counted from
     their close under the history window; read agent messages whose sender
     and reader actors are both pruned; card move records whose actor is
     pruned; and created project records whose project the server no
@@ -135,6 +135,8 @@ proposed-design:
       readonly escalations: Pick<Escalations, "list">;
       readonly configuration: RetentionConfiguration;
       readonly log: (entry: ServiceLogEntry) => void;
+      /** The environment names the service configuration declares. */
+      readonly environments: readonly string[];
       /** Defaults to Date.now, setTimeout, and setImmediate. */
       readonly clock?: RetentionClock;
       /** Called after each unit's transaction commits. */
@@ -181,7 +183,6 @@ proposed-design:
       readonly gateEvaluations: number;
       readonly escalations: number;
       readonly notifications: number;
-      readonly questions: number;
       readonly answers: number;
       readonly messages: number;
       readonly cardMoves: number;
@@ -221,7 +222,7 @@ proposed-design:
     }
 
     // agent-tools
-    pruneQuestion(connection, escalationId: string): { questions: number; answers: number } | "kept";
+    pruneAnswer(connection, escalationId: string): { answers: number } | "kept";
     prunableMessages(
       connection,
       { readBefore: number, after?: number, limit: number },
@@ -236,9 +237,13 @@ proposed-design:
     // t3code-source
     retirableCreatedProjects(
       connection,
-      { after?: CreatedProjectKey, limit: number },
+      { environments: readonly string[], after?: CreatedProjectKey, limit: number },
     ): RetirableCreatedProject[];
-    retireCreatedProject(connection, key: CreatedProjectKey): "retired" | "kept";
+    retireCreatedProject(
+      connection,
+      key: CreatedProjectKey,
+      { environments: readonly string[] },
+    ): "retired" | "kept";
     interface CreatedProjectKey { readonly environment: string; readonly projectId: string }
     interface RetirableCreatedProject extends CreatedProjectKey {
       /** The actor that created the project. */
@@ -276,9 +281,10 @@ proposed-design:
     | `github_redelivery` | GitHub source | failed deliveries the source asked for again | removed past the window once its hook's redelivery scan has passed it | `sourceEventDays.github` |
     | `gates_evaluation` | gates | grant rounds | removed unless a held token or an open escalation keeps it | `gateEvaluationDays` |
     | `escalation`, `escalation_notification` | escalations | questions to a person | a closed escalation whose notifications are settled, whose actor has ended, and that is not the newest occurrence of a subject naming no actor, is removed with its notifications | `historyDays`, from the close |
-    | `agenttool_question`, `agenttool_answer` | agent tools | agent questions | removed with their escalation, once the answer is settled and placed | `historyDays`, from the close |
+    | `agenttool_answer` | agent tools | answered agent questions | removed with its escalation, once it is settled and placed | `historyDays`, from the close |
+    | `agenttool_question` | agent tools | agent questions | never: its call key is the replay guard of its turn's `escalate` call, which stays identifiable in the thread's activity for the thread's life | none |
     | `agenttool_message` | agent tools | agent messages | a read message is removed once its sender's and its reader's histories are pruned; an unread or undelivered message, never | `historyDays` |
-    | `t3_created_project` | T3 Code environment source | projects actors create | removed once its presence is `removed`, no thread row names its project, and its creating actor's history is pruned; a record whose presence is never `removed` stays | `historyDays` |
+    | `t3_created_project` | T3 Code environment source | projects actors create | removed once its environment is configured, its presence is `removed`, no thread row names its project, and its creating actor's history is pruned; an `unseen` record and a record of an environment not configured stay | `historyDays` |
     | `t3_thread` | T3 Code environment source | threads | never: a late or later call reads its project and title, and its cursor is its replay position | none |
     | `usage_*`, ledger | usage, ledger | calls, windows | never, as `usage-intake` states | none |
     | `gates_token` | gates | grants | never: a reservation and its token's history name it | none |
@@ -299,7 +305,7 @@ proposed-design:
     | Webhook deliveries | the window of the source `github` | `github_delivery.received_at` | the delivery row |
     | Redeliveries | the window of the source `github` | `github_redelivery.requested_at` | the redelivery row |
     | Gate evaluations | `gateEvaluationDays` | `gates_evaluation.evaluated_at` | the evaluation row |
-    | Escalations | `historyDays` | `escalation.closed_at` | the escalation, its notification rows, and the agent question and answer that name it |
+    | Escalations | `historyDays` | `escalation.closed_at` | the escalation, its notification rows, and the agent answer that names it |
     | Messages | `historyDays` | `agenttool_message.read_at`, and both actors' histories pruned | the message row |
     | Card moves | `historyDays`, through the moving actor's history | the actor's history pruned | every card move row of the actor |
     | Created projects | `historyDays`, through the creating actor's history | the creating actor's history pruned | the created project record |
@@ -349,9 +355,10 @@ proposed-design:
     | An ended actor's usage by visit | the visits its postings name, with their entry times | visits are never deleted |
     | An outstanding token | its token row and the evaluation that granted it | token rows are never deleted; an evaluation an unreturned token names is not deleted |
     | An open reservation | the ledger's hold, keyed by its token id | the ledger and token rows are never deleted |
-    | An open escalation | the actor or the gate its subject names; its own row, notifications, question, and answer | the actors and gates the prune run keeps; only closed escalations are pruned |
+    | An open escalation | the actor or the gate its subject names; its own row, notifications, and answer | the actors and gates the prune run keeps; only closed escalations are pruned |
     | A notification still to send | its escalation | an escalation with a pending notification is not pruned |
-    | An answer still to send or place | its question row, its escalation's answer, and its own row | `pruneQuestion` answers `kept` for an answer that is pending or not placed, and the escalation stays with it |
+    | An answer still to send or place | its question row, its escalation's answer, and its own row | question rows are never deleted; `pruneAnswer` answers `kept` for an answer that is pending or not placed, and the escalation stays with it |
+    | An old `escalate` call that still identifies its turn, for any later actor that follows the thread | its question row, keyed by the call | question rows are never deleted |
     | A callback that can start again, or a service escalation's handling | the escalation row it reads | a blueprint escalation, or a service escalation naming an actor, is pruned only once that actor has ended; an answered service escalation is pruned only once its handling is recorded |
     | The next occurrence of a service escalation | the newest occurrence of its kind and subject | the newest occurrence of a subject naming no actor is never pruned |
     | A message not yet taken or read | its message row | only read messages are pruned |
@@ -414,7 +421,7 @@ proposed-design:
     An escalation is a record of what an ended actor did, or of a cause
     the service raised, so it follows the history window, counted from its
     close. The unit is one closed escalation with its
-    notifications and the agent question and answer that name it. The
+    notifications and the agent answer that names it. The
     prune run reads candidates with `prunableEscalations(connection, {
     closedBefore, after, limit: 100 })`, in escalation id order. A
     candidate is an escalation that is `answered` or `withdrawn`, closed
@@ -424,17 +431,27 @@ proposed-design:
     the protections keep its actor, when it names an actor whose snapshot
     is not ended, `done` or `stopped`, or when it names no actor and is
     the newest occurrence of its kind and subject. Otherwise it runs, in
-    one `store.connection.transaction`, `pruneQuestion(connection,
+    one `store.connection.transaction`, `pruneAnswer(connection,
     escalationId)` and, when it does not answer `kept`,
     `pruneEscalation(connection, escalationId)`, which deletes the
-    escalation's notification rows and then its row. `pruneQuestion`
+    escalation's notification rows and then its row. `pruneAnswer`
     answers `kept` while the escalation's answer row is `pending` or has
-    no `placed_at`, and otherwise deletes the question row and the answer
-    row that name the escalation, either of which may be absent.
-    `pruneEscalation` answers `kept`, and deletes nothing, when the row is
-    open or has a pending notification; the prune run then throws inside
-    the transaction so the question delete rolls back, and counts nothing
-    for the unit.
+    no `placed_at`, and otherwise deletes the answer row, which may be
+    absent. `pruneEscalation` answers `kept`, and deletes nothing, when the
+    row is open or has a pending notification; the prune run then throws
+    inside the transaction so the answer delete rolls back, and counts
+    nothing for the unit.
+
+
+    The agent question row stays. Its call key, the environment, its
+    identity, the thread, and the turn, is what makes an `escalate` call
+    repeated for that turn a replay, and an old call keeps identifying its
+    turn for as long as the thread's activity holds it, whichever actor
+    follows the thread then. A call that finds its question answers it as a
+    replay naming its escalation, raises nothing, and notifies no one, and
+    the escalations API answers that escalation `not-found` once it is
+    removed. A question row is a few short keys per question an agent
+    asked, so it is kept for the life of the store, as thread rows are.
 
 
     A subject that names an actor cannot be raised again once its actor
@@ -494,20 +511,23 @@ proposed-design:
     100 at a time, keeps each whose creating actor's snapshot has no
     `prunedAt`, since the actor's `t3code-project-create` command is the
     other record of the creation, and calls `retireCreatedProject(
-    connection, key)` for the rest, each in its own transaction.
-    `retireCreatedProject` deletes the record in one statement whose
-    condition repeats the presence and thread checks, and answers `kept`
-    when it deletes nothing. A thread row written between the read and the
-    delete keeps the record, since the delete reads the thread rows itself.
+    connection, key, { environments })` for the rest, each in its own
+    transaction. Both functions take the environment names the service
+    configuration declares, which the `retention` part passes from the
+    configuration's `environments` section, and neither lists nor deletes
+    a record of any other environment. `retireCreatedProject` deletes the
+    record in one statement whose condition repeats the environment,
+    presence, and thread checks, and answers `kept` when it deletes
+    nothing, so a thread row written after a record was listed keeps it.
 
 
     Two records never become retirable, and retention keeps them for the
     life of the store: a record whose project was deleted before the shell
     first listed it stays `unseen`, since the source cannot tell it from a
     project not yet listed; and a record of an environment no longer in
-    the service configuration keeps its last presence, since the source no
-    longer connects to it and a later configuration under the same name
-    resumes from its rows. Each is one small row per project.
+    the service configuration, whatever its last presence, since the
+    source no longer connects to it, cannot see the project return, and a
+    later configuration under the same name resumes from its rows. Each is one small row per project.
   threads: >-
     Thread rows are never pruned. Usage intake reads a thread's project and
     title for every call of the thread that reaches the service, however
@@ -592,8 +612,9 @@ proposed-design:
     Each mutation keeps its duplicate and restart behaviour. A webhook
     delivery repeated while its row stays is a duplicate, as now; one
     repeated after its row is gone is reconciled and publishes nothing a
-    first delivery did not. An `escalate` call repeated in its turn finds
-    its question, which stays while its escalation does. A blueprint
+    first delivery did not. An `escalate` call repeated for its turn finds
+    its question, which always stays, and raises nothing, whichever actor
+    follows the thread then. A blueprint
     escalation's callback started again after a restart finds its row,
     which stays while its actor runs. A service escalation raised again
     after an earlier occurrence closed takes the next occurrence number
@@ -618,7 +639,8 @@ proposed-design:
   service-wiring: >-
     The `retention` part in `retention/wiring.ts` opens the module from the
     store, `history`, `escalations`, the configuration's `retention`
-    section, and the log, and calls `start`. The owner functions take the
+    section, the names of the configuration's `environments`, and the log,
+    and calls `start`. The owner functions take the
     store's connection, so the part needs no member of the GitHub source,
     the agent tools, or the T3 Code environment source, and no other
     module's wiring part changes. It is listed after the `router` part's
@@ -658,14 +680,16 @@ proposed-design:
     pending `close` notification, one answered service escalation whose
     handling is not recorded, one raised by a running actor, three closed
     occurrences of one gate subject, and an agent question whose answer is
-    sent and not placed beside one whose answer is placed; read, delivered
+    sent and not placed beside one whose answer is placed, asked in a
+    thread an ended actor followed; read, delivered
     and unread, and undelivered messages between pruned, ended, and running
     actors; `sent`, `confirmed`, and `doubtful` card move rows of pruned,
     ended, and running actors on one item and field; and created projects
     that are `removed` with no thread, `removed`
     with an archived thread, `listed`, and `unseen`, with a creating actor
     pruned and not, one under a binding, and one of an environment no
-    longer configured. Behaviours proved, each written red before
+    longer configured that is `removed`, threadless, and has a pruned
+    creator. Behaviours proved, each written red before
     green: a prune run deletes exactly the rows past their windows and
     keeps every protected row; a window of `forever` deletes nothing of
     its kind; an ended actor past its window answers the history with its
@@ -688,11 +712,15 @@ proposed-design:
     and a new failure raises the occurrence after it with a new id; the
     escalation with a pending notification, the unhandled service
     escalation, the running actor's escalation, and the escalation whose
-    answer is not placed stay with their questions and answers, and each
+    answer is not placed stay with their answers, and each
     goes in a prune run after its notification settles, its handling
-    runs, its actor ends, or its answer is placed; an `escalate` call
-    repeated in its turn before the prune run and after it returns the
-    same escalation while the escalation stays; a blueprint escalation's
+    runs, its actor ends, or its answer is placed; every agent question row
+    stays; after the asking actor's escalation is pruned and the service
+    restarts, a later actor follows the same thread, and the old turn's
+    `escalate` call repeated then answers as a replay naming the removed
+    escalation, raises no escalation, writes no notification, and names
+    no actor, while a fresh `escalate` call in a new turn of that thread
+    raises one escalation naming the later actor; a blueprint escalation's
     callback started again after a restart of a running actor sends the
     recorded answer once; a fresh `escalate`, answer, and `send-message`
     after a prune run work and are delivered once; read messages go only
@@ -703,13 +731,15 @@ proposed-design:
     and state, a later change to a pruned actor's option is published with
     `movedBy` `null`, a change to the running actor's option is attributed
     to it, and a fresh move of a new actor is attributed after the prune
-    run; only the `removed` project with no thread and a pruned
-    creator goes, the one under a binding included, and the others stay;
-    a thread row of a `removed` project's id written by the fake clock's
-    `yield` between the read and the delete keeps the record; a late call
+    run; only the `removed` project of a configured environment with no
+    thread and a pruned creator goes, the one under a binding included, and
+    the others stay, the record of the environment no longer configured
+    included though it is `removed`, threadless, and its creator pruned; a
+    late call
     of each kept project's thread that no actor owns, and a late mapping
     onto it, post on the project's usage item, the item's Other when it
-    has one, before and after the prune run; with more than 100 ended actors past the window, so
+    has one, before and after the prune run; with more than 100 ended
+    actors past the window, so
     they take two actor batches, an escalation that the fake clock's
     `yield` raises after the first batch, naming an ended actor past its
     window that a later actor batch would prune and a gate whose
@@ -722,7 +752,13 @@ proposed-design:
     `stop` during a prune run resolves between batches; the first prune
     run runs 5 minutes after `start` and the next 60 minutes after it
     ends, and a failed prune run logs `retention-failed` and arms the
-    next. A fault test, in a child Node process running the service on the
+    next. An owner test of the T3 Code environment source, apart from the
+    prune run tests, lists a `removed` threadless record with
+    `retirableCreatedProjects`, writes a thread of its project through the
+    source's public boundary, then calls `retireCreatedProject` with the
+    listed key and finds `kept` and the record present; the same call for a
+    listed key whose environment is not in `environments` also answers
+    `kept`. A fault test, in a child Node process running the service on the
     populated store file, advances the clock past every cutoff, runs a
     prune run that sends itself `SIGKILL` from the probe after the first
     unit of a kind commits, once for each of `actor-pruned`,

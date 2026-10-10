@@ -35,7 +35,7 @@ description: >-
   history answers `prunedAt`. A running actor's history is never removed.
   The same window covers the other records of what an ended actor did, as
   `retention` states: a closed escalation, with its notifications and the
-  agent question and answer that name it, counted from its close, once
+  agent answer that names it, counted from its close, once
   no notification is pending, the answer is sent and placed, an answered
   service escalation's handling is recorded, and the actor it names has
   ended, keeping the newest occurrence of a service escalation whose

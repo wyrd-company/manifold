@@ -364,7 +364,7 @@ it no longer needs, in days, or `forever`:
 
 - `historyDays`: after an actor ends, its consumed events and its commands,
   and, counted from their close, its closed escalations with their
-  notifications and the agent questions and answers behind them. Past it,
+  notifications and the agent answers behind them. Past it,
   the Actor page shows the actor's summary, end, and timeline of state
   visits, and no sequence; the Task page no longer lists the escalation and
   its answer link answers `404`. An escalation with a notification still to
