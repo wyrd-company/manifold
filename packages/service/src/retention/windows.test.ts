@@ -195,6 +195,14 @@ test("forever keeps populated history, source events, and evaluations", async ()
       historyRows: 0,
       sourceEvents: 0,
       gateEvaluations: 0,
+      deliveries: 0,
+      redeliveries: 0,
+      escalations: 0,
+      notifications: 0,
+      answers: 0,
+      messages: 0,
+      cardMoves: 0,
+      createdProjects: 0,
     });
     expect(w.history.read("parcel")).toEqual(before);
     expect(
@@ -260,7 +268,7 @@ test("bounded source and evaluation batches use one prune run cutoff and keep op
       log: () => {},
     });
     expect(await r.prune()).toMatchObject({ sourceEvents: 1001, gateEvaluations: 1001 });
-    expect(yields).toBe(4);
+    expect(yields).toBe(6);
     expect(w.ledger.actorUsage("holder-1")).toEqual(reserved);
     expect(
       w.store.connection.database

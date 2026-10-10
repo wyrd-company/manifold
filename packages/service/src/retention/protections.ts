@@ -19,3 +19,15 @@ export function protections(escalations: readonly Escalation[]) {
   }
   return { actors, gates };
 }
+
+export function mayPruneEscalation(
+  candidate: import("../escalations/index.ts").PrunableEscalation,
+  snapshot: import("../store/index.ts").StoredSnapshot | undefined,
+  keepActors: ReadonlySet<string>,
+) {
+  if (!candidate.actorId) return !candidate.latestOccurrence;
+  return (
+    !keepActors.has(candidate.actorId) &&
+    (snapshot?.snapshot.status === "done" || snapshot?.snapshot.status === "stopped")
+  );
+}

@@ -13,6 +13,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, test } from "vite-plus/test";
+import { retirableCreatedProjects, retireCreatedProject, readThreadProject } from "./index.ts";
 import { startT3CodeSource, threadTopic } from "./index.ts";
 import type { T3CodeSourceOptions } from "./index.ts";
 import { openStore } from "../store/index.ts";
@@ -1736,3 +1737,27 @@ test("a created record written after the shell lists it starts listed", async ()
   });
   expect(source.createdProjects()[0]).toMatchObject({ presence: "listed", retirable: false });
 });
+
+test("a thread observed after listing a retirable project protects it at DELETE", async () => {
+  const { server, store, start } = await setup();
+  const source = start();
+  await source.ready("station");
+  source.recordCreatedProject({
+    environment: "station",
+    projectId: "project",
+    actorId: "creator",
+    item: "alpha",
+  });
+  store.connection.database.prepare("UPDATE t3_created_project SET presence='removed'").run();
+  const environments = ["station"];
+  const candidates = retirableCreatedProjects(store.connection, { environments, limit: 100 });
+  expect(candidates).toEqual([
+    { environment: "station", projectId: "project", actorId: "creator" },
+  ]);
+  server.change(fixtureThread("late-thread"));
+  await expect
+    .poll(() => readThreadProject(store.connection, "station", "late-thread"))
+    .toBe("project");
+  expect(retireCreatedProject(store.connection, candidates[0]!, { environments })).toBe("kept");
+  expect(source.createdProject("station", "project")).toBeDefined();
+  expect(retireCreatedProject(store.connection, candidates[0]!, { environments: [] })).toBe("kept");});

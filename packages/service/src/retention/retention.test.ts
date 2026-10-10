@@ -7,6 +7,7 @@ import { openStore } from "../store/index.ts";
 import { openHistory } from "../history/index.ts";
 import { openEscalations } from "../escalations/index.ts";
 import { startRouter } from "../router/index.ts";
+import { owners } from "./test-fixtures/owners.ts";
 import { openRetention } from "./index.ts";
 
 test("prunes ended actors atomically, keeps visits and pending rows, and converges", async () => {
@@ -26,6 +27,7 @@ test("prunes ended actors atomically, keeps visits and pending rows, and converg
     tokenFile: () => "",
   });
   const history = openHistory({ store, now: () => at, log: () => {} });
+  const owned = owners(store, router, escalations);
   try {
     for (const actorId of ["parcel", "active", "recent", "protected"]) {
       at = 1;
@@ -81,6 +83,7 @@ test("prunes ended actors atomically, keeps visits and pending rows, and converg
       choices: [{ id: "continue", label: "Continue" }],
     });
     const retention = openRetention({
+      environments: [],
       store,
       history,
       escalations,
@@ -98,6 +101,14 @@ test("prunes ended actors atomically, keeps visits and pending rows, and converg
       historyRows: 2,
       sourceEvents: 0,
       gateEvaluations: 0,
+      deliveries: 0,
+      redeliveries: 0,
+      escalations: 0,
+      notifications: 0,
+      answers: 0,
+      messages: 0,
+      cardMoves: 0,
+      createdProjects: 0,
     });
     const pruned = history.read("parcel")!;
     expect(pruned.visits).toEqual(visits);
@@ -114,9 +125,18 @@ test("prunes ended actors atomically, keeps visits and pending rows, and converg
       historyRows: 0,
       sourceEvents: 0,
       gateEvaluations: 0,
+      deliveries: 0,
+      redeliveries: 0,
+      escalations: 0,
+      notifications: 0,
+      answers: 0,
+      messages: 0,
+      cardMoves: 0,
+      createdProjects: 0,
     });
     await retention.stop();
   } finally {
+    await owned.close();
     router.stop();
     await escalations.stop();
     store.close();

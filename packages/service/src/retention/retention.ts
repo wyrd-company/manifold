@@ -5,6 +5,7 @@
 import { sourceEventSources, pruneSourceEvents } from "../router/index.ts";
 import { pruneGateEvaluations } from "../gates/index.ts";
 import type { PrunableActor } from "../store/index.ts";
+import { deliveries, closedEscalations, messages, cardMoves, createdProjects } from "./kinds.ts";
 import { cutoffs } from "./cutoffs.ts";
 import { protections } from "./protections.ts";
 import type { Retention, RetentionOptions, PruneResult, RetentionClock } from "./types.ts";
@@ -25,12 +26,21 @@ const empty = () => ({
   historyRows: 0,
   sourceEvents: 0,
   gateEvaluations: 0,
+  deliveries: 0,
+  redeliveries: 0,
+  escalations: 0,
+  notifications: 0,
+  answers: 0,
+  messages: 0,
+  cardMoves: 0,
+  createdProjects: 0,
 });
 export function openRetention({
   store,
   history,
   escalations,
   configuration,
+  environments,
   log,
   clock = systemClock,
   probe,
@@ -94,10 +104,14 @@ export function openRetention({
             limit: 1000,
           });
           result.sourceEvents += count;
+          if (count) probe?.("batch-pruned", "source-events");
           await next();
           if (count < 1000) break;
         }
       }
+    const batches = { store, result, stopped: () => stopped, next, kept, probe };
+    const githubCutoff = times.source("github");
+    if (githubCutoff !== undefined) await deliveries(batches, githubCutoff);
     if (times.gates !== undefined)
       for (;;) {
         if (stopped) break;
@@ -108,9 +122,16 @@ export function openRetention({
           limit: 1000,
         });
         result.gateEvaluations += count;
+        if (count) probe?.("batch-pruned", "gate-evaluations");
         await next();
         if (count < 1000) break;
       }
+    if (times.history !== undefined) {
+      await closedEscalations(batches, times.history);
+      await messages(batches, times.history);
+      await cardMoves(batches);
+      await createdProjects(batches, environments);
+    }
     if (Object.values(result).some((count) => count > 0))
       log({
         level: "info",

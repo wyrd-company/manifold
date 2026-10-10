@@ -38,3 +38,4 @@ export type {
   ProjectFieldOptionWrite,
   ProjectFieldWrite,
 } from "./types.ts";
+export { pruneDeliveries, pruneRedeliveries, cardMoveActors, pruneCardMoves } from "./prune.ts";

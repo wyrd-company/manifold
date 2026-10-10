@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: retention
 // ---
+import { owners } from "./owners.ts";
 import { openStore } from "../../store/index.ts";
 import { openHistory } from "../../history/index.ts";
 import { startRouter } from "../../router/index.ts";
@@ -76,6 +77,7 @@ export async function world(path = ":memory:") {
     }),
   };
   const router = startRouter({ store, host, clock: { now: () => at, setTimer: () => () => {} } });
+  const owned = owners(store, router, escalations);
   function save(actorId: string, status: "active" | "done" = "done") {
     const initial: ActorSave = {
       actorId,
@@ -153,6 +155,7 @@ export async function world(path = ":memory:") {
     store,
     history,
     router,
+    environments: ["station"],
     gates,
     escalations,
     ledger,
@@ -164,6 +167,7 @@ export async function world(path = ":memory:") {
     },
     now: () => at,
     close: async () => {
+      await owned.close();
       gates.stop();
       router.stop();
       await escalations.stop();

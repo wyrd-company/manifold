@@ -59,7 +59,7 @@ export interface StartServiceOptions {
 
 export interface ServiceProbes {
   readonly sending?: AgentThreadsOptions["sending"];
-  readonly retention?: (step: "actor-pruned", actorId: string) => void;
+  readonly retention?: (step: import("../retention/index.ts").PruneStep, id: string) => void;
   readonly command?: AgentThreadsOptions["probe"];
   readonly migrated?: (step: "migrated", actorId: string) => void;
   readonly capacityCredited?: (credit: import("../capacity/index.ts").CapacityCredit) => void;

@@ -19,3 +19,5 @@ export type {
   MessagePlacement,
 } from "./types.ts";
 export { readThreadProject } from "./thread-project.ts";
+export { retirableCreatedProjects, retireCreatedProject } from "./prune.ts";
+export type { CreatedProjectKey, RetirableCreatedProject } from "./prune.ts";

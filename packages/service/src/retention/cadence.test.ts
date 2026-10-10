@@ -61,6 +61,10 @@ test("cadence starts after five minutes, joins a prune run, and rearms an hour a
     expect(c.waiting()).toBe(1);
     expect(c.delay()).toBeUndefined();
     c.next();
+    for (let n = 0; n < 20; n++) {
+      await Promise.resolve();
+      c.next();
+    }
     expect((await pruneRun).actors).toBe(1);
     expect(logs.map((l) => l.event)).toEqual(["retention-pruned"]);
     expect(c.delay()).toBe(60 * 60 * 1000);
@@ -72,6 +76,14 @@ test("cadence starts after five minutes, joins a prune run, and rearms an hour a
       historyRows: 0,
       sourceEvents: 0,
       gateEvaluations: 0,
+      deliveries: 0,
+      redeliveries: 0,
+      escalations: 0,
+      notifications: 0,
+      answers: 0,
+      messages: 0,
+      cardMoves: 0,
+      createdProjects: 0,
     });
   } finally {
     await w.close();
@@ -165,7 +177,7 @@ test.each(["sources", "evaluations"] as const)(
         ...w,
         configuration: {
           historyDays: "forever",
-          sourceEventDays: { default: 30 },
+          sourceEventDays: { default: 30, github: "forever" },
           gateEvaluationDays: 30,
         },
         clock: c.clock,

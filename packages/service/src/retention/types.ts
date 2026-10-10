@@ -12,9 +12,10 @@ export interface RetentionOptions {
   readonly history: Pick<History, "prune">;
   readonly escalations: Pick<Escalations, "list">;
   readonly configuration: RetentionConfiguration;
+  readonly environments: readonly string[];
   readonly log: (entry: ServiceLogEntry) => void;
   readonly clock?: RetentionClock;
-  readonly probe?: (step: "actor-pruned", actorId: string) => void;
+  readonly probe?: (step: PruneStep, id: string) => void;
 }
 export interface RetentionClock {
   now(): number;
@@ -32,4 +33,14 @@ export interface PruneResult {
   readonly historyRows: number;
   readonly sourceEvents: number;
   readonly gateEvaluations: number;
+  readonly deliveries: number;
+  readonly redeliveries: number;
+  readonly escalations: number;
+  readonly notifications: number;
+  readonly answers: number;
+  readonly messages: number;
+  readonly cardMoves: number;
+  readonly createdProjects: number;
 }
+
+export type PruneStep = "actor-pruned" | "escalation-pruned" | "project-retired" | "batch-pruned";

@@ -18,6 +18,8 @@ import {
 } from "@wyrd-company/manifold-shared";
 import { schemas } from "@wyrd-company/t3code-client";
 import { fixtureThread } from "../t3code-source/test-fixtures/server.ts";
+import { pruneAnswer } from "./index.ts";
+import { pruneEscalation } from "../escalations/index.ts";
 import { agentThreadTopic, openAgentTools } from "./index.ts";
 const closing: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -83,13 +85,15 @@ async function fixture(
   let finishRead: (() => void) | undefined;
   let holdReads = false;
   let readSignal: AbortSignal | undefined;
-  const tools = openAgentTools({
+  let follower = "parcel";
+  let turn = "turn-a";
+  const toolOptions = {
     store,
     configuration: { identifyTimeoutMs: 500 },
     environments: new Set(["station"]),
     router: () => router,
     actors: () => ({
-      followers: (_environment, threadId) => (threadId === "thread.a" ? ["parcel"] : []),
+      followers: (_environment, threadId) => (threadId === "thread.a" ? [follower] : []),
       issueThreads: () => [{ actorId: "parcel", environment: "station", threadId: "thread.a" }],
       actorOf: () => ({ manifold: { issue: "shipment" }, commit: "a".repeat(40) }),
       followedThreads: () => ["thread.a"],
@@ -111,12 +115,12 @@ async function fixture(
             status: "running",
             providerName: "codex",
             runtimeMode: "full-access",
-            activeTurnId: "turn-a",
+            activeTurnId: turn,
             lastError: null,
             updatedAt: "2026-01-01T00:00:00Z",
           },
           latestTurn: {
-            turnId: "turn-a",
+            turnId: turn,
             state: "running",
             requestedAt: "2026-01-01T00:00:00Z",
             startedAt: null,
@@ -128,7 +132,7 @@ async function fixture(
               id: "activity-a",
               tone: "tool",
               kind: "tool.started",
-              turnId: "turn-a",
+              turnId: turn,
               summary: "handoff",
               payload: { toolCallId: "call-a" },
               createdAt: "2026-01-01T00:00:00Z",
@@ -155,7 +159,8 @@ async function fixture(
     },
     escalations: () => escalations,
     log: () => {},
-  });
+  } satisfies Parameters<typeof openAgentTools>[0];
+  let tools = openAgentTools(toolOptions);
   const escalations = openEscalations({
     store,
     configuration: {
@@ -170,7 +175,7 @@ async function fixture(
     handlers: {
       "held-actor": () => {},
       "stranded-token": () => {},
-      "agent-question": tools.questionHandler,
+      "agent-question": (question) => tools.questionHandler(question),
     },
   });
   escalations.start();
@@ -224,7 +229,20 @@ async function fixture(
       finishRead?.();
     },
     store,
-    tools,
+    get tools() {
+      return tools;
+    },
+    follower: (id: string) => {
+      follower = id;
+    },
+    turn: (id: string) => {
+      turn = id;
+    },
+    async restartTools() {
+      await tools.stop();
+      tools = openAgentTools(toolOptions);
+      tools.start();
+    },
     escalations,
     sent,
     call,
@@ -381,6 +399,7 @@ test("rejected answer commands publish an answer with no turn and preserve the a
   const f = await fixture({ rejected: true });
   const result = await f.call("escalate", { question: "Which shelf?", freeText: true });
   const id = (result.body as { escalationId: string }).escalationId;
+  await eventually(() => expect(f.notifications).toHaveLength(1));
   f.escalations.answer(id, { text: "Upper" }, "api");
   await eventually(() => expect(f.store.pendingInbox("parcel")).toHaveLength(2));
   expect(f.store.pendingInbox("parcel")[1]!.payload).toMatchObject({
@@ -393,6 +412,7 @@ test("unknown placement is recorded once with a null turn", async () => {
   const f = await fixture();
   const result = await f.call("escalate", { question: "Which shelf?", freeText: true });
   const id = (result.body as { escalationId: string }).escalationId;
+  await eventually(() => expect(f.notifications).toHaveLength(1));
   f.escalations.answer(id, { text: "Upper" }, "api");
   await eventually(() => expect(f.sent).toHaveLength(1));
   f.tools.messagePlaced({
@@ -764,4 +784,55 @@ test("pending answers wait independently by environment and retain order within 
     expect.stringContaining("First"),
     expect.stringContaining("Second"),
   ]);
+});
+
+test("pruned agent question replays after reopen for a later follower, while a fresh turn raises once", async () => {
+  const f = await fixture();
+  const first = await f.call("escalate", { question: "Which shelf?", freeText: true });
+  const id = (first.body as { escalationId: string }).escalationId;
+  await eventually(() => expect(f.notifications).toHaveLength(1));
+  f.escalations.answer(id, { text: "Upper" }, "api");
+  await eventually(() => expect(f.sent).toHaveLength(1));
+  f.tools.messagePlaced({
+    environment: "station",
+    threadId: "thread.a",
+    messageId: f.sent[0]!.messageId,
+    placement: "joined",
+    turnId: "turn-a",
+  });
+  await eventually(() => expect(f.notifications).toHaveLength(2));
+  f.store.saveSnapshot({
+    actorId: "parcel",
+    machine: "sort",
+    snapshot: { status: "done", value: "sorted" },
+  });
+  expect(pruneAnswer(f.store.connection, id)).toEqual({ answers: 1 });
+  expect(pruneEscalation(f.store.connection, id)).toEqual({ notifications: 2 });
+  await f.restartTools();
+  f.store.saveSnapshot({
+    actorId: "later",
+    machine: "sort",
+    snapshot: { status: "active", value: "waiting" },
+  });
+  f.follower("later");
+  expect((await f.call("escalate", { question: "Old call", freeText: true })).body).toMatchObject({
+    escalationId: id,
+    replay: true,
+  });
+  expect(f.escalations.list({ status: "open" })).toEqual([]);
+  expect(f.notifications).toHaveLength(2);
+  f.turn("fresh-turn");
+  const fresh = await f.call("escalate", { question: "Which shelf?", freeText: true });
+  expect(fresh.body).toMatchObject({ replay: false });
+  const freshId = (fresh.body as { escalationId: string }).escalationId;
+  expect(f.escalations.get(freshId)?.raiser).toMatchObject({
+    subject: { actorId: "later", turnId: "fresh-turn" },
+  });
+  expect((await f.call("escalate", { question: "Again", freeText: true })).body).toMatchObject({
+    escalationId: freshId,
+    replay: true,
+  });
+  expect(f.escalations.get(id)).toBeUndefined();
+  expect(f.escalations.answer(id, { text: "Old answer" }, "api")).toEqual({ status: "not-found" });
+  expect(f.escalations.get(freshId)?.status).toBe("open");
 });

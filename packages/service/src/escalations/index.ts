@@ -22,3 +22,5 @@ export type {
   Invocation,
 } from "./types.ts";
 export { mountEscalations, escalationImplementations } from "./assembly.ts";
+export { prunableEscalations, pruneEscalation } from "./prune.ts";
+export type { PrunableEscalation } from "./prune.ts";

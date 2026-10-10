@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: [store, portfolio-ledger, blueprint-expressions, decision-models, process-repository, blueprint-loader, portfolio, durable-event-delivery, github-event-source, t3code-environment-source, service-assembly, intake, gate-runtime, agent-threads, escalations, usage-intake, host-cli-usage, actor-history]
 // ---
+import { initializeOwners } from "./retention/test-fixtures/owners.ts";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -200,7 +201,9 @@ describe("store and ledger on one database file", () => {
     ]);
     const pruning = open(path);
     const pruneHistory = openHistory({ store: pruning.store, now: () => 10, log: () => {} });
+    await initializeOwners(pruning.store);
     const retention = openRetention({
+      environments: [],
       store: pruning.store,
       history: pruneHistory,
       escalations: { list: () => [] },
@@ -213,6 +216,14 @@ describe("store and ledger on one database file", () => {
       historyRows: 2,
       sourceEvents: 1,
       gateEvaluations: 1,
+      deliveries: 0,
+      redeliveries: 0,
+      escalations: 0,
+      notifications: 0,
+      answers: 0,
+      messages: 0,
+      cardMoves: 0,
+      createdProjects: 0,
     });
     expect(pruneHistory.read("meter-01")).toEqual(activeHistory);
     expect(pruning.store.pendingInbox("meter-01").map((row) => row.eventId)).toEqual(["e-1"]);

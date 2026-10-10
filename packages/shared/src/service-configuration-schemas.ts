@@ -298,13 +298,13 @@ export const retentionConfigurationSchema = {
   properties: {
     historyDays: {
       description:
-        "Days after an actor ends before retention removes its consumed inbox rows, its event links, and its commands. Its visits stay.",
+        "Days after an actor ends before retention removes its consumed inbox rows, its event links, and its commands. Its visits stay. The same window removes the actor's closed escalations, counted from their close, its card move records, read agent messages once both their actors' histories are gone, and a created project's record once its creator's history is gone, the server no longer lists it, and no thread names it.",
       $ref: "#/$defs/window",
       default: 90,
     },
     sourceEventDays: {
       description:
-        "Days after a source event's first acceptance before retention removes the record that makes a later publish of it a replay, by event source.",
+        "Days after a source event's first acceptance before retention removes the record that makes a later publish of it a replay, by event source. The window of `github` also covers the GitHub source's webhook delivery and redelivery records.",
       type: "object",
       default: {},
       propertyNames: {

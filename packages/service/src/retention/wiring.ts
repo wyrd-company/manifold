@@ -16,6 +16,7 @@ export const retention = wiringPart({
       history: members.history,
       escalations: members.escalations,
       configuration: members.configuration.retention,
+      environments: Object.keys(members.configuration.environments),
       log: members.log,
       ...(context.options.probes?.retention ? { probe: context.options.probes.retention } : {}),
     });

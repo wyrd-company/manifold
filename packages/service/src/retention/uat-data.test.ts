@@ -2,6 +2,7 @@
 // relationships:
 //   verifies: [retention, actor-history]
 // ---
+import { initializeOwners } from "./test-fixtures/owners.ts";
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -57,7 +58,9 @@ test("UAT seed preserves existing rows and one prune run removes exactly expired
     const expired = history.read("uat-retention-expired");
     assert.equal(expired!.events.length, 1);
     assert.equal(expired!.commands.length, 1);
+    await initializeOwners(store);
     const retention = openRetention({
+      environments: [],
       store,
       history,
       escalations: { list: () => [] },
@@ -71,6 +74,14 @@ test("UAT seed preserves existing rows and one prune run removes exactly expired
       historyRows: 2,
       sourceEvents: 1,
       gateEvaluations: 1,
+      deliveries: 0,
+      redeliveries: 0,
+      escalations: 0,
+      notifications: 0,
+      answers: 0,
+      messages: 0,
+      cardMoves: 0,
+      createdProjects: 0,
     });
     assert.deepEqual(store.loadSnapshot("existing"), existing);
     assert.deepEqual(history.read("uat-retention-recent"), recent);
@@ -95,6 +106,14 @@ test("UAT seed preserves existing rows and one prune run removes exactly expired
       historyRows: 0,
       sourceEvents: 0,
       gateEvaluations: 0,
+      deliveries: 0,
+      redeliveries: 0,
+      escalations: 0,
+      notifications: 0,
+      answers: 0,
+      messages: 0,
+      cardMoves: 0,
+      createdProjects: 0,
     });
     await retention.stop();
   } finally {

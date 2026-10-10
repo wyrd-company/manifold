@@ -342,6 +342,7 @@ test.each(["project-sending", "t3code-project-create", "thread-create", "turn-st
             project_id: [...server.projects.keys()][0],
             actor_id: "worker",
             item: "beta",
+            presence: "unseen",
           },
         ]);
       } finally {
