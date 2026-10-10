@@ -2,7 +2,7 @@
 // relationships:
 //   verifies: [host-cli-blueprint-lint, token-lint]
 // ---
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vite-plus/test";
@@ -152,5 +152,58 @@ it("lints invoked model sets only with a repository, including shared models and
   } finally {
     log.mockRestore();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it.each([
+  ["file", "inside"],
+  ["file", "outside"],
+  ["directory", "inside"],
+  ["directory", "outside"],
+])("reports a missing model for a symlink %s pointing %s the repository", async (kind, target) => {
+  const directory = await mkdtemp(join(tmpdir(), "blueprint-symlink-lint-"));
+  const outside = await mkdtemp(join(tmpdir(), "blueprint-symlink-target-"));
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const file = join(directory, "sample.yml");
+    await writeFile(
+      file,
+      stringify({
+        machine: {
+          initial: "quote",
+          states: {
+            quote: {
+              invoke: { src: "decision-models/quote.yml", onDone: "done", onError: "done" },
+            },
+            done: { type: "final" },
+          },
+        },
+        schemas: { input: true, output: true, context: true, events: {} },
+      }),
+    );
+    const destination = target === "inside" ? join(directory, "actual") : outside;
+    if (target === "inside") await mkdir(destination);
+    await writeFile(
+      join(destination, "quote.yml"),
+      stringify({
+        nodes: [
+          { id: "in", type: "inputNode" },
+          { id: "out", type: "outputNode" },
+        ],
+        edges: [{ id: "one", sourceId: "in", targetId: "out" }],
+      }),
+    );
+    if (kind === "directory") await symlink(destination, join(directory, "decision-models"));
+    else {
+      await mkdir(join(directory, "decision-models"));
+      await symlink(join(destination, "quote.yml"), join(directory, "decision-models/quote.yml"));
+    }
+    expect(await blueprintLintCommand(["--repository", directory, file])).toBe(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("decision-model"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("missing"));
+  } finally {
+    log.mockRestore();
+    await rm(directory, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });

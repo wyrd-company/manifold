@@ -5,7 +5,7 @@
 import { readTaskMetadata } from "../task-metadata-lint/command.ts";
 import { declaredLifecycleOptions, declaredTaskFields } from "@wyrd-company/manifold-shared";
 import { join } from "node:path";
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import {
   lintBlueprint,
   manifoldImplementationNames,
@@ -126,7 +126,12 @@ export async function blueprintLintCommand(
         ? undefined
         : await lintInvokedDecisionModels(async (path) => {
             try {
-              return await readFile(join(repository, path), "utf8");
+              let current = repository;
+              for (const part of path.split("/")) {
+                current = join(current, part);
+                if ((await lstat(current)).isSymbolicLink()) return undefined;
+              }
+              return await readFile(current, "utf8");
             } catch (error) {
               if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
               throw error;
