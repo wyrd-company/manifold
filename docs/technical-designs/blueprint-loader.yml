@@ -373,8 +373,15 @@ proposed-design:
     an entry, that names no state node is `history-missing`. Each child in
     `children` must be an invoke, with that id and `src`, of a state node
     active in the value; otherwise it is `child-missing`. A child whose
-    `src` is not in the registry's actors, or names a child blueprint the
-    version bound to a rejecting logic, is `implementation-missing`. A
+    `src` is a decision model path is checked against the version's own
+    bindings, not the registry: it passes when the version bound the path
+    to its evaluation logic, and is `implementation-missing` when the
+    version bound no logic to the path. A version that loads binds every
+    model it invokes, since rule 13 refuses a missing or invalid one, so
+    a persisted invoke of a loaded version's model always passes. Any
+    other child whose `src` is not in the registry's actors, or that
+    names a child blueprint the version bound to a rejecting logic, is
+    `implementation-missing`. A
     child whose snapshot holds a state value and whose registered logic is
     a state machine is checked against that machine the same way, with its
     paths prefixed by the child id. The check reads only the snapshot and
@@ -447,7 +454,11 @@ proposed-design:
     one whose model is missing or has an error is in `failures` with the
     `decision-model` finding, while a version at a later commit that
     fixes the model loads; that two versions at one commit invoking one
-    model read it once; and that `serviceImplementations` has
+    model read it once; that `checkRestore` passes a persisted snapshot
+    whose active state holds an in-flight invoke of a decision model the
+    version binds, the actor restored from it takes `onDone` once with the
+    model's result, and a snapshot whose decision model child names a path
+    the version does not bind returns `implementation-missing`; and that `serviceImplementations` has
     exactly the names and `raises` declarations of `manifoldImplementationNames`. A registry guard named `in` throws; a `potential` gate loads
     with its warning and token lint result, a `violation` is in `failures`,
     and a graph exceeding a bound of 10 loads with a `token-unknown` warning.

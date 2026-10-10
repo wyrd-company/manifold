@@ -2529,12 +2529,18 @@ proposed-design:
     for one file and "Update <blueprint path> and <n> decision models"
     otherwise, "Add" for a single added file. The answer's `outcome`
     gives the toast, as for a blueprint save. When `loaded` is true the
-    editor reads the blueprint's source and each model's source at the
-    answer's commit, and the reads settle the draft: when every file
-    equals its saved text the draft is removed; when a file differs, a
-    later commit changed it after the save, and the draft becomes an
-    ordinary draft based on the source's commit, each file's base text
-    the file there and its text the saved text. When `loaded` is false,
+    editor settles the draft against one current applied revision: it
+    reads the blueprint's source, whose `commit` is the latest applied
+    revision, and then each model's source with `commit` set to that
+    commit, so every file is read at the same revision, never at the
+    answer's commit, whose files always equal the saved texts. When every
+    file there equals its saved text the draft is removed; when any file
+    differs, a later commit changed it after the save, and the draft
+    becomes an ordinary draft based on that commit, each file's base text
+    the file there, `exists` false for a file not there, and its text the
+    saved text, with the info alert naming each changed file. A draft
+    with `saved` that the editor opens settles the same way, and so does
+    the answer to "Load saved version". When `loaded` is false,
     or a read fails, the pending alert opens, and "Load saved version"
     sends the same publish again. A `422` closes the dialog and marks the
     findings in their files. A `409` opens the conflict alert, naming
@@ -2608,7 +2614,12 @@ proposed-design:
     did not change are not written; and the model draft functions: Apply
     adds an entry, an entry equal to its base is removed, a change removes
     the `saveId`, a draft written without `models` reads as one with none,
-    and a settled publish removes the draft or rebases it file by file.
+    and settlement over one revision: every file equal to its saved text
+    removes the draft; a model alone changed at the settling revision,
+    with the blueprint equal, keeps the draft with every file based on
+    that revision and the model's saved text kept; and a blueprint source
+    whose commit is later than the publication's reads every model at
+    that later commit.
     The service tests are `declarations-api`'s and `blueprints-api`'s
     validation criteria. The built-browser test drives the built console
     from the service over a fixture process repository whose blueprint
@@ -2629,9 +2640,22 @@ proposed-design:
     second test moves the model on the remote branch, publishes, sees the
     conflict alert name the model, sees the draft kept and the branch's
     model unchanged, compares, uses the latest as base, and publishes. A
-    third opens the Intake group's model, edits it into a `syntax` error,
+    third has the fixture server accept a publication's push and refuse
+    the next fetch, so the answer has `loaded` false, then commits a
+    change to the model alone on top of the save; with the server
+    healthy, "Load saved version" answers `already-saved`, and the editor
+    keeps the draft with the model's saved text over the later commit and
+    the alert naming the model, rather than clearing it; a fourth makes
+    the same model-only change after a publication that answered `loaded`
+    true and before its settling reads, with the same outcome. A
+    fifth opens the Intake group's model, edits it into a `syntax` error,
     applies, sees Publish disabled with the finding in the Problems strip,
-    and fixes it. The browser tests run in both themes, record every
+    and fixes it; the fixture's intake decision model is `intake.yml` at
+    the repository root and names, through a `decisionNode`, a model at
+    `shared/rates.yml`, and the test edits that model too, so the
+    blueprint lint and the publication carry both paths outside
+    `decision-models/`, the lint answers each time, and Publish follows
+    its findings. The browser tests run in both themes, record every
     request the page makes, and assert that none leaves the service's
     origin, and assert that the dialog's code loads only when it opens.
   blueprints-client: >-

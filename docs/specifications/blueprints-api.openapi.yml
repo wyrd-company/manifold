@@ -298,8 +298,12 @@ components:
             required: [path, text]
             properties:
               path:
+                description: >-
+                  A decision model path: a repository path ending in `.yml`
+                  that is not a blueprint path, a declaration path,
+                  `prices.yml`, or `manifold.yml`.
                 type: string
-                pattern: "^decision-models/.+\\.yml$"
+                pattern: "^(?!.*(^|/)\\.{1,2}(/|$))(?!blueprints/)(?!(bindings|task-metadata|portfolio|accounts|prices|manifold)\\.yml$)[^/\\\\]+(/[^/\\\\]+)*\\.yml$"
               text:
                 type: string
     LintResponse:

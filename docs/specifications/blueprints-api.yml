@@ -102,9 +102,14 @@ description: >-
   need not exist. Rule 13 of `blueprint` checks each decision model the
   text invokes in the set `lintDecisionModelSet` reads at `base`, the
   latest applied revision when absent, through a reader that answers the
-  text of each entry of `models`, `{ path, text }` with a decision model
-  path, in place of the revision's file at that path, so that the
-  findings follow the console's model drafts. A `base` the process
+  text of each entry of `models`, `{ path, text }`, in place of the
+  revision's file at that path, so that the findings follow the
+  console's model drafts. An entry's `path` is a decision model path of
+  `declarations-api`: any `.yml` path that is not a blueprint path, a
+  declaration path, `prices.yml`, or `manifold.yml`, so the overlay holds
+  the intake decision model and a model a `decisionNode` names wherever
+  it lies, while an invoke `src` names only a path under
+  `decision-models/`. A `base` the process
   repository does not hold answers `400`, and so do two `models` entries
   with one path. It reads and writes nothing else.
 
@@ -194,6 +199,11 @@ validation-criteria: >-
   `decision-models/a.yml` answers a `decision-model` finding with
   `reason` `missing` when the revision holds no such file, none when
   `models` holds a clean text at the path, and one with `reason`
-  `invalid` when `models` holds a text with a `syntax` cell; that a text with a finding
+  `invalid` when `models` holds a text with a `syntax` cell; that a lint
+  whose `models` holds `intake.yml` and `shared/rates.yml`, a model the
+  invoked model's `decisionNode` names, answers `200`, with a
+  `decision-model` finding of `reason` `invalid` when `shared/rates.yml`
+  holds a `syntax` cell and none when it is clean; that `models` naming
+  `bindings.yml` answers `400`; that a text with a finding
   answers `422`; and the `400`, `403`, `404`, `405`, `413`, `415`, and `503`
   answers.
