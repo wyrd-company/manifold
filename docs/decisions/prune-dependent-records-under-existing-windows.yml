@@ -1,0 +1,51 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - retention
+    - retention-configuration
+    - escalations
+    - agent-tools
+    - github-event-source
+    - t3code-environment-source
+description: >-
+  Webhook delivery and redelivery records, escalations with their
+  notifications and agent answers, agent messages, card move records, and
+  created project records grow for the life of the store. Each belongs to
+  an origin that already has a retention window: a GitHub delivery to the
+  GitHub source's source events, and the others to an actor's history.
+  Service configuration has three windows, `historyDays`,
+  `sourceEventDays`, and `gateEvaluationDays`. Bounding the new kinds
+  either reuses those windows or adds a window per kind.
+considered-options:
+  "1": >-
+    Prune each new kind under the window of its origin. Delivery and
+    redelivery records follow the GitHub source's `sourceEventDays`.
+    Closed escalations of ended actors, with their notifications and agent
+    answers, follow `historyDays` from their close, and a service
+    escalation follows it from its close with the newest occurrence of
+    each kind and subject kept. Read agent messages, card move records,
+    and created project records go once the actors they name are pruned.
+    Agent question rows stay, as replay guards.
+  "2": >-
+    Add a window per kind, such as `escalationDays`, each with its own
+    default.
+  "3": >-
+    Keep these rows for the life of the store.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 removes each row when the record that gives it meaning is
+    removed, so a pruned actor never leaves an escalation, message, or
+    card move that names it, and an operator reasons about one window per
+    origin. It reuses approved values and adds no configuration. Option 2
+    adds keys an operator must set in step with `historyDays` to keep the
+    records consistent, with no known need for a different period. Option
+    3 leaves the rows unbounded.
+expected-outcomes:
+  positive:
+    - A long-running store bounds deliveries, escalations, messages, card moves, and retired created projects.
+    - An actor's escalations, messages, and card moves stay readable for exactly as long as its history.
+    - No new retention window key or default.
+  negative:
+    - An operator cannot keep escalations longer than actor history without keeping all history longer.
+    - Agent question rows, kept as replay guards, still grow.
