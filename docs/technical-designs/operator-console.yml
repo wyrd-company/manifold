@@ -2427,7 +2427,10 @@ proposed-design:
     `revisionAt(base)` holds no revision, applies `editBindings`, and
     saves the result as a save of `bindings.yml`. An archive reads
     `portfolio.yml` and `bindings.yml` at `base`, answering `400` when
-    `revisionAt(base)` holds no revision, applies the pure
+    `revisionAt(base)` holds no revision, awaits `revisions.findSave`
+    with the request's `base` and `saveId` and answers `200`
+    `already-saved` with `loaded` true when it finds the save, and
+    otherwise applies the pure
     `archiveItemEdit(files, request)` of `declarations-api/archive-item.ts`,
     which answers both texts or the request's findings, lints the two
     texts together with `lintPortfolioDeclaration` and their warnings
@@ -2501,7 +2504,7 @@ proposed-design:
     import type { TaskMetadataDeclaration, UsageAccount } from "@wyrd-company/manifold-shared";
 
     export interface DeclarationsApiOptions {
-      readonly revisions: Pick<Revisions, "latest" | "save">;
+      readonly revisions: Pick<Revisions, "latest" | "save" | "findSave">;
       readonly processRepository: Pick<ProcessRepository, "revisionAt">;
       /** The followed repository, for the publish dialogs. */
       readonly repository: { readonly url: string; readonly branch: string };
@@ -3359,6 +3362,16 @@ proposed-design:
     the concurrent commit of the refused save case leaves the remote with
     no archive commit, `GET /api/declarations/bindings` still lists the
     created projects, and calls on their threads still post on `beta`.
+    Recovery: after the archive with created project choices completes,
+    the store gains a record `p7` on `beta`, `p3`'s record turns
+    retirable, and the same request sent again answers `already-saved`
+    with the archive commit and no second commit, where a new request
+    with the same choices answers `choice-missing` and `not-attached`.
+    Archive on an Other: with a record `p8` on `alpha/other`, archiving
+    `alpha` lists `p8` "on Other"; choosing "Archive project" adds a
+    binding on `alpha` with `archived: true`, the commit lints, a call on
+    `p8`'s thread posts on `alpha/other` before and after the archive,
+    and `p8`'s record is unchanged.
     Unresolved on an archived item: with `beta` archived by a commit that
     edits `portfolio.yml` alone, the archived list shows `beta` with "3
     projects to resolve"; "Choose project moves" opens the resolve form,

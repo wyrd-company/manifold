@@ -104,8 +104,14 @@ proposed-design:
     choice for a created project is declared as a new T3code project
     binding in the same commit: move gives it the archived item's parent,
     whose Other then takes its unowned usage, as `usage-item` states;
-    reassign, the sibling; archive, the record's item with `archived:
-    true`. The binding takes precedence over the record, as resolution
+    reassign, the sibling; archive, with `archived: true`, the record's
+    item, or, when the record's item is an Other, that Other's parent,
+    since no binding names an Other. The archived binding on the parent
+    lands the project's unowned usage on the parent's Other, as
+    `usage-item` states, which is the record's item, so the archive keeps
+    the project's usage where it was. A record on the top-level Other is
+    under no item and is never attached. The binding takes precedence
+    over the record, as resolution
     states, so the commit alone sets where the project's unowned usage
     goes, and the store is not written. The record stays as it is, the
     project's creation provenance. Every created project attached at
@@ -117,7 +123,10 @@ proposed-design:
     item's usage is, and it is listed against the archived item until a
     choice declares its binding. Its choice goes through the same
     `archive-item` endpoint, which archives an archived item again with
-    no change.
+    no change. The archive recovers a save it already made before it
+    reads the records: a retried request whose `saveId` is on the branch
+    answers that save, whatever records were written, retired, or reset
+    since, as `declarations-api` states.
   created-project-ownership: >-
     The effective ownership of a created project is where its unowned
     usage goes now: its own binding's item, else its association's item,

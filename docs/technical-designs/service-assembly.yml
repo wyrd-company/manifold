@@ -287,6 +287,8 @@ proposed-design:
       follow(): Promise<void>;
       /** Queues a pull, a save, and the pull and apply of the saved commit as one job. */
       save(request: SaveRequest): Promise<SavedRevision>;
+      /** Queues a pull and its apply, then answers the commit carrying the save between the head and `base`, if any. */
+      findSave(request: Pick<SaveRequest, "base" | "saveId">): Promise<string | undefined>;
     }
 
     export type SavedRevision =
@@ -600,6 +602,14 @@ proposed-design:
     and the job resolves `conflict` with reason `branch-moved`, the
     current commit, and the text of each requested file at it; otherwise it rejects with
     the second error. No push follows the second one.
+    A `findSave` job runs the apply step, `processRepository.pull()`, and
+    the apply step, as a pull job does, then answers
+    `processRepository.findSave(request)`; a pull that rejects rejects
+    the job. Its answer is a commit the job just applied or one of its
+    first parents, so a caller that finds its save reads it in force. An
+    endpoint that checks a request against state outside the process
+    repository calls it first, so a retried save is recovered before
+    that state, which may have changed since the save, is checked.
     A branch that moves under a save is therefore answered by what it
     changed, as a typed conflict and never as a remote error, and no save
     is retried more than once. No other pull runs

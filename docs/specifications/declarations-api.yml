@@ -315,7 +315,10 @@ description: >-
   For a created project the service adds `name` to `t3codeProjects` with
   the project's `environment` and `project`, and an `item` by the same
   choice: the archived item's parent, the sibling, or, with `archived:
-  true`, its record's item. The binding takes precedence over the
+  true`, its record's item, or that item's parent when the record's item
+  is an Other item, since no binding names an Other; usage intake then
+  posts the project's unowned usage on that parent's Other, the record's
+  item, as `portfolio` (usage-item) states. The binding takes precedence over the
   record, so the commit alone moves the project's unowned usage, and the
   service writes nothing to the store. The console makes `name` with
   `t3-` before the slug of the project's title, or of its id when the
@@ -323,7 +326,15 @@ description: >-
   made from a name, so a retried request carries the same name.
 
   The service reads `portfolio.yml` and `bindings.yml` at `base`,
-  answering `400` when `revisionAt(base)` holds no revision. It sets
+  answering `400` when `revisionAt(base)` holds no revision. It then
+  awaits `revisions.findSave({ base, saveId })`, which pulls and applies
+  the branch and looks for the request's save between the head and
+  `base`. When the save is there, it answers `200` with `outcome`
+  `already-saved`, that commit, and `loaded` true, and checks nothing
+  else, so a retry of an archive that completed answers that archive
+  even when created project records were written, retired, or deleted
+  with their environment since. Otherwise it checks the request against
+  the created project records as they stand and goes on. It sets
   `archived: true` on the item in `portfolio.yml` and applies each
   choice to its binding in `bindings.yml`, both with the `yaml` package's
   document model, so every comment stays, and in a file in the block
