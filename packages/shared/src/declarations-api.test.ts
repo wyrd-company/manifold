@@ -228,3 +228,30 @@ test("accounts sources carry environment names and accounts or prices findings",
   expect(validate(invalid)).toBe(false);
   expect(isDeclarationSourceResponse(invalid)).toBe(false);
 });
+
+test("storage metadata and scopes carry all declared storage kinds", () => {
+  for (const kind of [
+    "project-field",
+    "issue-field",
+    "issue-type",
+    "label",
+    "milestone",
+    "front-matter",
+  ]) {
+    expect(
+      isLintDeclarationResponse({
+        ...findings,
+        storageKinds: [
+          { kind, types: ["text"], settings: ["key"], optionProperties: [], scope: "issue" },
+        ],
+        fields: [{ ...field, scope: { kind: "issue", names: [], sharedWith: [] } }],
+      }),
+    ).toBe(true);
+  }
+  expect(
+    isLintDeclarationResponse({
+      ...findings,
+      fields: [{ ...field, scope: { kind: "invalid", names: [], sharedWith: [] } }],
+    }),
+  ).toBe(false);
+});

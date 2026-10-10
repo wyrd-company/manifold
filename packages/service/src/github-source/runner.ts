@@ -2,6 +2,10 @@
 // relationships:
 //   implements: github-event-source
 // ---
+import { taskWriteRecords, writeBody } from "./body-write.ts";
+import type { StorageScope } from "@wyrd-company/manifold-shared";
+import { trackedIssueIndex } from "./mirror.ts";
+import type { TaskFieldWrite, ScopeConfiguration, ScopeEntityWrite } from "./types.ts";
 import { moveRecords } from "./move-records.ts";
 import type { CardMove } from "./types.ts";
 import { createGitHubApi, classifyWriteError } from "./github-api.ts";
@@ -37,7 +41,15 @@ export function createRunner(
 ) {
   const api = createGitHubApi(options, clock);
   const moves = moveRecords(options.store.connection);
+  const taskWrites = taskWriteRecords(options.store.connection);
   type Job =
+    | {
+        kind: "operation";
+        run: () => Promise<void>;
+        signal: AbortSignal | undefined;
+        reject: (error: unknown) => void;
+        detach: () => void;
+      }
     | {
         kind: "move";
         move: CardMove;
@@ -231,6 +243,51 @@ export function createRunner(
         }
         return event;
       });
+      if (options.taskFieldValues) {
+        const previous = trackedIssueIndex(before, bound);
+        const next = trackedIssueIndex(after, bound);
+        for (const [id, issue] of next) {
+          const earlier = previous.get(id);
+          if (!earlier?.content || !issue.content) continue;
+          for (const project of issue.projects) {
+            const from = options.taskFieldValues(project.nodeId, earlier);
+            const to = options.taskFieldValues(project.nodeId, issue);
+            if (!from || !to) continue;
+            for (const [field, value] of Object.entries(to)) {
+              const old = from[field];
+              if (!old || JSON.stringify(old.value) === JSON.stringify(value.value)) continue;
+              const revision = taskWrites.revision(id, project.nodeId, field);
+              events.push({
+                source: "github",
+                eventId: `task-field:${id}:${project.nodeId}:${field}:${revision}`,
+                topics: [`github.issue.${id}`, `github.project.${project.nodeId}`],
+                event: {
+                  type: "github.task-field.changed",
+                  issue: {
+                    nodeId: issue.issue.nodeId,
+                    repository: issue.issue.repository,
+                    number: issue.issue.number,
+                    state: issue.issue.state,
+                    stateReason: issue.issue.stateReason,
+                  },
+                  project: { ...project },
+                  binding: options.taskFieldBinding?.(project) ?? "",
+                  field,
+                  storage: value.storage,
+                  from: old.value,
+                  to: value.value,
+                  setBy: taskWrites.attribute(
+                    id,
+                    project.nodeId,
+                    field,
+                    value.value.state === "set" ? value.value.value : null,
+                  ),
+                },
+              });
+            }
+          }
+        }
+      }
       const mirrorChanged = mirror.write(before, after);
       for (const event of events) {
         if (!validEvent(event.event)) throw new TypeError("Invalid normalized GitHub event");
@@ -405,6 +462,14 @@ export function createRunner(
     queued.detach();
     if (signal?.aborted) {
       queued.reject(signal.reason);
+      return;
+    }
+    if (queued.kind === "operation") {
+      try {
+        await queued.run();
+      } catch (error) {
+        queued.reject(signal?.aborted ? signal.reason : error);
+      }
       return;
     }
     if (queued.kind === "move") return moveJob(queued);
@@ -594,6 +659,7 @@ export function createRunner(
             options.store.connection.transaction(() => {
               for (const id of bound.keys()) mirror.enqueue("project", id);
             });
+            for (const scope of options.scopes?.() ?? []) await scopeObservation(scope);
             pull();
           }
         } catch (error) {
@@ -627,9 +693,140 @@ export function createRunner(
           if (wakeRequested && !stopped) wake();
         });
   }
+  function serial<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (stopped)
+      return Promise.reject(new GitHubWriteError("transport", "GitHub source is stopped"));
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    return new Promise<T>((resolve, reject) => {
+      const aborted = () => {
+        const index = queue.indexOf(job);
+        if (index >= 0) {
+          queue.splice(index, 1);
+          job.detach();
+          reject(signal?.reason);
+        }
+      };
+      const job: Job = {
+        kind: "operation",
+        signal,
+        reject,
+        detach: () => signal?.removeEventListener("abort", aborted),
+        run: async () => resolve(await work()),
+      };
+      queue.push(job);
+      signal?.addEventListener("abort", aborted, { once: true });
+      wake();
+    });
+  }
+  async function scopeObservation(
+    scope: StorageScope,
+    signal?: AbortSignal,
+  ): Promise<ScopeConfiguration> {
+    const owner =
+      scope.kind === "organization" ? scope.organization : scope.repository.split("/")[0]!;
+    const configured = Object.keys(options.configuration.owners).some(
+      (login) => login.toLowerCase() === owner.toLowerCase(),
+    );
+    const observed: ScopeConfiguration = !configured
+      ? {
+          scope,
+          status: "unconfigured",
+          message: `GitHub owner is not configured: ${owner}`,
+          readAt: clock.now(),
+        }
+      : options.storageAdapters
+        ? await options.storageAdapters.observeScope(scope, signal)
+        : {
+            scope,
+            status: "unsupported",
+            message: "Storage adapter is unavailable",
+            readAt: clock.now(),
+          };
+    options.store.connection.transaction(() => mirror.observeScope(observed));
+    return observed;
+  }
   wake();
   return {
     bound,
+    observeScope: (scope: StorageScope, signal?: AbortSignal) =>
+      serial(() => scopeObservation(scope, signal), signal),
+    writeScopeEntity: (write: ScopeEntityWrite, signal?: AbortSignal) =>
+      serial(async () => {
+        if (!options.storageAdapters)
+          throw new GitHubWriteError("unavailable", "Storage adapter is unavailable");
+        const entity = await options.storageAdapters.writeScopeEntity(write, signal);
+        const scope: StorageScope =
+          "organization" in write
+            ? { kind: "organization", organization: write.organization }
+            : { kind: "repository", repository: write.repository };
+        await scopeObservation(scope, signal);
+        return entity;
+      }, signal),
+    writeTaskField: (write: TaskFieldWrite, signal?: AbortSignal) =>
+      serial(async () => {
+        const issue = mirror.trackedIssueIndex(bound).get(write.issueNodeId);
+        const project = issue?.projects.find((project) => project.nodeId === write.projectNodeId);
+        if (!issue || !project)
+          throw new GitHubWriteError("item-missing", "Issue item is absent from the Project");
+        const storage = write.storage;
+        const row = taskWrites.row(write);
+        if (
+          row &&
+          (row["field"] !== write.field ||
+            row["value"] !== JSON.stringify(write.value) ||
+            row["storage"] !== JSON.stringify(storage))
+        )
+          throw new GitHubWriteError(
+            "rejected",
+            "Invocation already owns another task field write",
+          );
+        taskWrites.sent(write, clock.now());
+        try {
+          if (storage.kind === "front-matter") {
+            const owner = issue.issue.repository.split("/")[0]!;
+            await writeBody(write, taskWrites, {
+              read: () => api.readBody(owner, write.issueNodeId, signal),
+              write: (body) => api.writeBody(owner, write.issueNodeId, body, signal),
+              edits: () => api.bodyEdits(owner, write.issueNodeId, signal),
+            });
+          } else if (storage.kind === "project-field") {
+            const fields = await api.projectFields(project, signal);
+            const field = fields.find((field) => field.name === storage.name);
+            const item = issue.items.find((item) => item.project.nodeId === project.nodeId);
+            if (!field || !item) throw new GitHubWriteError("missing", "Task field is absent");
+            let value: Record<string, unknown> | null = null;
+            if (write.value !== null) {
+              if (field.type === "single-select") {
+                const option = field.options.find((option) => option.name === write.value);
+                if (!option) throw new GitHubWriteError("missing", "Task field option is absent");
+                value = { singleSelectOptionId: option.id };
+              } else if (field.type === "text" || field.type === "number" || field.type === "date")
+                value = { [field.type]: write.value };
+              else throw new GitHubWriteError("unavailable", "Task field type is unsupported");
+            }
+            await api.setProjectValue(
+              project.owner,
+              project.nodeId,
+              item.nodeId,
+              field.nodeId,
+              value,
+              signal,
+            );
+            mirror.enqueue("item", item.nodeId, project.nodeId);
+          } else {
+            if (!options.storageAdapters)
+              throw new GitHubWriteError("unavailable", "Storage adapter is unavailable");
+            await options.storageAdapters.writeTaskField(write, issue, signal);
+          }
+        } catch (error) {
+          if (error instanceof GitHubWriteError && error.kind !== "transport")
+            taskWrites.status(write, "refused");
+          throw classifyWriteError(error);
+        }
+        taskWrites.status(write, "confirmed");
+        mirror.enqueue("issue", write.issueNodeId);
+        options.probeTaskFieldWrite?.(write);
+      }, signal),
     moveCard(move: CardMove, signal?: AbortSignal): Promise<void> {
       if (stopped) throw new TypeError("GitHub source is stopped");
       if (signal?.aborted) return Promise.reject(signal.reason);

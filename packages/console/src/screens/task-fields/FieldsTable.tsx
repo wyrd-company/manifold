@@ -9,10 +9,11 @@ import type {
   TaskFieldEdit,
   DeclarationFinding,
   TaskFieldType,
+  StorageKindName,
 } from "@wyrd-company/manifold-shared/declarations-api";
 import type { ProjectSummary } from "../../api/projects.ts";
 import { Button } from "../../ui/button.tsx";
-import { fieldGroups, rowFindings } from "./fields.ts";
+import { fieldGroups, rowFindings, storageLabels } from "./fields.ts";
 export function FieldsTable({
   fields,
   storageKinds,
@@ -124,18 +125,22 @@ export function FieldsTable({
                           value={field.storage ?? "project-field"}
                           disabled={disabled || field.lifecycle}
                           className={error?.typeOrStorage ? "field-error" : ""}
-                          onChange={() =>
+                          onChange={(e) =>
                             onEdit({
                               kind: "set-field",
                               location: field.location,
-                              values: { storage: "project-field" },
+                              values: { storage: e.target.value as StorageKindName },
                             })
                           }
                         >
-                          {field.storage && field.storage !== "project-field" ? (
+                          {field.storage && !storageKinds.some((k) => k.kind === field.storage) ? (
                             <option>{field.storage}</option>
                           ) : null}
-                          <option value="project-field">Project field</option>
+                          {storageKinds.map((kind) => (
+                            <option key={kind.kind} value={kind.kind}>
+                              {storageLabels[kind.kind]}
+                            </option>
+                          ))}
                         </select>
                       </td>
                       <td>

@@ -23,6 +23,13 @@ export const manifoldImplementationCatalog: readonly ImplementationEntry[] = [
     ...implementationContracts["github-card-move"],
   },
   {
+    name: "github-task-field-set",
+    kind: "actor",
+    group: "GitHub",
+    description: "Set or clear a declared task field value.",
+    ...implementationContracts["github-task-field-set"],
+  },
+  {
     name: "escalate",
     kind: "actor",
     group: "People",

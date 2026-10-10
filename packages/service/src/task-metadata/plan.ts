@@ -2,6 +2,7 @@
 // relationships:
 //   implements: task-metadata
 // ---
+import { planScopeConfiguration } from "./scope-plan.ts";
 import { createHash } from "node:crypto";
 import type { ProjectMetadata } from "@wyrd-company/manifold-shared";
 import type {
@@ -44,16 +45,20 @@ export function ownedFields(metadata: ProjectMetadata | undefined): OwnedField[]
       options: metadata.lifecycle.options.map((name) => ({ name })),
       accept: false,
     },
-    ...Object.entries(metadata.fields ?? {}).map(([taskField, f]) => ({
-      field: f.storage?.name ?? taskField,
-      lifecycle: false,
-      taskField,
-      type: f.type,
-      options: ("options" in f ? f.options : []).map((o) =>
-        typeof o === "string" ? { name: o } : o,
-      ),
-      accept: f.whenChanged === "accept",
-    })),
+    ...Object.entries(metadata.fields ?? {})
+      .filter(([, f]) => f.storage.kind === "project-field")
+      .map(([taskField, f]) => ({
+        field: f.storage.kind === "project-field" ? f.storage.name : taskField,
+        lifecycle: false,
+        taskField,
+        type: f.type,
+        options: ("options" in f ? f.options : []).map((o) =>
+          typeof o === "string"
+            ? { name: o }
+            : { ...o, color: o.color as ProjectFieldOption["color"] },
+        ),
+        accept: f.whenChanged === "accept",
+      })),
   ];
 }
 export function matchFields(input: PlanInput) {
@@ -255,10 +260,66 @@ export function planProjectConfiguration(input: PlanInput): ProjectPlan {
           ? 1
           : 2;
   changes.sort((a, b) => rank(a) - rank(b));
+  for (const [taskField, field] of Object.entries(input.metadata?.fields ?? {})) {
+    if (field.storage.kind === "project-field") continue;
+    const reached = (input.scopes ?? []).filter((scope) =>
+      scope.owned.entities.some(
+        (entity) =>
+          entity.storage === field.storage.kind &&
+          entity.declarations.some((declaration) => declaration.field === taskField),
+      ),
+    );
+    const local = reached
+      .flatMap((scope) => planScopeConfiguration(scope).changes)
+      .filter((change) => change.target.taskField === taskField);
+    const ready =
+      reached.length > 0 && reached.every((scope) => scope.observed?.status === "ready");
+    statuses.push({
+      field:
+        field.storage.kind === "front-matter"
+          ? field.storage.key
+          : field.storage.kind === "issue-field"
+            ? field.storage.name
+            : taskField,
+      taskField,
+      lifecycle: false,
+      storage: field.storage.kind,
+      github:
+        field.storage.kind === "front-matter"
+          ? "present"
+          : !ready || local.some((change) => change.action === "create")
+            ? "missing"
+            : local.length
+              ? "differs"
+              : "present",
+      detail:
+        field.storage.kind === "front-matter"
+          ? "Front matter is read and written on each issue; Apply changes no GitHub configuration."
+          : (local[0]?.description ??
+            (ready
+              ? `Configuration belongs to ${reached.map((scope) => (scope.scope.kind === "organization" ? scope.scope.organization : scope.scope.repository)).join(", ")}.`
+              : "The shared storage scope has no ready observation.")),
+    });
+  }
+  const scopes = (input.scopes ?? []).map((scope) => ({
+    scope: {
+      kind: scope.scope.kind,
+      name: scope.scope.kind === "organization" ? scope.scope.organization : scope.scope.repository,
+      bindings: scope.bindings,
+    },
+    status: scope.observed?.status ?? ("unobserved" as const),
+    observedAt: scope.observed?.readAt ?? null,
+    ...(scope.observed && scope.observed.status !== "ready"
+      ? { message: scope.observed.message }
+      : {}),
+  }));
+  changes.push(...(input.scopes ?? []).flatMap((scope) => planScopeConfiguration(scope).changes));
   const drift = changes.filter((c) => c.drift).length;
   const pending = changes.filter((c) => c.action !== "remove").length;
   return {
     changes,
+    scopes,
+    outside: input.outside ?? [],
     fields: statuses,
     digest: createHash("sha256").update(canonical(changes)).digest("hex"),
     configuration:
@@ -312,7 +373,7 @@ export function projectWrites(
   remove: boolean,
 ): { write: ProjectFieldWrite; changes: readonly PlanChange[] }[] {
   const eligible = plan.changes.filter(
-    (c) => c.side === "github" && (!c.requiresRemoval || remove),
+    (c) => c.storage === "project-field" && c.side === "github" && (!c.requiresRemoval || remove),
   );
   const result: { write: ProjectFieldWrite; changes: readonly PlanChange[] }[] = [];
   const matches = matchFields(input);

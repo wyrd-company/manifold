@@ -2,6 +2,7 @@
 // relationships:
 //   implements: github-event-source
 // ---
+import type { StorageScope, TaskFieldStorage, TaskFieldValue } from "@wyrd-company/manifold-shared";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Credentials } from "../service-configuration/index.ts";
 import type { ProcessRepository } from "../process-repository/index.ts";
@@ -33,6 +34,29 @@ export interface ProcessRepositoryTrigger extends Pick<ProcessRepository, "pull"
   readonly branch: string;
 }
 export interface GitHubSourceOptions {
+  /** Storage adapters join through their module's wiring part. */
+  readonly storageAdapters?: {
+    readonly observeScope: (
+      scope: StorageScope,
+      signal?: AbortSignal,
+    ) => Promise<ScopeConfiguration>;
+    readonly writeScopeEntity: (
+      write: ScopeEntityWrite,
+      signal?: AbortSignal,
+    ) => Promise<ScopeEntity | undefined>;
+    readonly writeTaskField: (
+      write: TaskFieldWrite,
+      issue: TrackedIssue,
+      signal?: AbortSignal,
+    ) => Promise<void>;
+  };
+  readonly taskFieldBinding?: (project: GitHubProject) => string | undefined;
+  readonly taskFieldValues?: (
+    projectNodeId: string,
+    issue: TrackedIssue,
+  ) => Readonly<Record<string, TaskFieldValueWithStorage>> | undefined;
+  readonly scopes?: () => readonly StorageScope[];
+  readonly probeTaskFieldWrite?: (write: TaskFieldWrite) => void;
   readonly configuration: GitHubConfiguration;
   readonly credentials: Credentials;
   readonly store: Store;
@@ -51,7 +75,15 @@ export interface GitHubSourceOptions {
   /** The name of the lifecycle field the declaration in force declares for a Project, by node id. */
   readonly lifecycleField?: (projectNodeId: string) => string | undefined;
 }
+export interface TaskFieldValueWithStorage {
+  readonly storage: TaskFieldStorage["kind"];
+  readonly value: TaskFieldValue;
+}
 export interface GitHubSource {
+  scopeConfiguration(scope: StorageScope): ScopeConfiguration | undefined;
+  observeScope(scope: StorageScope, signal?: AbortSignal): Promise<ScopeConfiguration>;
+  writeScopeEntity(write: ScopeEntityWrite, signal?: AbortSignal): Promise<ScopeEntity | undefined>;
+  writeTaskField(write: TaskFieldWrite, signal?: AbortSignal): Promise<void>;
   project(nodeId: string): GitHubProject | undefined;
   projectByNumber(owner: string, number: number): GitHubProject | undefined;
   moveCard(move: CardMove, signal?: AbortSignal): Promise<void>;
@@ -164,6 +196,7 @@ export interface GitHubProject {
   readonly number: number;
 }
 export interface TrackedIssue {
+  readonly content?: IssueContent | undefined;
   readonly issue: GitHubIssue;
   readonly blockedBy: readonly GitHubIssue[];
   readonly blocking: readonly GitHubIssue[];
@@ -222,6 +255,11 @@ export interface CardMove {
 export class GitHubWriteError extends Error {
   readonly status: number | undefined;
   readonly kind:
+    | "missing"
+    | "out-of-scope"
+    | "unavailable"
+    | "front-matter-invalid"
+    | "body-conflict"
     | "field-missing"
     | "option-missing"
     | "item-missing"
@@ -230,6 +268,11 @@ export class GitHubWriteError extends Error {
     | "rejected";
   constructor(
     kind:
+      | "missing"
+      | "out-of-scope"
+      | "unavailable"
+      | "front-matter-invalid"
+      | "body-conflict"
       | "field-missing"
       | "option-missing"
       | "item-missing"
@@ -247,3 +290,160 @@ export class GitHubWriteError extends Error {
 
 /** The tracked issues of one mirror read, keyed by node id. */
 export interface TrackedIssueIndex extends ReadonlyMap<string, TrackedIssue> {}
+export interface IssueContent {
+  /** In GitHub's order. */
+  readonly labels: readonly { readonly nodeId: string; readonly name: string }[];
+  readonly milestone: {
+    readonly nodeId: string;
+    readonly number: number;
+    readonly title: string;
+  } | null;
+  readonly issueType: { readonly nodeId: string; readonly name: string } | null;
+  /** Every issue field value the issue holds, in GitHub's order; a multi-select value is left out. */
+  readonly issueFields: readonly {
+    readonly fieldNodeId: string;
+    readonly name: string;
+    readonly value: Exclude<GitHubFieldValue, null | { readonly kind: "iteration" }>;
+  }[];
+  /** The body as GitHub holds it, the empty string for none. */
+  readonly body: string;
+  /** When GitHub last recorded an edit of the body, in epoch milliseconds, or null. */
+  readonly lastEditedAt: number | null;
+}
+
+export type ScopeConfiguration =
+  | {
+      readonly scope: StorageScope;
+      readonly status: "ready";
+      readonly readAt: number;
+      /** For an organization scope; empty for a repository. */
+      readonly issueFields: readonly IssueFieldConfiguration[];
+      readonly issueTypes: readonly IssueTypeConfiguration[];
+      /** For a repository scope; empty for an organization. */
+      readonly labels: readonly LabelConfiguration[];
+      readonly milestones: readonly MilestoneConfiguration[];
+    }
+  | {
+      readonly scope: StorageScope;
+      readonly status: "unsupported" | "forbidden" | "unconfigured" | "missing";
+      readonly readAt: number;
+      readonly message: string;
+    };
+
+export interface IssueFieldConfiguration {
+  readonly nodeId: string;
+  readonly name: string;
+  readonly type: "text" | "number" | "date" | "single-select" | "multi-select";
+  /** A single-select field's options in GitHub's order; empty for another type. */
+  readonly options: readonly ProjectFieldOption[];
+}
+
+export interface IssueTypeConfiguration {
+  readonly nodeId: string;
+  readonly name: string;
+  readonly color: ProjectFieldOptionColor | null;
+  readonly description: string;
+  readonly enabled: boolean;
+}
+
+export interface LabelConfiguration {
+  readonly nodeId: string;
+  readonly name: string;
+  /** Six lower-case hexadecimal digits. */
+  readonly color: string;
+  readonly description: string;
+}
+
+export interface MilestoneConfiguration {
+  readonly nodeId: string;
+  readonly number: number;
+  readonly title: string;
+  readonly description: string;
+  readonly state: "open" | "closed";
+}
+
+export type ScopeEntity =
+  | IssueFieldConfiguration
+  | IssueTypeConfiguration
+  | LabelConfiguration
+  | MilestoneConfiguration;
+
+export type ScopeEntityWrite =
+  | {
+      readonly kind: "issue-field-create";
+      readonly organization: string;
+      readonly name: string;
+      readonly type: "text" | "number" | "date" | "single-select";
+      readonly options?: readonly ProjectFieldOptionWrite[];
+    }
+  | {
+      readonly kind: "issue-field-update";
+      readonly organization: string;
+      readonly nodeId: string;
+      readonly name?: string;
+      readonly options?: readonly ProjectFieldOptionWrite[];
+    }
+  | { readonly kind: "issue-field-delete"; readonly organization: string; readonly nodeId: string }
+  | {
+      readonly kind: "issue-type-create";
+      readonly organization: string;
+      readonly name: string;
+      readonly color: ProjectFieldOptionColor;
+      readonly description: string;
+    }
+  | {
+      readonly kind: "issue-type-update";
+      readonly organization: string;
+      readonly nodeId: string;
+      readonly name?: string;
+      readonly color?: ProjectFieldOptionColor;
+      readonly description?: string;
+      readonly enabled?: true;
+    }
+  | {
+      readonly kind: "label-create";
+      readonly repository: string;
+      readonly name: string;
+      readonly color: string;
+      readonly description: string;
+    }
+  | {
+      readonly kind: "label-update";
+      readonly repository: string;
+      readonly nodeId: string;
+      readonly name?: string;
+      readonly color?: string;
+      readonly description?: string;
+    }
+  | { readonly kind: "label-delete"; readonly repository: string; readonly nodeId: string }
+  | {
+      readonly kind: "milestone-create";
+      readonly repository: string;
+      readonly title: string;
+      readonly description: string;
+    }
+  | {
+      readonly kind: "milestone-update";
+      readonly repository: string;
+      readonly number: number;
+      readonly title?: string;
+      readonly description?: string;
+    };
+
+export interface TaskFieldWrite {
+  /** The invocation of the `github-task-field-set` invoke that asks for the write. */
+  readonly actorId: string;
+  readonly invokeId: string;
+  readonly entryId: string;
+  readonly issueNodeId: string;
+  readonly projectNodeId: string;
+  /** The task field's name, for attribution and errors. */
+  readonly field: string;
+  readonly storage: TaskFieldStorage;
+  /** For a `label` field, the label name of each option; empty otherwise. */
+  readonly labels: readonly string[];
+  /** For a `label` or `milestone` field, the repositories of the binding's scope; empty otherwise. */
+  readonly repositories: readonly string[];
+  /** A string, a finite number, or null to clear; an option's name for a single-select field. */
+  readonly value: string | number | null;
+}

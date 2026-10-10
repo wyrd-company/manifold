@@ -3,7 +3,7 @@
 //   implements: task-metadata-tables
 // ---
 import type { TaskMetadataDeclaration, TaskMetadataFinding } from "@wyrd-company/manifold-shared";
-import type { AppliedConfiguration } from "./project-types.ts";
+import type { AppliedConfiguration, AppliedScope } from "./project-types.ts";
 import type { StoreConnection } from "../store/index.ts";
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -41,12 +41,24 @@ export function metadataRecords(connection: StoreConnection) {
           }
         : undefined;
     },
+    appliedScope(key: string): (AppliedScope & { at: number; commit: string }) | undefined {
+      const row = db.prepare("SELECT * FROM metadata_scope_applies WHERE scope_key = ?").get(key);
+      return row
+        ? {
+            configuration: JSON.parse(row["configuration"] as string),
+            owned: JSON.parse(row["owned"] as string),
+            at: row["applied_at"] as number,
+            commit: row["commit_id"] as string,
+          }
+        : undefined;
+    },
     recordApply(
       binding: string,
       project: string,
       commit: string,
       applied: AppliedConfiguration,
       at: number,
+      scopes: readonly { key: string; applied: AppliedScope }[] = [],
     ) {
       connection.transaction(() => {
         db.prepare(
@@ -59,6 +71,16 @@ export function metadataRecords(connection: StoreConnection) {
           JSON.stringify(applied.owned),
           at,
         );
+        for (const scope of scopes)
+          db.prepare(
+            "INSERT INTO metadata_scope_applies VALUES (?, ?, ?, ?, ?) ON CONFLICT (scope_key) DO UPDATE SET commit_id=excluded.commit_id, configuration=excluded.configuration, owned=excluded.owned, applied_at=excluded.applied_at",
+          ).run(
+            scope.key,
+            commit,
+            JSON.stringify(scope.applied.configuration),
+            JSON.stringify(scope.applied.owned),
+            at,
+          );
         db.prepare("DELETE FROM metadata_pending_saves WHERE binding = ?").run(binding);
       });
     },

@@ -3,7 +3,7 @@
 //   implements: host-cli-blueprint-lint
 // ---
 import { readTaskMetadata } from "../task-metadata-lint/command.ts";
-import { declaredLifecycleOptions } from "@wyrd-company/manifold-shared";
+import { declaredLifecycleOptions, declaredTaskFields } from "@wyrd-company/manifold-shared";
 import { join } from "node:path";
 import { readdir, readFile } from "node:fs/promises";
 import { lintBlueprint, manifoldImplementationNames } from "@wyrd-company/manifold-shared";
@@ -29,6 +29,7 @@ export async function blueprintLintCommand(
   const files: string[] = [];
   let repository: string | undefined;
   let lifecycleOptions: ReadonlySet<string> | undefined;
+  let taskFields: ReturnType<typeof declaredTaskFields> | undefined;
   let configurationBound: number | undefined;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!;
@@ -71,6 +72,7 @@ export async function blueprintLintCommand(
         return 2;
       }
       lifecycleOptions = declaredLifecycleOptions(result.declaration);
+      taskFields = declaredTaskFields(result.declaration);
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));
       return 2;
@@ -118,6 +120,7 @@ export async function blueprintLintCommand(
     const result = await lintBlueprint(file, text, manifoldImplementationNames, {
       ...(configurationBound === undefined ? {} : { configurationBound }),
       ...(lifecycleOptions === undefined ? {} : { lifecycleOptions }),
+      ...(taskFields === undefined ? {} : { taskFields }),
     });
     if (!result.ok) {
       for (const finding of result.findings) console.log(line(file, finding));

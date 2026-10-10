@@ -10,6 +10,7 @@ import {
   lintBlueprint,
   lintTaskMetadataDeclaration,
   declaredLifecycleOptions,
+  declaredTaskFields,
   ExpressionError,
   compileStateGuards,
 } from "@wyrd-company/manifold-shared";
@@ -143,7 +144,12 @@ export function createBlueprintLoader(options: BlueprintLoaderOptions): Blueprin
       ...(options.configurationBound === undefined
         ? {}
         : { configurationBound: options.configurationBound }),
-      ...(metadata.ok ? { lifecycleOptions: declaredLifecycleOptions(metadata.declaration) } : {}),
+      ...(metadata.ok
+        ? {
+            lifecycleOptions: declaredLifecycleOptions(metadata.declaration),
+            taskFields: declaredTaskFields(metadata.declaration),
+          }
+        : {}),
     });
     if (!lint.ok) return { status: "invalid", findings: lint.findings };
     try {

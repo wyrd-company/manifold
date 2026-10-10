@@ -23,7 +23,11 @@ export interface TaskMetadataOptions {
   readonly invocationOf: (args: Parameters<Parameters<typeof fromPromise>[0]>[0]) => Invocation;
   readonly source: (
     signal: AbortSignal,
-  ) => Promise<Pick<GitHubSource, "project" | "moveCard"> & Partial<ConfigurationSource>>;
+  ) => Promise<
+    Pick<GitHubSource, "project" | "moveCard"> &
+      Partial<Pick<GitHubSource, "writeTaskField">> &
+      Partial<ConfigurationSource>
+  >;
   readonly bindings?: ProjectConfigurationOptions["bindings"];
   readonly revisions?: ProjectConfigurationOptions["revisions"];
   readonly now?: () => number;
@@ -39,6 +43,10 @@ export type TaskMetadataApplied =
       readonly findings: readonly TaskMetadataFinding[];
     };
 export interface TaskMetadata {
+  values(
+    binding: string,
+    issue: import("../github-source/index.ts").TrackedIssue,
+  ): import("./values.ts").TaskFieldValues | undefined;
   readonly implementations: ImplementationRegistry;
   apply(revision: ProcessRepositoryRevision): Promise<TaskMetadataApplied>;
   current(): TaskMetadataDeclaration | undefined;

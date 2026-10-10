@@ -6,6 +6,17 @@ export { startGitHubSource } from "./receive.ts";
 export { GitHubDeliveryError, GitHubSourceError, GitHubWriteError } from "./types.ts";
 export type {
   GitHubSourceOptions,
+  TrackedIssueIndex,
+  IssueContent,
+  ScopeConfiguration,
+  ScopeEntity,
+  ScopeEntityWrite,
+  IssueFieldConfiguration,
+  IssueTypeConfiguration,
+  LabelConfiguration,
+  MilestoneConfiguration,
+  TaskFieldWrite,
+  TaskFieldValueWithStorage,
   CardMove,
   GitHubConfiguration,
   GitHubOwnerConfiguration,

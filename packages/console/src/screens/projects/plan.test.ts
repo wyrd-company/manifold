@@ -44,3 +44,30 @@ test("removals are visible but do not count until the operator includes them", (
     groups: [{ removes: 1 }],
   });
 });
+
+test("changes group by kind and scope so shared scopes retain their own counts", () => {
+  const scope = {
+    kind: "repository" as const,
+    name: "sample/depot",
+    bindings: ["sample", "other"],
+  };
+  const labels = {
+    ...changes[0]!,
+    id: "label",
+    storage: "label" as const,
+    scope,
+    target: { lifecycle: false, option: "size: small" },
+  };
+  const second = { ...labels, id: "second", scope: { ...scope, name: "sample/warehouse" } };
+  expect(
+    planGroups([...changes, labels, second], false).groups.map((group) => [
+      group.storage,
+      group.scope?.name,
+      group.creates,
+    ]),
+  ).toEqual([
+    ["project-field", undefined, 1],
+    ["label", "sample/depot", 1],
+    ["label", "sample/warehouse", 1],
+  ]);
+});

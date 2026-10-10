@@ -198,3 +198,35 @@ test("a stale Apply plan maps to stale only for the Apply conflict response", ()
   expect(mapProjectResult("plan", 409, body).kind).toBe("failed");
   expect(mapProjectResult("apply", 503, body).kind).toBe("failed");
 });
+
+test("plan guards read shared scope changes and unavailable scope status", () => {
+  const scope = { kind: "repository", name: "sample/depot", bindings: ["shipping"] };
+  expect(
+    isProjectPlanResponse({
+      ...plan,
+      scopes: [{ scope, status: "forbidden", observedAt: null, message: "Cannot read" }],
+      outside: [{ repository: "sample/other", issues: 1 }],
+      changes: [
+        {
+          ...change,
+          storage: "label",
+          scope,
+          target: { lifecycle: false, option: "size: small" },
+          to: { entity: "label", name: "size: small", color: "aaaaaa", description: "" },
+        },
+      ],
+    }),
+  ).toBe(true);
+  expect(
+    isProjectPlanResponse({ ...plan, scopes: [{ scope, status: "broken", observedAt: null }] }),
+  ).toBe(false);
+  expect(
+    mapProjectResult("apply", 409, {
+      error: {
+        kind: "scope-unavailable",
+        message: "Nothing was written.",
+        scopes: [{ scope, status: "forbidden", observedAt: null }],
+      },
+    }),
+  ).toMatchObject({ kind: "failed", errorKind: "scope-unavailable" });
+});

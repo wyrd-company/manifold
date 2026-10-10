@@ -611,11 +611,15 @@ proposed-design:
     row holds, for a front matter write, `attempt`, the number of the
     latest body write it sent, 1 for the write and 2 for its one repair;
     `basis_edited_at`, the time of the newest edit GitHub held when that
-    attempt was computed, so that every edit of the issue at or before it
-    precedes the attempt and the attempt's own edit is newer; and `check`,
+    attempt was computed, with the body read at that basis in `basis_body`;
+    for an issue with no edit its creation time is the basis, since GitHub
+    includes creation in its edit history. An edit with a different body
+    at the basis, or two later edits with the same timestamp, fail
+    `body-conflict`: GitHub's timestamps have one-second precision and do
+    not order these edits. The attempt's own edit must be newer; and `check`,
     one of `none`, `pending`, `passed`, or `conflict`, with the
     conflicting edit's time for `conflict`. (0) When the invocation's row
-    holds `check` `pending`, the source runs step (d) first, against the
+    holds `check` `pending`, or `none` after an attempted write, the source runs step (d) first, against the
     row's `basis_edited_at`, before anything else; a row whose `check` is
     `conflict` fails `body-conflict` again with no request, so a replay
     reports the same failure. (a) It reads the issue's `body` and
@@ -631,9 +635,13 @@ proposed-design:
     first, up to the 100 GitHub keeps. Since each attempt has its own
     basis, the write's edit is at or before the repair's basis, and the
     first edit by the App's account among them is the latest attempt's.
-    No such edit means the attempt never reached GitHub: `check` becomes
+    No such edit leaves the outcome unknown: `check` becomes
     `none` and the attempt runs again from (a), or for a repair from the
-    replaced edit's text again. With the attempt's edit the newest and no edit by
+    replaced edit's text again. GitHub can expose the new body before its
+    edit history; when (a) already holds the attempted body, `check` stays
+    `pending` and the invocation fails `transport` without another write,
+    so its replay checks the history again before taking the equal-value
+    shortcut. With the attempt's edit the newest and no edit by
     another account before it, `check` becomes `passed`. A write repairs
     at most once. When the check of attempt 1 finds an edit by another
     account before the write's edit, the write replaced it; when the

@@ -47,6 +47,8 @@ const connection = <T>(nodes: T[]) => ({
   pageInfo: { hasNextPage: false, endCursor: null as string | null },
 });
 export interface ModelIssue {
+  body?: string;
+  lastEditedAt?: string | null;
   title?: string;
   url?: string;
   id: string;
@@ -65,6 +67,28 @@ export interface ModelItem {
 }
 export async function githubFake() {
   const issues = new Map<string, ModelIssue>();
+  const edits = new Map<
+    string,
+    { editedAt: string; editor: { login: string; __typename: string }; diff: string }[]
+  >();
+  let hideOwnBodyEdits = false;
+  let nextBodyEditedAt: string | undefined;
+  let editTime = Date.parse("2026-01-01T00:00:00Z");
+  const editBody = (id: string, body: string, own: boolean, at?: string) => {
+    const issue = issues.get(id)!;
+    issue.body = body;
+    const forced = at ?? nextBodyEditedAt;
+    nextBodyEditedAt = undefined;
+    editTime = forced ? Date.parse(forced) : editTime + 1;
+    issue.lastEditedAt = new Date(editTime).toISOString();
+    const rows = edits.get(id) ?? [];
+    rows.push({
+      editedAt: issue.lastEditedAt,
+      editor: { login: own ? "sample-app" : "sample-editor", __typename: own ? "Bot" : "User" },
+      diff: body,
+    });
+    edits.set(id, rows);
+  };
   for (const [id, number] of ["I_A", "I_B", "I_C", "I_X", "I_D"].map(
     (id, index) => [id, index + 1] as const,
   ))
@@ -75,6 +99,14 @@ export async function githubFake() {
       stateReason: null,
       repository: { nameWithOwner: id === "I_X" ? "external/records" : "sample/records" },
     });
+  for (const issue of issues.values())
+    edits.set(issue.id, [
+      {
+        editedAt: "2025-01-01T00:00:00Z",
+        editor: { login: "sample-editor", __typename: "User" },
+        diff: "",
+      },
+    ]);
   const items = new Map<string, ModelItem>();
   const dependencies: [string, string][] = [];
   const subIssues: [string, string][] = [];
@@ -164,6 +196,12 @@ export async function githubFake() {
     if (!ref) return null;
     return {
       ...ref,
+      body: ref.body ?? "",
+      lastEditedAt: ref.lastEditedAt ?? null,
+      labels: connection([]),
+      issueType: null,
+      milestone: null,
+      issueFieldValues: connection([]),
       parent: issues.get(subIssues.find(([, child]) => child === id)?.[0] ?? "") ?? null,
       blockedBy: connection(
         dependencies
@@ -235,6 +273,62 @@ export async function githubFake() {
       }
       let data: unknown;
       switch (operation) {
+        case "GitHubIssueBody": {
+          const issue = issues.get(input.variables["id"] as string);
+          data = {
+            node: issue
+              ? {
+                  body: issue.body ?? "",
+                  createdAt: "2025-01-01T00:00:00Z",
+                  lastEditedAt: issue.lastEditedAt ?? null,
+                }
+              : null,
+          };
+          break;
+        }
+        case "GitHubIssueBodyWrite": {
+          const id = input.variables["id"] as string;
+          editBody(id, input.variables["body"] as string, true);
+          data = { updateIssue: { issue: { id } } };
+          break;
+        }
+        case "GitHubIssueBodyEdits":
+          data = {
+            viewer: { login: "sample-app[bot]" },
+            node: {
+              userContentEdits: {
+                nodes: (edits.get(input.variables["id"] as string) ?? []).filter(
+                  (edit) => !hideOwnBodyEdits || edit.editor.__typename !== "Bot",
+                ),
+              },
+            },
+          };
+          break;
+        case "GitHubTaskFieldSet":
+        case "GitHubTaskFieldClear": {
+          const item = items.get(input.variables["item"] as string)!;
+          const id = input.variables["field"] as string;
+          const field = fields.find((field) => field.id === id)!;
+          item.fieldValues.nodes = item.fieldValues.nodes.filter(
+            (value) => (value["field"] as { id: string }).id !== id,
+          );
+          const value = input.variables["value"] as Record<string, unknown> | undefined;
+          if (value) {
+            const option = field.options.find(
+              (option) => option.id === value["singleSelectOptionId"],
+            );
+            item.fieldValues.nodes.push({
+              field: { id: field.id, name: field.name, dataType: dataTypeOf(field) },
+              ...value,
+              ...(option ? { optionId: option.id, name: option.name } : {}),
+            });
+          }
+          data = {
+            updateProjectV2ItemFieldValue: { projectV2Item: { id: item.id } },
+            clearProjectV2ItemFieldValue: { projectV2Item: { id: item.id } },
+          };
+          break;
+        }
         case "GitHubProjectField":
           data = {
             node: { field: fields.find((f) => f.name === input.variables["name"]) ?? null },
@@ -535,6 +629,13 @@ export async function githubFake() {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return {
+    editBody,
+    nextBodyEditAt(at: string) {
+      nextBodyEditedAt = at;
+    },
+    lagBodyEdits(enabled: boolean) {
+      hideOwnBodyEdits = enabled;
+    },
     fields,
     failQuery(operation: string, type: string) {
       queryFailure = { operation, type };

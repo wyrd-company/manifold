@@ -78,6 +78,12 @@ tasks:
       - task: build
       - node testing/live-github/src/project-config.mjs
 
+  live:front-matter:
+    desc: Check issue front matter writes, replay, clear, and edit history on real GitHub
+    cmds:
+      - task: build
+      - node testing/live-github/src/front-matter.mjs
+
   live:stop:
     desc: Stop the live environment or recover its recorded children
     cmds: [node testing/live-github/src/stop.ts]

@@ -20,7 +20,9 @@ it("pins binding facts in the decision and uses that binding in task input", () 
     binding,
     { items: [], ledger: { items: [], allocations: [] }, githubProjects: [], t3codeProjects: [] },
     "P1",
+    { Urgency: { state: "set", value: "Normal" } },
   );
+  expect(input.task.values).toEqual({ Urgency: { state: "set", value: "Normal" } });
   expect(input.binding).toEqual({
     name: binding.name,
     item: binding.item,

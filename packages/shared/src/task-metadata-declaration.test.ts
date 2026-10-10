@@ -59,12 +59,22 @@ test("metadata schema agrees with the declaration asset", () => {
   );
 });
 test("the storage kinds table is exported from one source", () => {
-  expect(taskFieldStorageKinds).toEqual([
+  expect(taskFieldStorageKinds.slice(0, 1)).toMatchObject([
     {
       kind: "project-field",
       types: ["text", "number", "date", "single-select"],
       settings: ["name"],
     },
+  ]);
+});
+test("all six storage kinds are offered in contract order", () => {
+  expect(taskFieldStorageKinds.map((kind) => kind.kind)).toEqual([
+    "project-field",
+    "issue-field",
+    "issue-type",
+    "label",
+    "milestone",
+    "front-matter",
   ]);
 });
 test("absent metadata declares no Project and archived bindings still declare options", () => {

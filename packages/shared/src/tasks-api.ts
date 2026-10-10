@@ -14,6 +14,11 @@ import {
   string,
   uri,
 } from "./api-guards.ts";
+import type {
+  TaskFieldStorage,
+  TaskFieldType,
+  TaskFieldValue,
+} from "./task-metadata-declaration.ts";
 import { isEscalation } from "./escalations-api.ts";
 import type { Escalation } from "./escalations-api.ts";
 export const tasksApiPath = "/api/tasks";
@@ -49,7 +54,15 @@ export interface BoundProject {
   readonly lifecycle?: { readonly field: string; readonly options: readonly string[] };
   readonly tasks: readonly TaskSummary[];
 }
+export interface TaskProjectField {
+  readonly name: string;
+  readonly type: TaskFieldType;
+  readonly storage: TaskFieldStorage["kind"];
+  readonly where?: string;
+  readonly value: TaskFieldValue;
+}
 export interface TaskProject {
+  readonly fields?: readonly TaskProjectField[];
   readonly binding: string;
   readonly owner: string;
   readonly number: number;
@@ -94,6 +107,31 @@ export interface TasksResponse {
 export interface TaskResponse {
   readonly task: Task;
 }
+const taskFieldValue = (v: unknown) =>
+  shape(v, {
+    state: oneOf("set"),
+    value: (v) => string(v) || (typeof v === "number" && Number.isFinite(v)),
+  }) ||
+  shape(v, { state: oneOf("empty") }) ||
+  shape(v, { state: oneOf("invalid", "unavailable"), detail: string });
+const taskProjectField = (v: unknown) =>
+  shape(
+    v,
+    {
+      name: string,
+      type: oneOf("text", "number", "date", "single-select"),
+      storage: oneOf(
+        "project-field",
+        "issue-field",
+        "issue-type",
+        "label",
+        "milestone",
+        "front-matter",
+      ),
+      value: taskFieldValue,
+    },
+    { where: string },
+  );
 const actorId = (v: unknown) => string(v) && /^task:.+$/.test(v);
 const number = (v: unknown) => natural(v) && Number(v) > 0;
 const status = (v: unknown) => v === null || string(v);
@@ -140,7 +178,13 @@ export function isTaskResponse(v: unknown): v is TaskResponse {
         {
           actorId,
           issue,
-          projects: array((v) => shape(v, { ...projectFields, status }, { field: nonempty })),
+          projects: array((v) =>
+            shape(
+              v,
+              { ...projectFields, status },
+              { field: nonempty, fields: array(taskProjectField) },
+            ),
+          ),
           threads: array((v) =>
             shape(
               v,

@@ -643,7 +643,17 @@ export const blueprintSchema = {
         value: {
           description:
             "The value to set: a string for text, a finite number for number, a YYYY-MM-DD string for date, an option's name for single-select; null clears the field.",
-          type: ["string", "number", "null"],
+          oneOf: [
+            {
+              type: "string",
+            },
+            {
+              type: "number",
+            },
+            {
+              type: "null",
+            },
+          ],
         },
       },
     },

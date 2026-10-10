@@ -23,7 +23,9 @@ description: >-
   edit's whole text, and GitHub keeps at most 100 edits of an issue. When
   the text cannot be recovered the write fails as `body-conflict`, the
   replaced text stays in GitHub's edit history, and the blueprint decides
-  what to do.
+  what to do. GitHub's edit timestamps have one-second precision; edits
+  whose order cannot be established against the recorded basis body fail
+  `body-conflict` without another write.
 
 categories:
   - technical

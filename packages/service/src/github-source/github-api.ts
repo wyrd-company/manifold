@@ -9,6 +9,7 @@ import { githubEventsSchema } from "@wyrd-company/manifold-shared";
 import { GitHubSourceError, GitHubWriteError } from "./types.ts";
 import type {
   GitHubSourceOptions,
+  IssueContent,
   GitHubIssue,
   GitHubProject,
   ObservedIssue,
@@ -76,6 +77,10 @@ const fieldRef =
   "fragment GitHubField on ProjectV2FieldConfiguration { ... on ProjectV2FieldCommon { id name dataType } }";
 const fieldValues =
   "nodes { ... on ProjectV2ItemFieldTextValue { text field { ...GitHubField } } ... on ProjectV2ItemFieldNumberValue { number field { ...GitHubField } } ... on ProjectV2ItemFieldDateValue { date field { ...GitHubField } } ... on ProjectV2ItemFieldSingleSelectValue { optionId name field { ...GitHubField } } ... on ProjectV2ItemFieldIterationValue { iterationId title startDate duration field { ...GitHubField } } }";
+const issueValueSelection =
+  "nodes { ... on IssueFieldTextValue { text: value field { ...GitHubIssueField } } ... on IssueFieldNumberValue { number: value field { ...GitHubIssueField } } ... on IssueFieldDateValue { date: value field { ...GitHubIssueField } } ... on IssueFieldSingleSelectValue { optionId name field { ...GitHubIssueField } } }";
+const issueFieldRef =
+  "fragment GitHubIssueField on IssueFields { ... on Node { id } ... on IssueFieldCommon { name dataType } }";
 const pageInfo = "pageInfo { hasNextPage endCursor }";
 const itemRef = `fragment GitHubItem on ProjectV2Item { id type isArchived project { id } content { ... on Issue { ...GitHubIssueRef } ... on PullRequest { id } ... on DraftIssue { id } } fieldValues(first: 50) { ${pageInfo} ${fieldValues} } }`;
 const itemFragments = `${itemRef} ${fieldRef} ${issueRef}`;
@@ -101,6 +106,12 @@ interface Connection<T> {
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
 }
 interface RawIssue {
+  body?: string;
+  lastEditedAt?: string | null;
+  labels?: Connection<{ id: string; name: string }>;
+  milestone?: { id: string; number: number; title: string } | null;
+  issueType?: { id: string; name: string } | null;
+  issueFieldValues?: Connection<RawField>;
   title?: string;
   url?: string;
   id: string;
@@ -355,6 +366,85 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
       stopped = true;
       controller?.abort();
     },
+    query,
+    async readBody(owner: string, id: string, signal?: AbortSignal) {
+      const data = await query<{
+        node: { body: string; lastEditedAt: string | null; createdAt: string } | null;
+      }>(
+        owner,
+        "query GitHubIssueBody($id:ID!){node(id:$id){... on Issue {body lastEditedAt createdAt}}}",
+        { id },
+        signal,
+      );
+      if (!data.node || typeof data.node.body !== "string")
+        throw new GitHubWriteError("missing", "Issue body is unavailable");
+      return {
+        body: data.node.body,
+        lastEditedAt: data.node.lastEditedAt ? Date.parse(data.node.lastEditedAt) : null,
+        basisEditedAt: Date.parse(data.node.lastEditedAt ?? data.node.createdAt),
+      };
+    },
+    async writeBody(owner: string, id: string, body: string, signal?: AbortSignal) {
+      await writeQuery(
+        owner,
+        "mutation GitHubIssueBodyWrite($id:ID!,$body:String!){updateIssue(input:{id:$id,body:$body}){issue{id}}}",
+        { id, body },
+        "item-missing",
+        signal,
+      );
+    },
+    async bodyEdits(owner: string, id: string, signal?: AbortSignal) {
+      const data = await query<{
+        viewer: { login: string };
+        node: {
+          userContentEdits: {
+            nodes: {
+              editedAt: string;
+              editor: { login: string; __typename?: string } | null;
+              diff: string | null;
+            }[];
+          };
+        } | null;
+      }>(
+        owner,
+        "query GitHubIssueBodyEdits($id:ID!){viewer{login} node(id:$id){... on Issue {userContentEdits(first:100){nodes{editedAt editor{login __typename} diff}}}}}",
+        { id },
+        signal,
+      );
+      if (!data.node) throw new GitHubWriteError("missing", "Issue edit history is unavailable");
+      return data.node.userContentEdits.nodes.map((edit) => ({
+        at: Date.parse(edit.editedAt),
+        own:
+          edit.editor?.login === data.viewer.login ||
+          (edit.editor?.__typename === "Bot" && `${edit.editor.login}[bot]` === data.viewer.login),
+        body: edit.diff,
+      }));
+    },
+    async setProjectValue(
+      owner: string,
+      project: string,
+      item: string,
+      field: string,
+      value: Record<string, unknown> | null,
+      signal?: AbortSignal,
+    ) {
+      if (value === null)
+        await writeQuery(
+          owner,
+          "mutation GitHubTaskFieldClear($project:ID!,$item:ID!,$field:ID!){clearProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field}){projectV2Item{id}}}",
+          { project, item, field },
+          "item-missing",
+          signal,
+        );
+      else
+        await writeQuery(
+          owner,
+          "mutation GitHubTaskFieldSet($project:ID!,$item:ID!,$field:ID!,$value:ProjectV2FieldValue!){updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:$value}){projectV2Item{id}}}",
+          { project, item, field, value },
+          "item-missing",
+          signal,
+        );
+    },
     async projectField(
       owner: string,
       project: string,
@@ -521,7 +611,7 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
     async issues(owner: string, ids: readonly string[]) {
       const data = await query<{ nodes: (RawIssue | null)[] }>(
         owner,
-        `query GitHubIssues($ids: [ID!]!) { nodes(ids: $ids) { ... on Issue { ...GitHubIssueRef parent { ...GitHubIssueRef } blockedBy(first: 50) { ${pageInfo} nodes { ...GitHubIssueRef } } blocking(first: 50) { ${pageInfo} nodes { ...GitHubIssueRef } } subIssues(first: 50) { ${pageInfo} nodes { ...GitHubIssueRef } } } } } ${issueRef}`,
+        `query GitHubIssues($ids: [ID!]!) { nodes(ids: $ids) { ... on Issue { ...GitHubIssueRef body lastEditedAt labels(first: 100) { ${pageInfo} nodes { id name } } milestone { id number title } issueType { id name } issueFieldValues(first: 50) { ${pageInfo} ${issueValueSelection} } parent { ...GitHubIssueRef } blockedBy(first: 50) { ${pageInfo} nodes { ...GitHubIssueRef } } blocking(first: 50) { ${pageInfo} nodes { ...GitHubIssueRef } } subIssues(first: 50) { ${pageInfo} nodes { ...GitHubIssueRef } } } } } ${issueRef} ${issueFieldRef}`,
         { ids },
       );
       if (!Array.isArray(data.nodes) || data.nodes.length !== ids.length)
@@ -543,7 +633,74 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
               )
             ).map(issue),
           );
+        let content: IssueContent | undefined;
+        if (raw.body !== undefined) {
+          if (typeof raw.body !== "string" || !raw.labels || !raw.issueFieldValues)
+            throw new GitHubSourceError("api", "Invalid issue content");
+          const labels = await connection(
+            owner,
+            raw.id,
+            "labels",
+            raw.labels,
+            "nodes { id name }",
+            "",
+          );
+          const fieldValues = await connection(
+            owner,
+            raw.id,
+            "issueFieldValues",
+            raw.issueFieldValues,
+            issueValueSelection,
+            issueFieldRef,
+          );
+          const issueFields: IssueContent["issueFields"][number][] = [];
+          for (const value of fieldValues) {
+            if (!value.field) continue;
+            const f = value.field;
+            const type = f.dataType;
+            const normalized =
+              type === "TEXT"
+                ? { kind: "text" as const, text: value.text }
+                : type === "NUMBER"
+                  ? { kind: "number" as const, number: value.number }
+                  : type === "DATE"
+                    ? { kind: "date" as const, date: value.date }
+                    : type === "SINGLE_SELECT"
+                      ? {
+                          kind: "single-select" as const,
+                          optionId: value.optionId,
+                          name: value.name,
+                        }
+                      : undefined;
+            if (normalized)
+              issueFields.push({
+                fieldNodeId: nodeId(f.id),
+                name: f.name,
+                value: validate("field-value", normalized),
+              });
+          }
+          const lastEditedAt = raw.lastEditedAt ? Date.parse(raw.lastEditedAt) : null;
+          if (lastEditedAt !== null && !Number.isFinite(lastEditedAt))
+            throw new GitHubSourceError("api", "Invalid last body edit time");
+          content = {
+            body: raw.body,
+            lastEditedAt,
+            labels: labels.map((label) => ({ nodeId: nodeId(label.id), name: label.name })),
+            milestone: raw.milestone
+              ? {
+                  nodeId: nodeId(raw.milestone.id),
+                  number: raw.milestone.number,
+                  title: raw.milestone.title,
+                }
+              : null,
+            issueType: raw.issueType
+              ? { nodeId: nodeId(raw.issueType.id), name: raw.issueType.name }
+              : null,
+            issueFields,
+          };
+        }
         values.push({
+          content,
           issue: issue(raw),
           blockedBy: lists[0]!,
           blocking: lists[1]!,

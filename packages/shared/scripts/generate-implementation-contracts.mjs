@@ -40,6 +40,10 @@ const contracts = {
     input: contract(blueprint, "card-move-input"),
     output: contract(blueprint, "card-move-output"),
   },
+  "github-task-field-set": {
+    input: contract(blueprint, "task-field-set-input"),
+    output: contract(blueprint, "task-field-set-output"),
+  },
   "send-message": {
     input: contract(tools, "send-message-input"),
     output: contract(tools, "send-message-output"),

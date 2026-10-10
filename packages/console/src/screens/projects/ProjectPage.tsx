@@ -115,13 +115,16 @@ export function ProjectPage({ binding }: { binding: string }) {
         kind: "error",
         text:
           answer.message +
+          (answer.kind === "failed" && answer.errorKind === "scope-unavailable"
+            ? ` Nothing was written.${answer.scopes?.map((scope) => ` ${scope.scope.name}: ${scope.status}.`).join("") ?? ""}`
+            : "") +
           (answer.kind === "failed" && answer.writes !== undefined
             ? ` ${answer.writes} writes made.${answer.changes?.find((c) => c.outcome === "failed") ? ` Failed: ${answer.changes.find((c) => c.outcome === "failed")!.description}` : ""}`
             : "") +
           (answer.kind === "failed" && answer.errorKind === "declaration-unsaved"
             ? " The change into the task fields was not saved."
             : ""),
-        retry: true,
+        retry: !(answer.kind === "failed" && answer.errorKind === "scope-unavailable"),
       });
     if (answer.kind !== "stale" && answer.kind !== "missing") await refresh();
     setBusy(false);
@@ -163,7 +166,14 @@ export function ProjectPage({ binding }: { binding: string }) {
             Task fields
           </Button>
           <Button
-            disabled={busy || !grouped?.count}
+            disabled={
+              busy || !grouped?.count || plan?.scopes?.some((scope) => scope.status !== "ready")
+            }
+            title={
+              plan?.scopes?.some((scope) => scope.status !== "ready")
+                ? "A scope cannot be applied."
+                : undefined
+            }
             onClick={() => {
               if (grouped?.removals.length && plan)
                 setConfirmation({ remove, digest: plan.digest, changes: grouped.removals });

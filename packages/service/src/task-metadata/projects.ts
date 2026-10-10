@@ -3,7 +3,11 @@
 //   implements: task-metadata
 // ---
 import { createHash } from "node:crypto";
-import { lintTaskMetadataDeclaration } from "@wyrd-company/manifold-shared";
+import {
+  lintTaskMetadataDeclaration,
+  scopeOwnership,
+  scopeKey,
+} from "@wyrd-company/manifold-shared";
 import type {
   ProcessRepositoryRevision,
   TaskMetadataDeclaration,
@@ -17,6 +21,7 @@ import type {
   BoundProject,
   ConfigurationSource,
   ProjectConfiguration,
+  ScopeInput,
 } from "./project-types.ts";
 import {
   appliedConfiguration,
@@ -24,6 +29,9 @@ import {
   planProjectConfiguration,
   projectWrites,
 } from "./plan.ts";
+import { taskFieldValues } from "./values.ts";
+import type { TrackedIssueIndex } from "../github-source/index.ts";
+import { planScopeConfiguration } from "./scope-plan.ts";
 import { acceptFields } from "./accept.ts";
 export class ProjectRequestError extends Error {
   readonly status: number;
@@ -43,7 +51,7 @@ export function createProjects(
   revision: () => ProcessRepositoryRevision | undefined,
 ) {
   const controller = new AbortController();
-  const queues = new Map<string, Promise<unknown>>();
+  let queue: Promise<unknown> = Promise.resolve();
   const now = options.now ?? Date.now;
   let cachedSource: ConfigurationSource | undefined;
   let closed = false;
@@ -83,10 +91,55 @@ export function createProjects(
       );
     return project;
   }
+  function scopesFor(
+    s: ConfigurationSource,
+    declaration: TaskMetadataDeclaration | undefined,
+    binding: string,
+    issues: TrackedIssueIndex | undefined = s.trackedIssueIndex?.(),
+  ): ScopeInput[] {
+    if (!declaration) return [];
+    const ownership = scopeOwnership(
+      declaration,
+      Object.fromEntries(bindings().map((b) => [b.binding, b.owner])),
+      (name) => {
+        const b = bindings().find((b) => b.binding === name);
+        const project = b && s.projectByNumber(b.owner, b.number);
+        return project && issues
+          ? [...issues.values()]
+              .filter((issue) => issue.items.some((item) => item.project.nodeId === project.nodeId))
+              .map((issue) => issue.issue.repository)
+          : [];
+      },
+    );
+    return [...ownership.values()]
+      .filter((owned) => owned.bindings.includes(binding))
+      .sort((a, b) => scopeKey(a.scope).localeCompare(scopeKey(b.scope)))
+      .map((owned) => ({
+        scope: owned.scope,
+        owned,
+        bindings: owned.bindings,
+        observed: s.scopeConfiguration?.(owned.scope),
+        applied: records.appliedScope(scopeKey(owned.scope)),
+      }));
+  }
+  async function observeScopes(
+    s: ConfigurationSource,
+    scopes: readonly ScopeInput[],
+    signal?: AbortSignal,
+  ): Promise<ScopeInput[]> {
+    return Promise.all(
+      scopes.map(async (scope) => ({
+        ...scope,
+        observed: s.observeScope ? await s.observeScope(scope.scope, signal) : scope.observed,
+      })),
+    );
+  }
   async function plan(binding: string, signal?: AbortSignal) {
     const b = bound(binding);
     const s = await source(signal);
     const project = resolved(s, b);
+    const issues = s.trackedIssueIndex?.();
+    const metadata = current()?.projects[binding];
     let observation: { status: "fresh" } | { status: "stale"; message: string } = {
       status: "fresh",
     };
@@ -107,6 +160,7 @@ export function createProjects(
         metadata: current()?.projects[binding],
         fields: fields.fields,
         applied: records.applied(binding, project.nodeId),
+        scopes: await observeScopes(s, scopesFor(s, current(), binding, issues), signal),
       }),
       binding,
       owner: b.owner,
@@ -115,7 +169,23 @@ export function createProjects(
       declarationCommit: revision()?.commit ?? records.commit() ?? null,
       observedAt: fields.readAt,
       observation,
-      frontMatter: null,
+      frontMatter:
+        metadata &&
+        Object.values(metadata.fields).some((field) => field.storage.kind === "front-matter")
+          ? {
+              mismatched: [...(issues?.values() ?? [])].filter(
+                (issue) =>
+                  issue.items.some((item) => item.project.nodeId === project.nodeId) &&
+                  Object.entries(
+                    taskFieldValues({ metadata, project, issue, inScope: () => true }),
+                  ).some(
+                    ([name, value]) =>
+                      metadata.fields[name]?.storage.kind === "front-matter" &&
+                      value.state === "invalid",
+                  ),
+              ).length,
+            }
+          : null,
     };
   }
   async function apply(binding: string, request: ApplyRequest): Promise<ApplyAnswer> {
@@ -133,7 +203,21 @@ export function createProjects(
     const project = resolved(s, b);
     const previous = records.applied(binding, project.nodeId);
     const observed = await s.observeProjectFields(project.nodeId, controller.signal);
-    const input = { metadata, fields: observed.fields, applied: previous };
+    const scopes = await observeScopes(s, scopesFor(s, declaration, binding), controller.signal);
+    const input = { metadata, fields: observed.fields, applied: previous, scopes };
+    const unavailable = scopes.filter((scope) => scope.observed?.status !== "ready");
+    if (unavailable.length || (scopes.length && !s.writeScopeEntity))
+      throw new ProjectRequestError(
+        409,
+        "scope-unavailable",
+        "A reached storage scope is unavailable",
+        {
+          scopes: planProjectConfiguration({
+            ...input,
+            scopes: unavailable.length ? unavailable : scopes,
+          }).scopes,
+        },
+      );
     const planned = planProjectConfiguration(input);
     if (request.digest !== undefined && request.digest !== planned.digest)
       throw new ProjectRequestError(409, "plan-stale", "Project configuration plan has changed");
@@ -190,6 +274,32 @@ export function createProjects(
       for (const c of group.changes)
         outcomes[outcomes.findIndex((o) => o.id === c.id)] = { ...c, outcome: "applied" };
     }
+    for (const scope of scopes)
+      for (const group of planScopeConfiguration(scope).writes) {
+        if (group.changes.some((change) => change.requiresRemoval) && !request.removeUndeclared)
+          continue;
+        try {
+          await s.writeScopeEntity!(group.write, controller.signal);
+          writes++;
+          for (const change of group.changes)
+            outcomes[outcomes.findIndex((outcome) => outcome.id === change.id)] = {
+              ...change,
+              outcome: "applied",
+            };
+        } catch (error) {
+          for (const change of group.changes)
+            outcomes[outcomes.findIndex((outcome) => outcome.id === change.id)] = {
+              ...change,
+              outcome: "failed",
+            };
+          throw new ProjectRequestError(
+            502,
+            error instanceof Error && "kind" in error ? String(error.kind) : "transport",
+            error instanceof Error ? error.message : "Shared scope write failed",
+            { writes, changes: outcomes },
+          );
+        }
+      }
     if (acceptedText !== undefined) {
       if (!options.revisions)
         throw new ProjectRequestError(503, "unavailable", "Declaration save is unavailable");
@@ -261,19 +371,40 @@ export function createProjects(
         "Project declaration was removed during Apply",
       );
     const applied = appliedConfiguration(latest, after.fields, previous);
+    const afterScopes = await observeScopes(s, scopes, controller.signal);
+    const failedObservation = afterScopes.filter((scope) => scope.observed?.status !== "ready");
+    if (failedObservation.length)
+      throw new ProjectRequestError(
+        502,
+        "scope-unavailable",
+        "A storage scope could not be observed after Apply",
+        {
+          writes,
+          changes: outcomes,
+          scopes: planProjectConfiguration({ ...input, scopes: failedObservation }).scopes,
+        },
+      );
     records.recordApply(
       binding,
       project.nodeId,
       revision()?.commit ?? records.commit()!,
       applied,
       now(),
+      afterScopes.map((scope) => ({
+        key: scopeKey(scope.scope),
+        applied: planScopeConfiguration(scope).applied!,
+      })),
     );
     return {
       outcome: planned.changes.length ? "applied" : "in-sync",
       changes: outcomes,
       writes,
-      configuration: planProjectConfiguration({ metadata: latest, fields: after.fields, applied })
-        .configuration,
+      configuration: planProjectConfiguration({
+        metadata: latest,
+        fields: after.fields,
+        applied,
+        scopes: scopesFor(s, current(), binding),
+      }).configuration,
       declarationCommit: savedCommit,
     };
   }
@@ -293,6 +424,7 @@ export function createProjects(
                 metadata: current()?.projects[b.binding],
                 fields: fields.fields,
                 applied,
+                scopes: scopesFor(cachedSource!, current(), b.binding),
               }).configuration
             : { state: "not-applied" as const },
           lastApplied: applied ? { at: applied.at, commit: applied.commit } : null,
@@ -306,7 +438,7 @@ export function createProjects(
         return Promise.reject(
           new ProjectRequestError(503, "unavailable", "Project configuration is closed"),
         );
-      const operation = (queues.get(binding) ?? Promise.resolve())
+      const operation = queue
         .catch(() => {})
         .then(async () => {
           try {
@@ -325,12 +457,7 @@ export function createProjects(
             );
           }
         });
-      queues.set(binding, operation);
-      void operation
-        .finally(() => {
-          if (queues.get(binding) === operation) queues.delete(binding);
-        })
-        .catch(() => {});
+      queue = operation;
       return operation;
     },
     planDeclaration: (declaration) =>
@@ -342,6 +469,7 @@ export function createProjects(
           metadata: declaration.projects[b.binding],
           fields: fields.fields,
           applied: records.applied(b.binding, project.nodeId),
+          scopes: scopesFor(cachedSource!, declaration, b.binding),
         });
         return [
           {
@@ -351,6 +479,8 @@ export function createProjects(
             configuration: planned.configuration,
             changes: planned.changes,
             fields: planned.fields,
+            scopes: planned.scopes,
+            outside: planned.outside,
           },
         ];
       }),
@@ -360,7 +490,7 @@ export function createProjects(
     async close() {
       closed = true;
       controller.abort();
-      await Promise.allSettled(queues.values());
+      await Promise.allSettled([queue]);
     },
   };
 }

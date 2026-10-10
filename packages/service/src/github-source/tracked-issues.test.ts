@@ -119,6 +119,16 @@ test.each([10, 1000])("all tracked issues share one mirror read over %i issues",
       present: false,
       revision: 0,
     });
+    after.issues.get("parcel-0")!.content = {
+      body: "---\nweight: 3\n---\nPack.\n",
+      lastEditedAt: 10,
+      labels: [{ nodeId: "label-small", name: "small" }],
+      milestone: { nodeId: "milestone-north", number: 1, title: "North" },
+      issueType: { nodeId: "type-parcel", name: "Parcel" },
+      issueFields: [
+        { fieldNodeId: "weight", name: "Weight", value: { kind: "number", number: 3 } },
+      ],
+    };
     mirror.write(before, after);
     source = startGitHubSource({
       store,
@@ -161,6 +171,7 @@ test.each([10, 1000])("all tracked issues share one mirror read over %i issues",
       for (const id of [ids[0]!, ids[500]!, ids[999]!])
         expect(tracked.find((t) => t.issue.nodeId === id)).toEqual(source.trackedIssue(id));
     const first = tracked.find((t) => t.issue.nodeId === "parcel-0")!;
+    expect(first.content).toEqual(after.issues.get("parcel-0")!.content);
     expect(first.projects).toEqual([project]);
     expect(first.items.map((i) => i.nodeId)).toEqual(["duplicate", "parcel-0"]);
     expect(first.items.find((i) => i.nodeId === "parcel-0")?.fields).toEqual({

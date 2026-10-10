@@ -117,7 +117,10 @@ export function taskDetail(
   projects: readonly TasksBoundProject[],
   snapshot: StoredSnapshot | undefined,
   escalations: readonly TasksEscalation[],
-  reads: Pick<TasksOptions, "held" | "thread" | "tokenHolder" | "actorUsage" | "accountUnit">,
+  reads: Pick<
+    TasksOptions,
+    "held" | "thread" | "tokenHolder" | "actorUsage" | "accountUnit" | "taskFields"
+  >,
 ): Task | undefined {
   const memberships = projects.flatMap((p) => {
     const value = status(p, tracked);
@@ -130,6 +133,7 @@ export function taskDetail(
             number: p.number,
             ...(p.lifecycle ? { field: p.lifecycle.field } : {}),
             status: value,
+            ...(reads.taskFields ? { fields: reads.taskFields(p.binding, tracked) ?? [] } : {}),
           },
         ];
   });

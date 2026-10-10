@@ -29,11 +29,36 @@ export interface ProjectField {
   readonly type: "text" | "number" | "date" | "single-select" | "multi-select" | "iteration";
   readonly options?: readonly ProjectOption[];
 }
+export interface ProjectScope {
+  readonly kind: "organization" | "repository";
+  readonly name: string;
+  readonly bindings: readonly string[];
+}
+export interface ProjectScopeStatus {
+  readonly scope: ProjectScope;
+  readonly status:
+    | "ready"
+    | "unsupported"
+    | "forbidden"
+    | "unconfigured"
+    | "missing"
+    | "unobserved";
+  readonly observedAt: number | null;
+  readonly message?: string;
+}
+export interface ProjectEntity {
+  readonly entity: "issue-type" | "label" | "milestone";
+  readonly name: string;
+  readonly description: string;
+  readonly color?: string;
+  readonly enabled?: boolean;
+}
 export interface ProjectChange {
   readonly id: string;
-  readonly storage: "project-field";
+  readonly storage: "project-field" | "issue-field" | "issue-type" | "label" | "milestone";
+  readonly scope?: ProjectScope;
   readonly target: {
-    readonly field: string;
+    readonly field?: string;
     readonly lifecycle: boolean;
     readonly option?: string;
     readonly taskField?: string;
@@ -43,18 +68,35 @@ export interface ProjectChange {
   readonly side: "github" | "declaration";
   readonly drift: boolean;
   readonly requiresRemoval: boolean;
-  readonly properties: readonly ("name" | "options" | "order" | "color" | "description")[];
-  readonly from: ProjectField | ProjectOption | null;
-  readonly to: ProjectField | ProjectOption | null;
+  readonly properties: readonly (
+    | "name"
+    | "options"
+    | "order"
+    | "color"
+    | "description"
+    | "enabled"
+  )[];
+  readonly from: ProjectField | ProjectOption | ProjectEntity | null;
+  readonly to: ProjectField | ProjectOption | ProjectEntity | null;
 }
 export interface ProjectFieldStatus {
-  readonly field: string;
+  readonly storage?:
+    | "project-field"
+    | "issue-field"
+    | "issue-type"
+    | "label"
+    | "milestone"
+    | "front-matter";
+  readonly scope?: ProjectScope;
+  readonly field?: string;
   readonly lifecycle: boolean;
   readonly github: "present" | "missing" | "differs";
   readonly detail: string;
   readonly taskField?: string;
 }
 export interface ProjectPlanResponse {
+  readonly scopes?: readonly ProjectScopeStatus[];
+  readonly outside?: readonly { readonly repository: string; readonly issues: number }[];
   readonly binding: string;
   readonly owner: string;
   readonly number: number;
@@ -90,6 +132,7 @@ export type ProjectResult<T> =
       errorKind?: string;
       writes?: number;
       changes?: readonly AppliedProjectChange[];
+      scopes?: readonly ProjectScopeStatus[];
     };
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -149,57 +192,111 @@ const field = (v: unknown) =>
     },
     { options: array(option) },
   );
-const target = nullable((v) => field(v) || option(v));
+const entity = (v: unknown) =>
+  shape(
+    v,
+    { entity: oneOf("issue-type", "label", "milestone"), name: string, description: string },
+    { color: string, enabled: boolean },
+  );
+const scope = (v: unknown) =>
+  shape(v, { kind: oneOf("organization", "repository"), name: string, bindings: array(string) });
+const scopeStatus = (v: unknown) =>
+  shape(
+    v,
+    {
+      scope,
+      status: oneOf("ready", "unsupported", "forbidden", "unconfigured", "missing", "unobserved"),
+      observedAt: nullable(integer),
+    },
+    { message: string },
+  );
+const target = nullable((v) => field(v) || option(v) || entity(v));
 const changeMembers = {
   id: string,
-  storage: oneOf("project-field"),
+  storage: oneOf("project-field", "issue-field", "issue-type", "label", "milestone"),
   target: (v: unknown) =>
-    shape(v, { field: string, lifecycle: boolean }, { option: string, taskField: string }),
+    shape(v, { lifecycle: boolean }, { field: string, option: string, taskField: string }),
   description: string,
   action: oneOf("create", "change", "remove"),
   side: oneOf("github", "declaration"),
   drift: boolean,
   requiresRemoval: boolean,
   properties: (v: unknown) =>
-    array(oneOf("name", "options", "order", "color", "description"))(v) &&
+    array(oneOf("name", "options", "order", "color", "description", "enabled"))(v) &&
     Array.isArray(v) &&
     new Set(v).size === v.length,
   from: target,
   to: target,
 };
-const change = (v: unknown) => shape(v, changeMembers);
+const change = (v: unknown) => shape(v, changeMembers, { scope });
 const appliedChange = (v: unknown) =>
-  shape(v, { ...changeMembers, outcome: oneOf("applied", "kept", "failed", "not-run") });
+  shape(v, { ...changeMembers, outcome: oneOf("applied", "kept", "failed", "not-run") }, { scope });
 export function isProjectsResponse(v: unknown): v is ProjectsResponse {
   return shape(v, { projects: array(summary) });
 }
 export function isProjectPlanResponse(v: unknown): v is ProjectPlanResponse {
-  return shape(v, {
-    binding: string,
-    owner: string,
-    number: positive,
-    projectNodeId: string,
-    declarationCommit: nullable(string),
-    observedAt: nullable(integer),
-    observation: (o) =>
-      shape(o, { status: oneOf("fresh") }) || shape(o, { status: oneOf("stale"), message: string }),
-    configuration,
-    changes: array(change),
-    digest: (d) => string(d) && /^[0-9a-f]{64}$/.test(String(d)),
-    fields: array((f) =>
-      shape(
-        f,
-        {
-          field: string,
-          lifecycle: boolean,
-          github: oneOf("present", "missing", "differs"),
-          detail: string,
-        },
-        { taskField: string },
+  return shape(
+    v,
+    {
+      binding: string,
+      owner: string,
+      number: positive,
+      projectNodeId: string,
+      declarationCommit: nullable(string),
+      observedAt: nullable(integer),
+      observation: (o) =>
+        shape(o, { status: oneOf("fresh") }) ||
+        shape(o, { status: oneOf("stale"), message: string }),
+      configuration,
+      changes: array(change),
+      digest: (d) => string(d) && /^[0-9a-f]{64}$/.test(String(d)),
+      fields: array((f) =>
+        shape(
+          f,
+          {
+            lifecycle: boolean,
+            github: oneOf("present", "missing", "differs"),
+            detail: string,
+          },
+          {
+            taskField: string,
+            field: string,
+            scope,
+            storage: oneOf(
+              "project-field",
+              "issue-field",
+              "issue-type",
+              "label",
+              "milestone",
+              "front-matter",
+            ),
+          },
+        ),
       ),
-    ),
-    frontMatter: nullable((f) => shape(f, { mismatched: natural })),
-  });
+      frontMatter: nullable((f) => shape(f, { mismatched: natural })),
+    },
+    {
+      scopes: array((v) =>
+        shape(
+          v,
+          {
+            scope,
+            status: oneOf(
+              "ready",
+              "unsupported",
+              "forbidden",
+              "unconfigured",
+              "missing",
+              "unobserved",
+            ),
+            observedAt: nullable(integer),
+          },
+          { message: string },
+        ),
+      ),
+      outside: array((v) => shape(v, { repository: string, issues: positive })),
+    },
+  );
 }
 export function isProjectApplyResponse(v: unknown): v is ProjectApplyResponse {
   return shape(v, {
@@ -215,6 +312,7 @@ const errorKinds = oneOf(
   "unresolved-project",
   "undeclared",
   "declaration-conflict",
+  "scope-unavailable",
   "declaration-invalid",
   "declaration-pending",
   "invalid-request",
@@ -233,7 +331,12 @@ const writeErrorKinds = oneOf(
   "declaration-unsaved",
 );
 interface ProjectError {
-  readonly error: { readonly kind: string; readonly message: string; readonly commit?: string };
+  readonly error: {
+    readonly kind: string;
+    readonly message: string;
+    readonly commit?: string;
+    readonly scopes?: readonly ProjectScopeStatus[];
+  };
 }
 interface ProjectApplyFailure {
   readonly error: { readonly kind: string; readonly message: string };
@@ -241,7 +344,14 @@ interface ProjectApplyFailure {
   readonly changes: readonly AppliedProjectChange[];
 }
 const isError = (v: unknown): v is ProjectError =>
-  shape(v, { error: (e) => shape(e, { kind: errorKinds, message: string }, { commit: string }) });
+  shape(v, {
+    error: (e) =>
+      shape(
+        e,
+        { kind: errorKinds, message: string },
+        { commit: string, scopes: array(scopeStatus) },
+      ),
+  });
 const isApplyFailure = (v: unknown): v is ProjectApplyFailure =>
   shape(v, {
     error: (e) => shape(e, { kind: writeErrorKinds, message: string }),
@@ -270,7 +380,7 @@ export function mapProjectResult<K extends keyof Bodies>(
       changes: body.changes,
     };
   if (status !== 200 && isError(body)) {
-    const { kind, message, commit } = body.error;
+    const { kind, message, commit, scopes } = body.error;
     if (status === 404 && kind === "unknown-binding") return { kind: "missing", message };
     if (status === 409 && kind === "unresolved-project") return { kind: "unresolved", message };
     if (operation === "apply" && status === 409) {
@@ -279,7 +389,12 @@ export function mapProjectResult<K extends keyof Bodies>(
       if (kind === "declaration-pending")
         return { kind: "pending", message, ...(commit === undefined ? {} : { commit }) };
     }
-    return { kind: "failed", errorKind: kind, message };
+    return {
+      kind: "failed",
+      errorKind: kind,
+      message,
+      ...(scopes === undefined ? {} : { scopes }),
+    };
   }
   return { kind: "failed", message: fallback };
 }

@@ -100,3 +100,86 @@ test("built Board reads settled usage and records panel answers once, including 
     await f.close();
   }
 });
+
+test("built Task fields show declared values and their issue storage locations", async () => {
+  const fixture = boardWorld(true);
+  const server = await consoleHost();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    mountConsole(server.host, {
+      store: fixture.store,
+      history: openHistory({ store: fixture.store, log: () => {} }),
+    });
+    server.host.mount("/api/tasks", fixture.tasks.requestListener);
+    const page = await browser.newPage();
+    await page.route("**/api/tasks/task%3Aparcel", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { task: { projects: Record<string, unknown>[] } };
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          task: {
+            ...body.task,
+            projects: body.task.projects.map((project) => ({
+              ...project,
+              fields: [
+                {
+                  name: "Weight",
+                  type: "number",
+                  storage: "front-matter",
+                  where: "Front matter weight",
+                  value: { state: "set", value: 0 },
+                },
+                {
+                  name: "Route",
+                  type: "single-select",
+                  storage: "milestone",
+                  where: "Milestones of example/depot",
+                  value: { state: "empty" },
+                },
+                {
+                  name: "Size",
+                  type: "single-select",
+                  storage: "label",
+                  where: "Labels size: * of example/depot",
+                  value: { state: "invalid", detail: "More than one size label" },
+                },
+                {
+                  name: "Effort",
+                  type: "number",
+                  storage: "issue-field",
+                  where: "Issue field Effort of example-org",
+                  value: { state: "unavailable", detail: "No organization observation" },
+                },
+              ],
+            })),
+          },
+        },
+      });
+    });
+    await page.goto(server.url + "/console/board/task/task%3Aparcel");
+    const fields = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Fields", exact: true }) });
+    await fields.getByText("Weight", { exact: true }).first().waitFor();
+    expect(await fields.getByText("Weight", { exact: true }).first().getAttribute("title")).toBe(
+      "Front matter weight",
+    );
+    expect(
+      await fields.locator(".task-field").filter({ hasText: "Weight" }).first().innerText(),
+    ).toContain("0");
+    await fields.getByText("Empty", { exact: true }).first().waitFor();
+    expect(
+      await fields.getByText("Cannot read", { exact: true }).first().getAttribute("title"),
+    ).toBe("More than one size label");
+    expect(
+      await fields.getByText("Not available", { exact: true }).first().getAttribute("title"),
+    ).toBe("No organization observation");
+    await fields.getByRole("link", { name: "Task fields", exact: true }).waitFor();
+  } finally {
+    await browser.close();
+    await server.close();
+    await fixture.close();
+  }
+});

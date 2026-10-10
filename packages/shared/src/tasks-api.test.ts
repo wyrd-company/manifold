@@ -116,3 +116,46 @@ test("escalation length limits count Unicode characters as the schema does", () 
     }),
   ).toBe(false);
 });
+
+test("task fields accept all value states and reject malformed set values", () => {
+  const task = {
+    actorId: "task:parcel",
+    issue: { nodeId: "parcel", repository: "example/delivery", number: 1, state: "open" },
+    projects: [],
+    threads: [],
+    usage: { settled: false, accounts: [] },
+    escalations: { open: [], recent: [] },
+  };
+  const project = { binding: "sample", owner: "example", number: 1, status: null };
+  const field = {
+    name: "Size",
+    type: "number",
+    storage: "front-matter",
+    where: "Front matter Size",
+    value: { state: "set", value: 0 },
+  };
+  for (const value of [
+    { state: "set", value: 0 },
+    { state: "set", value: "small" },
+    { state: "empty" },
+    { state: "invalid", detail: "Wrong type" },
+    { state: "unavailable", detail: "Not read" },
+  ])
+    expect(
+      isTaskResponse({
+        task: { ...task, projects: [{ ...project, fields: [{ ...field, value }] }] },
+      }),
+    ).toBe(true);
+  for (const value of [
+    { state: "set", value: false },
+    { state: "set", value: null },
+    { state: "set", value: Infinity },
+    { state: "invalid" },
+    { state: "empty", value: 1 },
+  ])
+    expect(
+      isTaskResponse({
+        task: { ...task, projects: [{ ...project, fields: [{ ...field, value }] }] },
+      }),
+    ).toBe(false);
+});

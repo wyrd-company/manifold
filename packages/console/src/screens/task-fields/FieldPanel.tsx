@@ -10,7 +10,7 @@ import type {
 } from "@wyrd-company/manifold-shared/declarations-api";
 import type { ProjectSummary } from "../../api/projects.ts";
 import { Button } from "../../ui/button.tsx";
-import { fieldScope } from "./fields.ts";
+import { fieldScope, storageLabels } from "./fields.ts";
 function TextSetting({
   label,
   value,
@@ -76,7 +76,7 @@ export function FieldPanel({
           onCommit={(name) => set({ name })}
         />
         <label>
-          Stored as<span>Project field</span>
+          Stored as<span>{kind ? storageLabels[kind.kind] : field.storage}</span>
         </label>
         <p className={holds ? "success-text" : "error-text"}>
           {holds ? "Can hold" : "Cannot hold"} {field.type}
@@ -84,13 +84,28 @@ export function FieldPanel({
         {kind?.settings.map((setting) => (
           <TextSetting
             key={`${setting}:${field.settings?.[setting] ?? ""}`}
-            label={setting === "name" ? "Project field name" : setting}
+            label={
+              setting === "name"
+                ? `${kind.kind === "issue-field" ? "Issue" : "Project"} field name`
+                : setting === "organization"
+                  ? "Organization"
+                  : setting === "prefix"
+                    ? "Label prefix"
+                    : setting === "key"
+                      ? "Front matter key"
+                      : setting
+            }
             value={field.settings?.[setting] ?? ""}
-            placeholder={field.name}
+            placeholder={setting === "organization" ? (project?.owner ?? "") : field.name}
             disabled={disabled || field.lifecycle}
             onCommit={(v) => set({ settings: { ...field.settings, [setting]: v } })}
           />
         ))}
+        {kind?.kind === "label" ? (
+          <p className="muted">
+            Labels are named {field.settings?.["prefix"] ?? "<prefix>"}&lt;option&gt;
+          </p>
+        ) : null}
         {field.type === "single-select" ? (
           <div className="field-options">
             <h4>Options</h4>
@@ -139,8 +154,11 @@ export function FieldPanel({
           </h4>
           {field.onGitHub ? <p className="muted">{field.onGitHub.detail}</p> : null}
           <p className="mono muted">{fieldScope(field, project)}</p>
+          {field.scope?.sharedWith?.length ? (
+            <p className="muted">Shared with {field.scope.sharedWith.join(", ")}</p>
+          ) : null}
         </div>
-        {!field.lifecycle ? (
+        {!field.lifecycle && kind?.kind !== "front-matter" ? (
           <>
             <h4>When changed on GitHub</h4>
             <div className="field-segment" role="group" aria-label="When changed on GitHub">

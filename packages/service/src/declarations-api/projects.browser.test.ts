@@ -462,3 +462,123 @@ test("Task fields rejects a duplicate name without changing draft lint or the pa
     await fixture.close();
   }
 }, 30_000);
+
+test("Task fields selects every storage kind and keeps front matter settings through draft reload and discard", async () => {
+  const fixture = await projectsHost();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+    await page.goto(fixture.url + "/console/settings/task-fields");
+    await page.getByRole("button", { name: "Add field", exact: true }).first().click();
+    await page.getByLabel("Field name", { exact: true }).waitFor();
+    const storage = page.getByLabel("Storage of field-1", { exact: true });
+    expect(await storage.locator("option").allTextContents()).toEqual([
+      "Project field",
+      "Issue field",
+      "Issue type",
+      "Label",
+      "Milestone",
+      "Front matter",
+    ]);
+    for (const kind of [
+      "issue-field",
+      "issue-type",
+      "label",
+      "milestone",
+      "project-field",
+      "front-matter",
+    ]) {
+      const edited = page.waitForResponse(
+        (response) => response.url().endsWith("/task-fields/edit") && response.status() === 200,
+      );
+      await storage.selectOption(kind);
+      await edited;
+      await page.waitForFunction(
+        () =>
+          !document.querySelector<HTMLSelectElement>('select[aria-label="Storage of field-1"]')
+            ?.disabled,
+      );
+      expect(await storage.inputValue()).toBe(kind);
+      if (kind === "issue-type") {
+        await page.getByText("Cannot hold text", { exact: true }).waitFor();
+        expect(await storage.getAttribute("class")).toContain("field-error");
+        expect(await page.getByRole("button", { name: "Publish", exact: true }).isDisabled()).toBe(
+          true,
+        );
+      }
+    }
+    expect(await page.getByText("When changed on GitHub", { exact: true }).count()).toBe(0);
+    await page.getByLabel("Front matter key", { exact: true }).fill("parcel-size");
+    const edited = page.waitForResponse(
+      (response) => response.url().endsWith("/task-fields/edit") && response.status() === 200,
+    );
+    await page.getByLabel("Front matter key", { exact: true }).press("Enter");
+    await edited;
+    await page.reload();
+    await page.getByRole("button", { name: "field-1", exact: true }).click();
+    expect(await page.getByLabel("Front matter key", { exact: true }).inputValue()).toBe(
+      "parcel-size",
+    );
+    await page.getByRole("tab", { name: "YAML", exact: true }).click();
+    expect(await page.locator(".cm-content").innerText()).toContain("parcel-size");
+    await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Discard draft", exact: true })
+      .click();
+    await page.getByRole("tab", { name: "Visual", exact: true }).click();
+    expect(await page.getByLabel("Storage of field-1", { exact: true }).count()).toBe(0);
+  } finally {
+    await browser.close();
+    await fixture.close();
+  }
+}, 30_000);
+
+test("Projects shows front matter mismatches and blocks a whole Apply when a shared scope is unavailable", async () => {
+  const fixture = await projectsHost();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.route("**/api/projects/delivery/plan", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as Record<string, unknown>;
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          scopes: [
+            {
+              scope: {
+                kind: "organization",
+                name: "example-org",
+                bindings: ["delivery", "secondary"],
+              },
+              status: "forbidden",
+              observedAt: null,
+              message: "Cannot read issue fields.",
+            },
+          ],
+          frontMatter: { mismatched: 2 },
+        },
+      });
+    });
+    await page.goto(fixture.url + "/console/projects/delivery");
+    await page
+      .getByText("2 issues have front matter the task fields cannot read.", { exact: true })
+      .waitFor();
+    expect(
+      await page.getByRole("button", { name: "Apply 1 changes", exact: true }).isDisabled(),
+    ).toBe(true);
+    expect(
+      await page
+        .getByRole("button", { name: "Apply 1 changes", exact: true })
+        .getAttribute("title"),
+    ).toBe("A scope cannot be applied.");
+    await page
+      .getByText("example-org: forbidden · Cannot read issue fields.", { exact: true })
+      .waitFor();
+  } finally {
+    await browser.close();
+    await fixture.close();
+  }
+}, 30_000);

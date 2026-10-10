@@ -12,18 +12,32 @@ export function planGroups(changes: readonly ProjectChange[], removeUndeclared: 
   return {
     count: counted.length,
     removals: counted.filter((change) => change.requiresRemoval),
-    groups: rows.length
-      ? [
-          {
-            storage: "project-field",
-            rows,
-            creates: counted.filter((c) => c.action === "create").length,
-            changes: counted.filter((c) => c.action === "change").length,
-            removes: counted.filter((c) => c.action === "remove").length,
-          },
-        ]
-      : [],
+    groups: [
+      ...new Set(
+        rows.map(({ change }) =>
+          JSON.stringify([change.storage, change.scope?.kind, change.scope?.name]),
+        ),
+      ),
+    ].map((key) => {
+      const groupRows = rows.filter(
+        ({ change }) =>
+          JSON.stringify([change.storage, change.scope?.kind, change.scope?.name]) === key,
+      );
+      const first = groupRows[0]!.change;
+      const included = groupRows.filter((row) => !row.kept).map((row) => row.change);
+      return {
+        storage: first.storage,
+        scope: first.scope,
+        rows: groupRows,
+        creates: included.filter((c) => c.action === "create").length,
+        changes: included.filter((c) => c.action === "change").length,
+        removes: included.filter((c) => c.action === "remove").length,
+      };
+    }),
   };
 }
 export const changeTarget = (change: ProjectChange) =>
-  change.target.field + (change.target.option === undefined ? "" : ` / ${change.target.option}`);
+  (change.target.field ?? "") +
+  (change.target.option === undefined
+    ? ""
+    : `${change.target.field ? " / " : ""}${change.target.option}`);

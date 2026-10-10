@@ -3,7 +3,7 @@
 //   verifies: operator-console
 // ---
 import { expect, test } from "vite-plus/test";
-import { fieldAtCursor, rowFindings, fieldGroups } from "./fields.ts";
+import { fieldAtCursor, rowFindings, fieldGroups, fieldScope } from "./fields.ts";
 const fields = [
   {
     binding: "sample",
@@ -35,4 +35,26 @@ test("field selection and findings follow locations and exact range boundaries",
     typeOrStorage: false,
   });
   expect(fieldGroups(fields, [])).toMatchObject([{ binding: "sample", fields }]);
+});
+
+test("field scope names shared organizations, repositories and issue bodies", () => {
+  expect(
+    fieldScope({
+      ...fields[1]!,
+      scope: { kind: "organization", names: ["sample-org"], sharedWith: ["other"] },
+    }),
+  ).toBe("Organization sample-org");
+  expect(
+    fieldScope({
+      ...fields[1]!,
+      scope: { kind: "repository", names: ["sample/one", "sample/two"], sharedWith: [] },
+    }),
+  ).toBe("Repositories sample/one, sample/two");
+  expect(
+    fieldScope({
+      ...fields[1]!,
+      storage: "front-matter",
+      scope: { kind: "issue", names: [], sharedWith: [] },
+    }),
+  ).toBe("In each issue's body");
 });

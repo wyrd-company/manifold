@@ -91,7 +91,16 @@ export function taskFieldEdit(value: unknown): value is TaskFieldEdit {
     (!("type" in v) ||
       (typeof v["type"] === "string" &&
         ["text", "number", "date", "single-select"].includes(v["type"]))) &&
-    (!("storage" in v) || v["storage"] === "project-field") &&
+    (!("storage" in v) ||
+      (typeof v["storage"] === "string" &&
+        [
+          "project-field",
+          "issue-field",
+          "issue-type",
+          "label",
+          "milestone",
+          "front-matter",
+        ].includes(v["storage"]))) &&
     (!("settings" in v) ||
       (record(v["settings"]) &&
         Object.values(v["settings"]).every((item) => typeof item === "string"))) &&

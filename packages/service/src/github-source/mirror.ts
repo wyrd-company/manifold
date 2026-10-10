@@ -3,9 +3,14 @@
 //   implements: github-source-database-schema
 //   references: github-event-source
 // ---
+import { isDeepStrictEqual } from "node:util";
+import { scopeKey } from "@wyrd-company/manifold-shared";
+import type { StorageScope } from "@wyrd-company/manifold-shared";
 import type { Store } from "../store/index.ts";
 import type {
   GitHubProject,
+  IssueContent,
+  ScopeConfiguration,
   GitHubIssue,
   TrackedIssue,
   TrackedIssueIndex,
@@ -78,6 +83,7 @@ export function trackedIssueIndex(
     if (!row.baselined || !row.present || !memberships) continue;
     tracked.set(id, {
       issue: row.issue,
+      content: row.content,
       items: memberships,
       blockedBy: blockedBy.get(id) ?? [],
       blocking: blocking.get(id) ?? [],
@@ -100,6 +106,23 @@ export function createMirror(store: Store, now: () => number) {
     ...(typeof row["url"] === "string" ? { url: row["url"] } : {}),
   });
   function read(): MirrorState {
+    const labels = new Map<string, IssueContent["labels"][number][]>();
+    for (const row of db
+      .prepare("SELECT * FROM github_issue_label ORDER BY issue_node_id,position")
+      .all())
+      append(labels, row["issue_node_id"] as string, {
+        nodeId: row["label_node_id"] as string,
+        name: row["name"] as string,
+      });
+    const values = new Map<string, IssueContent["issueFields"][number][]>();
+    for (const row of db
+      .prepare("SELECT * FROM github_issue_field_value ORDER BY issue_node_id,position")
+      .all())
+      append(values, row["issue_node_id"] as string, {
+        fieldNodeId: row["field_node_id"] as string,
+        name: row["name"] as string,
+        value: JSON.parse(row["value"] as string) as IssueContent["issueFields"][number]["value"],
+      });
     return {
       issues: new Map(
         db
@@ -109,6 +132,23 @@ export function createMirror(store: Store, now: () => number) {
             row["issue_node_id"] as string,
             {
               issue: issue(row),
+              content:
+                row["body"] === null
+                  ? undefined
+                  : {
+                      body: row["body"] as string,
+                      lastEditedAt: row["last_edited_at"] as number | null,
+                      labels: labels.get(row["issue_node_id"] as string) ?? [],
+                      issueFields: values.get(row["issue_node_id"] as string) ?? [],
+                      milestone:
+                        row["milestone"] === null
+                          ? null
+                          : (JSON.parse(row["milestone"] as string) as IssueContent["milestone"]),
+                      issueType:
+                        row["issue_type"] === null
+                          ? null
+                          : (JSON.parse(row["issue_type"] as string) as IssueContent["issueType"]),
+                    },
               baselined: Boolean(row["baselined"]),
               present: Boolean(row["present"]),
               revision: row["revision"] as number,
@@ -201,8 +241,8 @@ export function createMirror(store: Store, now: () => number) {
   function write(before: MirrorState, after: MirrorState) {
     const count = () => db.prepare("SELECT total_changes() AS count").get()!["count"];
     const previousCount = count();
-    for (const [id, row] of after.issues)
-      if (JSON.stringify(before.issues.get(id)) !== JSON.stringify(row))
+    for (const [id, row] of after.issues) {
+      if (!isDeepStrictEqual(before.issues.get(id), row))
         db.prepare(
           "INSERT INTO github_issue (issue_node_id,repository,number,state,state_reason,baselined,revision,present,title,url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(issue_node_id) DO UPDATE SET repository=excluded.repository, number=excluded.number, state=excluded.state, state_reason=excluded.state_reason, baselined=excluded.baselined, revision=excluded.revision, present=excluded.present,title=excluded.title,url=excluded.url",
         ).run(
@@ -217,6 +257,30 @@ export function createMirror(store: Store, now: () => number) {
           row.issue.title ?? null,
           row.issue.url ?? null,
         );
+      if (!isDeepStrictEqual(before.issues.get(id)?.content, row.content)) {
+        db.prepare(
+          "UPDATE github_issue SET body=?, last_edited_at=?, milestone=?, issue_type=? WHERE issue_node_id=?",
+        ).run(
+          row.content?.body ?? null,
+          row.content?.lastEditedAt ?? null,
+          row.content?.milestone ? JSON.stringify(row.content.milestone) : null,
+          row.content?.issueType ? JSON.stringify(row.content.issueType) : null,
+          id,
+        );
+        db.prepare("DELETE FROM github_issue_label WHERE issue_node_id=?").run(id);
+        db.prepare("DELETE FROM github_issue_field_value WHERE issue_node_id=?").run(id);
+        row.content?.labels.forEach((label, position) =>
+          db
+            .prepare("INSERT INTO github_issue_label VALUES(?,?,?,?)")
+            .run(id, position, label.nodeId, label.name),
+        );
+        row.content?.issueFields.forEach((field, position) =>
+          db
+            .prepare("INSERT INTO github_issue_field_value VALUES(?,?,?,?,?)")
+            .run(id, position, field.fieldNodeId, field.name, JSON.stringify(field.value)),
+        );
+      }
+    }
     for (const [id, row] of after.projects)
       if (JSON.stringify(before.projects.get(id)) !== JSON.stringify(row))
         db.prepare(
@@ -284,6 +348,103 @@ export function createMirror(store: Store, now: () => number) {
   return {
     read,
     write,
+    scopeConfiguration(scope: StorageScope): ScopeConfiguration | undefined {
+      const key = scopeKey(scope);
+      const row = db.prepare("SELECT * FROM github_scope WHERE scope_key=?").get(key);
+      if (!row) return;
+      const status = row["status"] as ScopeConfiguration["status"];
+      const readAt = row["read_at"] as number;
+      if (status !== "ready") return { scope, status, readAt, message: row["message"] as string };
+      const rows = (table: string) =>
+        db.prepare(`SELECT * FROM ${table} WHERE scope_key=? ORDER BY position`).all(key);
+      return {
+        scope,
+        status,
+        readAt,
+        issueFields: rows("github_issue_field").map((row) => ({
+          nodeId: row["node_id"] as string,
+          name: row["name"] as string,
+          type: row["data_type"] as import("./types.ts").IssueFieldConfiguration["type"],
+          options: JSON.parse(row["options"] as string) as ProjectFieldOption[],
+        })),
+        issueTypes: rows("github_issue_type").map((row) => ({
+          nodeId: row["node_id"] as string,
+          name: row["name"] as string,
+          color: row["color"] as import("./types.ts").ProjectFieldOptionColor | null,
+          description: row["description"] as string,
+          enabled: Boolean(row["enabled"]),
+        })),
+        labels: rows("github_label").map((row) => ({
+          nodeId: row["node_id"] as string,
+          name: row["name"] as string,
+          color: row["color"] as string,
+          description: row["description"] as string,
+        })),
+        milestones: rows("github_milestone").map((row) => ({
+          nodeId: row["node_id"] as string,
+          number: row["number"] as number,
+          title: row["title"] as string,
+          description: row["description"] as string,
+          state: row["state"] as "open" | "closed",
+        })),
+      };
+    },
+    observeScope(configuration: ScopeConfiguration) {
+      const key = scopeKey(configuration.scope);
+      db.prepare(
+        "INSERT INTO github_scope VALUES(?,?,?,?,?) ON CONFLICT(scope_key) DO UPDATE SET scope=excluded.scope,status=excluded.status,read_at=excluded.read_at,message=excluded.message",
+      ).run(
+        key,
+        JSON.stringify(configuration.scope),
+        configuration.status,
+        configuration.readAt,
+        configuration.status === "ready" ? null : configuration.message,
+      );
+      if (configuration.status !== "ready") return;
+      for (const table of [
+        "github_issue_field",
+        "github_issue_type",
+        "github_label",
+        "github_milestone",
+      ])
+        db.prepare(`DELETE FROM ${table} WHERE scope_key=?`).run(key);
+      configuration.issueFields.forEach((entity, index) =>
+        db
+          .prepare("INSERT INTO github_issue_field VALUES(?,?,?,?,?,?)")
+          .run(key, entity.nodeId, index, entity.name, entity.type, JSON.stringify(entity.options)),
+      );
+      configuration.issueTypes.forEach((entity, index) =>
+        db
+          .prepare("INSERT INTO github_issue_type VALUES(?,?,?,?,?,?,?)")
+          .run(
+            key,
+            entity.nodeId,
+            index,
+            entity.name,
+            entity.color,
+            entity.description,
+            Number(entity.enabled),
+          ),
+      );
+      configuration.labels.forEach((entity, index) =>
+        db
+          .prepare("INSERT INTO github_label VALUES(?,?,?,?,?,?)")
+          .run(key, entity.nodeId, index, entity.name, entity.color, entity.description),
+      );
+      configuration.milestones.forEach((entity, index) =>
+        db
+          .prepare("INSERT INTO github_milestone VALUES(?,?,?,?,?,?,?)")
+          .run(
+            key,
+            entity.nodeId,
+            index,
+            entity.number,
+            entity.title,
+            entity.description,
+            entity.state,
+          ),
+      );
+    },
     projectByNumber(owner: string, number: number): GitHubProject | undefined {
       const row = db
         .prepare("SELECT * FROM github_project WHERE owner=? COLLATE NOCASE AND number=?")

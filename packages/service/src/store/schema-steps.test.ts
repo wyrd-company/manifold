@@ -69,6 +69,8 @@ const expectedSteps = (owner: string, steps: string[]) => {
       router: "router-database-schema",
       gates: "gates-database-schema",
       history: "history-database-schema",
+      github: "github-source-database-schema",
+      metadata: "task-metadata-tables",
       usage: "usage-tables",
       tthree: "t3code-source-database-schema",
     } as Record<string, string>

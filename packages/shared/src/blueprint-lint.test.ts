@@ -497,3 +497,80 @@ it("validates migration schemas and mappings at document locations", async () =>
     ]),
   });
 });
+
+it("checks literal task field names, types and options across bindings", async () => {
+  const doc = document();
+  Object.assign(doc.machine.states.sorting, {
+    invoke: { src: "github-task-field-set", input: { field: "Urgency", value: "Urgent" } },
+  });
+  const actorNames = { ...names, actors: new Set(["github-task-field-set"]) };
+  const taskFields = new Map([
+    ["Urgency", { types: new Set(["single-select"] as const), options: new Set(["Normal"]) }],
+  ]);
+  const result = await lintBlueprint("blueprints/delivery.yml", stringify(doc), actorNames, {
+    taskFields,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    findings: [
+      expect.objectContaining({
+        kind: "task-field-value",
+        name: "Urgency",
+        location: "/machine/states/sorting/invoke/input/value",
+      }),
+    ],
+  });
+  expect(await lintBlueprint("blueprints/delivery.yml", stringify(doc), actorNames)).toMatchObject({
+    ok: true,
+  });
+  taskFields.get("Urgency")!.options.add("Urgent");
+  expect(
+    await lintBlueprint("blueprints/delivery.yml", stringify(doc), actorNames, { taskFields }),
+  ).toMatchObject({ ok: true });
+  taskFields.clear();
+  expect(
+    await lintBlueprint("blueprints/delivery.yml", stringify(doc), actorNames, { taskFields }),
+  ).toMatchObject({
+    ok: false,
+    findings: [
+      expect.objectContaining({
+        kind: "task-field-value",
+        location: "/machine/states/sorting/invoke/input/field",
+      }),
+    ],
+  });
+});
+it("task field lint permits clears, mappings and any declared binding type", async () => {
+  const doc = document();
+  const actorNames = { ...names, actors: new Set(["github-task-field-set"]) };
+  const invoke = { src: "github-task-field-set", input: { field: "Weight", value: 3 as unknown } };
+  Object.assign(doc.machine.states.sorting, { invoke });
+  const taskFields = new Map([
+    [
+      "Weight",
+      {
+        types: new Set<"text" | "number" | "date" | "single-select">(["number", "single-select"]),
+        options: new Set(["Heavy"]),
+      },
+    ],
+  ]);
+  const run = () =>
+    lintBlueprint("blueprints/delivery.yml", stringify(doc), actorNames, { taskFields });
+  expect(await run()).toMatchObject({ ok: true });
+  invoke.input.value = "Heavy";
+  expect(await run()).toMatchObject({ ok: true });
+  invoke.input.value = "Unknown";
+  expect(await run()).toMatchObject({
+    ok: false,
+    findings: [expect.objectContaining({ kind: "task-field-value" })],
+  });
+  invoke.input.value = null;
+  expect(await run()).toMatchObject({ ok: true });
+  Object.assign(invoke, {
+    input: { type: "expression.map", params: { expression: '{"field":"Weight","value":3}' } },
+  });
+  Object.assign(doc.schemas, {
+    actors: { "github-task-field-set": { input: { type: "object" }, output: true } },
+  });
+  expect(await run()).toMatchObject({ ok: true });
+});

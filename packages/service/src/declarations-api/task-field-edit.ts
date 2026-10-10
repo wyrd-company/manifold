@@ -123,11 +123,12 @@ export function editTaskFields(text: string, edit: TaskFieldEdit) {
       const changed = !isMap(current) || current.get("kind") !== values.storage;
       if (changed && isMap(current)) {
         for (const pair of current.items.slice())
-          if (isScalar(pair.key) && !["kind", "name"].includes(String(pair.key.value)))
+          if (isScalar(pair.key) && String(pair.key.value) !== "kind")
             current.delete(pair.key.value);
         current.set("kind", values.storage);
       } else if (changed) node.set("storage", doc.createNode({ kind: values.storage }));
       else current.set("kind", values.storage);
+      if (values.storage === "front-matter") node.delete("whenChanged");
     }
     if (values.settings !== undefined) {
       if (!isMap(node.get("storage", true)))

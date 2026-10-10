@@ -486,7 +486,7 @@ export const githubEventsSchema = {
             value: {
               description:
                 "A string for text, a finite number for number, a YYYY-MM-DD string for date, and the option's name for single-select.",
-              type: ["string", "number"],
+              oneOf: [{ type: "string" }, { type: "number" }],
             },
           },
         },

@@ -5,6 +5,7 @@
 // ---
 import type {
   GitHubIssue,
+  IssueContent,
   GitHubProject,
   ObservedIssue,
   ObservedItem,
@@ -14,6 +15,7 @@ import type {
 } from "./types.ts";
 import type { SourceEvent, RoutedEvent } from "../router/index.ts";
 export interface IssueRow {
+  content?: IssueContent | undefined;
   issue: GitHubIssue;
   baselined: boolean;
   present: boolean;
@@ -114,6 +116,7 @@ export function reconcileIssue(
     const change = row && row.issue.state !== value.state;
     state.issues.set(value.nodeId, {
       issue: value,
+      content: value.nodeId === id ? (observed.content ?? row?.content) : row?.content,
       baselined: row?.baselined ?? false,
       present: value.nodeId === id ? true : (row?.present ?? true),
       revision: (row?.revision ?? 0) + (change ? 1 : 0),

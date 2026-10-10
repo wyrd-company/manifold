@@ -90,7 +90,12 @@ export function startIntake(options: IntakeOptions): Intake {
     const issue = options.tracked.trackedIssue(id);
     if (!issue || !issue.items.some((i) => i.project.nodeId === record.project!.nodeId)) return;
     const evaluation = record.evaluation as { result?: { data?: unknown } };
-    const input = taskInput(issue, record, evaluation.result?.data);
+    const input = taskInput(
+      issue,
+      record,
+      evaluation.result?.data,
+      options.taskValues?.(record.binding!, issue),
+    );
     const errors = inputErrors(loaded.blueprint, input, record.actorId);
     if (errors) {
       startFailure(id, {
@@ -195,7 +200,13 @@ export function startIntake(options: IntakeOptions): Intake {
     }
     // Capture all decision inputs before the first await. A later revision or
     // mirror update belongs only to a later attempt or to the start step.
-    const input = decisionInput(issue, chosen.binding, declaration, chosen.project.nodeId);
+    const input = decisionInput(
+      issue,
+      chosen.binding,
+      declaration,
+      chosen.project.nodeId,
+      options.taskValues?.(chosen.binding.name, issue),
+    );
     let cached;
     try {
       cached = await models.get(basis.revision);
@@ -227,7 +238,7 @@ export function startIntake(options: IntakeOptions): Intake {
     };
     const errors = inputErrors(
       decision.blueprint,
-      taskInput(issue, record, decision.data),
+      taskInput(issue, record, decision.data, options.taskValues?.(record.binding!, issue)),
       record.actorId,
     );
     if (errors) {

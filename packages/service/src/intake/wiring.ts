@@ -2,6 +2,7 @@
 // relationships:
 //   implements: service-assembly
 // ---
+import type { TaskMetadata } from "../task-metadata/index.ts";
 import { startIntake } from "./index.ts";
 import { wiringPart } from "../service/wiring.ts";
 import type { Service } from "../service/types.ts";
@@ -14,7 +15,7 @@ export const intake = wiringPart({
         Service,
         "escalations" | "store" | "github" | "blueprints" | "revisions" | "actorHost" | "log"
       >
-    >,
+    > & { taskMetadata: TaskMetadata },
     context,
   ): { intake: Intake } => {
     const { escalations, store, github, blueprints, revisions, actorHost, log } = members;
@@ -22,6 +23,7 @@ export const intake = wiringPart({
       escalations: escalations,
       store: store,
       tracked: github,
+      taskValues: (binding, issue) => members.taskMetadata.values(binding, issue),
       blueprints: blueprints,
       current: revisions.current,
       actors: actorHost,

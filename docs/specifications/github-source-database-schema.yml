@@ -45,6 +45,30 @@ description: |-
   names, so a new or archived item can be read with its owner's credential
   before the mirror holds that item. It is null for other pending kinds.
 
+  Task field writes. `github_task_field_write` records one invocation's
+  issue, Project, declared field, storage and value before its request.
+  Its status distinguishes sent, confirmed and refused writes; `attributed`
+  consumes attribution on the first observed change without deleting the
+  recovery basis. Front matter attempts persist `attempt` (0, 1 or 2),
+  `basis_edited_at` and `basis_body`, `original_edited_at`, the repair body, `check_state`
+  (none, pending, passed or conflict), and `conflict_edited_at`. A pending
+  check runs before a replay's equal-value shortcut. Attempt 2 cannot repair
+  again. `github_task_field_revision` increments each issue, Project and
+  field's event identity in the mirror transaction.
+
+  Shared scopes. `github_scope` records each storage scope, its status,
+  message and read time. `github_issue_field`, `github_issue_type`,
+  `github_label` and `github_milestone` hold its ordered configuration,
+  with stable entity node ids and each kind's properties. A complete
+  observation replaces these rows in one transaction. All five kinds use
+  this single migration step.
+
+  Issue content. `github_issue` holds body, last body edit time, milestone
+  and issue type. `github_issue_label` and `github_issue_field_value` hold
+  labels and normalized issue field values in GitHub order. Every content
+  member joins the same mirror read as issue identity and relationships;
+  absent body means content has not been observed.
+
   Card moves. `github_card_move` holds one row per card move write whose
   value GitHub may hold and the source has not yet attributed: the move's
   invocation, its actor id, invoke id, and entry id, with the field node

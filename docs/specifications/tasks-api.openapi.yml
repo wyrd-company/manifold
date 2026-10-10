@@ -269,7 +269,9 @@ components:
             state:
               const: set
             value:
-              type: [string, number]
+              oneOf:
+                - type: string
+                - type: number
         - type: object
           additionalProperties: false
           required: [state]

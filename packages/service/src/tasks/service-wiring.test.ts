@@ -15,7 +15,12 @@ test("service mounts tasks with live bindings, excludes archived bindings, and r
   try {
     await f.commit(60, {
       taskMetadata: {
-        projects: { sample: { lifecycle: { field: "Stage", options: ["Ready", "Delivered"] } } },
+        projects: {
+          sample: {
+            lifecycle: { field: "Stage", options: ["Ready", "Delivered"] },
+            fields: { Urgency: { type: "text" } },
+          },
+        },
       },
       bindings: {
         githubProjects: {
@@ -43,6 +48,16 @@ test("service mounts tasks with live bindings, excludes archived bindings, and r
     expect(response.status).toBe(200);
     expect(isTasksResponse(body)).toBe(true);
     expect(body.projects).toHaveLength(1);
+    const detail = await (await fetch(`${url}/task%3AI_A`)).json();
+    expect(detail.task.projects[0].fields).toEqual([
+      {
+        name: "Urgency",
+        type: "text",
+        storage: "project-field",
+        where: "Project field Urgency",
+        value: { state: "empty" },
+      },
+    ]);
     expect(body.projects[0]).toMatchObject({
       binding: "sample",
       lifecycle: { field: "Stage", options: ["Ready", "Delivered"] },

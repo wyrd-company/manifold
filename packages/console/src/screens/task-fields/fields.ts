@@ -33,5 +33,19 @@ export function rowFindings(fields: readonly TaskField[], findings: readonly Dec
   );
 }
 export function fieldScope(field: TaskField, project?: ProjectSummary) {
+  if (field.scope?.kind === "issue" || field.storage === "front-matter")
+    return "In each issue's body";
+  if (field.scope?.kind === "organization") return `Organization ${field.scope.names.join(", ")}`;
+  if (field.scope?.kind === "repository") return `Repositories ${field.scope.names.join(", ")}`;
+  if (field.scope?.kind === "project") return `On ${field.scope.names.join(", ")}`;
   return `On ${project ? `${project.owner}/${project.number}` : field.binding}`;
 }
+
+export const storageLabels = {
+  "project-field": "Project field",
+  "issue-field": "Issue field",
+  "issue-type": "Issue type",
+  label: "Label",
+  milestone: "Milestone",
+  "front-matter": "Front matter",
+} as const;

@@ -45,6 +45,14 @@ description: >-
   task field name, and `applied_at` the time
   the Apply recorded it, in epoch milliseconds.
 
+  `metadata_scope_applies` holds one row per shared storage scope, keyed
+  by `scopeKey`. `configuration` is the JSON of the last ready scope
+  observation, `owned` maps each owned entity key to its matched node id,
+  `commit_id` is the declaration commit and `applied_at` the epoch
+  millisecond time. Every completed Apply replaces each reached scope's
+  row in the same transaction as the binding's Project row. The row is
+  shared by all bindings that reach the scope.
+
   `metadata_pending_saves` holds, per binding, the accept save an Apply
   pushed whose commit was not yet in force: `save_id`, the save's id;
   `commit_id`, the pushed commit; and `saved_at`. An Apply writes the row

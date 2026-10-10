@@ -9,6 +9,7 @@ import type {
   TasksResponse,
   TaskIssue,
   TaskThread,
+  TaskProject,
 } from "@wyrd-company/manifold-shared/tasks-api";
 import type { Escalation } from "@wyrd-company/manifold-shared/escalations-api";
 export interface TasksBoundProject {
@@ -45,6 +46,7 @@ export type TasksEscalation = Escalation;
 export type TasksThreadView = Omit<TaskThread, "threadId" | "environment">;
 export interface TasksOptions {
   readonly store: Pick<Store, "loadSnapshot">;
+  readonly taskFields?: (binding: string, issue: TasksTrackedIssue) => TaskProject["fields"];
   held(actorId: string): boolean;
   boundProjects(): readonly TasksBoundProject[];
   readonly github: TasksGitHub;

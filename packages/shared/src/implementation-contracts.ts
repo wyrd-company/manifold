@@ -26,6 +26,43 @@ export const implementationContracts = {
       maxProperties: 0,
     },
   },
+  "github-task-field-set": {
+    input: {
+      description: "The input of `github-task-field-set`.",
+      type: "object",
+      required: ["field", "value"],
+      additionalProperties: false,
+      properties: {
+        field: {
+          description:
+            "A field or option name as GitHub shows it: not empty, with no leading or trailing white space.",
+          type: "string",
+          pattern: "^\\S(?:.*\\S)?$",
+        },
+        value: {
+          description:
+            "The value to set: a string for text, a finite number for number, a YYYY-MM-DD string for date, an option's name for single-select; null clears the field.",
+          oneOf: [
+            {
+              type: "string",
+            },
+            {
+              type: "number",
+            },
+            {
+              type: "null",
+            },
+          ],
+        },
+      },
+    },
+    output: {
+      description: "The output of `github-task-field-set`, once GitHub holds the value.",
+      type: "object",
+      additionalProperties: false,
+      maxProperties: 0,
+    },
+  },
   "send-message": {
     input: {
       description: "The input of the `send-message` actor.",

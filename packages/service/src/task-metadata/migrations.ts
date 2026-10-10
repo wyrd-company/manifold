@@ -57,5 +57,14 @@ CREATE TABLE metadata_pending_saves (
   commit_id TEXT NOT NULL CHECK (length(commit_id) > 0),
   saved_at INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
+
+-- Applied configuration shared by every binding that reaches the scope.
+CREATE TABLE metadata_scope_applies (
+  scope_key TEXT PRIMARY KEY CHECK (length(scope_key) > 0),
+  commit_id TEXT NOT NULL CHECK (length(commit_id) > 0),
+  configuration TEXT NOT NULL CHECK (json_valid(configuration)),
+  owned TEXT NOT NULL CHECK (json_valid(owned)),
+  applied_at INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
 `,
 ];

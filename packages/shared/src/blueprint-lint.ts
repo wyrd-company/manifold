@@ -34,6 +34,7 @@ export type BlueprintFinding = {
     | "machine"
     | "final-state-missing"
     | "lifecycle-option"
+    | "task-field-value"
     | "gate"
     | "token-violation"
     | "token-potential"
@@ -53,6 +54,13 @@ export type BlueprintFinding = {
 export interface BlueprintLintOptions {
   readonly configurationBound?: number;
   readonly lifecycleOptions?: ReadonlySet<string>;
+  readonly taskFields?: ReadonlyMap<
+    string,
+    {
+      readonly types: ReadonlySet<"text" | "number" | "date" | "single-select">;
+      readonly options: ReadonlySet<string>;
+    }
+  >;
 }
 export type BlueprintLint =
   | {
@@ -205,6 +213,7 @@ export async function lintBlueprint(
     });
   }
   const lifecycleFindings: BlueprintFinding[] = [];
+  const taskFieldFindings: BlueprintFinding[] = [];
   function walk(config: Record<string, unknown>, location: string) {
     actions(config["entry"], `${location}/entry`);
     actions(config["exit"], `${location}/exit`);
@@ -234,6 +243,35 @@ export async function lintBlueprint(
           message: `Lifecycle option is not declared: ${input["status"]}`,
           name: input["status"],
         });
+      if (
+        invoke["src"] === "github-task-field-set" &&
+        options.taskFields &&
+        typeof input["field"] === "string" &&
+        input["type"] !== "expression.map"
+      ) {
+        const name = input["field"],
+          field = options.taskFields.get(name),
+          value = input["value"];
+        const literal = value === null || typeof value === "string" || typeof value === "number";
+        const accepts =
+          field &&
+          (value === null ||
+            (typeof value === "number" && Number.isFinite(value) && field.types.has("number")) ||
+            (typeof value === "string" &&
+              (field.types.has("text") ||
+                (field.types.has("date") && /^\d{4}-\d{2}-\d{2}$/.test(value)) ||
+                (field.types.has("single-select") && field.options.has(value)))));
+        if (!field || (literal && !accepts))
+          taskFieldFindings.push({
+            path,
+            kind: "task-field-value",
+            location: `${at}/input/${field ? "value" : "field"}`,
+            name,
+            message: field
+              ? "Value does not match a declared task field type or option"
+              : "Task field is not declared",
+          });
+      }
       for (const key of ["onDone", "onError", "onSnapshot"])
         transitions(invoke[key], `${at}/${key}`);
     });
@@ -330,7 +368,7 @@ export async function lintBlueprint(
   if (findings.length)
     return {
       ok: false,
-      findings: [...findings, ...unknownEvents, ...lifecycleFindings],
+      findings: [...findings, ...unknownEvents, ...lifecycleFindings, ...taskFieldFindings],
       warnings: [],
     };
   const tokens = lintTokens(blueprint, { names, ...options });
@@ -342,6 +380,7 @@ export async function lintBlueprint(
     }
   findings.push(...unknownEvents);
   findings.push(...lifecycleFindings);
+  findings.push(...taskFieldFindings.sort((a, b) => compareExpressionText(a.location, b.location)));
   return findings.length
     ? { ok: false, findings, warnings }
     : { ok: true, blueprint, warnings, tokens };

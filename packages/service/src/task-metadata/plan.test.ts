@@ -3,6 +3,7 @@
 //   verifies: task-metadata
 // ---
 import { expect, test } from "vite-plus/test";
+import { projectWrites } from "./plan.ts";
 import { planProjectConfiguration } from "./index.ts";
 const metadata = {
   lifecycle: { field: "Stage", options: ["Packed", "Sent"] },
@@ -141,4 +142,42 @@ test("field names remain unique on rename and replacement; option properties are
   expect(result.changes.filter((c) => c.target.field === "Delivery").every((c) => !c.drift)).toBe(
     true,
   );
+});
+test("non-Project storage never provisions Project fields", () => {
+  const planned = planProjectConfiguration({
+    metadata: {
+      ...metadata,
+      fields: {
+        note: {
+          type: "text",
+          storage: { kind: "front-matter", key: "note" },
+          whenChanged: "revert",
+        },
+      },
+    },
+    fields: [fields[0]!],
+    applied: undefined,
+  });
+  expect(planned.changes).toEqual([]);
+  expect(planned.fields.map((field) => field.taskField).filter(Boolean)).toEqual(["note"]);
+});
+
+test("scope changes sharing a field name never cause Project writes", () => {
+  const input = { metadata, fields, applied };
+  const planned = planProjectConfiguration(input);
+  const change = {
+    id: "organization:sample:issue-field:Mass:change",
+    storage: "issue-field" as const,
+    scope: { kind: "organization" as const, name: "sample", bindings: ["parcels"] },
+    target: { field: "Mass", lifecycle: false },
+    description: "Change Mass.",
+    action: "change" as const,
+    side: "github" as const,
+    drift: false,
+    requiresRemoval: false,
+    properties: ["name" as const],
+    from: { name: "Weight", type: "number" as const },
+    to: { name: "Mass", type: "number" as const },
+  };
+  expect(projectWrites(input, { ...planned, changes: [change] }, "P_one", false)).toEqual([]);
 });

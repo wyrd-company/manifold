@@ -24,8 +24,20 @@ export interface DeclarationFinding extends ApiFinding {
   readonly file?: "portfolio" | "bindings" | "accounts" | "prices";
 }
 export type TaskFieldType = "text" | "number" | "date" | "single-select";
-export type StorageKindName = "project-field";
+export type StorageKindName =
+  | "project-field"
+  | "issue-field"
+  | "issue-type"
+  | "label"
+  | "milestone"
+  | "front-matter";
+export interface TaskFieldScope {
+  readonly kind: "project" | "organization" | "repository" | "issue";
+  readonly names: readonly string[];
+  readonly sharedWith?: readonly string[];
+}
 export interface TaskField {
+  readonly scope?: TaskFieldScope;
   readonly binding: string;
   readonly name: string;
   readonly lifecycle: boolean;
@@ -45,6 +57,9 @@ export interface StorageKind {
   readonly kind: StorageKindName;
   readonly types: readonly TaskFieldType[];
   readonly settings: readonly string[];
+  readonly optionProperties?: readonly ("color" | "description")[];
+  readonly color?: "named" | "hex";
+  readonly scope?: TaskFieldScope["kind"];
 }
 export interface ProjectImpact {
   readonly binding: string;
@@ -228,11 +243,18 @@ const finding = (v: unknown) =>
   (!Object.hasOwn(v, "range") || range(v["range"])) &&
   (!Object.hasOwn(v, "file") || oneOf("portfolio", "bindings", "accounts", "prices")(v["file"]));
 const findings = { findings: array(finding), warnings: array(finding) };
+const fieldScope = (v: unknown) =>
+  shape(
+    v,
+    { kind: oneOf("project", "organization", "repository", "issue"), names: strings },
+    { sharedWith: strings },
+  );
 const field = (v: unknown) =>
   shape(
     v,
     { binding: string, name: string, lifecycle: boolean, location: string },
     {
+      scope: fieldScope,
       storage: string,
       type: string,
       settings: (s) => record(s) && Object.values(s).every(string),
@@ -258,11 +280,26 @@ const metadata = {
   preview,
   fields: array(field),
   storageKinds: array((v) =>
-    shape(v, {
-      kind: oneOf("project-field"),
-      types: array(oneOf("text", "number", "date", "single-select")),
-      settings: strings,
-    }),
+    shape(
+      v,
+      {
+        kind: oneOf(
+          "project-field",
+          "issue-field",
+          "issue-type",
+          "label",
+          "milestone",
+          "front-matter",
+        ),
+        types: array(oneOf("text", "number", "date", "single-select")),
+        settings: strings,
+      },
+      {
+        optionProperties: array(oneOf("color", "description")),
+        color: oneOf("named", "hex"),
+        scope: oneOf("project", "organization", "repository", "issue"),
+      },
+    ),
   ),
   impact: array(
     (v) =>

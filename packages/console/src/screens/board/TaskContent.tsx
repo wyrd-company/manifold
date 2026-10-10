@@ -2,6 +2,7 @@
 // relationships:
 //   implements: [operator-console, tasks-api]
 // ---
+import { TaskValue } from "./TaskValue.tsx";
 import { TaskActorTimeline } from "../actors/TaskActorTimeline.tsx";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
@@ -222,18 +223,27 @@ export function TaskContent({ origin = "board" }: { origin?: "board" | "epics" }
         <div className="task-side">
           <section className="task-section">
             <h2>Fields</h2>
-            {task.projects.map((p) => (
-              <div className="task-field" key={p.binding}>
-                <span className="muted">
-                  {p.owner} / {p.number}
-                  <small>{p.field ?? "Lifecycle"}</small>
-                </span>
-                <span>
-                  {p.status ?? "No status"}{" "}
-                  <LockKeyhole size={12} aria-label="Manifold sets this field" />
-                </span>
+            {task.projects.map((project) => (
+              <div key={project.binding}>
+                <div className="task-field">
+                  <span className="muted">
+                    {project.owner} / {project.number}
+                    <small>{project.field ?? "Lifecycle"}</small>
+                  </span>
+                  <span>
+                    {project.status ?? "No status"}{" "}
+                    <LockKeyhole size={12} aria-label="Manifold sets this field" />
+                  </span>
+                </div>
+                {(project.fields ?? []).map((field) => (
+                  <div className="task-field" key={field.name}>
+                    <span title={field.where}>{field.name}</span>
+                    <TaskValue value={field.value} singleSelect={field.type === "single-select"} />
+                  </div>
+                ))}
               </div>
             ))}
+            <Link to="/settings/task-fields">Task fields</Link>
           </section>
           <section className="task-section">
             <h2>Usage</h2>

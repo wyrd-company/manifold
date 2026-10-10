@@ -10,23 +10,77 @@ import { memoryRevision } from "@wyrd-company/manifold-shared";
 import { openTaskMetadata, taskMetadataMigrationSteps } from "./index.ts";
 import { openStore } from "../store/index.ts";
 import type { SaveRequest } from "../process-repository/index.ts";
-import type { ProjectField, ProjectFieldWrite } from "../github-source/index.ts";
+import type {
+  ProjectField,
+  ProjectFieldWrite,
+  ScopeConfiguration,
+  ScopeEntityWrite,
+  TrackedIssue,
+} from "../github-source/index.ts";
 const bindings =
   "githubProjects: { parcels: { owner: sample, number: 1, environment: local, item: shipments } }";
 const text =
   "# keep this comment\nprojects:\n  parcels:\n    lifecycle: { field: Stage, options: [Packed, Sent] }\n    fields:\n      mass: { type: number, whenChanged: accept, storage: { kind: project-field, name: Mass } }\n";
-function setup(initial: ProjectField[] = []) {
+function setup(
+  initial: ProjectField[] = [],
+  sharedBinding = false,
+  initialScope?: ScopeConfiguration,
+  issues: readonly TrackedIssue[] = [],
+) {
   const directory = mkdtempSync(join(tmpdir(), "project-config-"));
   const store = openStore({ path: join(directory, "store.sqlite") });
   store.connection.migrate("metadata", taskMetadataMigrationSteps);
   let fields = initial;
+  let scope = initialScope;
+  const scopeWrites: ScopeEntityWrite[] = [];
+  let scopeFailureAt: number | undefined;
+  let observationFailureAt: number | undefined;
+  let scopeReads = 0;
   let seq = 0;
   let observed = false;
   const writes: ProjectFieldWrite[] = [];
   const saves: SaveRequest[] = [];
   let saveMode: "accept" | "pending" | "already-pending" | "reject" = "accept";
   let failureAt: number | undefined;
+  let mirrorReads = 0;
   const source = {
+    trackedIssueIndex: () => {
+      mirrorReads++;
+      return new Map(issues.map((issue) => [issue.issue.nodeId, issue]));
+    },
+    ...(initialScope
+      ? {
+          scopeConfiguration: () => scope,
+          observeScope: async (): Promise<ScopeConfiguration> =>
+            ++scopeReads === observationFailureAt
+              ? {
+                  scope: scope!.scope,
+                  status: "forbidden",
+                  readAt: 10,
+                  message: "Scope read denied",
+                }
+              : scope!,
+          writeScopeEntity: async (write: ScopeEntityWrite) => {
+            if (scopeWrites.length === scopeFailureAt) throw new Error("Scope write interrupted");
+            scopeWrites.push(write);
+            if (scope?.status === "ready" && write.kind === "issue-type-create")
+              scope = {
+                ...scope,
+                issueTypes: [
+                  ...scope.issueTypes,
+                  {
+                    nodeId: `T_${scopeWrites.length}`,
+                    name: write.name,
+                    color: write.color,
+                    description: write.description,
+                    enabled: true,
+                  },
+                ],
+              };
+            return undefined;
+          },
+        }
+      : {}),
     project: () => ({ nodeId: "P_one", owner: "sample", number: 1 }),
     projectByNumber: () => ({ nodeId: "P_one", owner: "sample", number: 1 }),
     moveCard: async () => {},
@@ -80,6 +134,17 @@ function setup(initial: ProjectField[] = []) {
         environment: "local",
         portfolioItem: "shipments",
       },
+      ...(sharedBinding
+        ? [
+            {
+              binding: "crates",
+              owner: "sample",
+              number: 2,
+              environment: "local",
+              portfolioItem: "shipments",
+            },
+          ]
+        : []),
     ],
     revisions: {
       save: async (request) => {
@@ -101,9 +166,20 @@ function setup(initial: ProjectField[] = []) {
   });
   return {
     metadata,
+    mirrorReads: () => mirrorReads,
     store,
     writes,
     saves,
+    scopeWrites,
+    scopeFailAt: (at: number | undefined) => {
+      scopeFailureAt = at;
+    },
+    observationFailAt: (at: number) => {
+      observationFailureAt = at;
+    },
+    scopeChange: (change: (value: ScopeConfiguration) => ScopeConfiguration) => {
+      scope = change(scope!);
+    },
     source,
     saveMode: (mode: typeof saveMode) => {
       saveMode = mode;
@@ -178,7 +254,10 @@ test("Accept saves one valid declaration and records only after it enters force"
       base: "a".repeat(40),
       files: [{ path: "task-metadata.yml", text: expect.stringContaining("# keep this comment") }],
     });
-    expect(f.metadata.current()?.projects["parcels"]?.fields["mass"]?.storage?.name).toBe("Weight");
+    expect(f.metadata.current()?.projects["parcels"]?.fields["mass"]?.storage).toMatchObject({
+      kind: "project-field",
+      name: "Weight",
+    });
     expect((await f.metadata.projects.apply("parcels", { removeUndeclared: false })).writes).toBe(
       0,
     );
@@ -492,6 +571,264 @@ test("accept options by id: renamed owned colors stay owned and added options do
     expect((await f.metadata.projects.apply("parcels", { removeUndeclared: false })).writes).toBe(
       0,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("every binding Apply uses the same queue", async () => {
+  const f = setup([], true);
+  try {
+    await f.metadata.apply(
+      memoryRevision("a".repeat(40), {
+        "task-metadata.yml":
+          text +
+          "  crates:\n    lifecycle: { field: Stage, options: [Packed, Sent] }\n    fields:\n      mass: { type: number, storage: {kind: project-field, name: Mass} }\n",
+        "bindings.yml":
+          "githubProjects: {parcels: {owner: sample, number: 1, environment: local, item: shipments}, crates: {owner: sample, number: 2, environment: local, item: shipments}}",
+      }),
+    );
+    const results = await Promise.all([
+      f.metadata.projects.apply("parcels", { removeUndeclared: false }),
+      f.metadata.projects.apply("crates", { removeUndeclared: false }),
+    ]);
+    expect(results.map((result) => result.writes)).toEqual([2, 0]);
+    expect(f.writes).toHaveLength(2);
+  } finally {
+    await f.close();
+  }
+});
+test("Apply refuses every write when a reached shared scope is unobserved", async () => {
+  const f = setup();
+  try {
+    await f.metadata.apply(
+      memoryRevision("a".repeat(40), {
+        "task-metadata.yml":
+          text +
+          "      category: {type: single-select, options: [One], storage: {kind: issue-type, organization: sample}}\n",
+        "bindings.yml": bindings,
+      }),
+    );
+    const plan = await f.metadata.projects.plan("parcels");
+    expect(plan.scopes).toMatchObject([
+      {
+        scope: { kind: "organization", name: "sample", bindings: ["parcels"] },
+        status: "unobserved",
+      },
+    ]);
+    await expect(
+      f.metadata.projects.apply("parcels", { removeUndeclared: false }),
+    ).rejects.toMatchObject({ status: 409, kind: "scope-unavailable" });
+    expect(f.writes).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("shared scope Apply records one configuration with the Project atomically and converges", async () => {
+  const f = setup([], false, {
+    scope: { kind: "organization", organization: "sample" },
+    status: "ready",
+    readAt: 10,
+    issueFields: [],
+    issueTypes: [],
+    labels: [],
+    milestones: [],
+  });
+  try {
+    await f.metadata.apply(
+      memoryRevision("a".repeat(40), {
+        "task-metadata.yml":
+          text +
+          "      category: {type: single-select, options: [One], storage: {kind: issue-type, organization: sample}}\n",
+        "bindings.yml": bindings,
+      }),
+    );
+    expect((await f.metadata.projects.apply("parcels", { removeUndeclared: false })).writes).toBe(
+      3,
+    );
+    expect(f.scopeWrites).toHaveLength(1);
+    expect(
+      f.store.connection.database
+        .prepare("SELECT scope_key, commit_id FROM metadata_scope_applies")
+        .all(),
+    ).toEqual([{ scope_key: "organization:sample", commit_id: "a".repeat(40) }]);
+    expect((await f.metadata.projects.apply("parcels", { removeUndeclared: false })).writes).toBe(
+      0,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("partial shared writes retain the previous applies and retry without duplicate entities", async () => {
+  const f = setup([], false, {
+    scope: { kind: "organization", organization: "sample" },
+    status: "ready",
+    readAt: 10,
+    issueFields: [],
+    issueTypes: [],
+    labels: [],
+    milestones: [],
+  });
+  try {
+    await f.metadata.apply(
+      memoryRevision("a".repeat(40), {
+        "task-metadata.yml":
+          text +
+          "      category: {type: single-select, options: [One, Two], storage: {kind: issue-type, organization: sample}}\n",
+        "bindings.yml": bindings,
+      }),
+    );
+    f.scopeFailAt(1);
+    await expect(
+      f.metadata.projects.apply("parcels", { removeUndeclared: false }),
+    ).rejects.toMatchObject({ status: 502, detail: { writes: 3 } });
+    expect(
+      f.store.connection.database.prepare("SELECT * FROM metadata_scope_applies").all(),
+    ).toEqual([]);
+    expect(
+      f.store.connection.database.prepare("SELECT * FROM metadata_project_applies").all(),
+    ).toEqual([]);
+    f.scopeFailAt(undefined);
+    expect((await f.metadata.projects.apply("parcels", { removeUndeclared: false })).writes).toBe(
+      1,
+    );
+    expect(f.scopeWrites).toHaveLength(2);
+    expect((await f.metadata.projects.apply("parcels", { removeUndeclared: false })).writes).toBe(
+      0,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("restored metadata reads shared drift from the persisted scope Apply", async () => {
+  const f = setup([], false, {
+    scope: { kind: "organization", organization: "sample" },
+    status: "ready",
+    readAt: 10,
+    issueFields: [],
+    issueTypes: [],
+    labels: [],
+    milestones: [],
+  });
+  let restored: ReturnType<typeof openTaskMetadata> | undefined;
+  try {
+    await f.metadata.apply(
+      memoryRevision("a".repeat(40), {
+        "task-metadata.yml":
+          text +
+          "      category: {type: single-select, options: [One], storage: {kind: issue-type, organization: sample}}\n",
+        "bindings.yml": bindings,
+      }),
+    );
+    await f.metadata.projects.apply("parcels", { removeUndeclared: false });
+    await f.metadata.close();
+    f.scopeChange((scope) =>
+      scope.status === "ready"
+        ? { ...scope, issueTypes: scope.issueTypes.map((type) => ({ ...type, name: "Other" })) }
+        : scope,
+    );
+    restored = openTaskMetadata({
+      connection: f.store.connection,
+      actorOf: () => undefined,
+      invocationOf: () => ({ actorId: "parcel", invokeId: "stage", entryId: "entry" }),
+      source: async () => f.source,
+      bindingOf: () => "parcels",
+      bindings: () => [
+        {
+          binding: "parcels",
+          owner: "sample",
+          number: 1,
+          environment: "local",
+          portfolioItem: "shipments",
+        },
+      ],
+    });
+    const plan = await restored.projects.plan("parcels");
+    expect(plan.configuration).toEqual({ state: "drift", count: 1 });
+    expect(plan.changes).toMatchObject([
+      { scope: { name: "sample" }, storage: "issue-type", action: "change", drift: true },
+    ]);
+  } finally {
+    await restored?.close();
+    await f.close();
+  }
+});
+
+test("plan reports front matter mismatches from one tracked issue snapshot without provisioning", async () => {
+  const project = { nodeId: "P_one", owner: "sample", number: 1 };
+  const issue: TrackedIssue = {
+    issue: {
+      nodeId: "I_one",
+      repository: "sample/depot",
+      number: 1,
+      state: "open",
+      stateReason: null,
+    },
+    blockedBy: [],
+    blocking: [],
+    subIssues: [],
+    parent: undefined,
+    projects: [project],
+    items: [{ project, nodeId: "ITEM_one", archived: false, fields: {} }],
+    content: {
+      labels: [],
+      milestone: null,
+      issueType: null,
+      issueFields: [],
+      body: "---\nweight: heavy\n---\nParcel",
+      lastEditedAt: null,
+    },
+  };
+  const f = setup([], false, undefined, [issue]);
+  try {
+    await f.metadata.apply(
+      memoryRevision("a".repeat(40), {
+        "task-metadata.yml": text + "      weight: {type: number, storage: {kind: front-matter}}\n",
+        "bindings.yml": bindings,
+      }),
+    );
+    const before = f.mirrorReads();
+    const plan = await f.metadata.projects.plan("parcels");
+    expect(plan.frontMatter).toEqual({ mismatched: 1 });
+    expect(f.mirrorReads() - before).toBe(1);
+    expect(plan.changes.map((change) => change.target.field)).not.toContain("weight");
+  } finally {
+    await f.close();
+  }
+});
+
+test("failed final scope observation never records a completed Apply", async () => {
+  const f = setup([], false, {
+    scope: { kind: "organization", organization: "sample" },
+    status: "ready",
+    readAt: 10,
+    issueFields: [],
+    issueTypes: [],
+    labels: [],
+    milestones: [],
+  });
+  try {
+    await f.metadata.apply(
+      memoryRevision("a".repeat(40), {
+        "task-metadata.yml":
+          text +
+          "      category: {type: single-select, options: [One], storage: {kind: issue-type, organization: sample}}\n",
+        "bindings.yml": bindings,
+      }),
+    );
+    f.observationFailAt(2);
+    await expect(
+      f.metadata.projects.apply("parcels", { removeUndeclared: false }),
+    ).rejects.toMatchObject({ status: 502, kind: "scope-unavailable", detail: { writes: 3 } });
+    expect(
+      f.store.connection.database.prepare("SELECT * FROM metadata_scope_applies").all(),
+    ).toEqual([]);
+    expect(
+      f.store.connection.database.prepare("SELECT * FROM metadata_project_applies").all(),
+    ).toEqual([]);
   } finally {
     await f.close();
   }

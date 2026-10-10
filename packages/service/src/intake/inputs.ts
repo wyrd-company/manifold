@@ -3,6 +3,7 @@
 //   implements: intake-decision-model
 // ---
 import { createHash } from "node:crypto";
+import type { TaskFieldValue } from "@wyrd-company/manifold-shared";
 import type { PortfolioDeclaration } from "@wyrd-company/manifold-shared";
 import type { TrackedIssue } from "../github-source/index.ts";
 import type { IntakeRecord } from "./types.ts";
@@ -21,13 +22,18 @@ export function descendant(
   }
   return false;
 }
-export function facts(issue: TrackedIssue, projectId: string) {
+export function facts(
+  issue: TrackedIssue,
+  projectId: string,
+  values: Readonly<Record<string, TaskFieldValue>> = {},
+) {
   const item = issue.items.find((i) => i.project.nodeId === projectId)!;
   return {
     issue: issue.issue,
     project: item.project,
     item: { nodeId: item.nodeId, archived: item.archived },
     fields: item.fields,
+    values,
     blockedBy: issue.blockedBy,
     blocking: issue.blocking,
     subIssues: issue.subIssues,
@@ -39,9 +45,10 @@ export function decisionInput(
   binding: Binding,
   declaration: PortfolioDeclaration,
   projectId: string,
+  values: Readonly<Record<string, TaskFieldValue>> = {},
 ) {
   return {
-    task: facts(issue, projectId),
+    task: facts(issue, projectId, values),
     binding: {
       name: binding.name,
       item: binding.item,
@@ -62,6 +69,7 @@ export function taskInput(
     "project" | "environment" | "portfolioItem" | "blueprintPath" | "evaluation"
   >,
   data: unknown,
+  values: Readonly<Record<string, TaskFieldValue>> = {},
 ): { readonly [key: string]: JsonValue } {
   return json({
     manifold: {
@@ -71,7 +79,7 @@ export function taskInput(
       portfolioItem: record.portfolioItem,
       blueprintPath: record.blueprintPath,
     },
-    task: facts(issue, record.project!.nodeId),
+    task: facts(issue, record.project!.nodeId, values),
     binding: (record.evaluation as { input: { binding: unknown } }).input.binding,
     intake: data ?? {},
   }) as { readonly [key: string]: JsonValue };

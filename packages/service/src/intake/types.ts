@@ -2,6 +2,7 @@
 // relationships:
 //   implements: intake
 // ---
+import type { TaskFieldValue } from "@wyrd-company/manifold-shared";
 import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
 import type { LoadedBlueprint, RevisionLoad, VersionLoad } from "../blueprint-loader/index.ts";
 import type { GitHubProject, TrackedIssue, TrackedIssueIndex } from "../github-source/index.ts";
@@ -18,6 +19,10 @@ export interface IntakeOptions {
   readonly escalations: Pick<Escalations, "raise" | "withdraw">;
   /** The GitHub event source satisfies it. */
   readonly tracked: TrackedIssues;
+  readonly taskValues?: (
+    binding: string,
+    issue: TrackedIssue,
+  ) => Readonly<Record<string, TaskFieldValue>> | undefined;
   /** The blueprint loader satisfies it. */
   readonly blueprints: { version(version: BlueprintVersion): Promise<VersionLoad> };
   /** The basis the service last published, or undefined before the first. */
