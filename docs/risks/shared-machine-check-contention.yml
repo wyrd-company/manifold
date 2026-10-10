@@ -9,17 +9,21 @@ relationships:
 title: Concurrent checks may fail on a shared machine
 description: >-
   Multiple test suites can contend for CPU and delay child processes,
-  persistence, and browser readiness beyond assumptions in tests. A check
+  persistence, worker startup, and browser readiness beyond assumptions in
+  tests. A check
   can fail while the same test succeeds alone, delaying review and hiding
   failures that also occur without contention.
 categories: [technical]
-likelihood: 3
+likelihood: 2
 impact: 3
 response-strategy: mitigate
 status: open
 # Mitigation:
-# Single default-worker and four-worker checks and a fresh-clone four-worker
-# check pass. Two concurrent service child-process suites pinned to one CPU
-# pass with default workers. Two concurrent full default-worker checks still
-# fail four to six tests each. This risk is reduced and remains open until
-# those full runs converge without weakening behavior assertions.
+# Two concurrent full default-worker checks pass on one machine, in four
+# complete runs, with no product timing, worker cap, or assertion relaxed;
+# a fresh-clone four-worker check and two concurrent child-process suites
+# pinned to one CPU pass. Three crash-recovery child-process tests can stop
+# on their 10-second worker.ready poll when broader suites run pinned to one
+# CPU, and one full Node 24.11 service run ended once with an unexplained
+# Vitest worker exit that its rerun did not repeat. The risk stays open
+# until those causes are measured and fixed.

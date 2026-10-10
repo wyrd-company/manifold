@@ -35,13 +35,14 @@ impact: 3
 
 response-strategy: mitigate
 # Mitigation: the editor and `reactflow` are pinned to exact versions, the
-# dialog loads only when opened, and the built-browser test drives every
-# behaviour the dialog relies on in both themes under the console's policy,
-# so an update that breaks one fails before it merges. A model stays a YAML
+# dialog loads only when opened, its JSONata cells do not use the editor's
+# WebAssembly build, and the built-browser test drives every behaviour the
+# dialog relies on in both themes under the console's policy, so an update
+# that breaks one fails before it merges. A model stays a YAML
 # file that the dialog's YAML view, any text editor, and the service's lint
 # handle without the editor.
 # Residual limit: an editor that is abandoned, or one that needs its
 # WebAssembly build to work, needs a fork or a change of the console's
 # policy, which is the user's decision.
 
-status: open
+status: mitigated

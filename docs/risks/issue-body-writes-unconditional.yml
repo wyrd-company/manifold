@@ -16,16 +16,19 @@ description: >-
   documents conditional requests for reads only. A front matter write
   reads the body, sets one key, and writes the body back, so a person's
   edit that GitHub takes between that read and that write is replaced.
-  The source checks the issue's edit history after each write and, once
-  per write, sets the key on the replaced text when GitHub's
-  `UserContentEdit.diff` gives it; any further edit ends the write as
-  `body-conflict`; GitHub's documentation does not state that `diff` holds the
-  edit's whole text, and GitHub keeps at most 100 edits of an issue. When
-  the text cannot be recovered the write fails as `body-conflict`, the
-  replaced text stays in GitHub's edit history, and the blueprint decides
-  what to do. GitHub's edit timestamps have one-second precision; edits
-  whose order cannot be established against the recorded basis body fail
-  `body-conflict` without another write.
+  The source checks the issue's edit history after each write. When the
+  write replaced one edit and is itself the newest edit, the source
+  repairs once: it sets the key on the replaced text that GitHub's
+  `UserContentEdit.diff` gives and writes that. Every other outcome ends
+  the write as a durable `body-conflict` with no further write: replaced
+  text that `diff` does not give, an edit newer than the write, any edit
+  by another account around the repair, and edits whose order GitHub's
+  one-second timestamps cannot establish against the recorded basis. A
+  person's edit that lands just before the repair write is replaced in
+  the body, stays in GitHub's edit history, and is named by the
+  `body-conflict`, and the blueprint decides what to do. GitHub keeps at
+  most 100 edits of an issue, and its documentation does not state that
+  `diff` holds an edit's whole text.
 
 categories:
   - technical
@@ -35,8 +38,13 @@ impact: 2
 
 response-strategy: mitigate
 
-status: open
+status: mitigated
 
-# Mitigation: the live check of front matter writes records whether
-# `diff` holds an edit's whole text, and the fault test makes a
-# person's edit land between the read and the write.
+# Mitigation: one repair with its own persisted basis, then a durable
+# `body-conflict`. Fault tests make a person's edit land before the write,
+# during the repair, and across a restart with a check pending. The live
+# front matter check set, replayed, and cleared a value on a real issue
+# with the issue's prose kept, and `diff` gave the edit's whole body text.
+# Residual limit, accepted: GitHub offers no conditional body write, so an
+# edit that lands just before the repair write is replaced in the body and
+# reported, not prevented.

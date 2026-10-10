@@ -1,0 +1,42 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: A runaway expression in a decision model stalls the service thread with no bound
+
+# GAP-EDGE: the risk schema declares no relationship-types; `related-to`
+# names the designs and decision that bound blueprint expressions, which
+# decision model evaluation does not use.
+relationships:
+  related-to:
+    - expressions
+    - intake
+    - operator-console
+    - decision-models
+    - evaluate-blueprint-expressions-in-a-worker-thread
+    - expression-worker-wait-unbounded
+
+description: >-
+  The service evaluates a decision model through the Zen engine, whose
+  custom handler runs the model's JSONata cells, expressions, and
+  conditions on the service thread. Intake, a blueprint state's
+  decision model invoke, and the console's evaluate endpoint each run
+  such an evaluation. JSONata has no loop construct, but a recursive
+  user-defined function can run without end, and no bound applies: the
+  `expressions.timeoutMs` wait bounds only blueprint expressions, which
+  run on the expressions worker. A model published with such a cell
+  stops every actor, delivery, and API request the service thread runs
+  until the service restarts.
+
+categories:
+  - technical
+
+likelihood: 2
+impact: 4
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: evaluate decision models on the expressions worker under the
+# approved `expressions.timeoutMs` wait, so a runaway evaluation fails as an
+# expression error and restarts the worker, as a blueprint expression does.
