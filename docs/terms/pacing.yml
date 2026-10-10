@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Pacing
+description: >-
+  A limit that spreads a portfolio item's allocation across a window, plus a burst, and restarts at each reset.

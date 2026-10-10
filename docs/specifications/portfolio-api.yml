@@ -1,0 +1,210 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - operator-console
+    - portfolio
+    - portfolio-ledger
+    - portfolio-declaration
+    - accounts-declaration
+    - price-table
+    - usage-intake
+    - bindings-declaration
+    - service-assembly
+    - declarations-api
+    - usage-api
+terms:
+  - portfolio-item
+  - allocation
+  - ceiling
+  - weight
+  - pacing
+  - unallocated-remainder
+  - available-balance
+  - capacity
+  - window
+  - reservation
+  - actual
+  - usage-move
+description: >-
+  Defines the portfolio endpoint of Manifold's API: the portfolio read,
+  which answers the portfolio items with their allocations, the accounts
+  with their capacity, current window, and latest call, each item's
+  available balance per account, how calls are priced, and the warnings
+  of the declaration in force.
+  `docs/specifications/portfolio-api.openapi.yml` is the machine-readable
+  definition. The Portfolio screen of the operator console reads it, and
+  any automation may. The text of `portfolio.yml` is read, linted, and
+  saved through the `portfolio.yml` path of `declarations-api`.
+
+  The endpoint is mounted with the HTTP host's `mount` at the prefix
+  `/api/portfolio` and is always served without authentication. Access
+  control belongs to the deployment. A path under the prefix other than
+  the prefix itself answers `404`. A method other than `GET` answers
+  `405` with `Allow: GET`. Every answer is JSON with `Cache-Control:
+  no-store`, and every error answer holds `error` and `message`. The
+  query string is ignored.
+
+  **Amounts.** Every amount is an integer in its account's native unit,
+  as the ledger holds it: for an account whose unit is `usd`, millionths
+  of a US dollar. Percentages are numbers from 0 to 100 with at most two
+  decimal places, as `portfolio-declaration` defines them. Instants are
+  ISO 8601 UTC strings with milliseconds.
+
+  **Read.** `GET /api/portfolio` answers `200` with:
+
+  - `commit`: the commit of the portfolio declaration in force, or `null`
+    before the first accepted declaration.
+
+  - `at`: the instant the service read the balances at, from the
+    service's clock.
+
+  - `accounts`: every account `accounts.yml` declares and does not
+    archive in the accounts declaration in force, in declaration order,
+    then every account an allocation row of the portfolio declaration in
+    force names and the accounts declaration does not declare or archives,
+    sorted by code point. Each holds its `name`; `declared`; `archived`,
+    true for an archived account; for a declared account, its `unit`, its
+    `kind`, and its `capacity` with `amount` converted to the ledger's
+    integer as `accounts-declaration` converts it, `reset` as declared,
+    and `every` as declared; and `lastUsedAt`, the time of the latest call
+    the service holds that charged the account, its usage intake's
+    `lastUsedAt`, absent when none did. `window` is the account's ledger window that
+    covers `at`: its `key`, `opensAt`, `closesAt`, `capacity`, the sum of
+    its credits, and `used`, every actual in the window plus every
+    outstanding reservation, on any item, live, archived, or not held by
+    the portfolio, which is the amount the sharing rule subtracts from
+    capacity for the account's unspent capacity. `window` is absent when
+    no ledger window covers `at`.
+
+  - `items`: every item of the portfolio declaration in force, archived
+    items and every Other included, depth first in declaration order, each
+    item's Other after its declared sub-items, and the top-level Other
+    last. Each holds its `id`; `parent`, the parent's id or `null`;
+    `title`, the declared title, the id when none is declared, and
+    `Other` for an Other item; `other`; `archived`, true when it or an
+    ancestor is archived; `projects`; `activeTasks`; `completedTasks`;
+    `allocations`; and,
+    for an item with sub-items, `unallocated`.
+
+  - `unallocated`: the top level's unallocated remainder, one entry per
+    account in `accounts`.
+
+  - `pricing`: how the service prices calls. `bundledCommit` is the
+    LiteLLM commit the bundled price table was generated from,
+    `bundledPriceTableCommit`; `bundledModels` the number of its model
+    entries; `overrides` the number of model entries of `prices.yml` in
+    force; and `unpriced` each provider and model with postings waiting
+    for a price, with `provider`, `model` (`null` for a call that named no
+    model), and `postings`, the number waiting, ordered by provider, then
+    model with `null` first; and `unmetered` each provider and model with
+    unmetered calls, whose provider records no token counts, in the same
+    shape and order, `postings` the number of those calls.
+
+  - `warnings`: the warnings of the declarations in force: the
+    `lintAllocatedAccounts` warnings of `portfolio.yml` at the commit of
+    the portfolio declaration in force, for each allocation whose account
+    the accounts declaration in force does not declare,
+    `account-undeclared`, or archives, `account-archived`, at the
+    allocation's account name. A revision
+    that changes only `accounts.yml` changes them. Each holds
+    `file`, `kind`, `location`, the RFC 6901 JSON Pointer in the file's
+    document, `severity`, `message`, and `details`, as the lint gives
+    them. Empty before the first accepted declaration.
+
+  An item's `projects` holds `github`, each GitHub Project binding that
+  is not archived and names the item, as `{ binding, owner, number }` in
+  declaration order, and `t3code`, each T3code project binding that is
+  not archived and names the item, as `{ binding, environment, project,
+  via: "binding" }`, then each T3code project that a listed GitHub
+  Project binding associates, as `{ environment, project, via:
+  "association" }`, then each created project that
+  `portfolio.createdProjects()` resolves `via: "created"` to the item and
+  that is not retirable, as `{ environment, project, via: "created",
+  actorId }`, so an archived item lists the created projects still
+  unresolved on it. `activeTasks` counts the active snapshots whose
+  `context.manifold.portfolioItem` is the item or an item under it.
+  `completedTasks` counts, by the same rule, the snapshots of ended
+  actors, `done` or `stopped`, that the store keeps: the actors
+  `GET /api/actors?status=completed` of `actors-api` lists. An actor
+  whose snapshot the store no longer keeps is not counted.
+
+  `allocations` holds one entry per account in `accounts`, in that order.
+  Each holds `account`; `declared`, true when the declaration in force has
+  an allocation row for the item and account; `guarantee`, the row's
+  guarantee or 0; `ceiling`, `weight`, and `pacing` when the row declares
+  them; and the ledger's balance of the item for the account at `at`:
+  `amount`, the guarantee amount in the window; `actual`, the actuals in
+  the window on the item and every item under it; `outstanding`, the
+  outstanding reservations on the item and every item under it;
+  `available`, amount less actual less outstanding, which may be
+  negative; and `reservable`, the sharing rule's answer for the item with
+  no other item waiting. `lifetime` is the sum of every actual the ledger
+  holds on the item and every item under it, in every window. An archived
+  item has no allocation rows in force, so its `guarantee` and `amount`
+  are 0 and `declared` is false.
+
+  An item's `actual` and `lifetime` count each call where the ledger
+  holds it: on the item it posted on, or, after a usage move of
+  `usage-api`, on the item it was moved to, in the window of its use. A
+  usage move changes no account's `window` or `used`.
+
+  An `unallocated` entry holds `account`; `percent`, 100 less the
+  guarantees of the parent's children for the account, archived children
+  counting 0; and `amount`, the parent's amount less the guarantee amounts
+  of its children. The parent's amount is the window's capacity at the
+  top level and the item's guarantee amount under an item. With no window,
+  every `amount` is 0.
+
+  For an archived account, `window` is the ledger's window that covers
+  `at` when one was credited before the archive, and absent otherwise,
+  since none is credited after it; each allocation's `reservable` is 0,
+  and its `available` is at most 0.
+
+  The read credits the current window of each declared account that is
+  not archived through the capacity module's balance read before it
+  reads, as a gate's balance
+  read does, so the balances are those of the window that covers `at`.
+  It writes nothing else. A read that throws answers `500`.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/portfolio-api.openapi.yml` is a valid OpenAPI 3.1
+  document. Tests in `packages/service` serve a fixture process repository,
+  start the service on it with a fixture clock, and request the endpoint
+  without authentication through the service's HTTP host. The fixture
+  declares accounts `acct-a` (`usd`, `api`), `acct-b` (`usd`,
+  `subscription`), and `acct-d` archived, items `alpha` holding `beta` and `gamma`, and `delta`
+  archived, and an allocation for `acct-c`, which `accounts.yml` does not
+  declare. They check that each body validates against its response
+  schema; that the read lists `acct-a`, `acct-b`, then `acct-c` with
+  `declared` false and no window, leaves out `acct-d`, and holds the
+  `account-undeclared` warning at the allocation's account name; that a
+  revision that allocates to `acct-d` lists it after `acct-c` with
+  `archived` true and no window, holds the `account-archived` warning at
+  that allocation, and credits it no window; that the first read credits
+  the current window of each declared account once and a second read
+  credits nothing; that after a reservation and actuals on `beta` for
+  `acct-a`, `beta` and `alpha` answer the actual, outstanding, available,
+  and reservable the ledger's `balance` answers, `lifetime` counts an
+  actual in an earlier window, and the account's `used` equals the
+  window's actuals plus outstanding reservations, an actual on `delta`
+  and one on an item the declaration no longer holds included, and its
+  `lastUsedAt` is the later actual's call time while `acct-b` has none;
+  that `pricing` names the fixture's bundled commit and model count, the
+  fixture's one `prices.yml` model, and a pending `unpriced` posting's
+  model; that
+  `alpha/other` follows `gamma` and the top-level `other` comes last; that
+  `unallocated` at the top level and under `alpha` hold the remainder's
+  percentage and amount; that `activeTasks` counts an active snapshot on
+  `gamma` under `alpha`; that `completedTasks` counts a `done` and a
+  `stopped` snapshot on `gamma` on `gamma` and `alpha`, one on `delta` on
+  `delta`, and no errored snapshot, and that after an active actor on
+  `beta` ends, `beta`'s `activeTasks` falls by one and its
+  `completedTasks` rises by one; that after a commit that changes `alpha`'s
+  guarantee is applied, the read answers its commit and the new guarantee;
+  that a revision that declares `acct-c` in `accounts.yml` and leaves
+  `portfolio.yml` unchanged removes the warning and lists `acct-c` as
+  declared, a later revision that removes it adds the warning back, and
+  a service restarted on the same store after each revision answers the
+  same; and the `404`, `405`, and `500` answers.

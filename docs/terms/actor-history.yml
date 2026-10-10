@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `related-to`
+  # is the best fit.
+  related-to:
+    - actor-history
+    - actors-api
+title: Actor history
+description: >-
+  What Manifold keeps of what one actor did, for as long as the store
+  keeps it: its state visits, the routed events it received with their
+  payloads, the T3 Code commands it sent, and its end.

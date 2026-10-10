@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - github-events
+title: Webhook Delivery
+description: >-
+  One signed HTTP request a GitHub webhook sends about one event,
+  identified by its GUID, which stays the same across hooks and
+  redeliveries.

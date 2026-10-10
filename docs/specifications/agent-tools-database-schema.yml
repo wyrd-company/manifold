@@ -1,0 +1,92 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - agent-tools
+  references:
+    - retention
+    - store-database-schema
+    - escalations-database-schema
+    - agent-tools
+terms:
+  - escalation
+description: |-
+  Defines the tables the agent tools module owns in Manifold's SQLite
+  database file. `docs/specifications/agent-tools-database-schema.sql` is
+  the machine-readable definition: the schema that the module's migrations
+  produce. The module receives the connection from the store and migrates
+  its tables with `migrate("agenttool", steps)`; its owner is `agenttool`,
+  so every table it creates is named `agenttool_<name>`. Times are
+  milliseconds since the Unix epoch. A row is deleted only by retention,
+  as `retention` states: an answer with its escalation, once it is
+  settled and placed, and a message once it is read
+  and both its sender's and its reader's histories are pruned. A question
+  row is never deleted, so its call key keeps answering a repeated call
+  for its turn as a replay after its escalation is removed.
+
+  Questions. `agenttool_question` holds one row per turn that escalated,
+  keyed by the call key: `environment`, `environment_id`, `thread_id`, and
+  `turn_id`. `escalation_id` is the escalation the turn raised, unique,
+  and `actor_id` the actor in its subject, whose end withdraws it.
+  `raised_at` is when the row was written, in the transaction that raised
+  the escalation.
+
+  Answers. `agenttool_answer` holds one row per answered agent question,
+  keyed by its `escalation_id`: the `environment` and `thread_id` it is
+  sent to, the `message_id` derived from the escalation id, and `text`,
+  the answer message. `status` is `pending`, `sent`, or `failed`.
+  `sequence` is the sequence T3 Code answered for the command, set exactly
+  when the row is `sent`; `error` is the server's message, set exactly
+  when the row is `failed`; `settled_at` is set exactly when the row
+  leaves `pending`. `written_at` orders the rows the sender takes.
+  `placed_at` is when the answer's turn was settled on, by the
+  environment source's first placement of the message or by the row's
+  failure, and `turn_id` is that turn, absent when the placement named
+  none; a row is placed once, and `agent.escalation.answered` is published
+  in the transaction that places it.
+
+  Messages. `agenttool_message` holds one row per message sent to a
+  thread, keyed by `message_id`, derived from the sending invocation and
+  the thread. `sequence` orders the messages as they were sent. The row
+  holds the `environment` and `thread_id` it is sent to, the sender's
+  actor id in `sender_actor_id` and the issue of its identity in
+  `sender_issue`, absent when the identity holds none, and `text`.
+  `sender_repository`, `sender_number`, and `sender_title` are the
+  sending task's name as the GitHub mirror gave it when the message was
+  sent: the repository as `owner/name` and the issue number, set together
+  and only with `sender_issue`, absent when the mirror did not track the
+  issue; and the issue's title, set only with them, absent when the
+  mirror had not read it. A message sent before the sender columns
+  existed has none.
+  `sent_at` is when the row was written, in the transaction that publishes
+  its `agent.message`. `delivered_at` and `delivered_to` are set together,
+  in the save of the first following actor that takes the event, to when
+  and to the actor that took it. `noticed_at` is when a mail notice first
+  told the thread's agent of the message. `read_at`, `read_turn_id`, and
+  `read_position` are set together, by the `get-messages` call that read
+  it: when, the turn that made the call, and the message's place among
+  the thread's read messages, unique in the thread, which orders every
+  answer. A message is noticed and read only once delivered,
+  and each column is set once.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/agent-tools-database-schema.sql` runs without error
+  on an empty SQLite database. A test opens the agent tools module on a
+  store over an empty file and compares the `type`, `name`, `tbl_name`, and
+  `sql` of every `sqlite_schema` row whose name starts with `agenttool`
+  with the rows the same file's statements produce on a second empty
+  database, with each run of whitespace in `sql` read as one space; they
+  are equal. After the module opens, `schema_migration` holds the row
+  `('agenttool', n)`, where n is the number of the module's migration
+  steps. A second question row for one turn, a sent answer without a
+  sequence, a failed answer without an error, and a turn id on an
+  unplaced answer each fail. A message delivered without the actor
+  that took it, a message read without its turn or its read position, two
+  messages of one thread at one read position, and a message noticed or
+  read before it is delivered each fail. A sender repository without an
+  issue or a number, a sender number without a repository, and a sender
+  title without a repository each fail.

@@ -1,0 +1,46 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: An escalation's answer key can be used by anyone who reads its notification
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the design that bounds the exposure.
+relationships:
+  mitigated-by:
+    - escalations
+    - escalations-configuration
+  related-to:
+    - serve-the-api-without-authentication
+
+description: >-
+  An ntfy notification carries the escalation's key in its buttons and its
+  link, since the key is what lets a tap answer without signing in.
+  Everyone who can read the topic receives the key: on an `open` topic,
+  anyone who knows or guesses its name; on any topic, the server's
+  operator and anything that reads the server's message cache while it
+  keeps the message. Whoever holds the key can answer while the
+  escalation is open. Manifold's API answers an escalation by its id with
+  no key, so anyone who can reach the API can answer any open escalation;
+  the key matters where only the answer endpoint is reachable. An answer
+  from the wrong person moves an actor, releases a held actor, or returns
+  a stranded token.
+
+categories:
+  - security
+
+likelihood: 2
+impact: 3
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: each destination declares its posture. `reserved` and
+# `self-hosted` require a publishing token, and the service warns at start
+# when the topic reads without one; `open` warns at start, and again when
+# the topic is short enough to guess. A key answers one escalation, only
+# while it is open, and only by POST; a GET never answers, and a wrong key
+# cannot be told from a missing escalation. The key is 32 random bytes, kept
+# in the store only in a pending notification and as a digest after. When
+# the escalation ends, a message under the same sequence ID replaces the
+# question and its buttons on every client that supports sequence IDs.

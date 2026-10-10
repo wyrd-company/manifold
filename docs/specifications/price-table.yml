@@ -1,0 +1,99 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` names the design that prices by this table.
+  realizes:
+    - usage-intake
+  references:
+    - accounts-declaration
+    - usage-record
+terms:
+  - call
+description: |-
+  Defines the price table: the price of each model's tokens in one unit,
+  and how a call's amount is computed from it. The same format is the
+  document in `prices.yml` at the root of the process repository and the
+  bundled price table in `packages/shared`.
+  `docs/specifications/price-table.schema.yml` is the machine-readable
+  definition. An absent `prices.yml` and an empty document declare no
+  prices.
+
+  Unit. `unit` is the unit of every price in the table, `usd`.
+
+  Models. `models` maps a model id, the string a call record's `model`
+  holds, to an entry. `aliases` lists other model ids the entry prices. A
+  call's model is priced by the entry whose id or alias equals it exactly.
+  `standard` holds the prices of a call at speed `standard`, and `fast`,
+  when present, the prices at speed `fast`. Each is a set of prices in the
+  table's unit, each a non-negative decimal: `input`, `output`,
+  `cacheRead`, `cacheWrite`, `cacheWriteOneHour`, and `reasoning` per
+  million tokens, and
+  `webSearchRequest` per request. `input` and `output` are required; the
+  others are present when the model has that price. `reasoning` absent is
+  the `output` price.
+
+  ```yaml
+  unit: usd
+  models:
+    model-a:
+      aliases: [model-a-20260101]
+      standard:
+        input: 2
+        output: 8
+        cacheRead: 0.2
+        cacheWrite: 2.5
+        cacheWriteOneHour: 4
+        webSearchRequest: 0.01
+  ```
+
+  Price in force. The price of a model is its entry in `prices.yml`,
+  else its entry in the bundled price table. An entry in `prices.yml`
+  replaces the bundled entry of the same id whole. An alias in
+  `prices.yml` that equals a bundled id or alias prices that model by the
+  `prices.yml` entry.
+
+  Amount. A call is priced when its model has an entry, the entry has a
+  price set for the call's speed, and the set has a price for every class
+  whose count in the call is above 0, where `cacheWrite` counts
+  `cacheWrite` less `cacheWriteOneHour`, `cacheWriteOneHour` counts
+  `cacheWriteOneHour`, and `reasoning` counts nothing for a `codex` call,
+  whose `output` already counts its reasoning tokens. A call with no model
+  is not priced. Each price converts once, when the table is loaded, to an
+  integer number of millionths, `p = Math.round(price × 1000000)`. With
+  `n` the count of each token class and `r` the count of web search
+  requests, the amount in millionths of the unit is
+
+  ```text
+  amount = round_half_up( (Σ n × p  +  r × p_webSearchRequest × 1000000) / 1000000 )
+  ```
+
+  computed with integer arithmetic.
+
+  For each speed, a declared one-hour cache-write price must be at least
+  the default cache-write price when both are present. Lint rejects a
+  cheaper one-hour price.
+
+  Growth. A posting that adds tokens to a base, the tokens a call key had
+  already charged, is priced as the amount of the base plus the added
+  tokens, less the amount of the base, both at one price. Each amount is
+  rounded once, so the postings of a key at one price sum to the amount of
+  all its tokens however the growth was split. A posting with a base of 0
+  is priced as its own tokens. A negative cumulative difference stays
+  pending as unpriced, without failing the push or its replay.
+
+  Findings. `lintUsageDeclaration` lints `prices.yml` with the kinds
+  `syntax` and `schema` as `accounts-declaration` states them, and
+  `duplicate-model`: a model id or alias that equals another entry's id
+  or alias in the same file. The location is the later one.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/price-table.schema.yml` is a valid JSON Schema
+  2020-12 document, and equals the schema `packages/shared` embeds, which a
+  test shows. The bundled price table validates against it, and a test
+  shows its unit is `usd`. Tests of the service's pricing show the amount
+  for each token class, a one-hour cache write, a web search request, a
+  `codex` call's reasoning, a `fast` call with and without `fast` prices,
+  an alias, an override of a bundled entry, a price with six fractional
+  digits, the rounding of a half millionth up, and growth split into
+  increments that each price below half a millionth summing to the
+  amount of the whole.

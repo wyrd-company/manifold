@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Portfolio item
+description: >-
+  A user-declared node in the portfolio tree that budget is allocated to and usage is attributed to.

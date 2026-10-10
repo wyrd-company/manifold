@@ -1,0 +1,56 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose command this is.
+  realizes:
+    - portfolio
+  references:
+    - portfolio-declaration
+    - bindings-declaration
+    - accounts-declaration
+description: >-
+  Defines the host CLI command `manifold-host portfolio lint`, which lints
+  the portfolio and bindings of a process repository checkout on the host.
+  It runs `lintPortfolioDeclaration` and `lintAllocatedAccounts` from
+  `packages/shared`, the functions the service runs on every revision it
+  applies, so it reports the same findings and warnings.
+  `docs/specifications/host-cli-portfolio-lint.cli.yml` is the
+  machine-readable definition.
+
+  The command takes one optional argument, the directory of a process
+  repository checkout, default the current directory. It reads
+  `portfolio.yml`, `bindings.yml`, and `accounts.yml` from that directory.
+  It passes the text of `portfolio.yml` and `bindings.yml` to
+  `lintPortfolioDeclaration`, which parses each as one YAML document, and
+  the text of `portfolio.yml` and `accounts.yml` to
+  `lintAllocatedAccounts`. An absent file
+  is linted as an empty document, as the service reads it. A directory
+  that cannot be read, or a file that exists but cannot be read, is
+  reported on standard error as `<file>: <reason>` and ends the command
+  with exit code 2 before anything is linted. Otherwise the command reports every finding
+  on standard output as one line, `<file>:<location> <kind> <message>`,
+  with the file as `portfolio.yml` or `bindings.yml`, the location the
+  finding's RFC 6901 JSON Pointer, and the kind and message the finding's.
+  Findings of `portfolio.yml` come first, then those of `bindings.yml`,
+  each in the lint's order. The `account-undeclared` and
+  `account-archived` warnings come last,
+  in the same form with the file `portfolio.yml`, each line ending with
+  ` (warning)`, in the lint's order. The command prints nothing and exits
+  0 when there is no finding and no warning, exits 0 when there are only
+  warnings, and exits 1 when there is a finding.
+format: cli
+validation-criteria: >-
+  `docs/specifications/host-cli-portfolio-lint.cli.yml` validates against
+  the CLI Command Specification schema. A test compiles the host CLI for
+  the current platform and runs `portfolio lint` from a directory with no
+  `node_modules`. It observes exit 0 and no output for a clean checkout and
+  for an empty directory; exit 1 with a `guarantee-limit` line naming the
+  parent and its sum, and an `unknown-item` line from `bindings.yml`; exit
+  1 with a `schema` line for a digit-leading item id; exit
+  1 with a `syntax` line for a `bindings.yml` that does not parse as YAML;
+  exit 0 and no output for an allocation of an account `accounts.yml`
+  declares; exit 0 with one `account-undeclared` line ending with
+  ` (warning)` for an allocation of an account it does not declare, and
+  for an allocation in a checkout with no `accounts.yml`; and exit 2 with
+  no standard output for a missing directory, for a `portfolio.yml` that
+  is a directory, and for an `accounts.yml` that is a directory.

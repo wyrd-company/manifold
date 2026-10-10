@@ -1,0 +1,14 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - environment-control
+    - environments-api
+title: Hold
+description: >-
+  An operator's pause or disconnect of one T3 Code environment, kept in
+  Manifold's store under the environment's name until the matching resume
+  or reconnect. A pause holds the thread and turn commands actors invoke;
+  a disconnect closes Manifold's connection and holds every command to the
+  environment.

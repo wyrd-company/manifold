@@ -1,0 +1,7 @@
+relationships:
+  verifies: usage-decoder
+provider: cursor
+harness-version: "2026.10.01-14929f9"
+decoder-version: 0.9.20
+shape-basis: ACP blob census in t3code-session-mapping and published transcript types in @codeburn/core 0.9.20; synthetic records without prompt text.
+version-basis: Installed harness version; fixtures are validated against the pinned decoder contract, not live session files.

@@ -1,0 +1,630 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - retention
+    - durable-event-delivery
+    - gates
+    - blueprint-loader
+    - service-configuration
+    - store
+    - agent-tools
+    - blueprint-migration
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications that define its contracts; `references` is the best fit.
+  references:
+    - escalation-contract
+    - escalations-configuration
+    - escalations-database-schema
+objective: >-
+  Let a blueprint state, and the service itself, put a question to a person
+  with up to three choices or a free-text answer, reach them through ntfy
+  with buttons that answer it and through Manifold's own API, take the
+  first answer and only the first, and hand it to whoever asked, so that no
+  answer is lost or taken twice across a restart.
+background:
+  problems:
+    - >-
+      ntfy publishes a message to everyone who subscribes to its topic. A
+      message can carry up to three action buttons; an `http` button sends
+      a request from the subscriber's device when it is tapped, and a
+      `click` URL opens when the notification is tapped. A button cannot
+      take typed text. A message published again with the same sequence ID
+      replaces the one a client shows.
+    - >-
+      Who can read a topic depends on the server. On ntfy.sh an unreserved
+      topic is readable by anyone who knows its name; a reserved topic and
+      a self-hosted server with deny-all access are readable only with a
+      token. Whoever can read a message can tap its buttons.
+    - >-
+      Chat and push clients fetch the links in a message to preview them, so
+      a link that answers a question when it is fetched answers it by itself.
+    - >-
+      A held actor takes no event, so nothing a blueprint declares can
+      release it, and a token held by an actor that cannot reach its return
+      point keeps every task behind its gate waiting.
+    - >-
+      An invoked callback that was running at a crash starts again with its
+      actor, so whatever it did when it started, it does again.
+design-challenges:
+  first-answer: >-
+    An escalation reaches a person on several channels at once. Two answers
+    that arrive together must give one winner, and the loser must learn
+    which answer won.
+  durability: >-
+    An answer given while the service is down, or in the moment between the
+    answer and the actor's save, must reach the actor once.
+  stale-answers: >-
+    An answer that arrives after the asking state has exited must not be
+    taken by a later state that happens to accept the same event.
+  exposed-channel: >-
+    The answer travels in a message that everyone who can read the topic
+    receives, so the key in it must answer one escalation, only while it is
+    open, and the topic and its token must stay out of the store and the
+    logs.
+  service-questions: >-
+    Some questions are the service's, not a blueprint's: a held actor, a
+    stranded token, an issue intake could not take in, and a gate whose
+    comparator cannot run. They need the same channels and an answer that
+    the service acts on.
+proposed-design:
+  high-level-overview: >-
+    An escalation is a row in the store: who raised it, the question, its
+    choices, whether it takes free text, the destinations it is sent to, its
+    status, and its answer. The escalations module,
+    `packages/service/src/escalations/`, raises escalations, publishes each
+    one to its destinations' ntfy topics with one button per choice and a
+    link to an answer page on the service's HTTP host, takes answers from
+    those buttons, that page, and Manifold's API, and records the first
+    answer in one transaction. When an escalation ends, it publishes the
+    outcome under the same sequence ID, which replaces the question and its
+    buttons on every client. A blueprint raises one by invoking the
+    `escalate` callback in a state; the callback lives as long as the state,
+    reads its escalation's row, and sends the answer back to its actor as an
+    event. The service raises its own for held actors, stranded tokens,
+    failed intakes, and failed comparators, and acts on the answer itself. The contracts are specified in
+    `escalation-contract`, the configuration in `escalations-configuration`,
+    and the tables in `escalations-database-schema`.
+  escalation: >-
+    An escalation has an id, a raiser, a title, a question in Markdown,
+    zero to three choices, each with an id and a label, a flag that allows
+    a free-text answer, and the names of its destinations. It has at least
+    one choice or allows free text. Its status is `open`, `answered`, or
+    `withdrawn`. An answered escalation records the answer, a choice id or
+    text, the channel it came through, `link` or `api`, and the time.
+    Status moves only from `open`, so an answer and a withdrawal that race
+    give one outcome. An id is 22 base64url characters, the first 16 bytes
+    of a SHA-256 digest over the parts that identify the escalation, so it
+    is also a valid ntfy sequence ID.
+  raising-from-a-blueprint: >-
+    `escalate` is a callback actor implementation in the implementation
+    registry. Its input, a mapping from the actor's context, is the
+    question, an optional title, the choices, the free-text flag, and the
+    destination names; with no destination named it uses `default`. The
+    callback reads its actor id, invoke id, and entry id with
+    `invocationOf` from the actor host, and its escalation id is derived
+    from the three, so the callback that a restart starts again raises
+    nothing new, and a new entry into the state raises a new escalation.
+    When it starts, it raises the escalation if the row does not exist. If
+    the row is answered and not yet taken, it sends the answer back at
+    once; if it is open, it waits for the module to report the answer and
+    then sends it back. The event it sends is `escalation.answered`, with
+    the escalation id, the answer, and the channel. The actor host persists
+    the actor after the event, as it does for every event an invoked actor
+    sends, and the first save of the actor after the callback sends the
+    answer marks the escalation taken in that save's transaction. A
+    callback that starts and finds its escalation taken sends nothing, so a
+    state that takes the answer and stays where it is does not receive it
+    twice. The callback never withdraws its escalation; withdrawal follows
+    the saved exit.
+  withdrawal: >-
+    The module gives the actor host one save hook, `saving`, which the host
+    runs inside each snapshot save's transaction with the actor id, the
+    snapshot, and the actor's active invokes, each with its invoke id and
+    the entry id of the state entry that invoked it. In that transaction
+    the hook marks taken every escalation of the actor whose answer was
+    sent back since its last save, withdraws every open escalation of the
+    actor whose invoke id and entry id are not in the list, and withdraws
+    the actor's open `held-actor` escalation, since an actor that saves is
+    not held. A save whose snapshot status is `done` or `stopped` lists no
+    active invokes, so the actor's end withdraws every escalation it has
+    open. A save whose snapshot status is `error` changes nothing: the
+    store keeps the snapshot before it, the actor is held, and its asking
+    state is still the one a `retry` restores. A callback that stops
+    without a saved exit withdraws nothing: one stopped by service
+    shutdown, by a delivery that is rolled back, or by a crash leaves its
+    escalation open, and the callback that the restored state starts again
+    finds the row as it was. An exit taken in memory and lost to a crash
+    before its save restores the asking state with its escalation still
+    open.
+  answer-to-the-asking-state: >-
+    The answer reaches the actor only through the callback of the state
+    that asked, so a state that has exited cannot take it and no later
+    state can. An answer committed after the save that records the exit
+    finds the escalation `withdrawn` and is refused. An answer committed
+    before that save leaves the row `answered`, so the save does not
+    withdraw it; if the save commits, the actor has left the state and the
+    answer is recorded but not taken, and if a crash comes first, the
+    restored asking state's callback reads the answered row and sends the
+    answer back. The decision record
+    `hand-escalation-answers-to-the-asking-state` records the choice.
+  raising-from-an-agent: >-
+    An agent raises an escalation with the harness plugin's `escalate`
+    tool. The agent tools module raises it as a service escalation of kind
+    `agent-question`, and gives the module that kind's handler, which
+    sends the answer back to the thread as a turn, as `agent-tools`
+    describes. The tool returns at once and the agent ends its turn, so no
+    tool call waits on a person. The decision record
+    `send-agent-escalation-answers-to-the-thread` records the choice.
+  raising-from-the-service: >-
+    The service raises an escalation with `raise({ kind, subject, question,
+    choices, title, freeText })`, where `subject` is a record of strings that names
+    what the escalation is about and `title` is optional, default
+    `Question`. `raise` and `withdraw` join the caller's transaction, so a
+    raiser writes its escalation in the transaction that records the cause.
+    Six kinds exist, as `escalation-contract` lists. `held-actor` is raised from the
+    router's `onHeld`, with subject `{ actorId }`, the reason, the inbox
+    row that errored or the restore mismatch, in its question, and the
+    choices `retry` and `dismiss`. `stranded-token` is raised by a gate on
+    the save that moves a holder from a configuration outside its gate's
+    trap set into one inside it, with subject `{ gate, tokenId }`, where
+    `gate` is `<blueprintPath>#<statePath>`, the actor and its
+    configuration in its question, and the choices `return` and `dismiss`.
+    `intake-failed` is raised by intake in the transaction that records a
+    current failed decision or a failed start of an issue, one whose issue
+    is still tracked and unchanged since the attempt read it, with subject `{ issue }`,
+    the issue's node id, the failure in its question, and the choices
+    `retry` and `dismiss`, as `intake` (escalations) states.
+    `comparator-failed` is raised by a gate whose comparator is missing,
+    fails to load, or fails to evaluate, with subject `{ gate }`, the
+    failure in its question, and the choices `retry` and `dismiss`, as
+    `gate-runtime` (comparator-failures) states.
+    `agent-question` is raised by the agent tools module for an agent's
+    `escalate` call, with subject `{ actorId, environment, threadId,
+    turnId }`, a title that names the agent's task, and the agent's
+    question, choices, and free-text flag. `migration-failed` is raised by
+    the migrations module in the transaction that records a migration
+    failure, with subject `{ version }`, the blueprint version key the
+    actor could not take, the actor, the kind, and the message in its
+    question, and the choices `retry` and `dismiss`, as
+    `blueprint-migration` (failures) states; every actor failing toward
+    one version shares its open occurrence.
+    A service escalation goes to the `default` destination; its title
+    defaults to `Question`, and it takes free text only when its request
+    asks for it. `withdraw({ kind, subject })` withdraws the open escalation
+    of a kind and subject inside the caller's transaction; a gate calls it
+    when the stranded token returns some other way, as on the holder's end.
+  occurrences: >-
+    One kind and subject can need the operator more than once: a `retry`
+    that meets the same failure holds the actor again, and a dismissed
+    cause can recur after a restart. Each service escalation therefore has
+    an occurrence number, and its id is derived from the kind, the subject
+    as JSON with its keys sorted, and that number. `raise` reads the latest
+    escalation for the kind and subject in its transaction. When that
+    escalation is open, or answered with its handling not yet recorded,
+    `raise` returns it, so one pending cause raised twice, by a repeated
+    `onHeld` or by a restart, stays one escalation. Otherwise, with none,
+    or the latest withdrawn or answered and handled, it raises the next
+    occurrence, open and with a new key.
+  handlers: >-
+    Each service kind has a handler, given to the module at construction.
+    The module runs a handler inside the transaction that records its
+    handling, and a handler may return a function, which the module calls
+    after that transaction commits. The `held-actor` handler returns, for
+    `retry`, a call to the router's `release` for the actor, so the
+    handling is recorded before `release` runs and a hold that `release`
+    meets raises the next occurrence; for `dismiss` it does nothing. The
+    module exports it as `heldActorHandler(release)`. The `stranded-token`
+    handler is the gate's: for `return` it writes the token's return
+    inside the transaction, so the gate runs its comparator again; for
+    `dismiss` it does nothing. The `intake-failed` handler is intake's,
+    exported as `intakeFailedHandler`: for `retry` it marks the issue's
+    record to be decided again inside the transaction and returns a call
+    that queues the issue, as `intake` (retry) states; for `dismiss` it does
+    nothing. The `comparator-failed` handler is the gate's: for `retry` it
+    writes nothing and returns a call that runs the gate again, loading its
+    comparator first when the gate has none; for `dismiss` it does nothing.
+    The `migration-failed` handler is the migrations module's: for `retry`
+    it clears the version's failure records inside the transaction and
+    returns a call that attempts each of those actors again; for `dismiss`
+    it does nothing.
+    A crash after the handling commits and
+    before `release` runs is covered by resume, which restores every held
+    actor again; one before intake's queue call, by the reconcile at
+    intake's start; and one before the gate runs, by `afterDrain`, which
+    runs every gate. `start()`, called after the router has started, runs the
+    handler of every answered service escalation whose handling is not
+    recorded. `release` of an actor that is not held does nothing, and
+    `return` of a token already returned does nothing. The `agent-question`
+    handler is the agent tools module's: inside the transaction it writes
+    the answer's pending turn once, and it returns a function that wakes
+    its sender.
+  router-release: >-
+    The router exports `release(actorId)`, as `durable-event-delivery`
+    (held-actors) states. For a held actor it asks the host to restore the
+    actor from its stored snapshot again; a restore that succeeds loads the
+    actor and schedules it to drain its pending rows in order, and a
+    refusal holds it again and calls `onHeld` with the new reason. For an
+    actor that is not held it does nothing. A delivery that errors again
+    holds the actor again, so `retry` after a fix in a new blueprint
+    version, or after a transient failure, resumes the actor without a
+    restart.
+  destinations: >-
+    A notification destination is a name the process repository uses,
+    mapped in service configuration to an ntfy server, a topic, a security
+    posture, and an optional credential of kind `ntfy-token`. A blueprint
+    names destinations; the service's own escalations use `default`. A
+    blueprint escalation whose input names no destination goes to
+    `default`, and to none when `default` is not configured. A named
+    destination with no mapping gives a notification row marked `failed`
+    with the error `unknown destination` and a log line naming it; the
+    escalation stays open on Manifold's API. The topic, the server, and the
+    token appear in no row and no log line; the module names a destination
+    only by its declared name.
+  security-posture: >-
+    Each destination declares its posture, and the module checks what it
+    can at start and warns; it refuses no posture. `open` is a topic that
+    anyone who knows its name can read, such as an unreserved topic on
+    ntfy.sh: the module logs a warning at start that anyone who knows the
+    topic can read every question and answer it, and a second warning when
+    the topic is shorter than 32 characters, since such a name may be
+    guessed. A credential is optional and, when named, is sent with each
+    publish. `reserved` is a topic reserved to the user's account on a
+    hosted server, such as ntfy.sh, and `self-hosted` is a topic on the
+    operator's own server with deny-all default access; each requires a
+    credential, and a destination of either posture without one is a
+    configuration issue. At start, for each `reserved` and `self-hosted`
+    destination, the module polls the topic once without the credential,
+    bounded by `requestTimeoutMs`, and logs a warning when the server
+    answers `200`, since the topic is then readable by anyone; any other
+    answer is logged only when it is not `401` or `403`. A `self-hosted`
+    destination whose server is `https://ntfy.sh` adds a warning. The check
+    never blocks start and never changes what is sent.
+  notification: >-
+    Raising an escalation writes one `ask` notification row per destination
+    in the same transaction. Each row holds the message the sender
+    publishes, without topic or credential: the title, the question in
+    Markdown cut to fit ntfy's 4,096-byte message limit with a line that
+    sends the reader to the page, the destination's priority, a `click` URL
+    that opens the answer page, one `http` button per choice that posts the
+    escalation's key and the choice to the answer endpoint and clears the
+    notification when the answer succeeds, and, when free text is allowed
+    and there are fewer than three choices, a `view` button that opens the
+    answer page. Free text is always reachable through the `click` URL.
+    The sender sends one request at a time, taking due rows in the order
+    they were written, so a destination's `close` row is never sent before
+    the request for its `ask` row has ended. Before each request it commits
+    the row's `attempts` raised by one, so a row with attempts above zero
+    may have reached ntfy, whatever happened to the response. It publishes
+    the row with `POST {server}/` and a JSON body that adds the topic and
+    the escalation id as `sequence_id`, with `Authorization: Bearer` and the
+    token read from the credential's file when the destination names one.
+    Each request is bounded by `requestTimeoutMs`. A `2xx` answer marks the
+    row sent and clears its message. A network failure, a timeout, a `429`, or a `5xx` leaves it
+    pending, and the sender tries it again after `retryIntervalMs`. Any
+    other status marks it failed with the status, clears its message, logs
+    the destination name and the status, and does not try again. The row
+    keeps its message, key included, from the raise until it is sent or
+    failed, so a send after a restart publishes the same buttons. A crash
+    after ntfy accepts a message and before the row is marked sent
+    publishes it again after the restart under the same sequence ID, so a
+    client that supports sequence IDs shows it once.
+  closing: >-
+    When an escalation leaves `open`, in the same transaction, each of its
+    `ask` rows still pending is marked `cancelled` and its message cleared,
+    so it is never sent again. Each `ask` row that may have reached ntfy
+    gets a `close` row: one sent, one pending with attempts above zero, and
+    one failed after more than one attempt, since an earlier attempt that
+    ended without a status may have been accepted. An `ask` never
+    attempted, or refused on its first and only attempt, gets none. So an ask
+    whose response was lost to a timeout, a dropped connection, or a crash
+    is closed, and an ask still in flight when the escalation ends is
+    closed after its request ends. A close for an ask that never reached
+    ntfy shows the outcome alone, which is harmless. A `close` row's
+    message carries the title, the outcome, answered with the choice's
+    label or as text and through which channel, or withdrawn, priority 1,
+    and no click URL or button; published under the same sequence ID, it
+    replaces the question and its buttons on every client that supports
+    sequence IDs. A text answer is cut on a character boundary, with `…`
+    added, so the message is at most 4,096 bytes in UTF-8; the escalation
+    keeps the whole answer. A `close` row is sent, retried, and failed as
+    an `ask` row is.
+  answer-page: >-
+    The service's HTTP host mounts the module's `requestListener` at
+    `/escalations` with `mount`, unauthenticated, since the key in each
+    request is what authorizes it. Each escalation has a key of 32 random
+    bytes, written in base64url into its `click` URL and its buttons. The
+    escalation row stores the key's SHA-256 digest, which every request is
+    checked against. The key itself is in the store only inside pending
+    `ask` rows, so after every destination is settled only the digest
+    remains. `GET /escalations/{id}?key={key}` shows the title, the
+    question as text, the choices as buttons, and a text field when free
+    text is allowed, and never answers, so a link preview changes nothing.
+    `POST /escalations/{id}/answer` with a form-encoded body holding the
+    key and a choice id or text answers the escalation through the channel
+    `link`; the page's form and ntfy's `http` buttons both send it. The
+    body is form-encoded and the request carries no other header, so a
+    browser sends it without a preflight, and the answer carries
+    `Access-Control-Allow-Origin: *`, so ntfy's web app reads the outcome
+    and clears the notification. A wrong or missing key answers `404`, so a
+    key cannot be told apart from an escalation id that does not exist. An
+    answer to an escalation that is no longer open answers `200` with a
+    page that says how it ended.
+  api: >-
+    Manifold's API lists escalations with
+    `GET /api/escalations?status=open`, reads one with
+    `GET /api/escalations/{id}`, and answers one with
+    `POST /api/escalations/{id}/answer` through the channel `api`. The
+    service's HTTP host mounts the module's `apiListener` at
+    `/api/escalations` with `mount`. The API is always served without
+    authentication. Access control belongs to the deployment: loopback by
+    default, or a proxy in front. The console's Task page and any automation
+    answer through it.
+  first-answer-wins: >-
+    `answer(id, answer, channel)` runs in one `store.connection.transaction`:
+    it updates the row from `open` to `answered` with the answer, closes
+    its notifications, and when no row changes it returns the row's current
+    status and answer. So of two answers the first to commit wins and the
+    second learns the outcome. After the commit it reports the answer to
+    the escalation's callback when one is waiting, or runs the handler of a
+    service escalation.
+  configuration: >-
+    The `escalations` section of service configuration holds `publicUrl`,
+    the base URL the answer page and buttons use; `destinations`, a map
+    from declared name to `{ server, topic, posture, credential, priority
+    }`; `requestTimeoutMs`, default 30000; and `retryIntervalMs`, default
+    60000. With no destinations, no notification is sent and escalations
+    are answered through the API. A destination requires `publicUrl`. The
+    credential kind `ntfy-token` holds `tokenFile`, read at each request,
+    so a replaced token applies to the next request without a restart.
+  store-tables: >-
+    The module owns its tables in the store's file, migrated with
+    `migrate("escalation", steps)`: `escalation`, one row per escalation,
+    with its raiser's actor id, invoke id, and entry id, or its kind,
+    subject, and occurrence, its key digest, when its answer was taken, and
+    when its handling ran; and `escalation_notification`, one row per
+    escalation, destination, and purpose, with its message until it is
+    settled, its status, attempts, next attempt time, last error, and
+    settled time. A service row's `kind` is any non-empty name, checked
+    against `ServiceEscalationKind` in code, so a new kind changes no
+    table. The one schema step creates the tables as
+    `escalations-database-schema` states. Rows are kept after an
+    escalation ends, so the console can show what was asked and how it was
+    answered, until retention removes them, as `retention` states.
+  retention: >-
+    The index exports `prunableEscalations(connection, { closedBefore,
+    after, limit })` and `pruneEscalation(connection, escalationId)` for
+    retention, as `retention` states. `prunableEscalations` lists, in id
+    order after `after`, the escalations that are closed before
+    `closedBefore`, have no `pending` notification, and, when an answered
+    service row, have their handling recorded, each with the actor it names
+    and whether it is the newest occurrence of its kind and subject.
+    `pruneEscalation` deletes the escalation's notification rows and then
+    its row in the caller's transaction, and answers `kept`, deleting
+    nothing, when the row is open or has a pending notification. A
+    removed escalation is `not-found` to `get` and `answer`, is not in
+    `list`, and its answer link answers `404`. Since the newest occurrence
+    of a subject that names no actor stays, the next occurrence of that
+    subject never reuses an id; a subject that names an actor is not
+    raised again once its actor has ended, which retention checks before it
+    removes one. The `waiting` callbacks and the taken set hold only open
+    escalations and running actors, which retention never removes.
+  public-interface: |-
+    `packages/service/src/escalations/index.ts` exports these names.
+
+    ```ts
+    import type { RequestListener } from "node:http";
+    import type { CallbackActorLogic, EventObject } from "xstate";
+    import type { PersistedSnapshot, Store } from "../store/index.ts";
+    import type { EscalationsConfiguration } from "../service-configuration/index.ts";
+
+    export function openEscalations(options: EscalationsOptions): Escalations;
+
+    export function heldActorHandler(release: (actorId: string) => void): ServiceEscalationHandler;
+
+    export interface EscalationsOptions {
+      readonly store: Store;
+      readonly configuration: EscalationsConfiguration;
+      /** Resolves an `ntfy-token` credential name to its token file path. */
+      readonly tokenFile: (credential: string) => string;
+      readonly handlers: Readonly<Record<ServiceEscalationKind, ServiceEscalationHandler>>;
+      readonly clock?: { now(): number };
+      readonly fetch?: typeof globalThis.fetch;
+      readonly logger?: { warn(message: string): void; error(message: string): void };
+    }
+
+    export interface Escalations {
+      /** The `escalate` callback logic the implementation registry binds. */
+      readonly escalate: CallbackActorLogic<EventObject, EscalateInput>;
+      /** The actor host's save hook; runs inside each snapshot save's transaction. */
+      saving(save: {
+        readonly actorId: string;
+        readonly snapshot: PersistedSnapshot;
+        readonly activeInvokes: readonly { readonly invokeId: string; readonly entryId: string }[];
+      }): void;
+      raise(request: ServiceEscalationRequest): Escalation;
+      /** Withdraws the open escalation of a kind and subject; joins the caller's transaction. */
+      withdraw(request: { readonly kind: ServiceEscalationKind; readonly subject: EscalationSubject }): void;
+      answer(id: string, answer: EscalationAnswer, channel: EscalationChannel): AnswerOutcome;
+      get(id: string): Escalation | undefined;
+      list(filter: { readonly status?: EscalationStatus }): readonly Escalation[];
+      /** Mounted with `mount("/escalations", ...)`. */
+      readonly requestListener: RequestListener;
+      /** Mounted with `mount("/api/escalations", ...)`. */
+      readonly apiListener: RequestListener;
+      /** After the router starts: runs pending handlers, checks postures, starts the sender. */
+      start(): void;
+      /** Stops the sender and aborts its request; the row stays pending. */
+      stop(): Promise<void>;
+    }
+
+    export type ServiceEscalationKind =
+      | "held-actor"
+      | "stranded-token"
+      | "intake-failed"
+      | "comparator-failed"
+      | "agent-question"
+      | "migration-failed";
+    export type EscalationSubject = Readonly<Record<string, string>>;
+    export type ServiceEscalationHandler = (escalation: Escalation) => void | (() => void);
+
+    export interface ServiceEscalationRequest {
+      readonly kind: ServiceEscalationKind;
+      readonly subject: EscalationSubject;
+      readonly question: string;
+      readonly choices: readonly EscalationChoice[];
+      /** Default `Question`. */
+      readonly title?: string;
+      /** Default `false`. */
+      readonly freeText?: boolean;
+    }
+
+    export interface EscalateInput {
+      readonly question: string;
+      readonly title?: string;
+      readonly choices?: readonly EscalationChoice[];
+      readonly freeText?: boolean;
+      readonly destinations?: readonly string[];
+    }
+
+    export interface EscalationChoice {
+      readonly id: string;
+      readonly label: string;
+    }
+
+    export type EscalationStatus = "open" | "answered" | "withdrawn";
+    export type EscalationChannel = "link" | "api";
+    export type EscalationAnswer = { readonly choice: string } | { readonly text: string };
+
+    export interface Escalation {
+      readonly id: string;
+      readonly raiser:
+        | { readonly type: "blueprint"; readonly actorId: string; readonly invokeId: string; readonly entryId: string }
+        | { readonly type: "service"; readonly kind: ServiceEscalationKind; readonly subject: EscalationSubject; readonly occurrence: number };
+      readonly title: string;
+      readonly question: string;
+      readonly choices: readonly EscalationChoice[];
+      readonly freeText: boolean;
+      readonly destinations: readonly string[];
+      readonly status: EscalationStatus;
+      readonly answer?: { readonly value: EscalationAnswer; readonly channel: EscalationChannel; readonly at: number };
+      readonly raisedAt: number;
+      readonly closedAt?: number;
+    }
+
+    export type AnswerOutcome =
+      | { readonly status: "answered"; readonly escalation: Escalation }
+      | { readonly status: "closed"; readonly escalation: Escalation }
+      | { readonly status: "invalid"; readonly reason: string }
+      | { readonly status: "not-found" };
+
+    export class EscalationInputError extends Error {
+      readonly issues: readonly string[];
+    }
+    ```
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `escalations.ts`
+    composes the module. `records.ts` holds the pure rules: id and key
+    derivation, input validation, the occurrence choice, and the ntfy
+    message for an ask and a close. `rows.ts` reads and writes the two
+    tables. `sender.ts` runs the publish loop and the posture check.
+    `http.ts` holds both request listeners. `callback.ts` holds the
+    `escalate` logic. `migrations.ts` holds the migration steps. The
+    escalate input schema, the event schema, and the API body schemas are
+    generated into `packages/shared` from `escalation-contract.schema.yml`,
+    as other schemas are, so the host CLI lint and the service share them.
+    `escalate` joins `manifoldImplementationNames.actors` and the module's
+    `ImplementationRegistry` part, which `implementations.ts` composes.
+  convergence: >-
+    `raise` twice for one blueprint state entry, or for one pending service
+    cause, writes one escalation and one set of notification rows. A crash
+    inside it writes nothing, and the callback or the `onHeld` that a
+    restart repeats raises it then. `answer` twice gives one answer. A
+    crash after the answer commits and before the callback's event is
+    saved sends the event again from the restarted callback; a crash after
+    that save finds the escalation taken and sends nothing. A crash after
+    an exit is taken in memory and before its save withdraws nothing. A
+    crash after the answer of a service escalation and before its handling
+    is recorded runs the handler at `start`, and the handler converges. A
+    withdrawal twice withdraws once. The sender publishes a row until it is
+    marked sent or failed; a row with attempts above zero is treated as
+    published when its escalation ends, so it gets one `close` row whether
+    the end comes before or after a restart. A publish repeated under the same sequence
+    ID replaces the one before it on the client.
+  errors: >-
+    A raise whose input fails the escalate input schema, such as more than
+    three choices, two choices with one id, no choice and no free text, or
+    an empty question, fails the callback with an `EscalationInputError`,
+    which the blueprint handles as an invoke error. An answer whose choice
+    is not one of the escalation's, or text to an escalation that takes
+    none, or text longer than 4,096 Unicode code points, is `invalid`:
+    `400` on the page and the API, and nothing changes. A request body
+    over 64 KiB, on the answer endpoint or the API, answers `413`. The
+    bound holds the longest valid answer in either encoding: 4,096
+    four-byte code points take 49,152 bytes form-encoded, each byte
+    written as `%XX`, and the same as JSON `\u` escapes of surrogate
+    pairs, so the whole body stays under 50,000 bytes. Text length is
+    checked after decoding, never as bytes. A notification that fails is recorded on its row and
+    never fails the escalation. SQLite errors propagate unchanged.
+  tests: >-
+    Tests import only the module's `index.ts`, the store's, and the
+    router's, run against a real file, and serve ntfy with a fake HTTP
+    server that records each request and answers as the test sets.
+    Behaviours proved, each red before green: a blueprint state that
+    invokes `escalate` receives `escalation.answered` once after an answer
+    through the page, once after a button's form post, and once after an
+    answer through the API; a state that takes the answer and stays
+    receives it once across a restart; two answers posted together give one
+    winner and the second learns the outcome; an answer after the state
+    exits is refused and no later state receives it; a `GET` of the click
+    URL changes nothing; a wrong key answers `404`; the published body has
+    the topic, the escalation id as `sequence_id`, one `http` button per
+    choice whose body holds the key, and a `click` URL; a destination with
+    a credential sends its token as a bearer; a notification that gets
+    `500` is published again after the retry interval and one that gets
+    `400` is not; an escalation that ends publishes a close under the same
+    sequence ID with no buttons, and one that ends before its first publish
+    attempt publishes nothing; an ask that ntfy accepts while the fake
+    server drops the response, or holds it past `requestTimeoutMs`, gets a
+    close when its escalation is then answered, and the close is sent
+    after the ask's request ends; an ask the fake server refuses with `400`
+    on its first attempt gets no close, and one whose first attempt times
+    out and whose second gets `400` gets a close; a close for a 4,096-character ASCII answer and for a
+    4,096-character answer of four-byte characters is at most 4,096 bytes
+    in UTF-8, ends with `…`, and the API returns the whole answer; a
+    question of 8,000 four-byte characters gives an ask message of at most
+    4,096 bytes; an answer of 4,096 four-byte code points is accepted as a
+    form-encoded body on the answer endpoint and as a JSON body, both raw
+    UTF-8 and `\u`-escaped, on the API, and one of 4,097 code points is
+    `400` on each; a body of 64 KiB plus one byte is `413` on each; an
+    `open` destination logs its warning at start, and
+    a `reserved` destination whose topic the fake server reads anonymously
+    logs that it is readable; no topic, server, or token appears in the
+    store or a log line. Fault tests in a child process that sends itself
+    `SIGKILL`: a kill after the answer commits and before the actor's save
+    delivers the answer once after restart; a kill after ntfy accepts and
+    before the row is marked sent publishes at most one more message, under
+    the same sequence ID and with the same buttons, which still answer; a
+    kill after ntfy accepts an ask and before the row is marked sent,
+    followed by an answer and by a withdrawal before the sender runs again,
+    each publishes one close and no ask after restart; a
+    kill after a `retry` answer and before its handling is recorded
+    releases the held actor once after restart; a kill after an invoked
+    event exits the asking state and before the save restores the state
+    with its escalation open, and the answer is then taken once; a clean
+    stop and start while a state is asking leaves its escalation open and
+    answerable. A held-actor test holds an actor through a delivery that
+    errors, fixes the cause, answers `retry`, and shows the actor drain its
+    pending rows without a restart; a `retry` that meets the same failure
+    raises a new open occurrence, and a `retry` of that occurrence after
+    the cause is fixed, across a restart, releases the actor. A `raise`
+    inside a caller's transaction that the caller then rolls back leaves
+    no escalation and no notification row; one with a `title` publishes
+    that title. Reopening a populated store keeps every escalation and
+    notification row, with the notification sequence intact. After
+    `pruneEscalation` removes the older closed occurrences of a gate
+    subject, a new failure of that gate raises the occurrence after the
+    newest, with a new id; `pruneEscalation` of an open escalation or of
+    one with a pending `close` notification answers `kept` and deletes
+    nothing; a removed escalation answers `not-found` through the API and
+    `404` through its link. Values are
+    generic and never drawn from Manifold's own domain.

@@ -1,0 +1,44 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: T3 Code and its providers carry a tool call's id to the MCP server and to the thread by their implementation, not by a documented contract
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the design that holds the measurement and the fallback.
+relationships:
+  mitigated-by:
+    - agent-tools
+  related-to:
+    - t3code-command-receipts-undocumented
+
+description: >-
+  The service identifies the thread and turn of an agent tool call by
+  finding the call's id, which the provider sends in the MCP request's
+  `_meta`, among the tool activities T3 Code records with the provider's
+  `toolCallId`. Claude sends `claudecode/toolUseId` and Codex `callId`, and
+  each equals the `toolCallId` T3 Code 0.0.45 records, measured with a
+  stdio MCP server registered as the plugin is. Cursor and OpenCode send
+  no call id to the MCP server. The post-tool-use hook that tells an agent
+  of mail identifies its thread the same way: the call id a provider gives
+  its hook equals `toolCallId` for Claude, Codex, and OpenCode, and not for
+  Cursor, and every provider's hook session id maps to its thread through
+  T3 Code's `provider_session_runtime`. Grok is not measured. Neither T3
+  Code nor the providers document either side. A provider release that moves or drops
+  the id, or a T3 Code release that records another id, leaves every call
+  from that provider unidentified by call id, and an agent whose prompt does
+  not name its thread gets `caller-unidentified` and cannot hand off.
+
+categories:
+  - technical
+
+likelihood: 3
+impact: 3
+
+response-strategy: mitigate
+# Mitigation: the service reads the call id's keys, so a moved key is
+# followed by a service release with no host CLI release; the `thread`
+# argument identifies a call with no call id; the live test of
+# `agent-tools` measures each provider against the `t3` release the
+# environment source targets.
+
+status: mitigated

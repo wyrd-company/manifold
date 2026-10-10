@@ -1,0 +1,747 @@
+# ---
+# relationships:
+#   realizes: blueprint
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/blueprint
+title: Blueprint
+description: >-
+  The blueprint file a process repository declares, the version identity
+  the loader gives it, and the finding the blueprint lint reports.
+$defs:
+  blueprint:
+    description: One blueprint file.
+    type: object
+    required:
+      - machine
+      - schemas
+    additionalProperties: false
+    properties:
+      description:
+        type: string
+      machine:
+        $ref: "#/$defs/machine"
+      schemas:
+        $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-schemas"
+      layout:
+        $ref: "#/$defs/layout"
+      migrations:
+        description: >-
+          The migration paths from an earlier version's context to this
+          version's. The machine never reads them.
+        type: array
+        items:
+          $ref: "#/$defs/migration-path"
+  migration-path:
+    description: >-
+      Maps the context of an actor on an earlier version whose context,
+      without `manifold`, `from` accepts to this version's context.
+    type: object
+    required:
+      - from
+      - context
+    additionalProperties: false
+    properties:
+      description:
+        type: string
+      from:
+        description: A JSON Schema of draft 2020-12 over the earlier context.
+        type: [object, boolean]
+      context:
+        description: A mapping whose result is the whole new context.
+        allOf:
+          - $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference"
+          - properties:
+              type:
+                const: expression.map
+  layout:
+    description: >-
+      Where the blueprint editor's canvas draws each state. The machine
+      never reads it.
+    type: object
+    additionalProperties: false
+    properties:
+      states:
+        description: >-
+          The top-left corner of each state, by state path, relative to its
+          parent state's corner, or to the canvas origin for a top-level
+          state. A path that names no state is ignored.
+        type: object
+        propertyNames:
+          $ref: "#/$defs/state-path"
+        additionalProperties:
+          $ref: "#/$defs/layout-point"
+  layout-point:
+    type: object
+    required:
+      - x
+      - y
+    additionalProperties: false
+    properties:
+      x:
+        type: integer
+      y:
+        type: integer
+  machine:
+    description: >-
+      The root state node of the machine configuration, with the machine id
+      and the initial context.
+    type: object
+    allOf:
+      - $ref: "#/$defs/state-node-properties"
+    propertyNames:
+      enum:
+        - description
+        - type
+        - initial
+        - history
+        - target
+        - states
+        - "on"
+        - always
+        - after
+        - onDone
+        - entry
+        - exit
+        - invoke
+        - meta
+        - tags
+        - output
+        - id
+        - context
+    properties:
+      context:
+        description: The initial context. `manifold` is the engine's.
+        type: object
+        not:
+          required:
+            - manifold
+  state-node:
+    type: object
+    allOf:
+      - $ref: "#/$defs/state-node-properties"
+    propertyNames:
+      enum:
+        - description
+        - type
+        - initial
+        - history
+        - target
+        - states
+        - "on"
+        - always
+        - after
+        - onDone
+        - entry
+        - exit
+        - invoke
+        - meta
+        - tags
+        - output
+        - id
+  state-node-properties:
+    description: The keys a state node shares with the root.
+    type: object
+    properties:
+      id:
+        type: string
+        minLength: 1
+      description:
+        type: string
+      type:
+        enum:
+          - atomic
+          - compound
+          - parallel
+          - final
+          - history
+      initial:
+        $ref: "#/$defs/state-key"
+      history:
+        enum:
+          - shallow
+          - deep
+      target:
+        $ref: "#/$defs/targets"
+      states:
+        type: object
+        propertyNames:
+          $ref: "#/$defs/state-key"
+        additionalProperties:
+          $ref: "#/$defs/state-node"
+      "on":
+        type: object
+        additionalProperties:
+          $ref: "#/$defs/transitions"
+      always:
+        $ref: "#/$defs/transitions"
+      after:
+        type: object
+        propertyNames:
+          description: A delay in milliseconds as decimal digits, or a delay implementation name.
+          minLength: 1
+        additionalProperties:
+          $ref: "#/$defs/transitions"
+      onDone:
+        $ref: "#/$defs/transitions"
+      entry:
+        $ref: "#/$defs/actions"
+      exit:
+        $ref: "#/$defs/actions"
+      invoke:
+        oneOf:
+          - $ref: "#/$defs/invoke"
+          - type: array
+            items:
+              $ref: "#/$defs/invoke"
+      meta:
+        type: object
+        properties:
+          gate:
+            $ref: "#/$defs/gate-declaration"
+      tags:
+        oneOf:
+          - type: string
+          - type: array
+            items:
+              type: string
+      output:
+        description: >-
+          On a top-level final state, the machine's output: static, or an
+          `expression.map`.
+        $ref: "#/$defs/value-or-mapping"
+  gate-declaration:
+    description: >-
+      The gate a state declares in `meta.gate`: its comparator file, where
+      its token is returned, whether a reservation accompanies the token,
+      the token event's type, and the region the comparator reads as the
+      task's dependency state.
+    type: object
+    required:
+      - comparator
+      - return
+    additionalProperties: false
+    properties:
+      comparator:
+        description: The repository-relative path of the comparator's TypeScript file.
+        type: string
+        pattern: "^[^/].*\\.ts$"
+        not:
+          pattern: "(^|/)\\.{1,2}(/|$)"
+      return:
+        oneOf:
+          - const: exit
+          - type: object
+            required:
+              - state
+            additionalProperties: false
+            properties:
+              state:
+                $ref: "#/$defs/state-path"
+      reservation:
+        type: boolean
+        default: false
+      token:
+        description: The type of the event that delivers the token.
+        type: string
+        minLength: 1
+        default: token
+      dependencies:
+        $ref: "#/$defs/state-path"
+  state-path:
+    description: A state node's keys from the root, joined with `.`.
+    type: string
+    pattern: "^[^.#]+(\\.[^.#]+)*$"
+  state-key:
+    description: A state key. Targets and state paths separate keys with `.` and ids with `#`.
+    type: string
+    minLength: 1
+    pattern: "^[^.#]+$"
+  targets:
+    oneOf:
+      - type: string
+        minLength: 1
+      - type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 1
+  transitions:
+    oneOf:
+      - $ref: "#/$defs/transition"
+      - type: array
+        items:
+          $ref: "#/$defs/transition"
+  transition:
+    oneOf:
+      - type: string
+        minLength: 1
+      - type: object
+        additionalProperties: false
+        properties:
+          target:
+            $ref: "#/$defs/targets"
+          guard:
+            $ref: "#/$defs/guard"
+          actions:
+            $ref: "#/$defs/actions"
+          reenter:
+            type: boolean
+          description:
+            type: string
+          meta:
+            type: object
+  guard:
+    description: >-
+      A guard: an implementation reference, an expression reference, or the
+      built-in `in` guard, which is never written by its bare name.
+    allOf:
+      - $ref: "#/$defs/reference"
+      - not:
+          const: in
+      - if:
+          type: object
+          required:
+            - type
+          properties:
+            type:
+              const: in
+        then:
+          $ref: "#/$defs/in-guard"
+  in-guard:
+    description: >-
+      The built-in guard that is true when every listed state is active.
+    type: object
+    required:
+      - type
+      - params
+    additionalProperties: false
+    properties:
+      type:
+        const: in
+      params:
+        type: object
+        required:
+          - states
+        additionalProperties: false
+        properties:
+          states:
+            type: array
+            minItems: 1
+            items:
+              $ref: "#/$defs/state-path"
+  actions:
+    oneOf:
+      - $ref: "#/$defs/reference"
+      - type: array
+        items:
+          $ref: "#/$defs/reference"
+  reference:
+    description: >-
+      An implementation referenced by name, with optional parameters, or an
+      expression reference. An expression implementation is never
+      referenced by its bare name.
+    oneOf:
+      - $ref: "#/$defs/implementation-name"
+      - type: object
+        required:
+          - type
+        additionalProperties: false
+        properties:
+          type:
+            $ref: "#/$defs/implementation-name"
+          params:
+            type: object
+      - $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference"
+  implementation-name:
+    description: >-
+      The name of an implementation that code registers. Names beginning
+      with `expression.` belong to the expression implementations.
+    type: string
+    minLength: 1
+    not:
+      pattern: "^expression\\."
+  value-or-mapping:
+    description: >-
+      A static value, or a mapping. An object whose `type` is
+      `expression.map` is a mapping and has the expression reference shape.
+    if:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          const: expression.map
+    then:
+      $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/expression-reference"
+  invoke:
+    type: object
+    required:
+      - src
+    additionalProperties: false
+    properties:
+      src:
+        description: >-
+          An actor implementation name, a blueprint path that invokes a
+          child blueprint, or a decision model path that evaluates a
+          decision model.
+        anyOf:
+          - $ref: "#/$defs/blueprint-path"
+          - $ref: "#/$defs/decision-model-path"
+          - $ref: "#/$defs/implementation-name"
+      id:
+        type: string
+        minLength: 1
+      systemId:
+        type: string
+        minLength: 1
+      input:
+        description: Static input, or an `expression.map`.
+        $ref: "#/$defs/value-or-mapping"
+      onDone:
+        $ref: "#/$defs/transitions"
+      onError:
+        $ref: "#/$defs/transitions"
+      onSnapshot:
+        $ref: "#/$defs/transitions"
+  blueprint-path:
+    description: The repository-relative path of a blueprint file.
+    type: string
+    pattern: "^blueprints/.+\\.ya?ml$"
+  decision-model-path:
+    description: The repository-relative path of a decision model file an invoke evaluates.
+    type: string
+    pattern: "^decision-models/.+\\.yml$"
+  child-blueprint-error:
+    description: The error an invoke of a child blueprint that cannot run fails with.
+    type: object
+    required:
+      - type
+      - path
+      - reason
+    additionalProperties: false
+    properties:
+      type:
+        const: child-blueprint
+      path:
+        $ref: "#/$defs/blueprint-path"
+      reason:
+        enum:
+          - missing
+          - invalid
+          - cycle
+          - schemas
+      findings:
+        description: For `invalid`, the child's lint findings.
+        type: array
+        items:
+          $ref: "#/$defs/blueprint-finding"
+  card-move-input:
+    description: The input of `github-card-move`.
+    type: object
+    required:
+      - status
+    additionalProperties: false
+    properties:
+      status:
+        description: >-
+          The name of an option of the lifecycle field the task metadata
+          declaration declares for the actor's Project.
+        $ref: https://manifold.wyrd.company/schemas/task-metadata-declaration#/$defs/name
+  card-move-output:
+    description: The output of `github-card-move`, once GitHub holds the option.
+    type: object
+    additionalProperties: false
+    maxProperties: 0
+  card-move-error:
+    description: The error a `github-card-move` invoke fails with.
+    type: object
+    required:
+      - type
+      - kind
+      - message
+    additionalProperties: false
+    properties:
+      type:
+        const: card-move
+      kind:
+        enum:
+          - input
+          - identity
+          - undeclared
+          - field-missing
+          - option-missing
+          - item-missing
+          - forbidden
+          - transport
+          - rejected
+      message:
+        type: string
+      status:
+        description: The `status` the move was asked for, when the input had one that is a string.
+        type: string
+  task-field-set-input:
+    description: The input of `github-task-field-set`.
+    type: object
+    required:
+      - field
+      - value
+    additionalProperties: false
+    properties:
+      field:
+        description: >-
+          The name of a task field the task metadata declaration declares
+          for the actor's Project.
+        $ref: https://manifold.wyrd.company/schemas/task-metadata-declaration#/$defs/name
+      value:
+        description: >-
+          The value to set: a string for text, a finite number for number,
+          a YYYY-MM-DD string for date, an option's name for single-select;
+          null clears the field.
+        oneOf:
+          - type: string
+          - type: number
+          - type: "null"
+  task-field-set-output:
+    description: The output of `github-task-field-set`, once GitHub holds the value.
+    type: object
+    additionalProperties: false
+    maxProperties: 0
+  task-field-set-error:
+    description: The error a `github-task-field-set` invoke fails with.
+    type: object
+    required:
+      - type
+      - kind
+      - message
+    additionalProperties: false
+    properties:
+      type:
+        const: task-field-set
+      kind:
+        enum:
+          - input
+          - identity
+          - undeclared
+          - value
+          - missing
+          - item-missing
+          - out-of-scope
+          - unavailable
+          - front-matter-invalid
+          - body-conflict
+          - forbidden
+          - transport
+          - rejected
+      message:
+        type: string
+      field:
+        description: The `field` the write was asked for, when the input had one that is a string.
+        type: string
+  actor-identity:
+    description: The engine's identity of an actor, at `context.manifold`.
+    type: object
+    additionalProperties: false
+    properties:
+      project:
+        description: The GitHub Project node id.
+        type: string
+        minLength: 1
+      issue:
+        description: The issue node id.
+        type: string
+        minLength: 1
+      environment:
+        description: The T3 Code environment name from service configuration.
+        type: string
+        minLength: 1
+      threads:
+        description: The ids of the threads the actor follows.
+        type: array
+        items:
+          type: string
+          minLength: 1
+      portfolioItem:
+        type: string
+        minLength: 1
+      blueprintPath:
+        $ref: "#/$defs/blueprint-path"
+  blueprint-version:
+    description: The identity the loader gives a loaded blueprint.
+    type: object
+    required:
+      - commit
+      - path
+    additionalProperties: false
+    properties:
+      commit:
+        description: The full id of the process repository commit the file was read at, or that a bundled blueprint runs against.
+        type: string
+        pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+      path:
+        description: The repository-relative path of the file.
+        type: string
+        pattern: "^blueprints/.+\\.ya?ml$"
+      bundle:
+        description: The digest of the bundle a bundled blueprint's text came from; absent for a repository blueprint.
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+  blueprint-version-key:
+    description: >-
+      A blueprint version as one string, `<commit>:<path>`, or
+      `<commit>:<path>@<bundle>` for a bundled blueprint.
+    type: string
+    pattern: "^([0-9a-f]{40}|[0-9a-f]{64}):blueprints/.+\\.ya?ml(@[0-9a-f]{64})?$"
+  blueprint-finding:
+    description: One failure the blueprint lint reports for one file.
+    type: object
+    required:
+      - path
+      - kind
+      - location
+      - message
+    additionalProperties: false
+    properties:
+      path:
+        description: The file's repository-relative path, or the file as given to the host CLI.
+        type: string
+      kind:
+        enum:
+          - yaml
+          - shape
+          - schema-invalid
+          - implementation-unknown
+          - machine
+          - final-state-missing
+          - gate
+          - syntax
+          - evaluation
+          - result
+          - schema
+          - schema-missing
+          - site-unsupported
+          - token-violation
+          - token-potential
+          - token-unknown
+          - lifecycle-option
+          - event-unknown
+          - task-field-value
+          - decision-model
+      location:
+        description: The RFC 6901 JSON Pointer of the failing value in the document.
+        type: string
+      message:
+        type: string
+      line:
+        description: For `yaml`, the 1-based line.
+        type: integer
+        minimum: 1
+      column:
+        description: For `yaml`, the 1-based column.
+        type: integer
+        minimum: 1
+      implementationKind:
+        description: For `implementation-unknown`, the kind of the reference.
+        enum:
+          - actor
+          - action
+          - guard
+          - delay
+      name:
+        description: >-
+          For `implementation-unknown`, the name referenced; for
+          `lifecycle-option`, the `status` that is not a declared option; for
+          `event-unknown`, the event type declared; for `task-field-value`,
+          the task field's name; for `decision-model`, the decision model path.
+        type: string
+      reason:
+        description: For `decision-model`, `missing` or `invalid`.
+        enum:
+          - missing
+          - invalid
+      modelFindings:
+        description: For `decision-model` with `reason` `invalid`, the errors of the model set.
+        type: array
+        minItems: 1
+        items:
+          $ref: "https://manifold.wyrd.company/schemas/process-manifest#/$defs/finding"
+      expression:
+        type: string
+      code:
+        type: string
+      position:
+        type: integer
+        minimum: 0
+      schemaErrors:
+        $ref: "https://manifold.wyrd.company/schemas/blueprint-expressions#/$defs/error-detail/properties/schemaErrors"
+      sample:
+        type: string
+        pattern: ^(examples\[[0-9]+\]|full|required)$
+      eventType:
+        type: string
+      gate:
+        description: For a token finding, the gated state's path.
+        $ref: "#/$defs/state-path"
+      steps:
+        description: >-
+          For `token-violation` and `token-potential`, the path from the
+          initial configuration through the grant to a trap that gives the gate its verdict.
+        type: array
+        minItems: 1
+        items:
+          $ref: "#/$defs/token-step"
+      choices:
+        description: >-
+          For `token-potential`, each opaque guard or raise choice on the
+          path, omitted when the path has no opaque choices.
+        type: array
+        minItems: 1
+        items:
+          $ref: "#/$defs/token-choice"
+      configurationBound:
+        description: For `token-unknown`, the bound the graph reached.
+        type: integer
+        minimum: 1
+      configurations:
+        description: For `token-unknown`, the configurations the graph held when it stopped.
+        type: integer
+        minimum: 0
+  token-step:
+    description: >-
+      One step of a token finding's path: the event sent, or `xstate.init`
+      for the initial configuration, and the key of the configuration
+      reached.
+    type: object
+    required:
+      - event
+      - configuration
+    additionalProperties: false
+    properties:
+      event:
+        type: string
+      configuration:
+        type: string
+      grant:
+        description: True on the step that delivers the gate's token.
+        const: true
+  token-choice:
+    description: One choice a token finding's path takes.
+    type: object
+    required:
+      - step
+      - location
+      - value
+    additionalProperties: false
+    properties:
+      step:
+        description: The 0-based index into `steps` of the step that takes the choice.
+        type: integer
+        minimum: 0
+      location:
+        description: The JSON Pointer of the guard, or of the action that raises.
+        type: string
+      raises:
+        description: For a raise, the event type raised.
+        type: string
+      value:
+        type: boolean

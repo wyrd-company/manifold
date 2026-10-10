@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    {
+      "id": "input",
+      "name": "request",
+      "type": "inputNode",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "output",
+      "name": "response",
+      "type": "outputNode",
+      "position": {
+        "x": 300,
+        "y": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "connection",
+      "sourceId": "input",
+      "targetId": "output",
+      "type": "edge"
+    }
+  ]
+}

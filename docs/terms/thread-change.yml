@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - t3code-thread-events
+title: Thread Change
+description: >-
+  A difference between two thread states, or the removal of a thread, that
+  the T3 Code environment source publishes as one event whose id is drawn
+  from the change itself, such as a turn id or a request id.

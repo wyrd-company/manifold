@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Token
+description: >-
+  What a gate grants a task actor so it may leave the gated state.

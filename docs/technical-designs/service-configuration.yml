@@ -1,0 +1,242 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - process-repository
+    - comparator-sandbox
+objective: >-
+  Give the service one host-local configuration file, validated once at the
+  boundary against the schemas its modules own, and one place that turns a
+  credential name into a credential, so that every module receives typed
+  configuration with its defaults filled, every error in the file is named
+  at once, and no credential value leaves the module that uses it.
+background:
+  current-design: >-
+    `comparator-sandbox-configuration` specifies the `comparatorSandbox`
+    section, and the comparator sandbox exports `comparatorSandboxDefaults`.
+    No module reads a configuration file. The process repository names
+    credentials, and the service needs the credential behind each name.
+  problems:
+    - >-
+      Each module that has configuration owns its section's shape, but one
+      file and one validation pass must cover every section, and a misspelled
+      section must fail instead of taking defaults.
+    - >-
+      A credential value must reach the code that authenticates and nothing
+      else: not an error message, a log line, a serialized object, or the
+      store.
+design-challenges:
+  composition: >-
+    The root schema composes section schemas that live in other
+    specifications, and a section added later must need one line in the root
+    and nothing in this module's code.
+  defaults: >-
+    An absent section and an absent property both take their shipped
+    defaults, so a module never handles `undefined` for a defaulted value.
+  secrecy: >-
+    A credential value is a string, and a string is printed by every path
+    that prints an object.
+proposed-design:
+  high-level-overview: >-
+    The service configuration module is
+    `packages/service/src/service-configuration/`, whose only public file is
+    `index.ts`. `loadServiceConfiguration(file)` reads one YAML file, parses
+    it with the `yaml` package, validates it with Ajv against the root schema
+    of `service-configuration` and the section schemas it references, applies
+    the defaults, checks the credential names and key files, and returns a
+    `ServiceConfiguration`. A file that fails throws one
+    `ServiceConfigurationError` listing every issue. The returned
+    `credentials` resolves a name to a `Credential`; a `github-app`
+    credential mints installation tokens with `@octokit/auth-app` and
+    returns each token wrapped in a `SecretValue` that prints as its
+    credential name.
+  public-interface: |-
+    `packages/service/src/service-configuration/index.ts` exports exactly
+    these names.
+
+    ```ts
+    import type { ComparatorSandboxLimits } from "../comparator-sandbox/index.ts";
+
+    export function loadServiceConfiguration(file: string): Promise<ServiceConfiguration>;
+
+    export interface ServiceConfiguration {
+      /** Absolute path of the file the configuration was read from. */
+      readonly file: string;
+      readonly processRepository: ProcessRepositoryConfiguration;
+      readonly comparatorSandbox: ComparatorSandboxLimits;
+      readonly blueprintLint: { readonly configurationBound: number };
+      readonly credentials: Credentials;
+    }
+
+    export interface ProcessRepositoryConfiguration {
+      readonly url: string;
+      readonly branch: string;
+      readonly credential: string | undefined;
+      /** Absolute; resolved against the configuration file's directory. */
+      readonly directory: string;
+      readonly pullTimeoutMs: number;
+      readonly commitAuthor: { readonly name: string; readonly email: string };
+    }
+
+    export interface Credentials {
+      /** Every defined credential name, sorted. */
+      readonly names: readonly string[];
+      /** Throws UnknownCredentialError for a name that is not defined. */
+      resolve(name: string): Credential;
+    }
+
+    export type Credential = GitHubAppCredential;
+
+    export interface GitHubAppCredential {
+      readonly kind: "github-app";
+      readonly name: string;
+      installationToken(request: InstallationTokenRequest): Promise<SecretValue>;
+    }
+
+    export interface InstallationTokenRequest {
+      /** Repository names on the installation's account; all when absent. */
+      readonly repositories?: readonly string[];
+      /** GitHub App permission names to levels; the installation's when absent. */
+      readonly permissions?: Readonly<Record<string, "read" | "write">>;
+      /** Aborts the token request. */
+      readonly signal?: AbortSignal;
+    }
+
+    export class SecretValue {
+      /** The name of the credential the value came from. */
+      readonly credential: string;
+      reveal(): string;
+    }
+
+    export class ServiceConfigurationError extends Error {
+      readonly file: string;
+      readonly issues: readonly ConfigurationIssue[];
+    }
+
+    export interface ConfigurationIssue {
+      /** JSON Pointer into the document; "" for the document itself. */
+      readonly path: string;
+      readonly message: string;
+    }
+
+    export class UnknownCredentialError extends Error {
+      readonly credential: string;
+    }
+    ```
+  module-layout: >-
+    The schema constants live in `packages/shared`, so that the service's
+    loader and the host CLI lints compile the same schemas.
+    `packages/shared/src/service-configuration-schemas.ts` holds one
+    constant per schema file the root composes, generated from
+    `docs/specifications/service-configuration.schema.yml`,
+    `process-repository-configuration.schema.yml`, and
+    `comparator-sandbox-configuration.schema.yml`, as
+    `decision-model-schema.ts` is generated from its YAML. It also exports
+    `serviceConfigurationSchemas`, the list of every constant, and
+    `serviceConfigurationSchemaId`, the root's `$id`, and the shared
+    package's `index.ts` exports all three kinds of name. A shared test
+    parses each YAML schema file and asserts it equals its constant. In the
+    service, `index.ts` re-exports the public names and nothing else;
+    `load.ts` reads, parses, validates, and checks; `credentials.ts`
+    implements `Credentials`, `GitHubAppCredential`, and `SecretValue`.
+    Service tests import only `index.ts`. `yaml` and `ajv` move from the
+    service's development dependencies to its dependencies, and
+    `@octokit/auth-app` is added.
+  composition: >-
+    Each schema file has an `$id` under
+    `https://manifold.wyrd.company/schemas/`. `load.ts` creates one
+    `Ajv2020` with `allErrors: true` and `useDefaults: true`, adds every
+    schema in `serviceConfigurationSchemas` with `addSchema`, and gets the
+    validator for `serviceConfigurationSchemaId`. The root names each
+    section under `properties` with a `$ref` to the section's `$id`, gives
+    each optional section `default: {}`, and sets `additionalProperties:
+    false`. A section module adds its schema file, its constant to
+    `serviceConfigurationSchemas`, and one `properties` entry to the root;
+    `load.ts` needs no change. The `ServiceConfiguration` interface gains
+    the section's property with the type the section module exports.
+  loading: >-
+    `loadServiceConfiguration(file)` resolves `file` to an absolute path and
+    reads it as UTF-8. A file that cannot be read throws a
+    `ServiceConfigurationError` with one issue at `""` whose message carries
+    the system error code. It parses the text with `yaml`'s `parseDocument`
+    and its default unique-key check; each parse error is an issue at `""`
+    with its line and column. It validates the parsed value, which fills
+    defaults in place; each Ajv error is an issue at its `instancePath`, with
+    the property name appended for `required` and `additionalProperties`
+    errors so the pointer names the missing or unknown property. After the
+    schema passes, it checks, in order of the document: each credential name
+    a section uses is a key of `credentials`, an issue at the property that
+    holds the name; `processRepository.url`, parsed with the WHATWG
+    `URL` class, has an empty `username` and `password`, an issue at
+    `/processRepository/url`; `processRepository.url` is `https://` when
+    `processRepository.credential` is present, an issue at
+    `/processRepository/url`; and each `privateKeyFile`, resolved against
+    the file's directory, is readable, an issue at its property. Any issue
+    throws one `ServiceConfigurationError` holding all of them, whose message
+    is the file path followed by one line per issue, `<path>: <message>`.
+    Otherwise it resolves `processRepository.directory` against the file's
+    directory and returns the frozen configuration. Loading reads and writes
+    nothing else, so loading twice returns equal results.
+  credentials: >-
+    `credentials.resolve(name)` returns the credential the file defines under
+    `name`, and throws `UnknownCredentialError` with `credential` set to the
+    name and a message naming it for any other name. A loader that reads a
+    credential name from the process repository resolves it through this
+    function, so a name the configuration does not define fails with that
+    error at the point of use. Credentials are created once, at load.
+  github-app-credential: >-
+    A `github-app` credential holds its `appId`, `installationId`,
+    absolute `privateKeyFile`, `apiUrl`, and one token cache, an object
+    with the `get` and `set` methods `@octokit/auth-app` takes as its
+    `cache` option, kept in memory for the life of the credential.
+    `installationToken(request)` reads the key file and calls
+    `createAppAuth` from `@octokit/auth-app` with the app ID, the key, the
+    installation ID, the shared cache, and a `request` made by
+    `request.defaults` from `@octokit/request` with `baseUrl` set to
+    `apiUrl` and `request.signal` set to the request's `signal`.
+    `createAppAuth` binds its `request` when it is created, and the options
+    of each `auth` call do not carry a signal, so the credential creates the
+    auth for each call and the signal reaches the HTTP request that mints
+    the token. It then calls `auth` with `type: "installation"`,
+    `repositoryNames` set to the request's `repositories`, and `permissions`
+    set to its `permissions`, and returns the token as a `SecretValue`.
+    `@octokit/auth-app` signs the App JWT and keeps each installation token
+    in the shared cache until shortly before it expires, so repeated
+    requests reuse a token. The private key and the tokens stay in process
+    memory; the module writes neither to a file, the store, nor a log. A
+    mint whose `signal` aborts rejects with the signal's `reason` as the
+    error, unchanged, so a caller recognizes its own timeout. Any other
+    failed mint throws an `Error` naming the credential and GitHub's status,
+    never the key or a token. `@octokit/request` is added beside
+    `@octokit/auth-app`.
+  secret-value: >-
+    `SecretValue` holds its value in a private class field. `reveal()`
+    returns it; this is the only way to read it. `toString()`, `toJSON()`,
+    and the `node:util` `inspect.custom` method each return
+    `[credential <name>]`, so a `SecretValue` placed in a template string,
+    `JSON.stringify`, `console.log`, or an error's cause prints its
+    credential name. Code calls `reveal()` only where it hands the value to
+    the library that authenticates.
+  tests: >-
+    Tests write configuration files to a temporary directory and call
+    `loadServiceConfiguration`. They cover: a minimal file returns every
+    section with its defaults, and `comparatorSandbox` equals
+    `comparatorSandboxDefaults`; a file with three errors in different
+    sections reports three issues with their pointers; an unknown root key
+    and an unknown property inside a section are issues; a duplicate key is
+    an issue with its line; `processRepository.credential` naming an
+    undefined credential is an issue at `/processRepository/credential`;
+    `credentials.resolve` of an undefined name throws
+    `UnknownCredentialError` naming it; an `http://` URL with a credential
+    is an issue; an `http://` URL and an `https://` URL each carrying a user
+    name and password, with and without `credential`, are each an issue at
+    `/processRepository/url`, and the issue's message holds neither; a missing key file is an issue; relative paths resolve
+    against the file's directory. A `SecretValue` made from a known string
+    does not contain that string in `String`, `JSON.stringify`, or
+    `util.inspect` output, nor in the message or inspected form of an error
+    whose cause it is. The `github-app` credential is tested against an
+    in-test HTTP server standing in for the GitHub API, named by `apiUrl`,
+    with a key generated by `node:crypto` in the test. A mint against an
+    API server that accepts the connection and never responds, with a
+    signal that aborts after 200 milliseconds, rejects with that signal's
+    `reason`; a second mint from the same credential against a healthy
+    server returns a token.

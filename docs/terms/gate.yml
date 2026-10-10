@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Gate
+description: >-
+  An implementation on a blueprint state that decides which waiting tasks may leave it.

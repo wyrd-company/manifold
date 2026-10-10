@@ -1,0 +1,49 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: host-cli-portfolio-lint
+# ---
+$schema: https://commonclischema.org/draft/2026-04/schema
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+commands:
+  - name: portfolio
+    summary: Work with the portfolio and bindings of a process repository.
+    mode: non-interactive
+    subcommands:
+      - name: lint
+        summary: Lint `portfolio.yml` and `bindings.yml` in a process repository checkout, and the accounts `portfolio.yml` allocates against `accounts.yml`.
+        mode: non-interactive
+        positional-arguments:
+          - name: repository
+            description: The process repository checkout directory. Defaults to the current directory.
+            position: 0
+            required: false
+            default: .
+            value:
+              type: path
+        output:
+          modes:
+            - name: text
+              description: >-
+                One line per finding on standard output,
+                `<file>:<location> <kind> <message>`, with the file
+                `portfolio.yml` or `bindings.yml`, then one line per
+                `account-undeclared` or `account-archived` warning in the
+                same form with the file `portfolio.yml`, ending with
+                ` (warning)`; nothing when
+                there is no finding and no warning.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: There is no finding; there may be warnings.
+            - code: 1
+              meaning: At least one file has a finding.
+            - code: 2
+              meaning: The directory or a file could not be read.
+        examples:
+          - manifold-host portfolio lint
+          - manifold-host portfolio lint ./process

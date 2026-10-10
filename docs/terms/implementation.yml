@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Implementation
+description: >-
+  A named piece of code a blueprint binds: actor logic, an action, a guard, or a delay.

@@ -1,0 +1,964 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - gates
+    - portfolio-ledger
+    - store
+    - process-repository
+    - usage-intake
+    - agent-threads
+  # GAP-EDGE: the technical-design schema declares no edge to a
+  # specification; `references` is the best fit.
+  references:
+    - accounts-declaration
+    - portfolio-api
+terms:
+  - capacity
+  - credit
+  - reset
+  - window
+objective: >-
+  Track budget by portfolio item across accounts so that a gate can ask
+  whether a task may reserve an estimate, unused budget is not stranded, one
+  item cannot take a sibling's guarantee, and every token is attributed to
+  the actor that spent it.
+background:
+  problems:
+    - >-
+      A fixed split strands what one item does not use, while a proportion
+      of what is left lets the first spender take the window.
+    - >-
+      A balance that subtracts only settled usage is wrong while an actor is
+      running, and wrong across a reset and after a move.
+    - >-
+      Usage arrives from provider session files after the fact, and the
+      files are deleted by the harness after a retention window.
+design-challenges:
+  sharing: >-
+    Guarantee, spillover, and protection against a late arrival pull in
+    different directions and must be configured by a developer who does not
+    know scheduler vocabulary.
+  in-flight-accounting: >-
+    A reservation and the usage it covers overlap in time and must not be
+    double-counted or lost across a window boundary.
+  attribution: >-
+    Usage must reach the right actor from a session file that names only a
+    provider session, and threads an operator opened outside Manifold must
+    land somewhere.
+proposed-design:
+  high-level-overview: >-
+    The portfolio is a tree of items the user declares in the process
+    repository. GitHub Projects and T3code projects attach to items through
+    their bindings. Every item with sub-items has an Other sub-item, and a
+    top-level Other holds usage attached to nothing. Each item, Other
+    included, has an allocation per account: a guaranteed percentage of its
+    parent, an optional ceiling, and optional pacing. Guarantees under one
+    parent total at most 100% at every level of the tree. They need not
+    total 100%; the remainder is unallocated and items borrow from it up to
+    their ceiling, never from a sibling. One ledger keyed by actor holds credits, reservations, actuals,
+    and settlements per item and account. Available balance counts usage as
+    it arrives. The portfolio and its bindings are declared in the process
+    repository; ledgers, observed capacity, and reset times are in the store.
+  items-and-bindings: >-
+    A GitHub Project binding names its environment and the item it attaches
+    to. A T3code project binding names the item it attaches to, unless the
+    T3code project is associated with a bound GitHub Project, in which case
+    it follows that Project's item and has no binding of its own. The
+    associations are a list on the GitHub Project binding naming its T3code
+    projects, one or many, which the operator edits to associate an
+    existing one. A T3code project that a process creates with
+    `t3code-project-create` follows the item of the actor that created it,
+    from a record in Manifold's store, until a binding or an association
+    names it. An item may hold any number of projects of either kind.
+    Threads in any other T3code project land on the top-level Other. Intake assigns each task to the
+    single lowest-level item within the subtree of the item its Project
+    attaches to. A task that matches none of an item's sub-items goes to
+    that item's Other, so that it is clear nothing matched within that item.
+    An item with no sub-items needs no Other; the console shows none under
+    it. The assignment lives in the store with the actor.
+  guarantee-limit: >-
+    Guarantees under one parent, Other included, total at most 100% at every
+    level. A declared portfolio whose guarantees under any parent exceed
+    100% is in an error state: the console names the parent and its sum and
+    refuses to save, and the ledger rejects the allocation rows.
+  archiving: >-
+    Archiving an item is one step. Its allocation returns to its parent's
+    unallocated remainder. For each project attached to it, the operator
+    chooses: move it up to the parent, where it lands on the parent's Other
+    by the same rule as intake; reassign it to a sibling; or archive the
+    project. Moving up is open to an item under another item; the projects
+    of a top-level item are reassigned or archived, since no binding names
+    an Other. An archived item keeps its history, and its usage stays
+    charged to its parent and to the account. The choice is made in the
+    same commit as the archive: a declaration in which a binding that is not
+    archived names an archived item is refused. The operator archives
+    through the `archive-item` endpoint of `declarations-api`, which
+    writes `portfolio.yml` and `bindings.yml` in one commit, so a save
+    that fails puts neither the archive nor any choice in the declaration
+    in force.
+  archiving-created-projects: >-
+    A created project is attached to an item when its record's item is the
+    item or an item under it, no binding or association names it, and its
+    record is not retirable. The archive lists it beside the bindings, by
+    environment and project id, and takes the same three choices. A
+    choice for a created project is declared as a new T3code project
+    binding in the same commit: move gives it the archived item's parent,
+    whose Other then takes its unowned usage, as `usage-item` states;
+    reassign, the sibling; archive, with `archived: true`, the record's
+    item, or, when the record's item is an Other, that Other's parent,
+    since no binding names an Other. The archived binding on the parent
+    lands the project's unowned usage on the parent's Other, as
+    `usage-item` states, which is the record's item, so the archive keeps
+    the project's usage where it was. A record on the top-level Other is
+    under no item and is never attached. The binding takes precedence
+    over the record, as resolution
+    states, so the commit alone sets where the project's unowned usage
+    goes, and the store is not written. The record stays as it is, the
+    project's creation provenance. Every created project attached at
+    the request needs a choice, as every live binding does. A created
+    project can become attached to an item that is already archived: an
+    actor running on the item creates one after the archive, or the
+    archive was made by editing the files. Such a project still resolves
+    to the archived item, so its usage stays charged as an archived
+    item's usage is, and it is listed against the archived item until a
+    choice declares its binding. Its choice goes through the same
+    `archive-item` endpoint, which archives an archived item again with
+    no change. The archive recovers a save it already made before it
+    reads the records: a retried request whose `saveId` is on the branch
+    answers that save, whatever records were written, retired, or reset
+    since, as `declarations-api` states.
+  created-project-ownership: >-
+    The effective ownership of a created project is where its unowned
+    usage goes now: its own binding's item, else its association's item,
+    else its record's item while the declaration in force declares it,
+    else the top-level Other, as resolution states, mapped to that item's
+    Other when it has sub-items, as `usage-item` states. `createdProjects()`
+    answers it for every created project record with the record's
+    provenance and its retirement state, so that the console lists
+    attached projects and retention knows which records it may retire.
+    Its creation provenance, the environment, project id, creating
+    actor, and the item at creation, never changes. A posting takes the
+    item resolution answers when it is recorded, and a late attribution
+    the item resolution answers when the mapping reaches the service, as
+    `usage-intake` states, so after an archive commit is applied, new
+    unowned usage and late attributions of the project follow its
+    binding, and posted usage stays where it posted until an operator
+    moves it. An archive leaves nothing pending in the store: its one
+    durable operation is the save, identified by its `saveId`, which
+    `Revisions.save` recovers from the branch after a crash. A record is
+    retirable when T3 Code has removed the project and no thread the
+    source keeps names it, as `t3code-environment-source` states;
+    retiring it changes no resolution.
+  sharing-rule: >-
+    An item may reserve while its usage counted as it arrives plus the new
+    reservation stays within its guarantee, or within its guarantee plus the
+    unallocated remainder up to its ceiling. Weight applies only to splitting
+    the remainder among items that have waiting work, and the gate supplies
+    which items have waiting work. Pacing, when set, spreads the window's
+    capacity across the window and restarts at a reset. Room an item borrows
+    from its parent's remainder is room its sub-items may use. No item may
+    reserve beyond the account's unspent capacity in the window: capacity
+    less every actual and outstanding reservation in it, on any item,
+    archived or removed included, whatever the current guarantees. With
+    allocations at 100% and no ceiling the rule is a fixed split.
+  ledger: >-
+    One append-only table with signed entries keyed by actor, item, and
+    account: a credit when a window opens or a reset is observed, a
+    reservation when a gate grants a token, an actual when usage posts, and
+    cancelling entries at settlement and on a move. Credits and actuals carry
+    their window; an actual counts in the window its usage happened in. An
+    outstanding reservation counts against the account's current window, so
+    it is neither lost nor counted twice across a reset. A reservation carries an
+    idempotency key so a replayed grant holds once. A move of an outstanding
+    reservation asks the sharing rule at the destination before it writes.
+  available-balance: >-
+    Allocation less usage counted as it arrives. A reservation holds its full
+    amount until the actor's posted usage consumes it; usage beyond the
+    reservation reduces the balance further. When every actor has settled it
+    equals allocation less settled actuals. The Portfolio page shows the
+    sharing rule's answer, what the item could reserve now, beside the
+    balance, and previews the rule on a fixed scenario when it is edited.
+    The scenario is one window of the account, halfway through, with
+    nothing spent and nothing reserved on any item; the preview answers,
+    for each item that is not archived, what it could reserve while it
+    alone has waiting work and while every item has waiting work, as
+    percentages of the window's capacity. The two answers show the
+    guarantee, the borrowing up to the ceiling, the weight's split, and
+    pacing's spread, and depend only on the declaration, so they are the
+    same for every window. The service computes it from the edited text
+    with the ledger's sharing rule, as the lint of `portfolio.yml` in
+    `declarations-api` states, and keeps nothing of it.
+  portfolio-read: >-
+    The operator reads the portfolio through `GET /api/portfolio` of
+    `portfolio-api`: the items of the declaration in force with their
+    allocations and attached projects, the accounts of the accounts
+    declaration in force with their capacity and the ledger's window that
+    covers the read, and each item's balance per account, from the
+    ledger's `balance` with no other item waiting, its `totals`, and its
+    `windowAt`. An account that an allocation names and the accounts
+    declaration does not declare is listed with balances of 0. One the
+    declaration archives is listed with nothing reservable: its window
+    credited before the archive, when one covers the read, and its actual
+    and outstanding stay as the ledger holds them, and its available is
+    at most 0, as `capacity-module` states. The read carries the
+    `account-undeclared` and `account-archived` warnings of the
+    declaration in force. The read credits the current window of each
+    declared account that is not archived as a gate's balance read does,
+    and changes nothing else. The operator
+    edits `portfolio.yml` from the Portfolio screen, which reads, lints,
+    and saves it through the `portfolio.yml` path of `declarations-api`,
+    as `operator-console` states.
+  settlement: >-
+    When an actor ends, by final state, by forced re-intake, or by its issue
+    closing, its reservations are retired and its actuals stay. After a
+    forced re-intake the old actor's actuals remain on its item and the new
+    actor starts unreserved on the item its intake chose.
+  usage: >-
+    The host CLI reads provider session files in-process and decodes them
+    with a pinned decoding library, then Manifold prices each call from its
+    own price table in the account's native unit. Every call carries a
+    timestamp, a model, all token classes, and the provider session id.
+    Manifold maps provider session to thread from T3 Code's own state and
+    thread to actor and state visit from its store, and posts each actual to
+    the actor. Actuals are captured at settlement at the latest, before the
+    harness's retention window can remove the file.
+  attribution-of-operator-threads: >-
+    A thread no actor owns is attributed by its T3code project: to its
+    binding's item, to the item of the GitHub Project binding that
+    associates it, to the creating actor's item for a project a process
+    created, or to Other. The Portfolio page lets an operator move such usage
+    to an item or a task, which writes the same move entries as re-intake.
+  capacity: >-
+    Each account declares its capacity in `accounts.yml`, in the
+    `accounts-declaration` format: its kind, the amount one window holds in
+    the account's unit, a reset at which a window opens, and the length of
+    a window in hours, days, or calendar months. The windows form a series
+    from the reset, in both directions. For an API account the amount is
+    the budget of a billing period. For a subscription the amount, the
+    reset, and the length are the operator's estimates of the provider's
+    limit, priced as the account's unit prices its calls; the provider's
+    reported reset times, its reported share used, and the ratio between
+    that share and the amount are observations and are not declared. A
+    granted reset is shown and never applied on the operator's behalf.
+  capacity-crediting: >-
+    The capacity module credits each window once, when an operation first
+    needs it, from the accounts declaration in force. A gate's balance read
+    and its reservation need the window that covers the current time now,
+    so the module credits it before the ledger call, in the caller's
+    transaction when one is open. An actual can wait, since usage intake
+    already holds a posting that lacks a fact and posts it when the fact
+    arrives: a posting whose `usedAt` no window covers is held pending with
+    reason `no-window`, the module credits that window on the next turn of
+    the event loop in its own transaction, and usage intake's
+    `retryPending` posts it. The ledger counts an actual in the window with
+    the greatest `opensAt` not after its `usedAt`, whether or not that
+    window has closed, so the module lets an actual reach the ledger only
+    once a window covers its time, and usage after a reset never counts in
+    the window before it. After every credit the module runs the service's follow-up once per turn of the
+    event loop: `retryPending`, then the gates' `inputChanged`. A window is
+    covered when the ledger's window with the greatest `opensAt` not after
+    the time has a `closesAt` after it. The window credited for a time `t`
+    is the declared series window that holds `t`, clipped to the gap
+    between the ledger's neighbouring windows of the account: it opens at
+    the later of the series window's open and the previous window's close,
+    and closes at the earlier of the series window's close and the next
+    window's open. An unclipped window is credited the declared amount; a
+    clipped one is credited the amount in proportion to its length,
+    `max(1, floor(amount × length / series length))`, computed with
+    `BigInt`. Windows never overlap, so a changed reset or length fills
+    the gap to its own series with one clipped window. The window's key is
+    its open time as an ISO 8601 UTC string, and the credit's idempotency
+    key is `capacity:<account>:<window key>`, so a window is credited once
+    whatever runs twice, on one connection or on two connections to the
+    file. A credited window keeps its capacity and its
+    bounds, so a changed amount applies from the next window credited. A
+    window credited for a past time, such as the window of usage decoded
+    from before Manifold ran, takes the declaration in force when it is
+    credited. An account that the accounts declaration does not name, such
+    as one `portfolio.yml` allocates and `accounts.yml` leaves out, is
+    credited nothing, and its balances read 0; the lint reports each such
+    allocation as the warning `account-undeclared`. An account the
+    declaration archives is credited nothing in the same way, and `ensure`
+    answers `undeclared` for it; the lint reports each allocation of it as
+    the warning `account-archived`. Archive is a boundary for new
+    reservations only: a window credited before the archive keeps its
+    credit, and the reservations, actuals, and settlements already in the
+    ledger stay as they are, but the capacity module refuses every new
+    reservation on the account and reads nothing reservable for it, as
+    `capacity-module` states, so its unspent credit funds no new work.
+    Removing `archived` lifts the boundary, and the credit of the current
+    window is reservable again.
+  capacity-module: |-
+    The capacity module is `packages/service/src/capacity/`. It holds no
+    state of its own on disk: windows and credits are the ledger's, and the
+    declaration in force is usage intake's. Its public surface is exported
+    from `index.ts`:
+
+    ```ts
+    export type CapacityAccount = {
+      kind: "api" | "subscription";
+      archived?: boolean; // true: credited no window, refused new reservations
+      capacity: {
+        amount: number; // in the account's unit, as declared
+        reset: string; // RFC 3339 date-time
+        every: { hours: number } | { days: number } | { months: number };
+      };
+    };
+
+    export function openCapacity(options: {
+      connection: LedgerConnection; // the store's connection, which the ledger holds
+      ledger: Ledger;
+      accounts(): Readonly<Record<string, CapacityAccount>>; // the declaration in force
+      now?: () => number; // defaults to Date.now; the ledger's clock
+      credited(credit: CapacityCredit): void; // after the credit is written, before the follow-up
+      followUp(): void; // once per turn of the event loop after a credit
+    }): Capacity;
+
+    export interface Capacity {
+      /** The ledger, with `balance` and `reserve` crediting the window at `now()` first. */
+      readonly ledger: Ledger;
+      /** Credits the window that covers `at` for `account` when none covers it. */
+      ensure(request: { account: string; at: number }): CapacityEnsureResult;
+      /** Cancels a scheduled credit or follow-up. */
+      close(): void;
+    }
+
+    export type CapacityCredit = {
+      account: string;
+      window: string;
+      opensAt: number;
+      closesAt: number;
+      amount: number; // in the ledger's integer amount of the unit
+    };
+
+    export type CapacityEnsureResult =
+      | { status: "covered"; window: string }
+      | { status: "credited"; credit: CapacityCredit; replayed: boolean }
+      | { status: "undeclared" }
+      | { status: "out-of-range" };
+    ```
+
+    `connection` is the `LedgerConnection` the ledger was created with, the
+    store's. Its `transaction` runs `BEGIN IMMEDIATE` at the outermost call
+    and a savepoint inside an open transaction, so the module encloses each
+    read of the windows and the write it decides on in one transaction, and
+    that transaction joins the caller's when one is open. `BEGIN IMMEDIATE`
+    takes the database's write lock before the read, so no other
+    connection on the file credits between the read and the credit.
+
+    `ensure` runs in one `connection.transaction`: it reads the account
+    from `accounts()`, reads the windows around `at` with the ledger's
+    `windowAt`, and calls `credit` when no window covers `at`. `credited` is
+    called after the transaction returns: after its commit when `ensure`
+    is the outermost transaction, and inside the caller's transaction when
+    it joins one.
+
+    `capacity.ledger` is the ledger it is given with three members
+    wrapped, each in one `connection.transaction`:
+
+    - `reserve` runs `ensure` with the request's account and `now()`, then
+      the ledger's `reserve`, so the credit and the reservation commit or
+      roll back together, alone or inside a gate's grant. For an account
+      `accounts()` holds with `archived: true` it writes nothing and
+      throws `LedgerError` with code `account-archived` and details `{
+      account }`, which a gate's grant meets as any other `LedgerError`:
+      the grant rolls back and the evaluation records a `reservation`
+      failure.
+
+    - `balance` runs `ensure` with the request's account and `now()`, then
+      the ledger's `balance`, so the read sees the window the credit wrote.
+      For an archived account it answers the ledger's balance with
+      `reservable` 0 and `available` the lesser of the ledger's and 0, so
+      `actual` and `outstanding` stay the ledger's and a comparator sees
+      nothing to reserve.
+
+    - `postActual` reads the windows around `usedAt` with `windowAt`, and
+      calls the ledger's `postActual` when a window covers it. Otherwise it
+      records the account and `usedAt`, schedules a credit, and throws
+      `LedgerError` with code `no-window` and details `{ account, at }`, as
+      the ledger does for a time before every window, so usage intake keeps
+      the posting pending.
+
+    Every other member is the ledger's. The scheduled callback, one
+    `setImmediate` per turn of the event loop, calls `ensure` for each
+    recorded time, each its own outermost transaction, then calls
+    `followUp` when any credit was written since the last follow-up.
+
+    The series is computed only inside the representable range, the
+    instants from `0001-01-01T00:00:00.000Z` to
+    `9999-12-31T23:59:59.999Z`, where every instant is a `Date` and its
+    `toISOString()` is a window key with a four-digit year. Lint holds the
+    reset inside that range and a length at most 87,600 hours, 3,650
+    days, or 120 months, as `accounts-declaration` states, none longer than
+    ten calendar years, so every window that holds a time from
+    `0011-01-01T00:00:00.000Z` to `9989-12-31T23:59:59.999Z` lies wholly
+    inside the range. For any other time, `ensure` returns `out-of-range` and credits nothing: a balance
+    read or a reserve then meets the ledger's windows as they are, and an
+    actual stays pending `no-window`. `windows.ts` holds the
+    series and the clipping as pure functions of the declared capacity,
+    the time, and the neighbouring windows; `capacity.ts` holds
+    `openCapacity`. The amount converts as `accounts-declaration` states,
+    and `lintUsageDeclaration` has already refused a capacity it cannot
+    convert, so the module trusts it.
+  capacity-wiring: >-
+    The service opens the capacity module after the portfolio and before
+    usage intake, with the store's connection, `portfolio.ledger`, the
+    service clock, `accounts`
+    reading `usage.accounts()`, `credited` as the service's probe and log
+    entry `capacity-credited`, and `followUp` running `usage.retryPending()`
+    and then the gates' `inputChanged()`. It gives usage intake
+    `capacity.ledger` for `postActual` and `settle`, and gives the gates a
+    portfolio whose `ledger` is `capacity.ledger` and whose `current` is the
+    portfolio's. After it follows the head revision at start, it calls
+    `usage.retryPending()` once, so a posting that waited on a credit
+    committed before a crash posts. It calls `capacity.close()` when it
+    stops. The module adds no store migration and no service
+    configuration.
+  capacity-convergence: >-
+    `ensure` twice for one time: the second finds the window covering it,
+    or replays the credit by its key, and writes nothing. A crash before a
+    credit commits leaves no window, and the next balance read, reserve, or
+    `retryPending` that needs it credits it. A crash after a credit commits
+    and before `retryPending` runs leaves the window credited once and its
+    postings pending, and the `retryPending` at start posts each once by its
+    ledger key. A credit written in a gate's grant or in a push rolls back
+    with it, and the next need credits it again. A follow-up that finds
+    nothing pending posts nothing, and a grant round that `inputChanged` starts
+    over unchanged balances grants nothing it would not have granted.
+  capacity-tests: |-
+    Tests live in `packages/service/src/capacity/capacity.test.ts` and
+    drive `openCapacity` with a `Ledger` and a usage intake on a database
+    file each test opens in a temporary directory, with an injected clock.
+    Values are generic: account `acct` of kind `api`, reset
+    `2026-01-01T00:00:00Z`, every `hours: 1`, amount 1, which is 1,000,000
+    in the ledger; items `alpha` and `beta` at 50%. Times are offsets from
+    the reset. The scenarios, each written red before green:
+
+    - First read: a balance read of `alpha` at 10 minutes credits window
+      `2026-01-01T00:00:00.000Z` from 0 to 1 hour with 1,000,000 and reads
+      allocation 500,000; a second read credits nothing.
+
+    - Reset: after a read at 10 minutes, a read at 1 hour 5 minutes
+      credits the window from 1 hour to 2 hours, and `followUp` runs once.
+
+    - Next window: with the window from 0 to 1 hour credited, a revision
+      with amount 2 is applied; a read at 30 minutes still reads
+      allocation 500,000, and a read at 1 hour 5 minutes credits 2,000,000.
+
+    - Changed series: with the window from 0 to 1 hour credited, a
+      revision with every `hours: 2` and reset 1 hour 30 minutes is applied;
+      a read at 1 hour 10 minutes credits a window from 1 hour to 1 hour 30
+      minutes with 250,000, and a read at 1 hour 40 minutes credits the
+      window from 1 hour 30 minutes to 3 hours 30 minutes with 1,000,000.
+
+    - Months: every `months: 1` from `2026-01-28T00:00:00Z`; an instant on
+      `2026-03-01` falls in the window from `2026-02-28` to `2026-03-28`,
+      and an instant on `2025-12-31` in the window from `2025-12-28` to
+      `2026-01-28`.
+
+    - Reserve: a reserve at 10 minutes with no window credits it in the
+      reserve's transaction; a reserve inside the caller's `transaction`
+      whose work then throws leaves no window and no credit; a standalone
+      reserve with no window for an item the portfolio does not hold throws
+      `invalid-input` and leaves no window, no credit, and no operation.
+
+    - Two connections: a second `DatabaseSync` on the same file, with its
+      own savepoint `LedgerConnection`, `Ledger`, and capacity module whose
+      declaration in force has amount 2. The first module runs `ensure` at
+      10 minutes inside a caller `transaction` that is still open; the
+      second's `ensure` at 10 minutes cannot begin its transaction, writes
+      nothing, and rethrows the database's busy error. After the first
+      commits, the second's `ensure` returns `covered`, and the file holds
+      one credit for the window, of 1,000,000.
+
+    - Range: with every `days: 3650` and reset `0001-01-01T00:00:00Z`, a
+      read at `0001-06-01` returns `out-of-range` and credits nothing; with
+      reset `2026-01-01T00:00:00Z`, `ensure` at `9989-12-31T00:00:00Z`
+      credits a window whose close is at most `9999-12-31T23:59:59.999Z`,
+      and at `9995-01-01` returns `out-of-range`; an actual at that time
+      stays pending `no-window`.
+
+    - Waiting actual: a push of a call at 10 minutes with no window answers
+      `pending` 1; after the next turn of the event loop the window is
+      credited, `retryPending` has run, and a second `DatabaseSync` opened
+      on the store's file reads one `actual` entry for the call's ledger
+      key.
+
+    - Stale window: with the window from 0 to 1 hour credited, a push of a
+      call at 1 hour 5 minutes answers `pending` 1, and the call posts in
+      the window from 1 hour to 2 hours; the window from 0 to 1 hour holds
+      no actual.
+
+    - Past window: a push of a call at minus 3 hours credits the window
+      from minus 3 hours to minus 2 hours and posts it there; a balance
+      read at 10 minutes reads the window from 0 to 1 hour.
+
+    - Undeclared: a balance read for an account `accounts.yml` does not
+      name credits nothing and reads 0.
+
+    - Archived: `alpha` reserves 100,000 on `acct` at 10 minutes, which
+      credits the window from 0 to 1 hour, and a call priced 50,000 posts
+      to it. A revision that archives `acct` is applied. A reserve of
+      `beta` at 20 minutes throws `account-archived` and writes no
+      operation; a balance read of `beta` reads `reservable` 0 and
+      credits nothing; `alpha`'s balance keeps its actual and its
+      outstanding 100,000, and its settlement retires the reservation. A
+      balance read at 1 hour 10 minutes credits no window. The service
+      restarted on the same file answers the same. A revision that
+      removes `archived` is applied, and a reserve of `beta` at 30
+      minutes succeeds in the window from 0 to 1 hour.
+
+    - Convergence: `ensure` twice for one time writes one credit; a credit
+      whose key the ledger holds replays.
+
+    The recovery test lives in `packages/service/src/capacity/recovery.test.ts`.
+    It starts a fixture service process on a database file with the
+    `credited` probe writing a line and waiting, pushes a call with no
+    window, and kills the process with `SIGKILL` after the line. It starts
+    the service again on the same file and reads one `credit` operation
+    for the window, and one posted `actual` for every pending posting.
+  declaration: >-
+    The portfolio is declared in `portfolio.yml` and the bindings in
+    `bindings.yml`, both at the root of the process repository. Their
+    formats are `portfolio-declaration` and `bindings-declaration`. Item ids
+    are unique across the tree, so an item keeps its id and its history when
+    it moves to another parent. Manifold adds the Other items: `other` at the
+    top level, and `<parent>/other` under every item with a sub-item. The
+    key `other` in an items mapping carries that Other's allocations. An
+    archive flag archives an item and everything under it and leaves its
+    allocations in the file, where they do not apply. The declaration maps
+    one to one onto the ledger's `LedgerPortfolioInput`, so the ledger's
+    tables and sharing rule take it unchanged.
+  declaration-module: |-
+    The portfolio module is `packages/service/src/portfolio/`. It owns the
+    declaration in force, the ledger built on it, and binding resolution,
+    so a gate's balance and an intake's item are read from the same commit.
+    Its public surface is exported from `index.ts`:
+
+    ```ts
+    /** Migration steps for owner `portfolio`, applied by the store's migrate. */
+    export const portfolioMigrationSteps: readonly string[];
+
+    /** The members of the process repository revision the module reads. */
+    export interface PortfolioRevision {
+      readonly commit: string;
+      read(path: string): Promise<string | undefined>;
+    }
+
+    export function openPortfolio(options: {
+      connection: LedgerConnection;
+      now?: () => number; // defaults to Date.now; passed to the ledger
+      /** The item recorded for a T3code project a `t3code-project-create` invoke created; undefined for any other. */
+      createdProject?: (project: { environment: string; id: string }) => { actorId: string; item: string } | undefined;
+      /** Every created project record with its retirement state; empty when absent. */
+      createdProjects?: () => readonly {
+        environment: string;
+        projectId: string;
+        actorId: string;
+        item: string;
+        retirable: boolean;
+      }[];
+    }): Portfolio;
+
+    export interface Portfolio {
+      readonly ledger: Ledger;
+      apply(revision: PortfolioRevision): Promise<PortfolioApplyResult>;
+      current(): PortfolioInForce;
+      githubProject(project: { owner: string; number: number }): GitHubProjectResolution | undefined;
+      t3codeProject(project: { environment: string; id: string }): T3codeProjectResolution;
+      /** The item's Other when the declaration in force holds one, else the item. */
+      usageItem(item: string): string;
+      /** The effective ownership of every created project, in the order of `createdProjects`. */
+      createdProjects(): readonly CreatedProjectOwnership[];
+    }
+
+    export type CreatedProjectOwnership = {
+      environment: string;
+      project: string;
+      /** Creation provenance: the creating actor and its item at creation. */
+      actorId: string;
+      createdItem: string;
+      /** What decides the project's item now, by the declaration in force. */
+      resolution: T3codeProjectResolution;
+      /** Where unowned usage of the project posts now: `usageItem(resolution.item)`. */
+      usageItem: string;
+      /** True when its resolution is `via: "created"` and its item, or an item above it, is archived. */
+      unresolved: boolean;
+      /** The record can attribute nothing and retention may delete it. */
+      retirable: boolean;
+    };
+
+    export type PortfolioApplyResult = (
+      | { status: "applied"; commit: string }
+      | { status: "unchanged"; commit: string }
+      | { status: "rejected"; commit: string; findings: readonly PortfolioFinding[] }
+    ) & { warnings: readonly PortfolioWarning[] };
+
+    export type PortfolioInForce = {
+      commit: string | null; // null before the first accepted declaration
+      declaration: PortfolioDeclaration;
+    };
+
+    export type GitHubProjectResolution = {
+      binding: string;
+      item: string;
+      environment: string;
+      t3codeProjects: readonly string[];
+      archived: boolean;
+    };
+
+    export type T3codeProjectResolution =
+      | { item: string; via: "binding" | "association"; binding: string; archived: boolean }
+      | { item: string; via: "created"; actorId: string }
+      | { item: "other"; via: "unbound" };
+    ```
+
+    `PortfolioRevision` is the part of `ProcessRepositoryRevision` the
+    module uses, declared structurally in the module as `LedgerConnection`
+    is in the ledger, so the process repository's revision satisfies it and
+    a test passes a fixture of the same shape. The service applies
+    `ledgerMigrationSteps` and `portfolioMigrationSteps` with the store's
+    `migrate`, calls `openPortfolio` with the store's connection, takes its
+    ledger from `portfolio.ledger`, and calls `apply` with every revision
+    the process repository pulls. `index.ts` holds the public surface,
+    `portfolio.ts` holds `openPortfolio`, `migrations.ts` holds the steps,
+    whose step 1 is the script of
+    `docs/specifications/portfolio-declarations-table.sql`, and
+    `resolution.ts` holds resolution as pure functions over a declaration.
+  declaration-in-force: >-
+    The declaration in force is persisted, so a restart with an invalid
+    declaration at the head commit resumes on the last valid one. Its table
+    is specified in `portfolio-declarations-table`. `openPortfolio` reads the
+    row with the greatest `seq`, or takes the empty declaration, which holds
+    only the top-level Other and no bindings, when there is none. It
+    validates that declaration with `parseLedgerPortfolio`, calls
+    `createLedger` with the result, and builds the resolution index. It
+    writes nothing.
+  applying-a-revision: >-
+    `apply` reads `portfolio.yml`, `bindings.yml`, and `accounts.yml`
+    through the revision, lints the text of the first two with
+    `lintPortfolioDeclaration`, and compares the normalized declaration
+    with the one in force. It checks the text of `portfolio.yml` and
+    `accounts.yml` with `lintAllocatedAccounts`, and every result,
+    whatever its status, carries the warnings that check returns. A
+    warning changes nothing that `apply` decides. A declaration with a
+    finding is rejected: `apply` returns the findings and the declaration in
+    force, the ledger's portfolio, and resolution stay as they were. A
+    declaration equal to the one in force, as canonical JSON, returns
+    `unchanged` and writes nothing. Any other declaration is accepted:
+    `apply` appends its row in one `connection.transaction`, then calls
+    `ledger.setPortfolio` with the parsed ledger portfolio and swaps the
+    resolution index, and returns `applied`. A changed declaration takes
+    effect on the next call to the ledger or to resolution, with no restart
+    and no new ledger. `apply` calls run one at a time in call order: a
+    call waits for the one before it, so two revisions never interleave
+    their reads and writes. A failing `read` rejects the call and changes
+    nothing. `apply` does not order revisions: the caller passes them in
+    the order it pulls them.
+  resolution: >-
+    `githubProject` answers the binding of a GitHub Project by owner and
+    number, the owner compared without regard to case, or undefined when no
+    binding names it. `t3codeProject` answers the item of a T3code project
+    on an environment: its own binding's item, else the item of the GitHub
+    Project binding whose environment matches and whose `t3codeProjects`
+    lists it, else, for a project `createdProject` answers, its recorded
+    item with `via: "created"` and the creating actor's id when the
+    declaration in force declares that item, archived or not, else the
+    top-level Other with `via: "unbound"`. A declared binding takes
+    precedence over the record, so an operator who binds a created project
+    moves it. `createdProject` is read at each call, since the record
+    changes between declarations; the service wiring answers it from the
+    T3 Code environment source's `t3_created_project` table. The lint
+    refuses a T3code project that is both bound and associated, or
+    associated twice, so the answer is unique. Resolution reads in-memory
+    maps built from the declaration in force, keyed by the lower-case owner
+    and number and by environment and T3code project id. An archived
+    binding resolves like any other and reports `archived: true`; intake
+    and the console decide what an archived binding allows.
+  usage-item: >-
+    Unowned usage attributed to an item lands where a task that matches
+    none of the item's sub-items lands: `usageItem(item)` answers the
+    item's Other, `<item>/other`, when the declaration in force holds
+    that Other, and the item itself otherwise. The declaration holds an
+    Other under every item that declares a sub-item, archived sub-items
+    included, so an item keeps its Other, and its usage keeps landing
+    there, after its last live sub-item is archived; once every sub-item
+    is removed from `portfolio.yml` the item has no Other and the usage
+    lands on the item. An archived item's Other is archived with it, and
+    its usage lands there, charged to the item's parent and its account
+    as an archived item's usage is. Usage intake applies `usageItem` to
+    the item `t3codeProject` answers for a thread no actor owns, whether
+    a binding, an association, or a created project's record gave it,
+    so a T3code project bound or moved to an item with sub-items is
+    charged to that item's Other. An actor's own item needs no mapping,
+    since intake already assigns the lowest matching item or an Other,
+    and an operator's usage move puts usage on the item the operator
+    names.
+  lint: >-
+    `lintPortfolioDeclaration` in `packages/shared` is the one function that
+    validates a declaration. The service runs it on every revision, and the
+    host CLI command `manifold-host portfolio lint` of
+    `host-cli-portfolio-lint` runs it on a checkout. It takes the text of
+    each file, undefined for an absent file, parses each with the `yaml`
+    library, validates each document against its JSON Schema with Ajv,
+    reports the findings of `portfolio-declaration` and
+    `bindings-declaration`, normalizes the declaration, and adds the Other
+    items. Normalization writes `guarantee` on every allocation row, 0 when
+    the declaration leaves it out, since the ledger requires it. The lint
+    then calls `parseLedgerPortfolio` on each allocation row alone, in a
+    portfolio of the row's item as the only item, and turns each
+    `LedgerError` into an `invalid-portfolio` finding at that row's source
+    pointer, which normalization keeps beside each row. When every row
+    passes, it calls `parseLedgerPortfolio` on the whole ledger input, and
+    a `LedgerError` becomes one finding with the error's code, message,
+    and details, so a declaration whose guarantees under one parent exceed
+    100% is refused with the ledger's error naming the parent and its sum.
+    The ledger's rules stay the only allocation rules, and every finding
+    has an exact location whatever the error's details name. It returns
+    the findings, or the declaration with its parsed ledger portfolio:
+
+    ```ts
+    export function lintPortfolioDeclaration(files: {
+      portfolio: string | undefined;
+      bindings: string | undefined;
+    }):
+      | { ok: true; declaration: PortfolioDeclaration; ledgerPortfolio: LedgerPortfolio }
+      | { ok: false; findings: readonly PortfolioFinding[] };
+
+    export type PortfolioFinding = {
+      file: "portfolio" | "bindings";
+      location: string; // RFC 6901 JSON Pointer in the file's document
+      kind: PortfolioFindingKind;
+      message: string;
+      details?: Record<string, unknown>;
+    };
+
+    export type PortfolioFindingKind =
+      | "syntax"
+      | "schema"
+      | "duplicate-item"
+      | "other-without-items"
+      | "invalid-portfolio"
+      | "guarantee-limit"
+      | "duplicate-binding"
+      | "duplicate-project"
+      | "duplicate-association"
+      | "bound-and-associated"
+      | "unknown-item"
+      | "archived-item";
+
+    export type PortfolioDeclaration = {
+      ledger: LedgerPortfolioInput; // Other items added, archive inherited, archived rows dropped
+      items: readonly {
+        id: string;
+        parent: string | null;
+        title: string;
+        archived: boolean;
+        other: boolean;
+      }[];
+      githubProjects: readonly {
+        name: string;
+        owner: string;
+        number: number;
+        environment: string;
+        item: string;
+        t3codeProjects: readonly string[];
+        archived: boolean;
+      }[];
+      t3codeProjects: readonly {
+        name: string;
+        environment: string;
+        project: string;
+        item: string;
+        archived: boolean;
+      }[];
+    };
+    ```
+
+    The two schemas are embedded in `packages/shared` as generated
+    constants, and a test shows each equals its specification asset.
+    Every declared name in them is a `$ref` to
+    `https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name`,
+    the one definition `service-configuration` holds. Ajv resolves a
+    `$ref` into a document only when every `$ref` of that document
+    resolves, so the lint's Ajv instance registers the generated constants
+    of the service configuration root schema and of each section schema it
+    references before it compiles the two declaration schemas. Those
+    constants live in `packages/shared`, where the service's configuration
+    loader and the lint both import them, and `bun build --compile` embeds
+    them in the host CLI.
+  allocated-accounts: |-
+    `lintAllocatedAccounts` in `packages/shared` is the one check that an
+    account `portfolio.yml` allocates is one `accounts.yml` declares and
+    does not archive, as `portfolio-declaration` states. The service's `apply`, the host CLI
+    command `manifold-host portfolio lint`, and the host CLI command
+    `manifold-host usage lint` each call it with the two files of the same
+    revision or checkout, so each reports the same warnings. Any other
+    consumer that lints `portfolio.yml`, such as a console edit, calls it
+    with the `accounts.yml` of the revision it lints against.
+
+    ```ts
+    export function lintAllocatedAccounts(files: {
+      portfolio: string | undefined;
+      accounts: string | undefined;
+    }): readonly PortfolioWarning[];
+
+    export type PortfolioWarning = {
+      file: "portfolio";
+      location: string; // RFC 6901 JSON Pointer of the allocation, `.../allocations/<account>`
+      kind: "account-undeclared" | "account-archived";
+      severity: "warning";
+      message: string;
+      details: { item: string; account: string };
+    };
+
+    /** Keeps, renames, or drops each warning of an `accounts`-less lint for the accounts given. */
+    export function classifyAllocatedAccounts(
+      warnings: readonly PortfolioWarning[],
+      accounts: Readonly<Record<string, { readonly archived?: boolean }>>,
+    ): readonly PortfolioWarning[];
+    ```
+
+    It parses and validates each file as its own lint does, and returns no
+    warning when either does not parse or validate, since that lint reports
+    the file. It walks the `items` mappings of the portfolio document in
+    document order, Other keys and archived items included, and gives one
+    warning for each allocation whose account name is not a key of the
+    declared `accounts`, `account-undeclared`, or names an account with
+    `archived: true`, `account-archived`. An Other's item id is `other` or
+    `<parent>/other`. It is a pure function of the two texts. Called with
+    `accounts` undefined it warns `account-undeclared` on every allocation;
+    `classifyAllocatedAccounts` then gives, for a set of accounts, the
+    warnings `lintAllocatedAccounts` gives with those accounts: it keeps a
+    warning whose account the set does not hold, makes one whose account
+    is archived an `account-archived` warning with that kind's message, and
+    drops the rest. `lintAllocatedAccounts` is the two in turn, so a reader
+    that caches the first per portfolio commit gives the same warnings.
+
+    The check warns and does not refuse, as the decision
+    `warn-of-undeclared-accounts` states. The service and the usage
+    declaration apply each file independently, so the pair in force can
+    disagree whatever the lint refuses. A refusal would freeze every edit
+    of `portfolio.yml` while `accounts.yml` lacks one name, and would
+    refuse an allocation written before its account is declared. The
+    warning is the feedback; the undeclared account's balances reading 0
+    is the behaviour.
+  ledger-portfolio-in-shared: >-
+    The host CLI lints with the ledger's allocation rules, so
+    `parseLedgerPortfolio`, `LedgerError`, `LedgerErrorCode`,
+    `LedgerPortfolio`, and `LedgerPortfolioInput` live in
+    `packages/shared/src/ledger-portfolio.ts`, with the read accessors the
+    ledger's computations use. The ledger's `index.ts` re-exports them, so
+    its public surface and every behaviour stay as `portfolio-ledger`
+    states them. `packages/shared` depends on `yaml`.
+  libraries: >-
+    The module adds no new library. YAML is parsed with `yaml` (eemeli/yaml),
+    which the host CLI and the service tests use: it is widely
+    adopted, actively released, has no dependencies, and reports parse
+    errors with line and column. JSON Schemas are checked with Ajv, which
+    `packages/shared` depends on.
+  convergence: >-
+    `apply` twice with the same revision: the second finds the declaration
+    equal to the one in force and writes nothing. `apply` of a rejected
+    revision twice rejects twice and writes nothing. A crash before the row
+    commits leaves the previous declaration in force, and the next `apply`
+    of that revision accepts it. A crash after the row commits and before
+    `setPortfolio` leaves the new row in force, and `openPortfolio` on
+    restart builds the ledger and resolution from it. `openPortfolio` writes
+    nothing. The warnings are a pure function of the revision's files, so
+    `apply` twice returns the same warnings and writes nothing for them. Migration convergence belongs to the store's `migrate`.
+  portfolio-tests: |-
+    Tests live in `packages/service/src/portfolio/portfolio.test.ts` and
+    drive `openPortfolio` through its public interface, against a database
+    file each test opens in a temporary directory, with an injected clock
+    and a revision fixture that serves file text by commit. Tests of the
+    lint live in `packages/shared`. Values are generic: account `acct`,
+    items `alpha`, `beta`, `gamma`, owner `example-org`, environment
+    `env-one`, T3code projects `t3-project-1` to `t3-project-4`, actors
+    `actor-1` and `actor-2`, one window `w1` from 0 to 1000 credited 100.
+    The scenarios, each written red before green:
+
+    - Load: a revision with `alpha` 60% holding `beta` and `gamma` gives a
+      ledger whose `alpha/other` balance reads with no error, and `apply`
+      returns `applied`.
+
+    - Empty: `openPortfolio` on an empty database holds only `other`, and
+      every T3code project resolves to it.
+
+    - Guarantee limit: a revision with `alpha` 70% and `beta` 40% returns
+      `rejected` with one `guarantee-limit` finding whose message names
+      the top level and 110%.
+
+    - Last valid stays in force: after `alpha` and `beta` at 50% are
+      applied, the 110% revision is rejected, `alpha` reservable is still
+      50, and a second `openPortfolio` on the same file reads the same.
+
+    - No restart: after `alpha` and `beta` at 50% are applied, a revision
+      at a new commit with `alpha` 30% and `beta` 70% is applied, and the
+      same `portfolio.ledger` reads `beta` allocation 70.
+
+    - Archive with outstanding reservations: `alpha` and `beta` at 50%,
+      the GitHub Project bound to `alpha`; `actor-1` reserves 20 on
+      `alpha`. A revision that archives `alpha` and leaves its binding live
+      is rejected with `archived-item`. A revision that archives `alpha`
+      and moves the binding to `beta` is applied: `beta` reservable is 80,
+      a reserve on `alpha` throws `invalid-input`, the GitHub Project
+      resolves to `beta`; after `actor-1` settles, `beta` reservable is 100.
+
+    - Resolution: a GitHub Project resolves to its item, with the owner in
+      another case too; a bound T3code project resolves `via: "binding"`;
+      a T3code project the GitHub Project binding lists resolves `via:
+      "association"` to the Project's item; the same id on another
+      environment resolves to `other`; an archived binding resolves with
+      `archived: true`; a project `createdProject` answers with `beta`
+      resolves `via: "created"` to `beta` with the actor's id, to its
+      binding's item once a revision binds it, and to `other` once a
+      revision no longer declares `beta`.
+
+    - Created project ownership: with records for `p1` on `beta`, `p2` on
+      `beta` that a binding names on `alpha`, and `p3` on `beta` that is
+      retirable, `createdProjects()` answers `p1` `via: "created"` on
+      `beta`, `p2` `via: "binding"` on `alpha` with `createdItem` `beta`,
+      and `p3` with `retirable` true, each with its actor id, and `p2`'s
+      `usageItem` `alpha/other`, since `alpha` holds `beta`. After a
+      revision that archives `beta` with no binding for `p1`, `p1` reads
+      `unresolved` true and still resolves to `beta`; after a revision that
+      adds an archived binding of `p1` on `beta`, it resolves `via:
+      "binding"` with `archived: true` and reads `unresolved` false; after
+      one that removes that binding, it reads `unresolved` true again.
+
+    - Several projects: `alpha` holds two GitHub Projects and two T3code
+      project bindings, and all four resolve to `alpha`.
+
+    - Usage item: with `alpha` holding `beta` and `gamma`, `usageItem`
+      answers `alpha/other` for `alpha`, `beta` for `beta`, and `other`
+      for `other`; after a revision that archives `beta` and `gamma` it
+      still answers `alpha/other`; after one that removes both from
+      `portfolio.yml` it answers `alpha`.
+
+    - Convergence: `apply` twice with one revision returns `applied` then
+      `unchanged` and leaves one row; a revision at a new commit with the
+      same files returns `unchanged`.
+
+    - Interleaving: two `apply` calls started together, with the first
+      revision's reads delayed, apply in call order, and the second
+      revision is in force.
+
+    - Undeclared account: a revision whose `accounts.yml` declares `acct`
+      and whose `portfolio.yml` allocates `acct` to `alpha` returns
+      `applied` with no warning. A revision that allocates `acct-typo` to
+      `beta` returns `applied` with one `account-undeclared` warning at
+      `/items/beta/allocations/acct-typo`, and `beta` reads a balance of 0
+      for `acct-typo`. A revision with no `accounts.yml` returns `applied`
+      with a warning for each allocation. A revision whose only change is
+      a fixed `accounts.yml` returns `unchanged` with no warning.
+
+    - Schema: the steps applied to an empty database produce the schema of
+      `docs/specifications/portfolio-declarations-table.sql`.
+
+    The host CLI test compiles the binary and runs `portfolio lint` as
+    `host-cli-portfolio-lint` states, including a digit-leading item id,
+    which both the binary and the service reject with a `schema` finding,
+    and an allocation of an undeclared account and a checkout with no
+    `accounts.yml`, which both commands and the service report as the same
+    `account-undeclared` warnings.

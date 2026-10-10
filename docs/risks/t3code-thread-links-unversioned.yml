@@ -1,0 +1,36 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged
+# rather than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: The T3 Code web client's thread route is not a published contract
+
+# GAP-EDGE: the risk schema declares no relationship-types; these edges connect
+# the source design that builds the link and the console design that shows it.
+relationships:
+  related-to:
+    - t3code-environment-source
+    - operator-console
+
+description: >-
+  The operator console links a task's threads to the T3 Code web client at
+  `{url}/{environmentId}/{threadId}`, the route T3 Code 0.0.45's web client
+  declares as `/_chat/$environmentId/$threadId`. T3 Code documents no URL
+  contract for its web client, so a release that renames the route breaks
+  every thread link while the thread itself, its events, and its commands
+  keep working. A broken link shows T3 Code's own not-found page; no
+  Manifold behavior depends on it.
+
+categories:
+  - technical
+
+likelihood: 2
+impact: 2
+
+response-strategy: accept
+# Acceptance: the link is built in one function of the T3 Code source, so a
+# changed route is one change there; the thread id stays on the Task page in
+# mono for an operator to find the thread by hand.
+
+status: open

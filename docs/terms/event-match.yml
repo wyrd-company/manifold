@@ -1,0 +1,9 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - blueprint-expressions
+title: Event Match
+description: >-
+  A JSONata expression over an event that decides whether a transition takes it.

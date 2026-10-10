@@ -1,0 +1,320 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - gates
+  mitigates:
+    - expression-worker-wait-unbounded
+objective: >-
+  Give the user two ways to put logic in the process repository, an
+  expression for anything about one value and a function for anything over a
+  set, so that every guard, mapping, decision, and comparator is a file
+  Manifold can lint, run, and explain, with no third language.
+background:
+  problems:
+    - >-
+      Under XState every guard, action, and input mapping is an implementation
+      referenced by name, which would make every condition a code change if
+      nothing else were provided.
+    - >-
+      A decision model's cells are written in its engine's own expression
+      language, which would be a third language beside the blueprint's
+      expressions and the comparator's code.
+    - >-
+      Unconstrained user code in the service can reach the network, run
+      forever, or grow into a process of its own.
+design-challenges:
+  synchronous-guards: >-
+    XState v5 guards, assignments, and mappings return their result
+    synchronously, and JSONata 2 returns every result as a promise.
+  bounded-wait: >-
+    A thread blocked in `Atomics.wait` runs no event loop, so it cannot
+    observe the `exit` event of the worker it waits on, and a JSONata
+    recursive function in tail position runs in the worker until something
+    stops it.
+  one-language-per-shape: >-
+    A user should be able to say in one sentence why a piece of logic is
+    written the way it is.
+  sandbox-limits: >-
+    A timeout and a memory limit must hold against a function that allocates
+    in a loop, and the lint in the host CLI must check a function without
+    running it.
+  cell-semantics: >-
+    A decision table cell in JSONata has no shorthand; `> 3` is a syntax
+    error and a range literal parses but never matches. What a cell means
+    must be written down and linted.
+proposed-design:
+  high-level-overview: >-
+    JSONata is the expression language everywhere an expression appears:
+    inline in a blueprint for guards, input and output mappings, and event
+    matches, and inside decision models through three custom Zen nodes whose
+    cells, expressions, and conditions are JSONata. TypeScript, run in a
+    QuickJS wasm sandbox, is used only for the comparator, the one function
+    whose input is a set. Decision models remain GoRules JDM files edited in the JDMEditor
+    and evaluated by the Zen engine.
+  blueprint-expressions: >-
+    A guard is a JSONata expression over the actor's context and the event,
+    yielding a boolean. A mapping is a JSONata expression at a schema
+    boundary: the input of a child state machine or invoked implementation,
+    the output of a final state, or the assignment of an event payload into
+    context. An event match is a JSONata expression over the event, yielding
+    a boolean. Each is carried in the YAML as the parameter of one generic
+    implementation, `expression.guard`, `expression.match`,
+    `expression.assign`, or `expression.map`, so the blueprint stays
+    serializable. The specification `blueprint-expressions` defines each
+    shape, what `$` is bound to at each site, and which schemas bound it.
+  expression-lint: >-
+    Every mapping sits between two declared schemas. The lint builds samples
+    from the input schema, evaluates the expression, and validates the result
+    against the output schema. Guards and matches are checked for a boolean
+    result. The samples are each of the schema's `examples`, one generated
+    value with every optional property, and one with required properties
+    only, generated from a fixed seed. The lint binds JSONata's clock to a
+    fixed instant and its random function to a seeded generator, so that a
+    lint result is repeatable. The events a site sees are read from the
+    transitions that reach it in the machine configuration.
+    The lint is a pure function in `packages/shared` over a blueprint's
+    machine and schemas, and the host CLI runs the same function.
+  synchronous-evaluation: >-
+    XState calls guards, assignments, and input and output mappings
+    synchronously, and JSONata evaluates asynchronously. The service
+    evaluates blueprint expressions in one expression worker thread per
+    process and blocks the calling thread with `Atomics.wait` on a shared
+    buffer until the result arrives or the wait reaches its bound, so every
+    implementation is an ordinary synchronous function and works the same in
+    an initial transition, an eventless transition, a restored actor, and a
+    child machine. The worker compiles each expression once and keeps the
+    compiled form by its source text. The worker holds no state the service
+    needs: a restarted worker or service starts empty, and a replayed event
+    evaluates again from the same snapshot.
+  worker-wait: |-
+    The expression worker runs under a supervisor thread, and the two are a
+    pair. The calling thread starts the supervisor, unreferenced so that it
+    does not keep the process alive, and the supervisor starts the
+    expression worker and watches it. A pair has one `SharedArrayBuffer` and
+    one `MessagePort` between the calling thread and the worker. The calling
+    thread posts a request on the port and waits on the buffer. The worker
+    posts the result on the port and wakes the calling thread, which reads
+    it with `receiveMessageOnPort`. The supervisor's event loop never blocks,
+    so it receives the worker's `exit` event and records the exit in the
+    buffer.
+
+    The channel is one module, `packages/service/src/expression-worker-channel.ts`,
+    built on `node:worker_threads`. It exports the calling side and the
+    worker side, so the expression worker and a test's fixture worker serve
+    requests through the same code:
+
+    ```ts
+    export function createExpressionWorkerChannel(options: {
+      worker: URL; // a module that calls serveExpressionWorker
+      onPair?(event: { pair: number; phase: "started" | "ended" }): void;
+    }): ExpressionWorkerChannel;
+
+    export interface ExpressionWorkerChannel {
+      evaluate(request: unknown, timeoutMs: number): ChannelResult;
+      close(): Promise<void>;
+    }
+
+    export type ChannelResult =
+      | { readonly ok: true; readonly value: unknown }
+      | { readonly ok: false; readonly cause: "timeout" }
+      | { readonly ok: false; readonly cause: "exit"; readonly exitCode: number };
+
+    export function serveExpressionWorker(
+      handler: (request: unknown) => Promise<unknown>,
+    ): void;
+    ```
+
+    `evaluate` blocks until its outcome is decided. `onPair` runs on the
+    calling thread's event loop. A pair is `started` when the channel
+    creates its supervisor. It is `ended` when the supervisor's `exit` event
+    fires, which follows the end of the worker. Pairs are numbered from 1 in
+    the order the channel starts them. `close` discards the current pair, if
+    there is one, and resolves when every pair the channel started has
+    ended. A second call does the same, so it resolves at once. The service
+    never closes its channel.
+
+    Arbitration. The buffer holds two words, the pair's `state` and its
+    `life`, and the worker's exit code. Each request and each result
+    carries the sequence number of its evaluation, and the calling thread
+    drops a message whose number is not the current one. Every step is a
+    sequentially consistent `Atomics` operation on one word. `life` is
+    `alive` until the supervisor stores `exited`, and never changes again.
+    `state` moves only by `Atomics.compareExchange`, so each step has one
+    winner:
+
+    | From | To | By | When |
+    |---|---|---|---|
+    | `idle` | `pending` | caller | it claims the pair for a request |
+    | `pending` | `untaken` | caller | after its claim, it reads `life` as `exited` |
+    | `pending` | `running` | worker | it takes the request |
+    | `running` | `done` | worker | it has posted the result |
+    | `pending` | `untaken` | supervisor | the worker exits |
+    | `running` | `failed` | supervisor | the worker exits |
+    | `pending`, `running` | `abandoned` | caller | the wait reaches its deadline |
+    | `done` | `idle` | caller | it has read the result |
+
+    The handshake has two ordered halves. The caller first claims the pair
+    by exchanging `idle` for `pending`, and only then reads `life`. If it
+    reads `exited`, it exchanges `pending` for `untaken` and posts nothing.
+    Otherwise it posts the request and waits. The supervisor first stores
+    the exit code and `exited` in `life`, and only then exchanges `pending`
+    for `untaken`, or `running` for `failed`, and wakes the calling thread.
+    Both halves are sequentially consistent, so the two threads cannot both
+    miss each other. Either the caller's read of `life` follows the
+    supervisor's store and sees `exited`, or the supervisor's exchange
+    follows the caller's claim and finds `pending`. In both cases the
+    evaluation reaches `untaken` without waiting for the deadline, whatever
+    the interleaving. The caller always finds `idle` when it claims a
+    current pair: the channel discards a pair on every terminal state
+    except `done`, and it returns `done` to `idle` once it has read the
+    result.
+
+    The worker posts the result before it moves the state to `done`, so the
+    calling thread finds the result on the port whenever it sees `done`.
+    Only `done`, `failed`, `untaken`, and `abandoned` end a wait, and none of
+    them is ever overwritten. A result that the worker publishes before it
+    exits therefore stands. An exit while the worker holds an evaluation
+    fails that evaluation. An exit before the worker takes the request is
+    never charged to that request.
+
+    The handshake and every transition are pure functions over the buffer's
+    `Int32Array`, exported from `packages/service/src/expression-worker-protocol.ts`,
+    one function per step: `claim`, `confirm`, `take`, `complete`,
+    `recordExit`, `abandon`, and `release`. The channel and
+    `serveExpressionWorker` call them, and a test calls them on a buffer in
+    one thread in any order it chooses.
+
+    One evaluation has one deadline, `timeoutMs` after `evaluate` is called,
+    and it runs as follows:
+
+    1. If the current pair's `life` is `exited`, the channel discards it.
+    2. If there is no current pair, the channel starts one.
+    3. The caller claims the pair and confirms `life`. If the confirm
+       finds `exited`, the state is `untaken` and step 6 follows.
+       Otherwise it posts the request and waits on the buffer until the
+       deadline.
+    4. On `done`, the result is the outcome.
+    5. On `failed`, the outcome is `exit` with the worker's exit code, and
+       the pair is discarded.
+    6. On `untaken`, the pair is discarded and the request is sent once
+       more on a new pair, within the same deadline. A second `untaken`
+       fails the evaluation with `exit`, so a worker that cannot start
+       fails at once and does not restart in a loop.
+    7. When the wait reaches the deadline, the caller exchanges `pending` or
+       `running` for `abandoned`. If the exchange wins, the outcome is
+       `timeout` and the pair is discarded. If the exchange loses, the
+       state the other thread reached decides. On `done`, the result is the
+       outcome. On `failed`, the outcome is `exit`. On `untaken`, the
+       outcome is `timeout`, because no time is left to send the request
+       again. After `failed` or `untaken`, the pair is discarded.
+
+    An evaluation worker that exits between evaluations therefore never
+    fails the next evaluation and never makes it wait for the deadline.
+    Step 1 catches an exit the supervisor recorded before the evaluation
+    began. The handshake in step 3 catches one that lands at any point
+    after that, before the worker takes the request.
+
+    Discarding a pair calls `terminate` on its supervisor, which ends the
+    worker with it. `Worker.terminate` interrupts the isolate, so it stops a
+    worker that is inside a JSONata loop. The channel drops the pair's
+    buffer and port, so a message from a discarded pair is never read.
+    Termination is asynchronous: the channel stops using a pair as soon as
+    it discards it, and the pair reports `ended` once its threads have gone.
+    At any moment the channel has at most one current pair. Every other pair
+    it started has been terminated and is either still ending or has
+    reported `ended`. Discarding is idempotent: terminating a pair that is
+    already terminated or has already ended does nothing, and a pair reports
+    `ended` once. A service that stops during a wait loses only threads, and
+    the event replays from the last saved snapshot.
+
+    Bound. The wait is bounded by `timeoutMs` of the `expressions` section of
+    service configuration, per `expressions-configuration`, default 1000.
+    The bound covers the whole round trip: a pair start when one is due,
+    compilation, evaluation, and the result. A pair start, which loads
+    JSONata and `packages/shared`, takes about a hundred milliseconds, and a
+    typical evaluation takes well under one. So the default holds several
+    starts, and the minimum of 250 holds one: the first evaluation after a
+    restart is not failed by the start alone. The maximum of 60000 caps how
+    long one runaway expression holds the calling thread.
+
+    Errors. `createBlueprintExpressions` turns a `timeout` or `exit` outcome
+    into an `ExpressionError` of kind `evaluation` that names the expression
+    and its location, with the message the specification
+    `blueprint-expressions` gives. The failure takes the existing expression
+    error path, so an actor sees it as it sees any other evaluation error. A
+    guard or match does not pass. An assignment raises `expression.error`. A
+    mapping stops the actor in error. Each is reported to `onError`. An
+    expression that never finishes holds the calling thread, and every actor
+    it runs, for the bound each time it is evaluated.
+
+    `configureBlueprintExpressions` sets the bound for the process. The
+    service calls it once at start with the `expressions` section, before it
+    loads a blueprint. A later call applies from the next evaluation. The
+    expression lint and the host CLI await JSONata in their own thread, and
+    they use neither the worker nor the bound.
+  expression-errors: >-
+    A failed expression yields an `ExpressionError` naming its kind (syntax,
+    evaluation, result, or schema), the expression, its location in the
+    blueprint as a JSON Pointer, and the JSONata error code and character
+    position when JSONata supplies them. A guard or match that fails does not
+    pass. An assignment that fails writes nothing to context and raises an
+    `expression.error` event the blueprint may handle. An input or output
+    mapping that fails throws, and the actor stops in error; the store keeps
+    the last good snapshot. Every failure is also reported to the service
+    through one callback, so it can be recorded.
+  jsonata-primitive: >-
+    `packages/shared` holds one JSONata primitive: compile an expression to
+    a compiled form or a syntax error, and evaluate a compiled form over an
+    input and bindings to a value or an evaluation error. The blueprint
+    worker, the expression lint, and the decision model nodes use it, so
+    JSONata has one version and one error shape in Manifold.
+  decision-models: >-
+    Manifold ships three custom Zen node types, a decision table, an
+    expression node, and a switch, with JSONata cells, expressions, and
+    conditions, built on the editor's exported table component and evaluated
+    by a host handler beside the engine. Input, output, and graph stay stock;
+    no decision model holds an expression in Zen's own language. The service
+    routes a JSONata switch through a generated stock switch that reads one
+    boolean per statement the handler computed. Hit policy, pass-through,
+    input field, output path, and loop mode are controls on the node card. A
+    setting that reads a value is JSONata; a setting that names a place is a
+    dotted path. The service evaluates a set of models through one Zen engine
+    whose custom handler runs the three kinds over JSONata compiled once at
+    load, and the lint in `packages/shared` checks a model without
+    evaluating it. The engine and editor versions are pinned; a contract test
+    guards the engine's error envelope and a browser check guards the
+    undocumented editor behaviour the table relies on. The specification
+    `decision-models` defines the node configurations, the evaluation, the
+    record, and the lint.
+  cell-semantics: >-
+    An input cell is a JSONata expression evaluated with the column's value
+    bound as `$` and the whole input bound as `$input`; an empty cell matches
+    anything; a cell matches when its result is true. An output cell is a
+    JSONata expression evaluated against the input whose result is the
+    column's value; a blank output cell or one with no result writes nothing.
+    The lint rejects a cell that does not parse and warns on an input cell
+    whose result is provably never boolean from the shape of its syntax tree;
+    a cell it cannot classify is left to strict matching at run time.
+  comparator-sandbox: >-
+    A comparator is a TypeScript module exporting one function typed by a
+    declaration file Manifold ships. The service transpiles it with the
+    TypeScript compiler API in-process and runs it in a fresh QuickJS wasm
+    instance per load with a capped memory and a per-evaluation timeout,
+    both set in service configuration with shipped defaults. The
+    function sees only its input; there is no import, no global, no network,
+    no timer, no clock. A seeded random and the values age is derived from
+    are inputs. A comparator that exceeds its limit fails the evaluation and
+    the gate records the failure and waits for the next input change.
+  comparator-lint: >-
+    The host CLI typechecks a comparator against the declaration file with
+    the TypeScript 6 compiler API in-process, rejecting a wrong signature and
+    any use of an undeclared host global. Library files are embedded in the
+    Bun binary. The CLI does not run the function.
+  explainability: >-
+    Each comparator evaluation is recorded with its input, output, and seed.
+    Each decision model evaluation is recorded with its input and the trace
+    the engine returns. The engine's trace names a failing node but not its
+    rule or column, so the handler carries the failing cell's location
+    through the engine's error, and the service writes it into the failing
+    node's trace, so the record names the node, rule, and column of any
+    failing cell.

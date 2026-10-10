@@ -1,0 +1,106 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - agent-tools
+    - host-cli-hook
+terms:
+  - harness-plugin
+description: |-
+  Defines the `mcp` command of the host CLI, `manifold-host`, which is the
+  harness plugin, and how it is registered in each provider T3 Code runs.
+  `docs/specifications/host-cli-mcp.cli.yml` is the machine-readable
+  command definition.
+
+  `manifold-host mcp --service <url> --environment <name>` serves the
+  Model Context Protocol over standard input and output as server
+  `manifold`, with the tools `handoff`, `escalate`, and `get-messages`
+  that `agent-tools` defines. For each tool call it sends one request to the service at
+  `--service` as the environment named `--environment`, and returns the
+  service's answer as the tool result, as `agent-tools` defines. It waits
+  for each response at most `--request-timeout-ms` milliseconds, default
+  30000. It sends no authentication credential; deployment controls access
+  to the service API. It reads no file and writes no file, keeps nothing
+  between calls, and writes to standard output only the protocol.
+  Standard error carries messages about the command line and each failed
+  request. It runs until standard input closes, and then exits 0.
+
+  Registration. A provider harness starts the plugin from a registration
+  in that provider's user-level MCP configuration, under the key
+  `manifold`. The command is the path of the installed binary. The
+  examples use the service `http://127.0.0.1:8080` and the environment
+  `workstation`.
+
+  Claude reads `.claude.json` in its configuration directory,
+  `CLAUDE_CONFIG_DIR` or the home directory:
+
+  ```json
+  {
+    "mcpServers": {
+      "manifold": {
+        "type": "stdio",
+        "command": "/usr/local/bin/manifold-host",
+        "args": ["mcp", "--service", "http://127.0.0.1:8080", "--environment", "workstation"]
+      }
+    }
+  }
+  ```
+
+  Codex reads `config.toml` in its home, `CODEX_HOME` or `~/.codex`:
+
+  ```toml
+  [mcp_servers.manifold]
+  command = "/usr/local/bin/manifold-host"
+  args = ["mcp", "--service", "http://127.0.0.1:8080", "--environment", "workstation"]
+  ```
+
+  Cursor reads `~/.cursor/mcp.json`:
+
+  ```json
+  {
+    "mcpServers": {
+      "manifold": {
+        "command": "/usr/local/bin/manifold-host",
+        "args": ["mcp", "--service", "http://127.0.0.1:8080", "--environment", "workstation"]
+      }
+    }
+  }
+  ```
+
+  OpenCode reads `~/.config/opencode/opencode.json`:
+
+  ```json
+  {
+    "mcp": {
+      "manifold": {
+        "type": "local",
+        "command": ["/usr/local/bin/manifold-host", "mcp", "--service", "http://127.0.0.1:8080", "--environment", "workstation"],
+        "enabled": true
+      }
+    }
+  }
+  ```
+
+  The plugin's hook, which tells an agent of new messages during its
+  turn, is registered beside it, as `host-cli-hook` gives.
+
+  Grok's registration is not measured; a Grok agent identifies its calls
+  with the `thread` argument once its harness loads the plugin. The
+  evidence for each registration is the provider table of `agent-tools`.
+format: cli
+validation-criteria: >-
+  The command surface conforms to
+  `docs/specifications/host-cli-mcp.cli.yml`. The binary test in
+  `packages/host-cli` compiles the binary, runs `manifold-host mcp` with an
+  MCP client over its standard input and output against a test HTTP server,
+  and checks that `tools/list` returns exactly `agentToolDefinitions`; that
+  a `tools/call` sends one request that validates against
+  `#/$defs/call-request` of `docs/specifications/agent-tools.schema.yml`,
+  with the call's arguments and `_meta`, and no Authorization header; that
+  an accepted response, a refusal, a response held past
+  `--request-timeout-ms`, and a refused connection each give the result
+  `agent-tools` defines; that every line on standard output is a protocol
+  message; and that closing standard input exits 0. A command line with an
+  unknown option, no `--service`, or an environment name that is not a
+  declared name exits 2 before serving.

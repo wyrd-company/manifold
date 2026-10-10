@@ -1,0 +1,175 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: agent-threads
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/agent-threads
+title: Agent threads
+description: >-
+  The inputs, outputs, and errors of the `t3code-project-create`,
+  `thread-create`, `turn-prepare`, and `turn-start` implementations. Each string field holds to the command
+  schema of the T3 Code client release once trimmed.
+$defs:
+  non-blank:
+    description: A string that is not empty after trimming.
+    type: string
+    pattern: "\\S"
+  id:
+    description: An id as the T3 Code server takes it.
+    $ref: "#/$defs/non-blank"
+  provider-instance:
+    description: >-
+      A provider instance id: letters, digits, `-`, and `_`, starting with a
+      letter, at most 64 characters, with optional surrounding whitespace.
+    type: string
+    pattern: "^\\s*[a-zA-Z][a-zA-Z0-9_-]{0,63}\\s*$"
+  template:
+    description: A Nunjucks template.
+    $ref: "#/$defs/non-blank"
+  repository-path:
+    description: A repository-relative path with `/` separators.
+    type: string
+    pattern: "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))(?!.*//)[^\\\\]+$"
+  values:
+    description: The object the templates render against.
+    type: object
+    default: {}
+  model:
+    type: object
+    required: [instanceId, model]
+    properties:
+      instanceId:
+        $ref: "#/$defs/provider-instance"
+      model:
+        $ref: "#/$defs/non-blank"
+      options:
+        description: Option id to value.
+        type: object
+        propertyNames:
+          pattern: "\\S"
+        additionalProperties:
+          oneOf:
+            - $ref: "#/$defs/non-blank"
+            - type: boolean
+    additionalProperties: false
+  runtime-mode:
+    enum: [approval-required, auto-accept-edits, auto, full-access]
+  interaction-mode:
+    enum: [default, plan]
+  optional-path:
+    oneOf:
+      - $ref: "#/$defs/non-blank"
+      - type: "null"
+    default: null
+  project-create-input:
+    type: object
+    required: [title, workspaceRoot]
+    properties:
+      environment:
+        description: >-
+          The name of an environment service configuration declares.
+          Default: the invoking actor's environment.
+        $ref: "#/$defs/non-blank"
+      title:
+        $ref: "#/$defs/template"
+      workspaceRoot:
+        description: >-
+          A Nunjucks template whose render, trimmed, is absolute under the
+          path rules of the environment's host platform, with no control
+          character.
+        $ref: "#/$defs/template"
+      values:
+        $ref: "#/$defs/values"
+      createWorkspaceRoot:
+        description: >-
+          Whether the server makes a workspace root that does not exist.
+        type: boolean
+        default: false
+    additionalProperties: false
+  project-create-output:
+    type: object
+    required: [projectId]
+    properties:
+      projectId:
+        $ref: "#/$defs/id"
+    additionalProperties: false
+  thread-create-input:
+    type: object
+    required: [project, title, model]
+    properties:
+      project:
+        $ref: "#/$defs/id"
+      title:
+        $ref: "#/$defs/template"
+      values:
+        $ref: "#/$defs/values"
+      model:
+        $ref: "#/$defs/model"
+      runtimeMode:
+        $ref: "#/$defs/runtime-mode"
+        default: full-access
+      interactionMode:
+        $ref: "#/$defs/interaction-mode"
+        default: default
+      branch:
+        $ref: "#/$defs/optional-path"
+      worktreePath:
+        $ref: "#/$defs/optional-path"
+    additionalProperties: false
+  thread-create-output:
+    type: object
+    required: [threadId]
+    properties:
+      threadId:
+        $ref: "#/$defs/id"
+    additionalProperties: false
+  turn-prepare-output:
+    type: object
+    required: [messageId]
+    properties:
+      messageId:
+        $ref: "#/$defs/id"
+    additionalProperties: false
+  turn-start-input:
+    type: object
+    required: [threadId, messageId, prompt]
+    properties:
+      threadId:
+        $ref: "#/$defs/id"
+      messageId:
+        $ref: "#/$defs/id"
+      prompt:
+        $ref: "#/$defs/repository-path"
+      values:
+        $ref: "#/$defs/values"
+      model:
+        $ref: "#/$defs/model"
+      runtimeMode:
+        $ref: "#/$defs/runtime-mode"
+      interactionMode:
+        $ref: "#/$defs/interaction-mode"
+    additionalProperties: false
+  turn-start-output:
+    type: object
+    required: [threadId, messageId]
+    properties:
+      threadId:
+        $ref: "#/$defs/id"
+      messageId:
+        $ref: "#/$defs/id"
+    additionalProperties: false
+  error:
+    type: object
+    required: [name, kind, message]
+    properties:
+      name:
+        const: AgentThreadError
+      kind:
+        enum: [input, environment, archived, template, rejected, unauthorized]
+      message:
+        type: string
+      serverMessage:
+        type: string
+    additionalProperties: false

@@ -1,0 +1,78 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no schema declares an edge from an asset to its
+#   # specification; `asset-of` names it.
+#   asset-of: price-table
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/price-table
+title: Price table
+description: >-
+  The prices of model tokens in one unit: the document in `prices.yml` at
+  the root of the process repository, and the bundled price table. An
+  empty document declares no prices.
+type: object
+additionalProperties: false
+properties:
+  unit:
+    description: The unit of every price in the table.
+    type: string
+    enum: [usd]
+  models:
+    description: Price entries, keyed by model id.
+    type: object
+    propertyNames:
+      minLength: 1
+    additionalProperties:
+      $ref: "#/$defs/entry"
+dependentRequired:
+  models: [unit]
+$defs:
+  price:
+    description: A non-negative decimal.
+    type: number
+    minimum: 0
+  prices:
+    type: object
+    additionalProperties: false
+    required:
+      - input
+      - output
+    properties:
+      input:
+        description: Per million input tokens.
+        $ref: "#/$defs/price"
+      output:
+        description: Per million output tokens.
+        $ref: "#/$defs/price"
+      cacheRead:
+        description: Per million cache-read tokens.
+        $ref: "#/$defs/price"
+      cacheWrite:
+        description: Per million cache-write tokens of the default lifetime.
+        $ref: "#/$defs/price"
+      cacheWriteOneHour:
+        description: Per million cache-write tokens with a one-hour lifetime.
+        $ref: "#/$defs/price"
+      reasoning:
+        description: Per million reasoning tokens; the output price when absent.
+        $ref: "#/$defs/price"
+      webSearchRequest:
+        description: Per web search request.
+        $ref: "#/$defs/price"
+  entry:
+    type: object
+    additionalProperties: false
+    required:
+      - standard
+    properties:
+      aliases:
+        type: array
+        uniqueItems: true
+        items:
+          type: string
+          minLength: 1
+      standard:
+        $ref: "#/$defs/prices"
+      fast:
+        $ref: "#/$defs/prices"

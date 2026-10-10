@@ -1,0 +1,95 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - store
+  references:
+    - durable-event-delivery
+    - retention
+description: >-
+  Defines the tables the store owns in Manifold's SQLite database file.
+  `docs/specifications/store-database-schema.sql` is the machine-readable
+  definition: the schema that a store opened on an empty file produces.
+
+  File. One SQLite file holds every table Manifold's store keeps. The store
+  opens it, owns the one connection to it, and sets `journal_mode = WAL`,
+  `synchronous = FULL`, and `foreign_keys = ON` on that connection. Every
+  other module that keeps tables in the file receives the connection from the
+  store.
+
+  Owners. Every table belongs to one owner. An owner is a lower-case word,
+  and every table and index it creates is named `<owner>_<name>`. The store's
+  owner is `store`. `schema_migration` is the one shared table: it holds one
+  row per owner with the number of that owner's migration steps applied.
+
+  Snapshots. `store_snapshot` holds one row per actor with the last snapshot
+  whose status is `active`, `done`, or `stopped`. `machine` names the
+  blueprint the actor runs. `snapshot` is the persisted snapshot as JSON.
+  `history_pruned_at` is null until retention removes the history of an
+  ended actor, and then holds when it did; an active snapshot never has
+  one. The `store_snapshot_prunable` index lists the ended snapshots whose
+  history is not yet pruned, in the order they ended.
+  `store_snapshot_state` holds one row per state node active in that
+  snapshot, named by its state path: the keys from the root of the state
+  value to the node, joined with `.`. A state value `{ open: { lifecycle:
+  ready } }` has the state paths `open`, `open.lifecycle`, and
+  `open.lifecycle.ready`. The rows of an actor are replaced in the same
+  transaction as its snapshot row. Two indexes serve the state query: one by machine
+  and state path, for the actors of one machine in a state, and one by
+  state path alone, for the actors of every machine in a state.
+
+  Errored snapshots. `store_errored_snapshot` holds one row per actor with
+  the last snapshot whose status is `error`, and the event id whose delivery
+  produced it when there is one. An errored snapshot is never written to
+  `store_snapshot`.
+
+  Inbox. `store_inbox` holds one row per target actor per event. `sequence`
+  is the insertion order and is never reused. `(actor_id, event_id)` is
+  unique, so a second write of the same event to the same actor holds one
+  row. `payload` is the event as JSON. A row is pending while `consumed_at` is
+  null. A consumed row stays until retention prunes its ended actor; a
+  pending row is never deleted.
+
+  Deadlines. `store_deadline` holds one armed deadline per actor, state path,
+  and event name. `deadline_id` identifies one arm and is never reused, so a
+  re-entry of the state that arms the deadline again gets a new id.
+  `fire_at` is the time at which the event is due. `entry_id` names the
+  entry into the state that armed the row. `fired_at` is null while the
+  deadline is armed and holds the time it fired after that; a fired row stays
+  for the rest of its entry, so the entry does not fire twice. A row exists
+  only while its state path is active in the actor's snapshot.
+
+  Migration failures. `store_migration_failure` holds at most one row per
+  actor: the last migration of the actor to a later blueprint version that
+  failed. `from_machine` is the version key the actor stayed on,
+  `to_machine` the key it could not take, `kind` why, `message` and
+  `detail` what the operator reads, the detail as JSON. A row exists only
+  while the actor's snapshot is `active` and saved with `from_machine`.
+  One index by `to_machine` lists the actors that failed toward one
+  version.
+
+  Text. A TEXT column holds a string's UTF-8 bytes, and a NUL (U+0000) is a
+  character like any other. A column that must not be empty is checked with
+  `<column> <> ''`, never with `length`, which counts only the characters
+  before the first NUL. Every column that holds a string from outside the
+  store is read as `CAST(<column> AS BLOB)`, as `store` (text values)
+  states: `actor_id`, `machine`, `state_path`, `event_id`, `topic`,
+  `event_name`, `entry_id`, `from_machine`, `to_machine`, and `message`.
+  `snapshot`, `payload`, and `detail` hold JSON written with
+  `JSON.stringify`, which writes a NUL as an escape.
+
+  Times. Every time is an integer count of milliseconds since the Unix epoch.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/store-database-schema.sql` runs without error on an
+  empty SQLite database. A test opens a store on an empty file and compares
+  the `type`, `name`, `tbl_name`, and `sql` of every `sqlite_schema` row whose
+  name is `schema_migration`, `sqlite_sequence`, or starts with `store_` with
+  the rows the same file's statements produce on a second empty database,
+  with each run of whitespace in `sql` read as one space; they are equal.
+  After the store opens, `schema_migration` holds the row `('store', 1)`.
+  No `CHECK` constraint of a `store_` table calls `length`.

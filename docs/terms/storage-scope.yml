@@ -1,0 +1,14 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - task-metadata-declaration
+    - task-metadata
+title: Storage Scope
+description: >-
+  Where a task field's configuration lives: its Project for a Project
+  field, an organization for an issue field or issue type, and each
+  repository of a binding's `repositories` for a label or milestone. An
+  organization or a repository is a shared scope, owned together by every
+  binding whose task fields reach it.

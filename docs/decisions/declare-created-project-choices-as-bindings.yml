@@ -1,0 +1,58 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - portfolio
+    - declarations-api
+    - t3code-environment-source
+  references:
+    - remember-created-projects-in-the-store
+description: >-
+  An operator who archives a portfolio item chooses, for each project
+  attached to it, to move it to the parent, reassign it to a sibling, or
+  archive it. A T3code project that a task created resolves to the
+  creating actor's item from a record in Manifold's store, and a declared
+  binding takes precedence over that record. The archive saves
+  `portfolio.yml` and `bindings.yml` in one commit through
+  `Revisions.save`, which a `saveId` makes idempotent across a crash. The
+  choice for a created project must live somewhere resolution reads, and
+  the archive must stay one coherent operation: a failed save publishes
+  no part of it, and a crash at any point converges after a restart.
+considered-options:
+  "1": >-
+    Declare the choice as a binding. The archive commit adds a T3code
+    project binding for each created project: the parent for a move, the
+    sibling for a reassign, and the record's item with `archived: true`
+    for an archive. The record in the store stays as written.
+  "2": >-
+    Record the choice in the store. A column or table beside
+    `t3_created_project` holds each project's chosen item or archive, and
+    a journal row orders the commit and the store write, so that a crash
+    between them is finished or undone on restart.
+  "3": >-
+    Edit the record. The archive overwrites the record's item, after the
+    commit is pushed.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    The choice is a declaration the operator makes, and the process
+    repository is where the user's declarations live. Option 1 puts the
+    whole archive in one commit, so the save's existing atomicity and
+    `saveId` recovery cover it, with no journal and no cross-store
+    boundary. It uses the precedence resolution already has, so usage
+    attribution and the portfolio's resolution do not change. The reason
+    `remember-created-projects-in-the-store` gives against a binding, a
+    commit in the path of every project create, does not apply, since the
+    archive is already a commit the operator asks for. Option 2 splits one
+    operator decision across the store and the repository, adds a journal
+    that must converge across every crash point, and makes the store hold
+    a declaration. Option 3 loses the creation provenance and has the same
+    cross-store ordering problem as option 2.
+expected-outcomes:
+  positive:
+    - A failed archive save leaves neither the archive nor any project choice, in the repository or in the store.
+    - A crash at any point of an archive converges by retrying the same `saveId`.
+    - The created project's creation provenance, its actor and item at creation, never changes.
+    - The process repository shows where each archived item's created projects went.
+  negative:
+    - The archive adds bindings with generated names to `bindings.yml`, which the operator may rename or remove.
+    - An operator who removes such a binding returns the project to its record's item, which the console then lists as unresolved when that item is archived.

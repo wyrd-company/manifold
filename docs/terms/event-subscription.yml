@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - router-events
+title: Subscription
+qualifier: event
+description: >-
+  The topics an actor hears and the event types it takes, derived from its
+  snapshot and its blueprint.

@@ -1,0 +1,38 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - agent-threads
+description: >-
+  `thread-create` starts an agent thread with a runtime mode, the
+  permission its agent runs with: `approval-required`,
+  `auto-accept-edits`, `auto`, or `full-access`. A thread Manifold starts
+  works while no one watches it, and an agent that stops for an approval
+  waits until a person answers in T3 Code.
+considered-options:
+  "1": >-
+    Optional, default `full-access`. A blueprint that names no mode starts
+    an agent that needs no approvals; a blueprint names a narrower mode
+    where it wants one.
+  "2": >-
+    Required, no default. Every `thread-create` names its mode, so the
+    process author always declares the agent's permission level.
+  "3": >-
+    Optional, default `approval-required`. A blueprint that names no mode
+    starts an agent that asks before each action.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 matches what an unattended pass is for: the agent does the
+    work and hands off. The process author still narrows the mode per
+    thread, and the environment the thread runs in, its machine and its
+    credentials, is the operator's to bound. Option 2 adds a field every
+    blueprint repeats with the same value. Option 3 stops every pass on
+    its first action until a person approves it in T3 Code, which no
+    Manifold escalation reaches.
+expected-outcomes:
+  positive:
+    - A blueprint starts an agent that works to handoff with no runtime mode declared.
+    - A process narrows the permission of a thread by naming its mode.
+  negative:
+    - An agent started without a declared mode can change anything its environment lets it change.
+    - Bounding what agents may do falls to the environment's machine and credentials.

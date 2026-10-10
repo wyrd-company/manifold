@@ -1,0 +1,681 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - retention
+    - durable-event-delivery
+    - store
+    - agent-threads
+  mitigates:
+    - t3code-thread-resume-bounded
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  references:
+    - router-events
+    - t3code-thread-events
+    - t3code-environments-configuration
+    - t3code-source-database-schema
+    - environment-control
+objective: >-
+  Turn the activity of every thread on every configured T3 Code environment
+  into thread changes published through the router, so that an actor hears
+  its thread through routing by thread id alone, a restart or a lost
+  connection resumes where the source stopped, and an environment that is
+  down holds back no other environment.
+background:
+  problems:
+    - >-
+      T3 Code 0.0.45 has no stream of every thread's events. The shell
+      subscription covers the environment and sends thread summaries; the
+      thread subscription sends one thread's detail events. Thread creation,
+      turn start, archive, and delete reach a client only as shell state.
+    - >-
+      Resume is bounded. A thread replays from `afterSequence` only while the
+      range holds at most 1000 of its stored events and 8 MiB of payload and
+      holds no `thread.created`; the shell replays only while the head is at
+      most 1000 events past the cursor. Past a bound the server sends a
+      snapshot of current state in place of the events.
+    - >-
+      Assistant text is stored as one event per paragraph and every tool
+      update is an activity, so raw events are many, and the live stream
+      coalesces tool updates that the replay sends one by one.
+design-challenges:
+  completeness: >-
+    Every change in a thread's turn, requests, and session that the server
+    lets a client observe is published once, across restarts, lost
+    connections, and replays the server replaces with a snapshot.
+  identity: >-
+    A change reached through a replay, through a snapshot, and live must
+    carry one event id, so that the router's replay rule removes the
+    duplicate.
+  following: >-
+    The source follows every non-archived thread without holding a
+    subscription open for each idle one.
+  isolation: >-
+    One environment that is down, rejects the credential, or sends what the
+    source cannot use stops nothing on another environment.
+proposed-design:
+  high-level-overview: >-
+    The T3 Code environment source is one module,
+    `packages/service/src/t3code-source/`, started once per service with the
+    store, the router, the `environments` section of service configuration,
+    and the credentials. For each configured environment it holds one
+    `T3Client` from `@wyrd-company/t3code-client`, so one socket carries the
+    environment's shell subscription and one thread subscription per thread
+    it is catching up. For each followed thread it keeps a compact thread in
+    the store: the client's projected `OrchestrationThread` reduced to what
+    decides the thread state. Each stream item the client delivers is
+    applied to the compact thread, the thread state before and after are
+    compared, and each thread change is published under the thread's topic
+    with an event id drawn from the change itself, in the transaction that
+    stores the new compact thread and cursor. The source name is `t3`. The
+    events, topics, and ids are specified in `t3code-thread-events`, the
+    configuration in `t3code-environments-configuration`, and the tables in
+    `t3code-source-database-schema`.
+  thread-state: >-
+    A thread state is a pure function of a compact thread: the thread's
+    project id; its latest turn, with turn id, state (`running`,
+    `completed`, `interrupted`, or `error`), assistant message id, and the
+    id of the user message that requested it, as turn attribution gives it;
+    its
+    open requests, each with request id, kind (`approval` or `user-input`),
+    and the opening activity's payload, in activity order, as the client's
+    `pendingRequests` returns them; and its session's status, last error,
+    and update time. A turn state or session status the client decodes as
+    unknown counts as no turn and no session.
+  compact-thread: >-
+    The compact thread is the `OrchestrationThread` with `messages` and
+    `proposedPlans` empty, each checkpoint's `files` empty, and `activities`
+    holding only the activities that open a request still open. It is
+    reduced after every applied event. The client's `applyThreadEvent` reads
+    from the thread only what the compact thread keeps, so applying an event
+    to the compact thread and reducing it gives the same thread state as
+    applying it to the full thread, a revert included, since a revert reads
+    the checkpoints' turn ids and statuses.
+  turn-attribution: >-
+    T3 Code records on each turn the user message whose request the turn
+    took, and exposes it to no client, so the source keeps the attribution
+    beside the compact thread: the id of the latest turn, the id of the
+    user message that requested it or none, and the pending message, the
+    id of the last user message sent that no turn has taken yet. An applied
+    `thread.message-sent` event of a user message sets the pending message.
+    After any applied item, a latest turn whose id differs from the stored
+    one takes the pending message as its message, and the pending message
+    is cleared; this is the server's own rule, under which each turn start
+    request replaces the pending one and the next turn to start takes it,
+    so a message sent while a turn runs goes to the next turn that starts.
+    A `snapshot` item carries no order of events, so it attributes by
+    time, since the server sets a turn's `requestedAt` and its user
+    message's `createdAt` from the server-normalized `createdAt` of the command that
+    requested the turn. A new latest turn in a snapshot takes the user
+    message whose `createdAt` equals the turn's `requestedAt` only when
+    exactly one user message has that time; with none or more than one it
+    takes none. The pending message from a snapshot is the user message
+    with the latest `createdAt` after the turn's `requestedAt`, or after
+    no time when the thread has no turn, only when exactly one user message
+    has that latest time; otherwise there is none. Two messages with one
+    time are never told apart by a guess, so an attribution is either the
+    message that requested the turn or none, and a turn with none is
+    published with `null`, which no actor's guard takes; that actor waits
+    on the deadline or escalation its blueprint gives the turn. The
+    baselines at the origin take their attribution from the read model by
+    the same rule. A turn first observed with no attribution has none, and
+    its changes carry `null`.
+  message-placement: >-
+    The source reports where each user message of a thread lands, for the
+    agent tools module's answers, through the `messagePlaced` option. An
+    applied `thread.message-sent` event of a user message whose thread
+    state has its latest turn `running` reports `joined` with that turn's
+    id, since T3 Code adds a message sent during a turn to the running
+    turn. A new latest turn that takes a message by turn attribution
+    reports `started` with the turn's id. A user message first seen in a
+    `snapshot` item that no turn takes reports `joined` with the latest
+    turn's id when that turn's `requestedAt` is before the message's
+    `createdAt` and the turn is running or its `completedAt` is after it,
+    and `unknown` with no turn otherwise. The hook runs inside the item's
+    transaction, before the source publishes the item's changes, so a row
+    the hook writes commits with them and precedes them in an actor's
+    inbox. The compact thread keeps no messages, so a placement is reported
+    as the item that places it is applied, and an item applied again after
+    a crash reports it again; the hook is idempotent.
+  thread-changes: >-
+    `threadChanges(before, after)` is a pure function from two thread
+    states, `before` possibly empty, to the thread changes between them, in
+    this order: a turn started when `after` has a turn whose id `before`
+    does not; a turn settled when `after`'s turn is settled and `before`
+    has a different turn or the same turn running; a request resolved for
+    each request open in `before` and not in `after`; a request opened for
+    each request open in `after` and not in `before`; and a session failed
+    when `after`'s session is `error` with no running turn and `before` has
+    no session with the same status and update time. A turn first seen
+    already settled gives started and then settled. Removal of a thread is
+    a change the shell decides, described under following.
+  subscriptions: >-
+    A thread subscription is the client's exported `watchThread(client.rpc,
+    threadId, { afterSequence })`, called with no `snapshotLoader`. Without
+    one, the client never reads a thread snapshot over HTTP, so every
+    `snapshot` item the source handles is one the server sent: for a thread
+    subscribed with no cursor, or in place of a replay past the server's
+    bound. Within the bound the server replays each event after the cursor,
+    and the source applies each in turn. `client.threads.watch`, which
+    seeds its projection from the current thread over HTTP before the
+    replay, is not used.
+  publishing: >-
+    The source handles one stream item at a time and pulls the next only
+    after the transaction for the current one commits, so the client's
+    acknowledgement holds the server back. For a thread item, in one
+    `store.connection.transaction`, it applies the item to the stored
+    compact thread, computes the thread changes, calls `router.publish` once
+    per change, and writes the thread's row with the reduced compact thread
+    and the new cursor and attribution. An `event` item above the cursor is applied with
+    `applyThreadEvent` and sets the cursor to its sequence; one at or below
+    the cursor changes nothing. A `snapshot` item replaces the compact
+    thread with the reduced snapshot, compared with the stored compact
+    thread, or with the empty state for a thread with no row, and sets the
+    cursor to its `snapshotSequence`. A `rejected` outcome from the router
+    is a defect in the source: the transaction rolls back and the
+    environment stops, as described under failures.
+  following: >-
+    The shell subscription decides which threads are followed. A thread in
+    the shell is followed; a thread the shell removes is archived or
+    deleted. A followed thread whose thread subscription is closed is
+    opened again from its cursor when a shell item for it carries a sequence
+    above the cursor. A thread subscription runs until its `synchronized`
+    item has been handled and the thread is idle, with no running turn, no
+    session `starting` or `running`, and no open request; then the source
+    sets the cursor to the higher of the cursor and the shell sequence that
+    opened it, and closes the subscription. The shell sends an item for
+    every event of a thread, detail or not, so the next event reopens it,
+    and an event that is not a detail event advances the cursor through
+    this rule. When the shell removes a thread, the source reads the thread
+    over HTTP. A thread that is found is archived: the source catches its
+    subscription up to `synchronized`, publishes thread archived with the
+    thread's `archivedAt`, and marks the row archived. A thread that is not
+    found is deleted: the source publishes thread deleted and marks the row
+    deleted. The source stores the shell summary's project identity before
+    subscribing to detail, so removal before the first snapshot still
+    publishes the change. A failed detail subscription whose HTTP read
+    reports a missing thread marks that thread deleted without failing the
+    environment. A shell item that brings an archived thread back marks it
+    followed and opens it from its cursor. A thread the shell lists that
+    has no row was created after the environment's origin; it is subscribed
+    with no cursor, and its first snapshot is compared with the empty
+    state, so its running turn, its open requests, and a turn it already
+    settled are published.
+  start: >-
+    An environment with no row is new. The source reads the environment
+    descriptor and the client's full orchestration snapshot, the read model
+    of every project and thread taken in one server transaction at one
+    `snapshotSequence`. That sequence is the environment's origin. In one
+    transaction the source writes the environment's row, with the server's
+    `environmentId`, the origin, and the origin as shell cursor, and one
+    thread row per thread in the read model that is not deleted: the
+    reduced compact thread at the origin, the origin as cursor, and status
+    `archived` for an archived thread and `followed` otherwise. Nothing is
+    published for these baselines. The source then subscribes to the shell
+    from the origin and opens a thread subscription from the origin for
+    every followed thread, so every change after the origin is published,
+    by replay or by the comparison with a server snapshot, and none at or
+    before it. A crash before the transaction commits leaves no row, and the
+    next start takes a new origin; nothing was published from the first.
+  resume: >-
+    `startT3CodeSource` reads every environment row, and for each configured
+    environment connects, reads the environment descriptor, and compares its
+    `environmentId` with the stored one. A different id means the name now
+    points at another server: in one transaction the source deletes the
+    environment's rows, and the environment starts as new. Every event id
+    holds the `environmentId`, so a change on the new server is never a
+    replay of one the router accepted from the old server, even when the
+    two reuse thread, turn, and request ids. Otherwise the
+    source subscribes to the shell from the stored shell cursor and opens a
+    thread subscription from its cursor for every followed thread, so each
+    catches up and closes once idle. A server that replays sends the events
+    after the cursor; a server past its bound sends a snapshot, which
+    replaces the compact thread, and the comparison with the stored state
+    publishes every change still visible in it. A change that opened and
+    closed inside a gap past the bound, such as a request answered while
+    the service was down, is not published.
+  readiness: >-
+    An environment is ready from the moment, in this run of the service,
+    that its row is committed with an origin and a connection has compared
+    the server's `environmentId` with it: after the first transaction of a
+    new environment, after the reset of one whose `environmentId` changed,
+    or after the first connection of a resumed one. It stays ready through
+    ordinary connection loss. When a connection finds a different
+    `environmentId`, readiness resets before the source reads its new
+    baseline and resolves only after the replacement origin commits.
+    The source fails writes admitted by `write` when the identity changes,
+    so writers retry only after the replacement origin commits. `write`
+    checks readiness and admits a send without yielding, with a signal
+    that identity invalidation aborts. Each admitted write names its
+    thread, or `null` for a write that targets no thread, such as
+    `project.create`. Before aborting a write that names a thread, the
+    source saves that thread with a null projection; a write that names
+    none saves nothing, since the replacement origin's shell lists every
+    project the server holds.
+    Replacement origins preserve null projections as observations to recover,
+    rather than adopting their snapshot state as baseline. The thread is
+    subscribed without a cursor and compared with the empty state, so a
+    command already accepted before cancellation is published. The null
+    projection survives a failed origin read and a service restart.
+    `ready` resolves after the durable origin commits, or at once when the
+    environment is ready. Writers use `write` for admission so the source
+    publishes their changes across origin replacement. A crash before the first transaction
+    commits leaves no row, and the environment is not ready in the next
+    run until its own origin commits. An environment that stops before it
+    is ready rejects every waiting `ready`.
+  connection: >-
+    The client resubscribes after its socket reconnects, deduplicates the
+    replay overlap by sequence, and keeps retrying a watch whose first
+    connection fails while the failure is transient. The source passes the
+    environment's `reconnect` backoff, `heartbeat`, and `openTimeoutMs` to
+    `T3Client.create`. A credential rejection ends the watches with the
+    client's error: the source closes that environment's client, waits the
+    next backoff delay, and creates the client again, reading the credential
+    file again, so a replaced token applies without a restart. The source
+    adds no wait of its own beyond the configured values.
+  operator-holds: >-
+    The source reads the operator holds of `environment-control` through
+    the `holds` port its options give it. Each environment loop reads
+    `held(environment)` before each connection. While the disconnected
+    hold is on, the environment's state is `disconnected`: the loop opens
+    no client, its readiness is reset so that `ready` and `write` wait,
+    and it waits on `changed` after the sequence it read, so a reconnect
+    that commits before the wait starts ends it at once. While the loop
+    runs it also waits on `changed` after the sequence it read before
+    connecting, and a change that turns the disconnected hold on ends the
+    connection as a stop does: the client closes, every open subscription
+    ends, and every cursor stays as it was stored. When the hold turns
+    off, the loop connects at once with no backoff delay, and resumes as
+    under resume: it compares the server's `environmentId`, and its
+    readiness resolves again after that comparison. The paused hold
+    changes nothing in the source, which keeps following a paused
+    environment. With no `holds`, nothing is held.
+  credentials: >-
+    The client's credential store for an environment reads the bearer access
+    token from the `tokenFile` of the environment's `t3code-token`
+    credential each time it is asked, and refuses every write, so the token
+    the operator places in the file is the only one used. The source needs
+    the token's `orchestration:read` scope; the same credential serves the
+    commands of `agent-threads`, which need `orchestration:operate`.
+  failures: >-
+    Each environment runs its own loop, and an error in one is caught at
+    that loop: it is logged with the environment name, and the environment's
+    status records it. A transient connection failure and a credential
+    rejection retry as described under connection. An item the client
+    reports as `decode-error` is logged with the environment and thread and
+    skipped; the next item moves the cursor past it. A `rejected` publish,
+    and an error the store or the router throws, stops the environment: its
+    status becomes `stopped` with the error, its client closes, and it
+    stays stopped until the service restarts or `restart` starts it again,
+    which the operator's reconnect calls. No other environment changes.
+  public-interface: |-
+    `packages/service/src/t3code-source/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { Logger } from "@wyrd-company/t3code-client";
+    import type { Router } from "../router/index.ts";
+    import type { Store } from "../store/index.ts";
+    import type { EnvironmentHolds } from "./types.ts";
+
+    export function startT3CodeSource(options: T3CodeSourceOptions): T3CodeSource;
+
+    export interface T3CodeSourceOptions {
+      readonly store: Store;
+      readonly router: Router;
+      /** The loaded `environments` section, defaults applied. */
+      readonly environments: EnvironmentsConfiguration;
+      /** Resolves a `t3code-token` credential name to its token file path. */
+      readonly tokenFile: (credential: string) => string;
+      /** Runs inside the transaction of the item that places a user message, before its changes are published. */
+      readonly messagePlaced?: (placement: MessagePlacement) => void;
+      /** The operator holds; none is held when absent. */
+      readonly holds?: EnvironmentHolds;
+      readonly logger?: Logger;
+    }
+
+    export interface MessagePlacement {
+      readonly environment: string;
+      readonly threadId: string;
+      readonly messageId: string;
+      readonly placement: "joined" | "started" | "unknown";
+      readonly turnId: string | null;
+    }
+
+    export interface T3CodeSource {
+      status(): readonly EnvironmentStatus[];
+      /**
+       * Resolves once the environment's origin is committed and this run's
+       * connection has confirmed its `environmentId`; rejects when the
+       * environment stops, is not configured, or `signal` aborts.
+       */
+      ready(environment: string, signal?: AbortSignal): Promise<void>;
+      /** `threadId` is `null` for a write that targets no thread. */
+      write<T>(environment: string, threadId: string | null, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>): Promise<T>;
+      /** The stored view of a thread the source follows or followed; undefined for any other. */
+      thread(environment: string, threadId: string): ThreadView | undefined;
+      /** Resolves after `ready` with the `environmentId` this run's connection confirmed. */
+      environmentId(environment: string, signal?: AbortSignal): Promise<string>;
+      /** Resolves after `ready` with `platform.os` of the descriptor the current connection confirmed. */
+      platform(environment: string, signal?: AbortSignal): Promise<"darwin" | "linux" | "windows" | "unknown">;
+      /** The environment's T3code projects as its shell last listed them; undefined before the first list. */
+      projects(environment: string): readonly T3CodeProjectView[] | undefined;
+      /** Starts again the loop of an environment whose state is `stopped`; does nothing for one that runs. */
+      restart(environment: string): void;
+      /** Records a project a `t3code-project-create` invoke created; a second record of the same project changes nothing. */
+      recordCreatedProject(record: CreatedProject): void;
+      /** The record of a created project; undefined for any other project. */
+      createdProject(environment: string, projectId: string): CreatedProject | undefined;
+      /** Every created project record, ordered by environment, then project id. */
+      createdProjects(): readonly CreatedProjectRecord[];
+      /** Closes every client; resolves when every environment loop has ended. */
+      stop(): Promise<void>;
+    }
+
+    export interface ThreadView {
+      readonly title: string;
+      /** `{url}/{environmentId}/{threadId}`: the thread's page on the T3 Code web client. */
+      readonly url: string;
+      /** The latest turn's state; absent when the thread has no turn. */
+      readonly turn?: "running" | "completed" | "interrupted" | "error";
+      /** True when T3 Code has archived or deleted the thread. */
+      readonly archived: boolean;
+    }
+
+    export interface T3CodeProjectView {
+      readonly id: string;
+      readonly title: string;
+      readonly workspaceRoot: string;
+      /** The count of the project's threads the source follows. */
+      readonly activeThreads: number;
+    }
+
+    export interface CreatedProject {
+      readonly environment: string;
+      readonly projectId: string;
+      readonly actorId: string;
+      /** The creating actor's portfolio item. */
+      readonly item: string;
+    }
+
+    export interface CreatedProjectRecord extends CreatedProject {
+      /** What the source has observed of the project on the environment's shell. */
+      readonly presence: "unseen" | "listed" | "removed";
+      /** The count of `t3_thread` rows, of any status, that name the project. */
+      readonly threads: number;
+      /** `presence` is `removed` and `threads` is 0: the record can attribute nothing. */
+      readonly retirable: boolean;
+    }
+
+    export interface EnvironmentStatus {
+      readonly environment: string;
+      readonly state: "connecting" | "following" | "retrying" | "disconnected" | "stopped";
+      readonly error?: string;
+      readonly followedThreads: number;
+      /** Followed threads whose latest turn is running or whose session is `starting` or `running`. */
+      readonly activeThreads: number;
+      readonly openSubscriptions: number;
+    }
+
+    /** The operator holds on one environment, as `environment-control` stores them. */
+    export interface EnvironmentHold {
+      readonly paused: boolean;
+      readonly disconnected: boolean;
+      /** The change sequence the holds were read at; 0 before the first change. */
+      readonly sequence: number;
+    }
+
+    export interface EnvironmentHolds {
+      /** The holds on an environment; both off for one the operator has not acted on. */
+      held(environment: string): EnvironmentHold;
+      /**
+       * Resolves at once when the environment's change sequence is no longer
+       * `after`, otherwise at its next change; rejects when `signal` aborts.
+       */
+      changed(environment: string, after: number, signal?: AbortSignal): Promise<void>;
+    }
+
+    /** `t3.environment.<environment>.thread.<encoded thread id>`. */
+    export function threadTopic(environment: string, threadId: string): string;
+
+    export type {
+      EnvironmentHold,
+      EnvironmentHolds,
+      EnvironmentsConfiguration,
+      ThreadChangeEvent,
+    } from "./types.ts";
+    ```
+  thread-view: >-
+    `thread(environment, threadId)` reads the thread's `t3_thread` row and
+    its environment's `t3_environment` row synchronously. It returns
+    `undefined` when the environment is not configured or either row is
+    absent. `title` is the compact thread's title, `turn` is the latest
+    turn's state from the thread state, and `archived` is true for a row
+    whose status is `archived` or `deleted`. `url` joins the environment's
+    configured `url`, without a trailing `/`, the stored `environmentId`,
+    and the thread id, each id percent-encoded, which is the route the T3
+    Code web client serves a thread on. The operator console links a
+    task's threads through it.
+  platform: >-
+    `platform(environment)` answers `platform.os` of the environment
+    descriptor that the environment's current connection read before it
+    confirmed the `environmentId`, after `ready`. The source keeps it in
+    memory with the confirmed connection, since every connection reads the
+    descriptor again; a connection that finds another `environmentId`
+    replaces it with the replacement server's. Agent threads checks a
+    workspace root against it.
+  created-projects: >-
+    The source keeps the record of the T3code projects that
+    `t3code-project-create` invokes created, in `t3_created_project`, so
+    that the portfolio resolves a created project to the creating actor's
+    item. `recordCreatedProject` inserts a row keyed by environment and
+    project id with the actor id and item, and leaves an existing row as
+    it is; it runs synchronously in its own transaction and throws when
+    the environment has no `t3_environment` row. The row's environment,
+    project id, actor id, and item are the project's creation provenance
+    and never change; an archive choice is declared in the process
+    repository as a binding, which takes precedence over the record, and
+    never edits the row. `recordCreatedProject` writes `presence` as
+    `listed` when the environment's in-memory project list holds the
+    project, and as `unseen` otherwise. `createdProject` reads the row
+    synchronously and answers `undefined` for a project with none.
+    `createdProjects` reads every row synchronously, with its presence
+    and its thread count, in one statement. A reset of an environment
+    whose `environmentId` changed deletes its rows with the environment's
+    other rows, since the projects they name were on the other server.
+  created-project-presence: >-
+    The source keeps what it observes of each created project on the
+    shell in the row's `presence`, as
+    `t3code-source-database-schema` states, so that whether a created
+    project can still receive usage survives a restart; the in-memory
+    project list does not. A shell snapshot sets `listed` on each row whose
+    project it lists without `deletedAt`, and `removed` on each `listed`
+    row whose project it omits or lists with `deletedAt`, and on each
+    `unseen` row whose project it lists with `deletedAt`. A
+    `project-upserted` item sets `listed` on its project's row and a
+    `project-removed` item sets `removed`. A row that is `removed` stays
+    `removed`. Each write runs in the `atomic` call that advances
+    `shell_sequence` past the item, so a kill between them replays the
+    item and writes the same value. A snapshot that omits an `unseen`
+    project leaves it, since the snapshot may have been read before the
+    server accepted the create; a project deleted before any shell item
+    listed it stays `unseen` and is never retirable.
+  created-project-retirement: >-
+    A created project record is retirable when its `presence` is
+    `removed` and no `t3_thread` row names its environment and project,
+    whatever the thread's status. Usage reaches a created project record
+    only through a thread: a call's provider session maps to a thread,
+    `threadProject` reads the thread's project from `t3_thread`, and
+    portfolio resolution reads the record of that project. While a
+    `t3_thread` row names the project, a new or late call can still
+    resolve to the record; while the project is not `removed`, T3 Code
+    can still start a thread in it. Once both are false, deleting the row
+    changes no resolution of any call, posted, pending, or still to come.
+    A binding that names the project does not make the row retirable,
+    since the operator may remove the binding and the record then
+    resolves again. The retention module deletes retirable rows in its
+    prune run, checking the predicate in the deleting statement:
+    `DELETE FROM t3_created_project AS c WHERE c.presence = 'removed' AND
+    NOT EXISTS (SELECT 1 FROM t3_thread AS t WHERE t.environment =
+    c.environment AND t.project_id = c.project_id)` over the run's batch
+    of keys, so a thread row written after the batch was chosen keeps the
+    record. The creating actor's `project-create` command stays in its
+    actor history and posted usage keeps its item in the ledger, so
+    retiring a record loses no history. Two kinds of record are never
+    retirable and stay: a record of a project that T3 Code deleted before
+    any shell item listed it, which stays `unseen`; and a record of an
+    environment removed from service configuration, whose shell the
+    source no longer reads, so its presence never changes. Both are
+    conservative, since neither can be told apart from a project that
+    can still receive usage, and both are bounded by the projects the
+    environment's actors created.
+  retention: >-
+    Thread rows are never removed apart from an environment reset: usage
+    intake reads a thread's project and title for any call of the thread,
+    however late, and a thread's cursor and stored state are where a
+    returning thread resumes. The index exports
+    `retirableCreatedProjects(connection, { environments, after, limit })`
+    and `retireCreatedProject(connection, key, { environments })` for
+    retention, as `retention` states. `environments` is the environment
+    names the service configuration declares. `retirableCreatedProjects`
+    lists, in key order after `after`, each created project of one of
+    those environments whose presence is `removed` and whose project no
+    thread row of any status names, with its creating actor.
+    `retireCreatedProject` deletes the record in one statement that
+    repeats all three checks, or answers `kept`. No call can reach a retired
+    project, since a call reaches a project only through a thread row. A
+    record that stays `unseen`, and a record of an environment no longer
+    configured, is never retirable and stays.
+  project-view: >-
+    `projects(environment)` answers the T3code projects of the
+    environment's shell: the projects of the last shell snapshot the
+    source read, from `shell.readModel` or `shell.watch`, with each later
+    `project-upserted` and `project-removed` item applied, each with its
+    `id`, `title`, and `workspaceRoot`. The source keeps this list in
+    memory per environment, since T3 Code holds it and every connection
+    reads it again; it answers `undefined` for an environment that is not
+    configured or whose shell it has not read since the service started.
+    `activeThreads` counts the environment's `t3_thread` rows with that
+    `project_id` whose status is `followed`, read synchronously at the
+    call. The operator console lists an environment's T3code projects
+    through it. A test against the fake server shows `undefined` before
+    the first shell read, the list after a snapshot, after a project
+    upserted and after one removed, and a count that drops when a thread
+    is archived.
+  module-layout: >-
+    `index.ts` re-exports the public names. `state.ts` holds the pure
+    functions: `compactThread`, `threadState`, and `threadChanges`.
+    `events.ts` holds the pure functions that build a source event from a
+    thread change, the topic, and the event id. `follow.ts` holds the pure
+    decision of which subscription to open or close from a shell item, the
+    stored rows, and the open subscriptions. `environment.ts` runs one
+    environment's loop: client, shell subscription, thread subscriptions,
+    and transactions. `source.ts` implements `startT3CodeSource`.
+    `migrations.ts` holds the migration steps under the owner `tthree`.
+    `types.ts` declares the `EnvironmentHolds` port that
+    `environment-control` implements.
+    `created-projects.ts` reads and writes `t3_created_project`.
+    Tests
+    import only `index.ts`, the router's `index.ts`, and the store's
+    `index.ts`.
+  convergence: >-
+    Handling one item twice publishes the same changes with the same ids and
+    writes the same row, so the router accepts them once. A crash inside an
+    item's transaction rolls back the publish and the row together, and the
+    resumed subscription delivers the item again from the old cursor. A
+    crash after the commit resumes from the new cursor. Starting the source
+    twice on the same file opens the same subscriptions from the same
+    cursors. A disconnect ends the connection with every cursor stored,
+    so a reconnect resumes from them as a restart does, and a disconnect
+    or reconnect taken twice changes the loop once. `restart` of an
+    environment that runs does nothing. Resetting an environment whose `environmentId` changed deletes
+    its rows in one transaction, so a crash leaves either the old rows,
+    which reset again, or none. `recordCreatedProject` twice for one
+    project leaves the first row. `stop` twice does nothing more.
+  dependencies: >-
+    `@wyrd-company/t3code-client` 0.5.0 or later, the release whose
+    `T3ClientOptions` accepts `backoff`, `pingIntervalMs`,
+    `missedPongLimit`, and `openTimeoutMs`, and whose watches retry a first
+    connection that fails transiently, and which reads the full
+    orchestration snapshot, `GET /api/orchestration/snapshot`, as
+    `shell.readModel()`. The source uses its `T3Client`, `shell.watch`,
+    `shell.readModel`, `watchThread`, `threads.detail`,
+    `server.environment`, `applyThreadEvent`, and `pendingRequests`.
+  tests: >-
+    Tests run against a fake T3 Code server in the test suite that speaks
+    the 0.0.45 wire protocol over a real socket: the environment descriptor,
+    the WebSocket ticket, `GET /api/orchestration/snapshot`,
+    `GET /api/orchestration/threads/:id`, and
+    `orchestration.subscribeShell` and `orchestration.subscribeThread` with
+    `afterSequence`, `requestCompletionMarker`, Ack flow control, and the
+    replay bounds, each bound set lower by the test so that the snapshot
+    path runs on a small fixture. The fake keeps a log of every event it has
+    stored, and a test script appends events to it: threads created,
+    turns started and settled, requests opened and answered, sessions
+    failed, threads archived, unarchived, and deleted, with generic ids.
+    Behaviours proved, each red before green: `threadChanges` gives each
+    change in its order for every pair of states in a fixture table, and
+    the compact thread gives the same thread state as the full projection
+    across every fixture stream, revert included; each change is published
+    under `threadTopic` with the id `t3code-thread-events` defines; a
+    replayed stream segment writes no second inbox row; a request opened
+    and resolved while the source was stopped, inside the replay bound,
+    publishes request opened and request resolved after the restart; a
+    thread whose
+    replay passes the bound resumes from a snapshot and publishes each
+    change visible in it once, and none that it already published; a new
+    environment publishes nothing from before its origin, publishes a
+    request a pre-existing thread opened after the origin and before its
+    thread subscription first delivered, and publishes a thread created
+    after it; a kill before the first connection's transaction commits
+    leaves no row and publishes nothing, and the next start takes its own
+    origin; an idle thread's subscription closes after
+    `synchronized` and reopens on the next event; an archived thread
+    publishes thread archived once, after its last change; a deleted thread
+    publishes thread deleted; a changed `environmentId` resets the
+    environment, and the new server's changes are accepted though it reuses
+    the old server's thread, turn, and request ids; two environments run at once, and one whose server is down
+    or rejects the token leaves the other publishing; a dropped socket
+    resumes and publishes every change once; and a replaced token file is
+    used on the next connection; a turn is published with the id of the
+    user message that requested it, live, on replay, and from a snapshot
+    past the bound, a turn whose message was sent while another turn ran is
+    published with that message, a turn first seen in a baseline with no
+    matching message is published with `null`, and a turn first seen in a
+    snapshot where two user messages share its `requestedAt`, one of them
+    a later message steered into it, is published with `null`, as is the
+    next turn when two pending messages share the latest time; `ready` waits while the
+    first connection is held back and resolves after the origin commits,
+    resolves at once afterwards, waits again in a run that starts after a
+    kill before the first transaction committed, and rejects when the
+    environment stops first; with the disconnected hold on at start the
+    fake server sees no connection and `ready` waits, and turning it off
+    connects and resolves `ready`; turning it on while following closes
+    the socket, a turn the fake server settles meanwhile is published once
+    after the hold turns off, and `activeThreads` counts a thread with a
+    running turn and drops when it settles; the paused hold leaves the
+    source following; and `restart` starts a stopped environment again.
+    The fault test runs the source in a child
+    Node process against the fake server, kills it with `SIGKILL` mid-stream
+    and asserts the signal, starts it again on the same file, and checks the
+    published changes against the changes the fake server's log implies: no
+    change missing and none twice. A `messagePlaced` hook sees a user message sent
+    while a turn runs as `joined` with that turn, a message that a new turn
+    takes as `started` with that turn, before the turn's started change is
+    published, and, from a snapshot past the replay bound, a message inside
+    the latest turn's span as `joined` and one placed neither way as
+    `unknown`; a hook that throws rolls back the item. A write that names
+    no thread, interrupted by an identity change, saves no thread row and
+    is retried after the replacement origin commits. `recordCreatedProject`
+    twice keeps the first row, `createdProject` answers it and `undefined`
+    for another project, and a changed `environmentId` deletes it. A
+    created project's `presence` reads `unseen` when recorded before the
+    shell lists it and `listed` when recorded after; `listed` after a
+    snapshot or a `project-upserted` item; `removed` after a
+    `project-removed` item, after a snapshot that lists it with
+    `deletedAt`, and after a snapshot that omits it while `listed`; and
+    `unseen` after a snapshot that omits it while `unseen`. A source killed
+    after a `project-removed` item and started again on the same file
+    reads `removed`. `createdProjects` answers `retirable` false while a
+    thread row of any status names the project or while it is not
+    `removed`, and true once both hold.

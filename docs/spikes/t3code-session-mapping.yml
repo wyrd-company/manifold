@@ -1,0 +1,283 @@
+$schema: https://refinery.systems/ontology/spike
+title: Provider session to T3 Code thread, read from T3 Code's database
+
+relationships:
+  mitigates:
+    - task-usage-unattributable
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the design and specification these findings inform.
+  references:
+    - usage-intake
+    - usage-decoder
+    - usage-record
+
+objective:
+  - Where does T3 Code keep the provider session that runs each thread, and can the host CLI read it in process and read-only?
+  - For each provider the usage decoder covers, does that session id equal the `providerSessionId` the decoder gives the session's calls?
+  - Where does Cursor keep the calls of a session T3 Code runs, and does it record their model, time, and exact token counts?
+
+background:
+  current-design: >-
+    The usage decoder gives every call a `providerSessionId`, the session id
+    the decoding library assigns it. Attribution needs the T3 Code thread
+    that ran each session. T3 Code persists, for each thread, the provider
+    session it resumes, so that a thread continues its conversation after
+    the server restarts.
+  problems:
+    - >-
+      T3 Code keeps the provider session in a provider-specific resume
+      cursor, and its projection columns for the provider session are
+      empty.
+    - >-
+      Each provider names its session in its own field, and two providers
+      run through the Agent Client Protocol, whose session store the
+      decoder may not read.
+
+ideas:
+  - >-
+    Read `provider_session_runtime` from T3 Code's SQLite database with
+    `node:sqlite` in read-only mode, and take the session id from the
+    resume cursor by provider.
+  - >-
+    Compare each id with the session files the decoder reads on the same
+    environment.
+
+environment:
+  location: a development environment running the released T3 Code server 0.0.44, read-only
+  tools:
+    - "node:sqlite DatabaseSync with readOnly: true (Node 24)"
+    - "T3 Code server 0.0.44, the npm package `t3` and its `@t3code/t3-linux-x64` binary, serving the database measured"
+    - "T3 Code source at the release tags v0.0.44 and v0.0.45, and at commit b0ae3f3 (v0.0.36-nightly.20260828.1208)"
+    - "@codeburn/core 0.9.20"
+    - "Cursor Agent 2026.10.01-14929f9, run by T3 Code through the Agent Client Protocol"
+  resources:
+    - "T3 Code database `~/.t3/userdata/state.sqlite` while the 0.0.44 server ran"
+    - "Provider session files under `~/.claude`, `~/.codex`, and `~/.cursor`"
+    - "Cursor ACP session stores `~/.cursor/acp-sessions/<id>/store.db`, read by structure, never by text value"
+
+findings:
+  database-read:
+    verdict: "confirmed: one read-only table read, while the server writes"
+    measurements:
+      table: provider_session_runtime
+      columns-read: "thread_id, provider_name, provider_instance_id, resume_cursor_json"
+      rows-by-provider: "claudeAgent 38, codex 108, cursor 37"
+      projection-provider-session-columns-filled: "0 of 183"
+    notes: >-
+      Measured: `DatabaseSync` opened the database with `readOnly: true`
+      while the T3 Code 0.0.44 server ran and wrote to it, and read every row of
+      `provider_session_runtime`. T3 Code writes that table from
+      `ProviderSessionRuntimeRepository.upsert`, one row per thread keyed
+      by `thread_id`, holding the cursor each adapter returns. The
+      `provider_session_id` and `provider_thread_id` columns of
+      `projection_thread_sessions` were empty on every row, so the resume
+      cursor is the only place the session id is kept. The row holds the
+      thread's current session only: a session a thread replaces is
+      mapped only by a push read before the replacement.
+
+  cursor-shapes:
+    verdict: "confirmed: one field per provider"
+    measurements:
+      claudeAgent-keys: "threadId, resume, resumeSessionAt, turnCount, turnStartMessageIds"
+      codex-keys: "threadId"
+      cursor-keys: "schemaVersion, sessionId"
+      grok-keys-from-source: "schemaVersion, sessionId"
+      opencode-keys-from-source: "schemaVersion, sessionId"
+    notes: >-
+      Measured on the database: the Claude cursor holds the Claude session
+      id in `resume`, and its `threadId` is the T3 Code thread id. The
+      Codex cursor holds the Codex thread id in `threadId`. The Cursor
+      cursor holds the ACP session id in `sessionId`. Read from T3 Code's
+      adapters at v0.0.44, v0.0.45, and b0ae3f3: `readClaudeResumeState` accepts `resume`, else `sessionId`;
+      the Grok and OpenCode adapters write `{ schemaVersion, sessionId }`,
+      the OpenCode id being the OpenCode session's id.
+
+  stable-releases:
+    verdict: "confirmed in source: v0.0.44 and v0.0.45 keep the table, columns, cursor fields, and provider names"
+    measurements:
+      live-server-release: "0.0.44"
+      source-tags-read: "v0.0.44, v0.0.45"
+      provider-session-runtime-migrations: "004 creates the table with thread_id, provider_name, resume_cursor_json; 027 adds provider_instance_id; both in each tag"
+      claude-cursor-in-source: "readClaudeResumeState reads `resume`, else `sessionId`; the cursor writes `resume: context.resumeSessionId`; in each tag"
+      codex-cursor-in-source: "CodexResumeCursorSchema is `{ threadId: string }` in each tag"
+      cursor-grok-opencode-cursor-in-source: "each adapter's resumeCursor holds `sessionId` in each tag"
+      provider-driver-kinds: "antigravity, claudeAgent, codex, cursor, grok, opencode in each tag"
+    notes: >-
+      Measured live: every row and cursor shape in this spike was read from
+      the database of a T3 Code 0.0.44 server, a stable release. Read from
+      source: at the tags v0.0.44 and v0.0.45, the release the T3 Code
+      environment source targets, `provider_session_runtime` is created by
+      migration 004 and gains `provider_instance_id` in migration 027, and
+      `ProviderSessionRuntime.ts` writes `thread_id`, `provider_name`,
+      `provider_instance_id`, and `resume_cursor_json` on every upsert. The
+      adapters write the cursor fields the `cursor-shapes` finding names.
+      The driver kind `antigravity` has no provider in the decoder, so its
+      rows give no mapping. The 0.0.45 shapes are read from source and not
+      measured on a 0.0.45 database. The host performs no version check: a
+      release that drops the table or a column fails the run, and a release
+      that moves a cursor field gives no mapping for that provider.
+
+  claude:
+    verdict: "confirmed: 36 of 38 resume ids name a session transcript"
+    measurements:
+      cursors: 38
+      matching-transcript-stems: 36
+      transcripts-on-environment: 392
+    notes: >-
+      Measured: 36 cursors' `resume` equals the stem of a session
+      transcript under `~/.claude/projects`, which is the
+      `providerSessionId` the decoder gives every call of the session and
+      of its subagents. The other two name no transcript on the
+      environment; their files are gone. A Claude instance with its own
+      configuration directory keeps its transcripts there.
+
+  codex:
+    verdict: "confirmed: 108 of 108 thread ids name a rollout"
+    measurements:
+      cursors: 108
+      matching-rollout-session-meta-ids: 108
+      rollouts-on-environment: 2708
+    notes: >-
+      Measured: every cursor's `threadId` equals the `payload.id` of the
+      first `session_meta` record of a rollout under `~/.codex/sessions`
+      or `~/.codex/archived_sessions`. The decoder gives the calls of that
+      rollout, and of the child threads whose library calls carry the root
+      session id, that id as `providerSessionId`.
+
+  cursor:
+    verdict: "confirmed: 167 of 167 ACP session ids name an ACP session store; 0 name an agent transcript"
+    measurements:
+      cursors: 167
+      provider-instance: "cursor on every row"
+      acp-session-directories-named: 167
+      acp-session-stores-named: 167
+      agent-transcripts-named: 0
+      agent-transcripts-on-environment: 253
+      agent-transcript-layout: "projects/<project>/agent-transcripts/<id>/<id>.jsonl on all 253"
+      agent-transcripts-in-a-cwd-with-an-acp-session: 0
+    notes: >-
+      Measured on a T3 Code 0.0.44 server running Cursor Agent
+      2026.10.01-14929f9. T3 Code runs Cursor through the Agent Client
+      Protocol, and each cursor's `sessionId` names a directory
+      `~/.cursor/acp-sessions/<id>/` holding `meta.json` and a SQLite
+      `store.db`. No agent transcript has the id of a T3 Code session,
+      and every agent transcript on the environment is in a project
+      directory whose working directory no ACP session has: Cursor Agent
+      writes agent transcripts for the runs it makes outside the Agent
+      Client Protocol, and none for the sessions T3 Code runs. Those
+      transcripts are nested, one directory per conversation, a layout
+      the pattern `projects/*/agent-transcripts/*.{txt,jsonl}` does not
+      reach although the directory walk is recursive. The session id of
+      the resume cursor is the session's id in its ACP session store, so
+      the store, read by the session id, holds the calls of the thread.
+
+  cursor-session-store:
+    verdict: "confirmed: every model response of a T3 Code session is in its ACP session store, with its model and a provider-written time"
+    measurements:
+      stores-read: 203
+      tables: "blobs (id TEXT PRIMARY KEY, data BLOB), meta (key TEXT PRIMARY KEY, value TEXT)"
+      blob-ids: "64 lowercase hexadecimal characters, the id of the blob's content"
+      json-blob-roles: "system, user, assistant, tool"
+      assistant-messages: 6189
+      assistant-messages-referenced-by-a-conversation-state: 6189
+      assistant-messages-with-model-name: 6188
+      assistant-messages-with-a-tool-call: 5988
+      tool-calls-with-a-timed-tool-record: "5988 of 5988 messages"
+      assistant-messages-without-a-tool-call: 201
+      distinct-models: 5
+      assistant-message-id-field: "not unique: 23 of 29 messages of one session hold the same one-character id"
+      blob-kinds: "conversation states 12583; records with field 26 and a field 1 not 32 bytes 210; records of only field 3 6190; records of only field 1 13151; records of fields among 1 to 5 231; tool records 11601, each with fields 57, 59, and 60; data of neither format 410, each named by another blob"
+      field-26-values-per-store: "2 in 197 stores, 3 in 5, 4 in 1"
+      calls-without-a-tool-call-and-their-anchor: "201 of 201 end exactly one state of the fewest references, and every state that ends with each gives it the same time: 195 from an earlier call's tool record, 6 from field 26"
+    notes: >-
+      Measured by key names, value types, enumerations, and numbers only;
+      no text value was read. A blob is either a JSON message or a
+      Protocol Buffers record. A JSON message has `role`, `content`, and
+      optional `id` and `providerOptions`; an assistant message is one
+      model response, and the `providerOptions.cursor.modelName` of its
+      reasoning part names its model. A conversation state record holds
+      field 1, the ordered references to the conversation's messages,
+      each the 32 bytes of a blob id, field 5, the context window gauge,
+      and field 26, a time in epoch milliseconds that takes two to four
+      values among one store's states. The store keeps every revision of
+      the conversation state, and every assistant message is referenced
+      by one. Every blob measured is of one of the kinds the census
+      names, and every blob that is neither JSON nor wire format is named
+      by another blob, as a file a tool result names. A tool
+      record holds in field 2 the tool call, with its tool-call id in
+      field 57 and its start and end times in epoch milliseconds in
+      fields 59 and 60; the tool-call id equals that of the assistant
+      message's `tool-call` part. An assistant message without a tool
+      call, one per session in the measured stores, is the session's
+      closing reply; no record holds its own time, and the records of only
+      field 3, one per assistant message, hold a start and end time but no
+      value equal to any of the message's fields. The `meta` table's one row holds the conversation's
+      latest state id and a blob encryption key; the decoder needs
+      neither. The store is undocumented, and its record field numbers are
+      read from the measured records.
+
+  cursor-token-counts:
+    verdict: "falsified: no exact per-call token count for a T3 Code Cursor session is on the environment"
+    measurements:
+      json-message-usage-fields: 0
+      conversation-state-token-fields: "context window gauge only: tokens in context, context limit, and per-category tokens"
+      t3code-context-window-activities-for-cursor-threads: 0
+      t3code-context-window-activities-for-claude-and-codex-threads: "11039 and 33298"
+      conversation-summaries-rows: 0
+      agent-transcript-token-model-or-time-fields: 0
+      library-cursor-token-basis: "@codeburn/core 0.9.20 cursor-agent: text length divided by 4"
+    notes: >-
+      Measured: no JSON message holds a usage or token field. The
+      conversation state's gauge holds the tokens in the context window at
+      that revision, which is neither a request's billed input, its cache
+      split, nor its output. T3 Code records a `context-window.updated`
+      activity for Claude and Codex threads and none for Cursor threads.
+      The tracking database's `conversation_summaries` table is empty and
+      declares `updatedAt` an integer. Agent transcripts hold `role` and
+      `message.content` records and a `turn_ended` record, with no model,
+      time, or token field, and the library derives each count from text
+      length. Cursor reports per-request token counts through its account
+      service, which the decoder does not read. So the exact token counts
+      of a T3 Code Cursor session cannot be decoded from the environment,
+      and a count derived from text understates the context the request
+      sent, which the gauge measures at more than 100 thousand tokens in a
+      long session.
+
+  grok-and-opencode:
+    verdict: "inferred from T3 Code source; not observed on an environment"
+    measurements:
+      grok-cursors: 0
+      opencode-cursors: 0
+    notes: >-
+      Read from source: the Grok adapter stores the ACP session id the
+      Grok agent returns, and the OpenCode adapter stores the OpenCode
+      session id. The decoder gives a Grok call the library's session id
+      for its session directory, and an OpenCode call the session id of
+      its session row or file. No Grok or OpenCode thread ran on this
+      environment, so neither equality is observed.
+
+conclusion: >-
+  The host CLI reads the session of every T3 Code thread from one table,
+  `provider_session_runtime`, read-only and in process, and takes the id
+  from the resume cursor by provider. For Claude and Codex the id equals
+  the decoder's `providerSessionId`, observed on every session whose files
+  remain. For Cursor the id names the session's ACP session store, which
+  holds every model response with its model and a provider-written time,
+  and no exact token count; Cursor writes no agent transcript for a T3
+  Code session. For Grok and OpenCode the equality follows from T3 Code's
+  source and is not yet observed. The table keeps only each thread's
+  current session. The live measurements are on the stable 0.0.44 server;
+  the table, columns, and cursor fields are the same in the source of
+  0.0.44 and 0.0.45.
+
+next-steps:
+  - >-
+    Find a source of exact per-request Cursor token counts that the host
+    or the service can read without a subprocess, and its relation to a
+    session id.
+  - >-
+    Measure the table and cursor shapes on a 0.0.45 server database when an
+    environment runs that release, and record them here.
+  - >-
+    Observe the Grok and OpenCode equality on an environment that runs
+    those providers under T3 Code, and record it here.

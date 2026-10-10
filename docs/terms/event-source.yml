@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Event Source
+description: >-
+  A shared origin of events that Manifold routes to actors.

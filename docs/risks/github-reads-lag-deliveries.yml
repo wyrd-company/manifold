@@ -1,0 +1,33 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: GitHub's API may answer with state older than the delivery that named it
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the design that bounds the effect.
+relationships:
+  mitigated-by:
+    - github-event-source
+
+description: >-
+  The GitHub event source reads an entity's current state through the
+  GraphQL API when a delivery names it. When that read answers with the
+  state from before the change, the comparison finds no difference and the
+  change is not published until the next sweep, up to `sweepIntervalMs`
+  later. Blueprints that wait on a blocker's close or a card move wait that
+  much longer.
+
+categories:
+  - technical
+
+likelihood: 2
+impact: 2
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: every sweep compares every tracked entity, so a lagging read
+# delays a change and never loses it. The implementation's tests cannot show
+# GitHub's consistency; measuring how often a read made right after a
+# delivery misses its change answers this risk.

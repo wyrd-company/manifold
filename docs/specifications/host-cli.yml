@@ -1,0 +1,176 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - host-command-catalog
+    - host-cli-blueprint-lint
+    - host-cli-comparator-lint
+    - host-cli-expressions-lint
+    - host-cli-manifest-lint
+    - host-cli-mcp
+    - host-cli-portfolio-lint
+    - host-cli-task-metadata-lint
+    - host-cli-usage
+description: >-
+  Defines how the host CLI, `manifold-host`, finds the command an
+  invocation names, how it answers for help, and how it refuses an unknown
+  command or flag. `docs/specifications/host-cli.cli.yml` is the
+  machine-readable definition of the tool, its `-h` and `--help` flag, and
+  its `help` command. Each other command is defined by its own
+  specification.
+
+
+  **Command tree.** The commands of `manifold-host` are the union of the
+  `commands` of every CLI asset whose path matches
+  `docs/specifications/host-cli*.cli.yml`, merged by name. Every asset
+  declares the same `tool`. A command with `subcommands` is a command
+  group; a command without them is a runnable command, named by its path,
+  the names from the root joined by spaces, such as `usage push`. A group
+  declared in more than one asset has the same summary in each, and its
+  subcommands are merged; a runnable command is declared in one asset
+  only. No command declares `-h` or `--help`, and `help` is a name at the
+  root only. The help text of every command is rendered from these assets,
+  so the help and the specifications do not disagree.
+
+
+  **Resolution.** The arguments after the binary name are read from the
+  left. Each argument that names a subcommand of the command reached so far
+  moves to it, starting at the root, until an argument is not a subcommand
+  name or the command reached is runnable. The remaining arguments belong
+  to the command reached. In them an argument is in flag position unless it
+  is the value of the option before it: an option of `kind: option`
+  written as its flag alone takes the next argument as its value, and
+  written `<flag>=<value>` takes none. An argument in flag position that
+  starts with `-` and is longer than `-` is a flag. The first of these
+  rules that holds decides the answer.
+
+  1. When a flag is `-h` or `--help`, the command reached answers with its
+  help on standard output and exit code 0, whatever the other arguments
+  are.
+
+  2. When the command reached is the root or a group and no argument
+  remains, it answers with its help on standard output and exit code 0.
+
+  3. When the command reached is the root or a group and its first
+  remaining argument is not a flag, that argument is an unknown command.
+  The command answers on standard error with
+  `manifold-host: unknown command '<command>'`, the command being the
+  path and the argument joined by a space, then its usage, and exits with
+  code 2.
+
+  4. When a flag is not one of the declared flags of the command reached,
+  the flag is unknown; the root and a group declare none. The command
+  answers on standard error with `manifold-host: unknown flag '<flag>'`,
+  the flag as written before any `=`, followed by ` for '<path>'` below
+  the root, then its usage, and exits with code 2.
+
+  5. When the command reached is `help`, its remaining arguments are the
+  target, a command path, and no command runs. The target is read from
+  the left, starting at the root: each argument that names a subcommand
+  of the command reached so far moves to it. When every argument has
+  moved, the command reached answers with its help on standard output and
+  exit code 0. When an argument does not name a subcommand of the command
+  reached, including any argument after a runnable command, that argument
+  is an unknown command: the command reached answers on standard error as
+  rule 3 states, with its path and that argument, and exits with code 2.
+  So `manifold-host help` answers what `manifold-host` and
+  `manifold-host --help` answer, `manifold-host help usage push` answers
+  what `manifold-host usage push --help` answers, and
+  `manifold-host help usage nothing` and
+  `manifold-host help usage push extra` are refused by `usage` and by
+  `usage push`. A flag in the target is decided by rules 1 and 4 for
+  `help`, which declares no flag but `-h` and `--help`:
+  `manifold-host help usage push --service` is refused as an unknown flag
+  for `help`, and `manifold-host help usage --help` answers the help of
+  `help`.
+
+  6. Otherwise the runnable command runs with its remaining arguments, and
+  its own specification defines what it does with them, including each
+  other refusal of its command line.
+
+
+  **Help.** Help is plain text in sections, each a heading line ending in
+  `:` followed by its entries indented by two spaces, with one empty line
+  between sections. A description is the asset's text with its line breaks
+  folded to spaces, printed as written, and wrapped at 80 columns with each
+  continuation line indented to the column where the description began.
+  When an entry's name reaches that column, the description starts on the
+  next line. The help of the root and of a group is, in order:
+
+  - the summary of the root or the group, on one line;
+
+  - `Usage:` with `manifold-host <path> <command> [flags]`, the path absent
+  at the root;
+
+  - `Commands:` with one entry for each runnable command beneath it, its
+  path relative to the command reached and its summary, ordered by path,
+  `help` included at the root;
+
+  - `Flags:` with `-h, --help` and its description;
+
+  - the line `Run 'manifold-host <path> <command> --help' for the arguments
+  and flags of a command.`, the path absent at the root.
+
+  The help of a runnable command is, in order, with a section absent when
+  it has no entry:
+
+  - the command's summary, on one line;
+
+  - `Usage:` with `manifold-host <path>`, then each required option as
+  `<flag> <value>`, then `[flags]` when it has an option that is not
+  required, then each positional argument in `position` order as
+  `<name>`, written `[<name>]` when it is not required and followed by
+  `...` when it is `greedy`;
+
+  - `Arguments:` with one entry for each positional argument, `<name>` and
+  its description;
+
+  - `Flags:` with one entry for each option in declared order and then
+  `-h, --help`. An entry is its flags joined by `, `, followed for an
+  option of `kind: option` by ` <type>` with the option's `value.type`, and
+  its description, followed by ` Required.` when it is required,
+  ` Repeatable.` when it is repeatable, and ` Default: <default>.` when it
+  declares a default;
+
+  - `Exit codes:` with one entry for each exit code, the code and its
+  meaning;
+
+  - `Examples:` with each example as written.
+
+  The usage of a command, printed after a refusal, is its `Usage:` section,
+  then for the root and a group its `Commands:` section, then the line
+  `Run 'manifold-host <path> --help' for more.`, the path absent at the
+  root.
+format: cli
+validation-criteria: >-
+  Every `docs/specifications/host-cli*.cli.yml` asset validates against the
+  CLI Command Specification schema. A unit test in `packages/host-cli`
+  merges the assets and observes that the command tree compiled into the
+  host CLI equals it. A unit test resolves and renders a tree of generic
+  commands, a group with two runnable commands, one with a required
+  option, a repeatable option, an option with a default, a flag, and a
+  greedy optional argument, and observes each section and the wrapping
+  above, `--help` beside an unknown flag answering help, a `--help` that
+  is the value of an option not answering help, `<flag>=<value>`, and the
+  refusal text and exit code 2 of an unknown command at the root and in a
+  group and of an unknown flag. For `help`, it observes the help of the
+  root, a group, and a runnable command as targets; the refusal by the
+  root, by a group, and by a runnable command of a target argument that
+  names none of their subcommands; the refusal of a target that ends in an
+  option's flag as an unknown flag for `help`; and that no target resolves
+  to a run. A test compiles the host CLI for the
+  current platform and runs it from a directory with no `node_modules`. It
+  observes that `manifold-host`, `manifold-host --help`, and
+  `manifold-host help` print the same text on standard output, with an
+  entry for every runnable command, and exit 0; that every runnable
+  command and every group answers `--help` and `-h` with exit 0 and its
+  help on standard output, equal to the help rendered from the assets; and
+  that `manifold-host help <path>` prints the same text as
+  `manifold-host <path> --help` for every group and runnable command, the
+  `help` command's own help included; and that an unknown command at the
+  root, an unknown command in a group, an unknown flag at the root, an
+  unknown flag of a runnable command, `manifold-host help` with an unknown
+  target in a group, and `manifold-host help` with a target that ends in
+  an option's flag each print their refusal and usage on standard error,
+  nothing on standard output, and exit 2.

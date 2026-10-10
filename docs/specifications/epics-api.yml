@@ -1,0 +1,123 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - operator-console
+    - github-event-source
+    - tasks-api
+terms:
+  - epic
+  - github-mirror
+  - tracked-issue
+description: |-
+  Defines the epics read endpoints of Manifold's API: `GET /api/epics`,
+  which lists the root tasks an operator can open as an epic, and
+  `GET /api/epics/{issueNodeId}`, which reads the epic under one tracked
+  issue: its sub-issue tree, each issue's lifecycle status and actor, and
+  the dependencies that name an issue of the tree.
+  `docs/specifications/epics-api.openapi.yml` is the machine-readable
+  definition. The Epics screen of the operator console reads them, and any
+  automation may.
+
+  The endpoints are mounted with the HTTP host's `mount` at the prefix
+  `/api/epics` and are always served without authentication. Access
+  control belongs to the deployment. They read the GitHub mirror through
+  the GitHub event source's `trackedIssues`, and the tasks list of
+  `tasks-api`, and change nothing. They make no GitHub call.
+  Manifold keeps no dependency or sub-issue data of its own: every
+  relationship in an answer is a present `github_dependency` or
+  `github_sub_issue` row of the mirror.
+
+  Issue. Every issue in an answer is `{ nodeId, repository, number,
+  state, title, url }`, as `tasks-api` defines a task summary's `issue`:
+  `state` is `open` or `closed`, and `title` and `url` are absent until
+  the mirror has read them. A closed issue is done, whatever its state
+  reason.
+
+  Roots. `GET /api/epics` answers `{ "roots": [...] }`, one entry
+  `{ issue }` per root task. A root task is a tracked issue that has at
+  least one present sub-issue in the mirror, and whose parent is absent or
+  is not a tracked issue. Open roots come first, then closed roots; each
+  group is ordered by `repository`, then by `number`, ascending. With no
+  root task, `roots` is empty. The query string is ignored. The list is
+  not paged.
+
+  One epic. `GET /api/epics/{issueNodeId}` answers `200` with
+  `{ "epic": {...} }` when the node id names a tracked issue, a root task
+  or any other, and `404` with an empty body for any other id. The segment
+  is percent-decoded once before it is compared. The epic holds `root`,
+  the node id asked for, `issues`, and `dependencies`.
+
+  The tree. The tree is the root and the issues reached from it through
+  present sub-issue rows. The walk descends from every tracked issue it
+  reaches, through the sub-issues `trackedIssue` lists for it. A sub-issue
+  that is not a tracked issue is in the tree, and the walk does not
+  descend from it, since the mirror holds no sub-issues for it. An issue
+  the walk reaches twice is in the tree once, under the parent it was
+  first reached from.
+
+  Outside issues. An outside issue is an issue that is not in the tree and
+  is at the other end of a dependency from a tracked issue of the tree.
+  It is in `issues` with `placement` `outside`. The walk does not follow
+  an outside issue's own sub-issues or dependencies.
+
+  `issues` holds one entry per issue of the tree and per outside issue:
+
+  - `issue`: the issue.
+  - `placement`: `root` for the root, `tree` for another issue of the
+    tree, and `outside` for an outside issue.
+  - `parent`: the node id of the tree issue it was reached from, present
+    for `tree` and absent for `root` and `outside`.
+  - `task`: present when the issue is a task on one or more bound
+    Projects, as `tasks-api` defines a task, and absent otherwise:
+    `{ actorId, projects, actor, openEscalations }`. `actorId` is
+    `task:<issueNodeId>`. `projects` holds one entry `{ binding, status }`
+    per bound Project the task is on, in the declaration's order, with
+    `status` as `tasks-api` defines it. `actor` and `openEscalations` are
+    the task summary's, from the first of those Projects; `actor` is
+    absent when the store holds no snapshot for the actor id.
+
+  The root comes first, then the rest of the tree in pre-order, each
+  issue's sub-issues ordered by `repository`, then by `number`, ascending;
+  then the outside issues ordered the same way.
+
+  `dependencies` holds one entry `{ blocking, blocked }` per present
+  dependency row between two issues of the answer that names a tracked
+  issue of the tree: `blocked` is blocked by `blocking`, so `blocked`
+  waits on `blocking`. The tracked issue's `blockedBy` and `blocking`
+  lists give the rows; a row two tree issues share appears once. The
+  entries are ordered by the index in `issues` of `blocked`, then of
+  `blocking`. A dependency between two issues neither of which is a
+  tracked issue of the tree is not in the answer. Dependencies are GitHub's
+  as the mirror holds them, cycles included.
+
+  Both answers are `200` with `Content-Type: application/json` and
+  `Cache-Control: no-store`. A path under the prefix other than
+  `/api/epics` and `/api/epics/{issueNodeId}` answers `404`. A method
+  other than `GET` answers `405` with `Allow: GET`. A read that throws
+  answers `500` with an empty body.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/epics-api.openapi.yml` is a valid OpenAPI 3.1
+  document. A test in `packages/service` requests both endpoints without
+  authentication through the service's HTTP host, with a store and GitHub
+  mirror fixtures over two bound Projects, and checks that each body
+  validates against its response schema in the OpenAPI document. The
+  fixtures include a root with a tree three levels deep, a sub-issue
+  that is not a tracked issue and has a sub-issue of its own on GitHub, a
+  tracked issue whose parent is not tracked, a tracked issue with no
+  sub-issue, a closed root, an issue on both Projects with a status on
+  each, an issue whose only item is archived, a task with no actor, a task
+  with an actor and an open escalation, a dependency between two tree
+  issues at different levels, a tree issue blocked by a tracked issue of
+  another tree and by an issue on no bound Project, a tree issue that
+  blocks an outside issue, a cycle of three dependencies, and a
+  dependency between two outside issues. The test checks the roots and
+  their order, that the untracked sub-issue's own sub-issue and the
+  dependency between two outside issues are absent, each field and
+  placement stated above, the order of issues and dependencies, that a
+  non-root tracked issue answers its own subtree with itself as `root`,
+  the `404` for an unknown id, an untracked id, and a sub-path, and the
+  `405`. Fixture values are generic and never drawn from Manifold's own
+  domain.

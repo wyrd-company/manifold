@@ -1,0 +1,61 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: host-cli
+# ---
+$schema: https://commonclischema.org/draft/2026-04/schema
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+global-options:
+  - name: help
+    flags: [-h, --help]
+    kind: flag
+    description: Show help for the command and exit.
+    required: false
+commands:
+  - name: help
+    summary: Show help for the host CLI or for a command.
+    mode: non-interactive
+    positional-arguments:
+      - name: command
+        description: >-
+          The path of a command or group, such as `usage push`, read from
+          the root one name at a time. Without it, the help of the host CLI
+          is shown. No command runs.
+        position: 0
+        greedy: true
+        required: false
+        value:
+          type: string-list
+          arity:
+            min: 0
+            max: unbounded
+    output:
+      modes:
+        - name: text
+          description: >-
+            The help of the host CLI or of the named command on standard
+            output.
+          machine-readable: false
+      exit-codes:
+        - code: 0
+          meaning: The help was shown.
+        - code: 2
+          meaning: >-
+            A name of the path is not a subcommand of the command before it,
+            or a flag other than `-h` or `--help` is given. The usage of the
+            command reached is on standard error.
+    examples:
+      - manifold-host help
+      - manifold-host help usage push
+notes:
+  - >-
+    The command tree of `manifold-host` is the union of the `commands` of
+    every `docs/specifications/host-cli*.cli.yml` asset. Each asset declares
+    this `tool`.
+  - >-
+    `-h` and `--help` are answered by every command and command group, and
+    no command declares them.

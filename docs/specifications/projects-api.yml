@@ -1,0 +1,291 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose endpoints these are.
+  realizes:
+    - task-metadata
+  references:
+    - task-metadata-declaration
+    - bindings-declaration
+    - github-event-source
+    - operator-console
+terms:
+  - binding
+  - task-field
+  - drift
+  - project-configuration-plan
+  - applied-configuration
+  - github-mirror
+  - storage-scope
+description: |-
+  Defines the Project configuration endpoints of Manifold's API:
+  `GET /api/projects`, which lists each bound Project with its
+  configuration state; `GET /api/projects/{binding}/plan`, which answers
+  the changes an Apply would make; and `POST /api/projects/{binding}/apply`,
+  which makes them. `docs/specifications/projects-api.openapi.yml` is the
+  machine-readable definition. The GitHub Projects screen of the operator
+  console reads and calls them, and any automation may.
+
+  The endpoints are mounted with the HTTP host's `mount` at the prefix
+  `/api/projects` and are served without authentication. Access control
+  belongs to the deployment. Every answer carries
+  `Cache-Control: no-store`.
+
+  Bound Projects. The bound Projects are the GitHub Project bindings of
+  the bindings declaration in force that are not archived, in the
+  declaration's order. `{binding}` is a binding name. A name that is no
+  bound Project's answers `404` with kind `unknown-binding`.
+
+  Owned configuration. A bound Project's owned configuration is its
+  lifecycle field and its task fields, as the task metadata declaration
+  in force declares them for the binding, each stored as the custom field
+  of the Project that its storage `name` names: the field's name and data
+  type and, for a single-select
+  field, its options, their order, and the colors and descriptions the
+  declaration declares. Every other custom field of the Project whose
+  data type is `TEXT`, `NUMBER`, `DATE`, `SINGLE_SELECT`, `MULTI_SELECT`,
+  or `ITERATION`, and that is not an organization issue field, is an
+  undeclared field; every option of an owned single-select field that the
+  declaration does not name is an undeclared option. Built-in fields and
+  organization issue fields are neither.
+
+  Shared scopes. A task field stored as an organization issue field or
+  issue type is configured in the organization, and one stored as a
+  repository label or milestone in each repository of the binding's
+  `repositories`, as `task-metadata-declaration` defines. Each such
+  organization or repository is a shared scope, and its owned
+  configuration is what every binding of the declaration in force
+  declares in it. A binding's plan holds the changes of its Project and
+  of every shared scope its task fields reach, the scope's changes
+  planned against the union of every binding's declaration there, so the
+  plan is the same whichever sharing binding asks for it and an Apply of
+  one binding never undoes another's declaration. A front matter task
+  field has no configuration and no change.
+
+  Plan. A bound Project's plan is the ordered list of changes that brings
+  its custom fields to its owned configuration, as `task-metadata`
+  computes it from the declaration in force, the Project's fields as the
+  GitHub mirror holds them, and the applied configuration. Each change
+  has:
+
+  - `id`: a string that names the change's target and action, stable
+    across plans of the same state.
+  - `storage`: the storage kind whose configuration the change sets:
+    `project-field`, `issue-field`, `issue-type`, `label`, or
+    `milestone`.
+  - `scope`: for a change of a shared scope, `{ kind, name, bindings }`:
+    `organization` with its login or `repository` with `owner/name`, and
+    the bindings whose task fields reach it; absent for a change of the
+    Project.
+  - `description`: one English sentence naming the target and what
+    happens to it.
+  - `target`: `{ field, lifecycle }` for a field and
+    `{ field, option, lifecycle }` for an option, with `taskField` for a
+    task field. `field` is the Project field's or issue field's name as
+    declared for an owned field, and as GitHub holds it for an undeclared
+    one; `option` is named the same way; `taskField` is the task field's
+    name; `lifecycle` is true for the lifecycle field. An issue type, a
+    label, or a milestone is `{ option, lifecycle, taskField }`, `option`
+    its name as GitHub names it, a label's with the field's prefix.
+  - `action`: `create`, `change`, or `remove`.
+  - `side`: where the change applies: `github` for a change Apply makes on
+    the Project the answer names by `owner` and `number`, and
+    `declaration` for a change Apply makes to `task-metadata.yml`, which
+    takes GitHub's field into the declaration for a task field whose
+    `whenChanged` is `accept`, when the declaration can hold that field;
+    drift in a field it cannot hold, such as one recreated as an iteration
+    field, stays a `github` change.
+  - `drift`: true when the change undoes drift, or takes it into the
+    declaration: GitHub's field or option differs from the applied
+    configuration in what the change sets.
+  - `requiresRemoval`: true for a change Apply makes only when the request
+    asks for removal: every `remove` on GitHub, and a `create` or `change`
+    that needs one first, such as a declared field whose name an
+    undeclared field holds or whose data type differs from the field of
+    that name on GitHub.
+  - `properties`: for a `change`, the properties it sets, from `name`,
+    `options`, `order`, `color`, `description`, and `enabled`; empty
+    otherwise.
+  - `from` and `to`: the target before and after, `null` for the side
+    where it does not exist. A field is `{ name, type }`, with `options`
+    for a single-select field; an option is `{ name, color, description
+    }`; an issue type, a label, or a milestone is `{ entity, name, color,
+    description, enabled }`, with `color` absent for a milestone and
+    `enabled` for an issue type alone.
+
+  Configuration state. A bound Project's configuration state is one of:
+
+  - `not-applied`: no Apply has completed for the binding on this
+    Project, or the declaration in force does not name the binding.
+  - `drift` with `count`: the plan has `count` changes whose `drift` is
+    true, at least one.
+  - `pending` with `count`: no change is drift, and the plan has `count`
+    creates and changes, at least one: the declaration in force changed
+    since the last Apply.
+  - `in-sync`: no change is drift, and the plan has no create or change.
+    An undeclared field or option that the last Apply kept is a `remove`
+    that is not drift, and leaves the Project in sync.
+
+  A declaration published after a Project's last Apply therefore shows
+  the Project `pending` until the next Apply, or `drift` when GitHub has
+  changed too; a Project never applied shows `not-applied`. The task
+  metadata module's `planDeclaration` answers the state, changes, and
+  field statuses each bound Project would show with a declaration not yet in force, for the
+  console's impact of a draft before it is published, as `task-metadata`
+  states.
+
+  The state is computed when it is asked for, from the mirror, so a
+  configuration change on GitHub shows at the next observation of the
+  Project's fields: each sweep, a `projects_v2` delivery for the Project,
+  a plan, and an Apply each observe them, as `github-event-source` states.
+
+  List. `GET /api/projects` answers `{ "projects": [...] }`, one entry per
+  bound Project:
+
+  - `binding`: the binding's name.
+  - `owner`, `number`: the Project's owner login and number.
+  - `projectNodeId`: the Project's node id, or `null` when the GitHub
+    event source has not resolved it.
+  - `portfolioItem`: the binding's portfolio item.
+  - `environment`: the binding's environment.
+  - `configuration`: the configuration state, from the mirror as it
+    stands, with no read of GitHub.
+  - `lastApplied`: `{ at, commit }`, when the binding's last Apply
+    completed, in epoch milliseconds, and the commit of the declaration it
+    applied; `null` before the first.
+  - `observedAt`: when the mirror last read the Project's fields, in
+    epoch milliseconds, or `null`.
+
+  A Project bound but not yet read from GitHub has `projectNodeId` `null`
+  until the source resolves it, and `observedAt` `null` until the source
+  reads its fields; it has had no Apply, since every Apply reads the
+  fields first, so its configuration is `not-applied`.
+
+  Plan. `GET /api/projects/{binding}/plan` first observes the Project's
+  fields: it asks the GitHub event source to read them into the mirror,
+  after the source's work in hand. It answers `{ binding, owner, number,
+  projectNodeId, declarationCommit, observedAt, observation,
+  configuration, changes, digest, fields, scopes, outside, frontMatter
+  }`. `digest` is the
+  SHA-256 of the changes' canonical JSON, the same for the same state.
+  `fields` says what GitHub holds of each owned field, the lifecycle field
+  first and then the task fields in declared order: `{ taskField,
+  storage, field, lifecycle, github, detail }`, where `storage` is absent
+  for a Project field, `field` is the Project field's, issue field's, or
+  front matter key's name and absent for an issue type, label, or
+  milestone field, `github` is `present` when the field and its entities
+  need no change, `differs` when one needs a change, and `missing` when
+  GitHub holds none of them, and `detail` is one English sentence naming
+  what differs or what an Apply creates. A front matter field is
+  `present`, with a detail that counts the issues whose front matter does
+  not read for it. `scopes` lists each shared scope the binding reaches,
+  in scope key order, `{ scope, status, observedAt, message }`, `status`
+  being the last read's: `ready`, `unsupported` for an owner that GitHub
+  gives no such configuration, such as an organization field on a user
+  account, `forbidden`, `unconfigured` for an owner service
+  configuration names no credential for, `missing`, or `unobserved`
+  before the first read. `outside` lists each repository that holds a
+  tracked issue of the Project and that the binding's `repositories`
+  do not name, with its count of tracked issues; Manifold provisions
+  nothing there and the issues stay tasks. Each is absent when empty.
+  `frontMatter` is `{ mismatched }`, the count of the Project's tracked
+  issues with a front matter task field whose value is invalid, or
+  `null` when the binding declares no front matter task field.
+  `declarationCommit` is the commit of the declaration in force, or
+  `null` before the first. `observation` is `{ "status": "fresh" }` when
+  the read succeeded, and `{ "status": "stale", "message" }` when it
+  failed, in which case the plan is computed from the mirror as it was;
+  when the mirror has never read the Project's fields, a failed read
+  answers `502` with kind `unobserved` and the read's message.
+  A binding the declaration does not name owns no configuration, so its
+  plan has no change and its state is `not-applied`. A Project the source has not
+  resolved answers `409` with kind `unresolved-project`. The plan writes
+  nothing but the mirror's fields.
+
+  Apply. `POST /api/projects/{binding}/apply` takes
+  `{ "removeUndeclared": boolean, "digest": string }`, with
+  `removeUndeclared` required and `digest` optional, and nothing else;
+  any other body answers `400` with kind `invalid-request`. With
+  `digest`, an Apply whose plan, after its observation, has another
+  digest answers `409` with kind `plan-stale` and writes nothing, so the
+  plan a person reviewed is the plan applied. It observes the
+  Project's fields, plans against the declaration in force, makes each
+  change in plan order, observes the fields again, and records the
+  applied configuration, as `task-metadata` states. A change whose
+  `requiresRemoval` is true is made only when `removeUndeclared` is true;
+  otherwise it is kept. Every `declaration` change of the plan is made by
+  one save of `task-metadata.yml`. Applies run one at a time across every
+  binding: a second request waits for the first and then runs, and finds
+  its changes made, so two bindings that share a scope never interleave
+  their writes there. Before any write, an Apply whose binding reaches a
+  shared scope that is not `ready` answers `409` with kind
+  `scope-unavailable` and `scopes`, each such scope's status.
+
+  It answers `200` with `{ outcome, changes, writes, configuration,
+  declarationCommit }`: `outcome` is `applied` when it made at least one
+  change and `in-sync` when the plan had nothing to make; each change of
+  the plan carries `outcome` `applied` or `kept`; `writes` is the number
+  of GitHub writes it made; `configuration` is the
+  state after the Apply; `declarationCommit` is the commit of the save
+  that took GitHub's fields into the declaration, or `null` when there
+  was none. An Apply whose GitHub write fails stops at that change and
+  answers `502` with `error` `{ kind, message }`, `writes`, and each
+  change's outcome, where `kind` is the
+  write's error kind, `field-missing`, `option-missing`, `missing` for
+  an issue type, label, or milestone GitHub no longer holds,
+  `forbidden`, `transport`, or `rejected`, and each change's `outcome` is `applied`,
+  `kept`, `failed` for the one that failed, and `not-run` for the rest; it
+  records no applied configuration. Before any write, the Apply lints the
+  declaration text its `declaration` changes give; a finding answers
+  `409` with kind `declaration-invalid` and writes nothing. A save that
+  conflicts answers `409` with kind `declaration-conflict` after the
+  GitHub changes are made. A save whose commit is pushed and not yet in
+  force answers `409` with kind `declaration-pending` and `commit`, the
+  pushed commit, in the error. The same Apply run again pushes nothing
+  new: while the process repository cannot be pulled it answers the same
+  `declaration-pending` with the same `commit`, and once the commit is in
+  force it completes. A save that fails before any commit of its text is
+  known answers `502` with kind `declaration-unsaved`, `writes`, and each
+  change's outcome. None of these records an applied configuration. A
+  binding the declaration in force does not name answers `409` with kind
+  `undeclared`, and an unresolved Project `409` with kind
+  `unresolved-project`.
+
+  Errors. An error answer is `{ "error": { "kind", "message" } }`, with
+  `commit` for `declaration-pending`. While
+  the service stops, every request answers `503` with kind
+  `unavailable`. A method
+  the path does not take answers `405` with an `Allow` header. A path under
+  `/api/projects` that is none of the three answers `404` with kind
+  `not-found`.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/projects-api.openapi.yml` is a valid OpenAPI 3.1
+  document. Endpoint tests run the service's request listener over a real
+  store file, the GitHub event source against the GitHub fake, and a
+  process repository fixture, and validate every answer against the
+  document's response schema for its path and status. They show: the list
+  names each bound Project in declaration order and leaves out an
+  archived binding; a binding never applied is `not-applied`; after an
+  Apply the plan is empty and the state `in-sync`; a declared option
+  renamed in the fake is `drift` with count 1 at the next plan, and a
+  `change` with `drift` true; a declaration that adds a field gives
+  `pending` with count 1 and no drift; an undeclared field present at the
+  first Apply and kept is a `remove` that leaves the state `in-sync`, and
+  one added in the fake afterwards is `drift`; an Apply with
+  `removeUndeclared` false keeps every `requiresRemoval` change and with
+  true makes it; an Apply whose fake mutation fails with a `502` answers
+  `502` with kind `transport`, the failed change `failed` and the rest
+  `not-run`; an Apply with the `digest` of an earlier plan, after a change in
+  the fake, answers `409` `plan-stale` and the fake logs no mutation; the
+  same plan twice has one digest; two bindings of one organization that
+  declare one issue field plan its create on both, the first Apply makes
+  it, and the second answers `in-sync` with no mutation; a label renamed
+  in the fake in a repository two bindings share is `drift` on both; a
+  user-owned Project whose issue field names no organization plans the
+  scope `unsupported` and its Apply answers `409` `scope-unavailable`
+  with no mutation; an issue in a repository no `repositories` entry
+  names is counted under `outside`; a binding with a front matter field
+  answers `frontMatter` with the count of invalid bodies; a body `{}`, `{ "removeUndeclared": "yes" }`, and a body with
+  another key answer `400`; an unknown binding answers `404`; and a
+  `DELETE` answers `405`. Fixtures use a domain unrelated to Manifold.

@@ -1,0 +1,45 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - t3code-environment-source
+    - t3code-thread-events
+description: >-
+  T3 Code 0.0.45, the stable release, resumes a thread's events from a
+  sequence only while the range holds at most 1000 of the thread's stored
+  events and 8 MiB of payload, and holds no `thread.created`; past that it
+  sends a snapshot of current state instead. Assistant text is stored one
+  event per paragraph and every tool update is an activity, so a long turn
+  passes the bound. The live stream also coalesces tool updates that a
+  replay sends one by one. The source must publish thread activity so that
+  a restart neither skips nor repeats what an actor acts on.
+considered-options:
+  "1": >-
+    Thread changes. The source keeps a compact projection of each thread,
+    publishes the changes in its turn, requests, and session, and takes each
+    event id from the change: a turn id, a request id.
+  "2": >-
+    Raw events. The source publishes each server event with its sequence as
+    the event id, and publishes one resynchronized event carrying the
+    snapshot when the server sends a snapshot in place of a replay.
+  "3": >-
+    Exact replay only. The source publishes raw events and stops an
+    environment with an error when the server sends a snapshot in place of
+    a replay.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 gives one path whatever the gap: a live stream, a replay, and a
+    snapshot yield the same changes with the same ids, so the router's
+    replay rule removes every duplicate, and a blueprint handles one set of
+    events. Option 2 makes every blueprint handle a second, state-shaped
+    event beside the raw ones, and its live and replayed event sets differ.
+    Option 3 stops following an environment after an outage long enough to
+    pass the bound, which narrows what Manifold supports.
+expected-outcomes:
+  positive:
+    - A restart, a lost connection, and a replay past the server's bound publish each change still visible in the thread once.
+    - Blueprints declare a small set of thread events, none of them per paragraph or per tool update.
+    - The source stores a compact thread per followed thread, not its messages or activity history.
+  negative:
+    - A change that opened and closed inside a gap past the server's bound, such as a request answered while the service was down, is not published.
+    - Thread activity outside the turn, requests, and session, such as individual messages and tool calls, is not published.

@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - escalations
+title: Escalation
+description: >-
+  A question put to a person, with up to three choices or a free-text
+  answer, by a blueprint state or by the service, sent to every channel it
+  names and closed by the first answer.

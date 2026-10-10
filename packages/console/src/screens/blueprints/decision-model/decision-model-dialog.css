@@ -1,0 +1,97 @@
+/* ---
+relationships:
+  implements: operator-console
+--- */
+.decision-model-dialog {
+  padding: 24px;
+  overflow: auto;
+}
+.decision-model-dialog .model-view {
+  height: 560px;
+  overflow: hidden;
+}
+.decision-model-dialog .blueprint-source {
+  height: 100%;
+}
+.decision-model-dialog .model-toolbar,
+.decision-model-dialog .model-table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.decision-model-dialog .model-table-toolbar select,
+.decision-model-dialog .model-switch select {
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  padding: 4px;
+}
+.decision-model-dialog .grl-dg__aside__menu__components {
+  display: none;
+}
+.decision-model-dialog .model-settings {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+}
+.decision-model-dialog .model-switch-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.decision-model-dialog .model-jsonata {
+  min-width: 100px;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.decision-model-dialog .model-problems {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.decision-model-dialog .model-problems button {
+  display: block;
+  text-align: left;
+  color: var(--error);
+  font-size: 12px;
+}
+.decision-model-dialog textarea {
+  display: block;
+  width: 100%;
+  min-height: 70px;
+  background: var(--card);
+  border: 1px solid var(--input);
+  font-family: var(--font-mono);
+}
+.decision-model-dialog [class*="table"] th {
+  font-family: var(--font-mono);
+}
+.decision-model-dialog [data-column-type="output"] {
+  background: var(--accent);
+}
+.decision-model-dialog .model-view {
+  flex-shrink: 0;
+}
+.decision-model-dialog pre {
+  max-height: 200px;
+  overflow: auto;
+  font: 12px var(--font-mono);
+}
+.decision-model-dialog th[data-self="output"],
+.decision-model-dialog th[data-parent="output"],
+.decision-model-dialog .model-output .cm-editor {
+  background: var(--accent);
+}
+.decision-model-dialog [data-model-problem="error"] {
+  outline: 1px solid var(--error);
+  outline-offset: -1px;
+}
+.decision-model-dialog [data-model-problem="warning"] {
+  outline: 1px solid var(--warning);
+  outline-offset: -1px;
+}
+.decision-model-dialog .grl-dg__aside__menu {
+  display: none;
+}

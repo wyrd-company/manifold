@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - escalations
+    - escalations-configuration
+title: Notification Destination
+description: >-
+  A name the process repository uses for where an escalation is sent,
+  mapped in service configuration to an ntfy server, topic, security
+  posture, and credential.

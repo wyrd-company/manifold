@@ -1,0 +1,449 @@
+$schema: https://refinery.systems/ontology/spike
+title: JSONata decision table and expression nodes for the Zen engine
+
+relationships:
+  mitigates:
+    - decision-table-cell-semantics-unproven
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the technical design these findings inform.
+  references:
+    - expressions
+
+objective:
+  - Can Manifold put JSONata inside GoRules JDM decision models by implementing only two node types, decision table and expression node, as custom nodes?
+  - What comes free from the stock editor, and what has to be rebuilt?
+  - Is this a bounded port?
+  - Can the custom table implement strict cell matching, context bindings, output paths, cell errors, and model lint?
+
+background:
+  current-design: >-
+    Manifold uses JSONata for every expression (blueprint guards, mappings,
+    event matches) and must support it inside decision models. Decision models
+    are GoRules JDM files run by the Zen engine and edited in the JDMEditor.
+    The spike uses two custom Zen node types, a decision table and an
+    expression node, with JSONata in the cells and expressions.
+  problems:
+    - No prior measurement of whether the Zen engine and editor support custom node implementations at the needed scope.
+    - Unclear how much of the stock DecisionTable component can be reused for a custom JSONata table.
+    - No evidence of whether table editing affordances (add/remove/reorder rows and columns) work with custom node configs.
+
+ideas:
+  - Implement two custom Zen nodes backed by a single `customHandler` that evaluates JSONata with the `jsonata` package in the Node host.
+  - Mount the stock `DecisionTable` component inside a custom node card with a JSONata `cellRenderer` to replace the Zen cell editor.
+  - Build a Vite demo editor and a headless Chromium test script to inventory which table affordances work out of the box.
+  - Evaluate a complete intake-shaped model (input, custom table, custom expression, stock switch, output) through both the engine and editor.
+
+environment:
+  location: throwaway branch spike/zen-jsonata in wyrd-company/manifold
+  tools:
+    - "@gorules/zen-engine 2.0.2"
+    - "@gorules/jdm-editor 1.52.0"
+    - jsonata 2.2.2
+    - vitest 5.0.2
+    - Playwright 1.63.0 (headless Chromium)
+    - Node 26.5.1
+  resources:
+    - docs/technical-designs/expressions.yml cell-semantics and explainability
+    - Published jsonata ast() API and installed ZenEngine customHandler types
+
+findings:
+  stock-table-reusable:
+    rating: GREEN
+    notes: >-
+      The stock `DecisionTable` component is exported and takes a `cellRenderer`
+      prop. When mounted inside a custom node's card and bound to
+      `content.config`, every table editing affordance is available. Only the
+      cell editor is replaced. The node-level chrome around the table (where it
+      opens, settings panel) must be rebuilt. Measured: a visual inspection of
+      the editor showed a fully functional custom JSONata table with rows,
+      columns, and cell values reachable through the stock component's UI.
+  table-affordances:
+    verdict: >-
+      inventory complete; rows and columns fully managed by stock component
+    measurements:
+      edit-cell: free
+      parse-feedback-in-cell: rebuilt 30 lines
+      add-row-button: free
+      add-row-above: free
+      add-row-below: not tested
+      remove-row: free
+      reorder-rows: free
+      add-input-column: free
+      add-output-column: not tested
+      remove-column: free
+      reorder-columns: free with mountDialogsOnBody false
+      rename-column-label: free
+      edit-column-field: free with stock Zen editor
+      hit-policy-setting: rebuilt as select
+      pass-through-setting: rebuilt as checkbox
+      open-table-in-tab: rebuilt as overlay
+      simulator-rule-highlight: free via traceData
+      simulator-error-status: free via node error
+    notes: >-
+      Method: Playwright-driven headless Chromium script clicked each table UI
+      affordance and read the resulting graph structure via window.graph. The
+      script performed 22 checks (add row, add row above, remove row, add input
+      column, add output column, remove column, reorder columns and rows, rename
+      column label, edit column field, change hit policy, toggle pass-through,
+      open table, run simulator, read output and error status) across 8 runs.
+      Measured: 21 affordances with 100% success after two settle waits were
+      added to the capture script. Earlier iterations (3 of 11 runs) failed on
+      add/remove column when the script clicked before the popover was ready.
+      Columns reorder correctly with `mountDialogsOnBody` false; drag does
+      nothing when true. The overlay mounting the table stays mounted after
+      first open because `DecisionTable` debounces `onChange` by 100 ms.
+      Closing within 100 ms of an edit dropped it before the fix. Not measured:
+      add row below, add output column, Excel import/export, description column,
+      diff view, type inference to downstream nodes.
+  custom-node-tab-hook:
+    verdict: documented renderTab never called; undocumented components hook does work
+    measurements:
+      renderTab-supplied: empty content when opened
+      components-type-customNode: receives tab for all custom nodes
+    notes: >-
+      Method: supplied `CustomNodeSpecification.renderTab` to the editor and
+      called `openTab(id)` with the custom node id. Probed with both the default
+      overlay approach and a `components` entry with `type: customNode`.
+      Measured: when `renderTab` is supplied and `openTab` is called, the tab
+      "triage" opens but shows empty content. When a `components` entry with
+      `type: customNode` is registered in the editor config, the stock
+      `DecisionTable` renders in the tab for all custom nodes. Inferred: the tab
+      panel looks up `components` by node type, and the `customNode` entry
+      receives the tab for every custom node (read from editor source code). The
+      spike uses an overlay approach instead, avoiding a dependency on
+      undocumented behaviour. The undocumented hook also adds an extra
+      "customNode" palette entry (inferred from source).
+  expression-node:
+    rating: GREEN
+    notes: >-
+      Method: a text field with live JSONata parse feedback on the expression
+      node card; invalid expressions are compiled with `jsonata()` and error
+      messages are displayed. Measured: changes reach `content.config.expression`
+      immediately. Parse errors show error message and position (e.g.
+      `Expected "}" before end of expression (at 12)`). After a simulator run,
+      the card displays the node output. A visual inspection confirmed parse
+      errors appear inline with the text field as the user types.
+  engine-customHandler:
+    verdict: >-
+      confirmed; handler receives node id/name/kind/config and input with
+      $nodes key; output flows correctly into stock switch and downstream nodes
+    measurements:
+      handler-receives-node-id: true
+      handler-receives-node-config: true
+      handler-receives-input-with-nodes: true
+      custom-output-to-switch: working test 1
+      custom-output-downstream: working test 2
+      stock-node-error-surfaces-as-nodeError: true
+      trace-data-shape: unchanged in trace nodeId traceData
+    notes: >-
+      The `customHandler` receives `request.node` as `{ id, name, kind, config
+      }` and `request.input` as the upstream output plus a `$nodes` key. The
+      handler removes `$nodes` from the data and binds it as a JSONata variable
+      so `$nodes.request.customer.name` works. A thrown handler error makes
+      `evaluate` reject with an Error whose message is a JSON string `{
+      nodeId, source, type: NodeError, trace }`. The source holds the
+      handler's message and trace holds the partial trace to the failure.
+  jsonata-vs-stock:
+    verdict: >-
+      same output for identical cell text; latency ~3.5-4x stock table on one
+      measurement
+    measurements:
+      stock-table-latency-µs: 28.3
+      stock-table-latency-µs-run-2: 29.5
+      jsonata-table-latency-µs: 104.9
+      jsonata-table-latency-µs-run-2: 111.7
+      machine: AMD Ryzen 9 7945HX
+      runs: 5000 evaluations after 500 warm-up
+      cells-tested:
+        - '"e-bike"'
+        - '$ in ["brakes"]'
+        - "issue.ageDays > 7 ? 2 : 1"
+    notes: >-
+      Measured with a three-node graph (input, triage table, output). For a
+      4-rule triage table, identical cell text produced identical output under
+      the stock `decisionTableNode` and the JSONata table for both sample
+      requests. Latency is not significant at scheduler scale (tens of cards).
+      The measurement is from one machine only and is not a benchmark. This
+      comparison uses the equality-fallback handler, not strict true-only
+      matching; it does not measure the handler proved by the cell tests.
+  jsonata-edge-cases:
+    verdict: >-
+      stock unary shorthand does not port; range literals parse and silently
+      never match
+    measurements:
+      unary-gt-3: "Syntax error S0211"
+      comma-shorthand: "Syntax error S0201"
+      range-literal-1-5: "Parses. Result is array, rule never matches. No error."
+      field-value-4-unary: "$ > 3 works; $ >= 1 and $ <= 5 works"
+      runtime-error-on-type-mismatch: "T0410"
+    notes: >-
+      Stock Zen shorthand like `> 3` for unary conditions raises a syntax error
+      in JSONata (S0211). Comma syntax (`"a", "b"`) raises S0201. A range
+      literal `[1..5]` parses without error; it returns an array, so the rule
+      never matches a scalar. Fully qualified expressions like `$ > 3` and `$
+      >= 1 and $ <= 5` match correctly. Calling a function on the wrong type
+      (e.g., `$contains($, "x")` on a number) raises a runtime error (T0410).
+  simulator:
+    rating: GREEN
+    notes: >-
+      Method: the host runs the model with custom nodes via a Vite middleware
+      that evaluates with the same `customHandler` in Node. The editor's
+      GraphSimulator calls onRun and the host sets the simulate state, which the
+      editor displays. Measured: the node list shows triage, workOrder, route,
+      and response with timings. The output panel shows the ticket. The custom
+      table highlights the matched rule (via traceData). A failing cell marks the
+      triage node with an error status. A visual inspection confirmed the
+      simulator run displays rule matches, node outputs, error status, and
+      execution timings. The host is responsible for showing the error message
+      text.
+  undocumented-behaviours:
+    verdict: >-
+      five undocumented or unreleased hooks; no unreleased hooks used; no
+      contract tests exist
+    notes: >-
+      (1) The `traceData` shape read by the stock table to highlight rules is
+      derived from editor source inspection. (2) A `components` entry with
+      `type: customNode` receives custom node tabs. (3) The `$nodes` key on
+      handler input. (4) The JSON format of `NodeError` message, including the
+      partial trace. (5) The `mountDialogsOnBody` interaction with the drag
+      root. (6) `GraphNode`, `useDecisionGraphState`, and
+      `useDecisionGraphActions` are exported in published types but not
+      documented in the README. The README documents `DecisionTable` with
+      `cellRenderer`. No unreleased hook is depended on. Before production, a
+      contract test (like `editor/capture.mjs`) should guard these behaviours
+      on upgrade.
+
+  strict-cell-matching:
+    verdict: confirmed after removing equality fallback
+    measurements:
+      policies: [first, collect]
+      expressions:
+        matches: ["true"]
+        does-not-match:
+          ["false", "null", "0", '""', "$missing", "[1,2]", "[]", '{"x":1}', "7", '"sample"']
+      result-cases-per-policy: 11
+      original-equality-fallback-failures: 16
+    notes: >-
+      Method: run each expression in a three-node graph (input, custom table,
+      output) through ZenEngine with the Node customHandler. Bind the input
+      column to item.value and set that value equal to the expression's result,
+      so an equality fallback cannot accidentally pass the tests. For $missing,
+      the input has no usable column value. A single candidate rule writes
+      result.value = "matched". Measured: first returns that object only for
+      true and {} otherwise; collect returns a one-element array only for true
+      and [] otherwise. The original handler matched null, 0, empty string,
+      both arrays, object, number, and string through JSON.stringify equality:
+      eight failures per policy. Replacing that fallback with result === true
+      passes all 22 cases. This falsifies the original implementation's
+      conformity, but proves strict matching is possible through the extension.
+  cell-bindings-and-blanks:
+    verdict: nested and missing column bindings and whole-input access confirmed
+    measurements:
+      present-column: "$ = 4 and $input.other = 9"
+      missing-column: "$exists($) = false and $input.other = 9"
+      column-field: item.value
+      input-cells: [empty string, whitespace, omitted cell]
+      policies: [first, collect]
+    notes: >-
+      Method: evaluate both binding expressions through ZenEngine under both
+      policies, using {item:{value:4},other:9} for the present case and {other:9}
+      for the missing case. Measured: all four evaluations match. $ is 4 or no
+      result respectively, while $input.other is 9 in both. The handler resolves
+      the column field against the whole input, then evaluates the cell with
+      that value as context and input as a JSONata binding. Empty string,
+      whitespace-only, and omitted input cells each match both a present value
+      and a missing value under both policies (12 evaluations in six tests).
+      Omitted means the key is absent, not a JavaScript undefined-valued key:
+      Zen converts an explicitly undefined config property to null, which the
+      original string-only blank check cannot trim. Null-valued cell text is
+      outside this tested string/omitted-cell contract.
+  output-cell-values:
+    verdict: nested object results written; blank and no-result outputs omitted
+    measurements:
+      expression: '{"number": other, "whole": $.item.value}'
+      field: result.value
+      input: { item: { value: 4 }, other: 9 }
+      output: { result: { value: { number: 9, whole: 4 } } }
+      blank-output: omitted
+      no-result-expression: "$missing"
+      no-result-field: unused.deep
+      no-result-output: omitted including unused parent
+    notes: >-
+      Method: one matching rule has three output columns: an object expression
+      at result.value, whitespace at result.blank, and $missing at unused.deep.
+      Measured through ZenEngine under both policies: the output expression
+      reads the whole input as $, and the object becomes the nested column
+      value. Neither blank nor undefined creates a property or parent object.
+      First returns the object and collect wraps it in an array. These omissions
+      are observed spike behavior; the design does not specify an alternative
+      blank-output or no-result representation.
+  failing-cell-trace:
+    verdict: evaluation stops; host enrichment supplies structured cell location
+    measurements:
+      expression: "$notAFunction($)"
+      jsonata-code: T1006
+      host-error: CellError
+      engine-error: Error with JSON message and type NodeError
+      node: table
+      rule: candidate
+      columns: [condition, answer]
+      policies: [first, collect]
+      native-failing-node-trace-data: null
+      enriched-trace-data:
+        error:
+          nodeId: table
+          ruleId: candidate
+          columnId: condition
+          expression: "$notAFunction($)"
+    notes: >-
+      Method: fail separately in an input and output cell under each policy;
+      append a catch-all fallback rule. Measured in four tests: the decision
+      rejects, no fallback result is returned, and the output node is absent
+      from the partial trace. Direct table evaluation throws CellError with
+      ruleId, columnId, and expression. Zen wraps the handler failure as Error;
+      its JSON message includes nodeId, source, type NodeError, and a partial
+      trace containing the input and failing table nodes. Native traceData on
+      the failing node is null. The customHandler serializes the CellError
+      location with the node id into its error message. A host evaluation
+      wrapper parses the error envelope and writes that location into the
+      failed node's traceData.error, then rejects with the enriched envelope.
+      All four tests assert both native null and enriched structured location.
+      No Zen fork or node_modules patch is needed. Contradiction with the
+      technical design: explainability attributes node, rule, and column to
+      the trace the engine returns. That native trace identifies the node but
+      does not carry rule or column; the host supplies them through enrichment.
+      Inferred: production must
+      retain the error envelope and perform this enrichment to meet the
+      explainability contract; storing only Zen's native trace loses rule and
+      column. Assumed: the measured NodeError envelope remains compatible on
+      supported engine upgrades; this needs a contract test.
+  model-cell-lint:
+    verdict: parse rejection and conservative never-boolean warnings are practical
+    measurements:
+      lint-tests: 22
+      rejected: [unparsable input cell, unparsable output cell]
+      warning-expressions:
+        [
+          "7",
+          '"sample"',
+          "null",
+          "1+2",
+          "[1..5]",
+          "[]",
+          '{"x":1}',
+          '"a" & "b"',
+          "true ? 2 : 3",
+          "(1; 2)",
+        ]
+      no-warning-expressions:
+        [
+          "true",
+          "false",
+          "$ > 3",
+          "$",
+          "item.value",
+          "$custom()",
+          "$number($)",
+          "true ? true : 3",
+          "[true][0]",
+        ]
+      example-model-count: 1
+      example-input-cells: 12
+      example-blank-input-cells: 7
+      example-original-string-literals: 4
+      example-original-boolean-comparisons: 1
+      example-corrected-boolean-comparisons: 5
+      example-output-cells: 12
+      example-output-string-literals: 8
+      example-output-number-literals: 3
+      example-output-numeric-conditionals: 1
+      example-unknown-input-expressions: 0
+      original-example-warnings: 4
+      corrected-example-warnings: 0
+    notes: >-
+      Method: lintModel walks each JSONata table's rules and declared input and
+      output columns, compiles each nonblank cell with jsonata(), and inspects
+      ast() without evaluating it. Parse errors reject and carry nodeId,
+      ruleId, and columnId for either direction. Boolean warnings apply only to
+      input cells; numeric and string outputs are legitimate values. Measured:
+      numeric/string/null literals, addition (1+2), concatenation, ranges,
+      and array/object constructors are classified as never returning boolean
+      in the listed cases. Source inspection: the classifier also handles
+      subtraction, multiplication, division, remainder, and unary minus; these
+      operators have no measured cases in this spike. The implementation
+      also follows the final expression of a block and conditionals whose two
+      branches are both provably nonboolean. Ten representative expressions
+      warn. Variables, paths, calls (including $number), mixed conditional
+      branches, and AST nodes with predicates or stages are left unclassified.
+      In particular [true][0] must not be classified from its array root, since
+      its predicate can select a boolean. Known boolean literals and comparisons
+      do not warn. The lint is a conservative proof for supported AST shapes,
+      not a complete type checker or proof about every JSONata program. Unknown
+      expressions remain valid and are subject to strict runtime matching;
+      schema-based sample evaluation can add evidence but cannot prove never.
+      Measured corpus: the single repair-intake model has 12 input cells, seven
+      blank, four string literals, and one membership comparison. Reconstructing
+      those literals yields four warnings; using explicit $ = comparisons yields
+      zero. No numeric, arithmetic, range, array/object, block, conditional, or
+      unknown input classes occur in that model. Its 12 output cells contain
+      eight strings, three numbers, and one numeric conditional, with no boolean
+      warning. Its two standalone expression nodes are outside this cell lint.
+  cell-semantics-verification:
+    verdict: 69 tests pass; typecheck passes; three mutations detected
+    measurements:
+      command: npx vitest run
+      test-files: 3
+      tests-passed: 69
+      tests-failed: 0
+      cell-semantics-tests: 38
+      model-lint-tests: 22
+      existing-engine-tests: 9
+      typecheck: npx tsc --noEmit
+      always-match-mutation-failures: 20
+      suppress-warning-mutation-failures: 11
+      remove-trace-enrichment-mutation-failures: 4
+    notes: >-
+      Method: write the semantic tests before changing the handler, and write
+      lint tests before implementing lintModel. The initial semantic run had
+      18 failures: 16 equality-fallback mismatches and two undefined config
+      properties converted to null by Zen. The missing-cell fixtures omit the
+      property to represent absent cell text. Removing equality fallback causes
+      two existing example-model tests to fail until four input literal cells
+      use explicit $ = comparisons. Final measured result: npx vitest run passes
+      all 69 tests in three files, and npx tsc --noEmit exits zero. Independently
+      mutate strict matching to always true, disable warnings, and remove host
+      trace enrichment: the respective targeted runs fail 20, 11, and four
+      tests. The 11 suppressed-warning failures comprise the ten listed
+      warning-expression cases plus "counts warnings in the example model":
+      its reconstructed literal conditions must yield four warnings, but the
+      mutation yields zero. Restore each mutation and run the final green suite
+      and typecheck.
+      Spike code stays disposable on spike/zen-jsonata and is not pushed.
+      No editor/browser checks or latency measurements were repeated by this
+      semantic proof. This evidence proves extension feasibility at the listed
+      library versions, not production implementation or complete static analysis.
+
+conclusion: >-
+  JSONata decision tables and expression nodes are viable as Zen extensions.
+  Strict true-only matching, nested and missing column contexts, whole-input
+  binding, blank input matching, nested object outputs, parse rejection, and
+  conservative never-boolean warnings are proved through the Node handler.
+  Runtime cell errors stop the decision; structured failing-cell traces require
+  host enrichment of Zen's error envelope. The original equality fallback and
+  four literal input conditions do not implement the specified matching rule.
+  Explicit equality expressions implement the intended example behavior.
+  The explainability design is contradicted: the native engine trace names
+  the node but carries no failing rule or column. Host enrichment supplies the
+  names that the design attributes to the engine trace. Lint warnings are
+  conservative static proof. Exhaustive classification of all never-boolean
+  JSONata expressions is not established.
+  The editor's exported table component supplies the measured editing controls;
+  settings and cell editing remain custom host/editor work.
+
+next-steps:
+  - Implement strict matching and the proved cell bindings and output behavior in the production custom node; retain behavior tests through ZenEngine.
+  - Resolve the explainability design contradiction by identifying host enrichment as the source of rule and column in failing-cell traces. Preserve structured locations across the handler error boundary and contract-test the NodeError envelope on upgrades.
+  - Implement parse rejection for every cell and conservative AST warnings for input cells. Keep unclassified expressions valid and document the warning coverage.
+  - Specify blank-output and no-result output representation before production; the spike omits both.
+  - Settle where the table opens and rebuild settings for inputField, outputPath, and executionMode loop; these remain unproved by the cell tests.
+  - Pin the editor dependency and establish browser contract checks for the undocumented behaviors relied on by the table.

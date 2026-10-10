@@ -1,0 +1,1265 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: declarations-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold declarations API
+  version: 0.1.0
+  description: >-
+    The declarations endpoints of Manifold's API: read, lint, and save of
+    `bindings.yml`, `task-metadata.yml`, `portfolio.yml`, and
+    `accounts.yml`, the edit of one task field, the read of the bindings, the save of one binding
+    as a structured edit, the archive of one portfolio item with its projects' choices,
+    the list, read, lint, and trial evaluation of decision models, and the publication
+    of blueprints and decision models in one commit.
+security: []
+paths:
+  /api/declarations/source:
+    get:
+      operationId: readDeclarationSource
+      summary: Read one declaration file at the latest applied revision, with its findings.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/DeclarationPath"
+      responses:
+        "200":
+          description: The file's text at the latest applied revision, or the empty string when the revision holds none.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeclarationSource"
+        "400":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/lint:
+    post:
+      operationId: lintDeclaration
+      summary: Lint an edited declaration text as the service and the host CLI lint it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LintRequest"
+      responses:
+        "200":
+          description: The findings of the text, with task fields and impact for a clean task metadata text.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LintResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/save:
+    post:
+      operationId: saveDeclaration
+      summary: Commit a declaration text to the configured branch and push it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Saved"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "502":
+          $ref: "#/components/responses/RemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/task-fields/edit:
+    post:
+      operationId: editTaskFields
+      summary: Edit one task field of a task metadata text and lint the result; writes nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskFieldEditRequest"
+      responses:
+        "200":
+          description: The edited text, the edited field's location, and the lint of the edited text.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskFieldEditResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/bindings:
+    get:
+      operationId: readBindings
+      summary: Read the bindings at the latest applied revision, with the items and environments a binding may name.
+      responses:
+        "200":
+          description: The bindings, items, and environments.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BindingsResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/bindings/save:
+    post:
+      operationId: saveBinding
+      summary: Set one binding in bindings.yml at the base, then save the file.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BindingSaveRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Saved"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "502":
+          $ref: "#/components/responses/RemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/archive-item:
+    post:
+      operationId: archiveItem
+      summary: Archive one portfolio item and set each attached project's choice, in one commit of portfolio.yml and bindings.yml.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ArchiveItemRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Saved"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "502":
+          $ref: "#/components/responses/RemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/decision-models:
+    get:
+      operationId: listDecisionModels
+      summary: List the decision models at the latest applied revision, with the intake decision model.
+      responses:
+        "200":
+          description: The decision model files under decision-models/ and the intake decision model.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionModelList"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/decision-model:
+    get:
+      operationId: readDecisionModel
+      summary: Read one decision model file at a commit, with the findings of the set rooted there.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/DecisionModelPath"
+        - name: commit
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Commit"
+      responses:
+        "200":
+          description: The file's text at the commit, or the empty string when the commit holds none.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionModelSource"
+        "400":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/decision-model/lint:
+    post:
+      operationId: lintDecisionModel
+      summary: Lint an edited decision model text with the set it reaches, through the overlay.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecisionModelLintRequest"
+      responses:
+        "200":
+          description: The findings and warnings of the set rooted at the path.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Findings"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/decision-model/evaluate:
+    post:
+      operationId: evaluateDecisionModel
+      summary: Evaluate an edited decision model over an input, through the overlay; writes nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecisionModelEvaluateRequest"
+      responses:
+        "200":
+          description: The evaluation record, with outcome result or error.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionModelEvaluation"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/declarations/publish:
+    post:
+      operationId: publishFiles
+      summary: Commit edited blueprints and decision models to the configured branch in one commit and push it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Saved"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: A file of the request changed on the branch since the base, or the branch moved under the save.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishConflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "502":
+          $ref: "#/components/responses/RemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
+components:
+  headers:
+    NoStore:
+      schema:
+        const: no-store
+  responses:
+    Error:
+      description: An error with its kind and message.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowed:
+      description: A method the endpoint does not take.
+      headers:
+        Allow:
+          schema:
+            enum: [GET, POST]
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Saved:
+      description: The text is on the branch.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SaveResponse"
+    Conflict:
+      description: The file on the branch changed since the base, or the branch moved under the save.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SaveConflict"
+    Invalid:
+      description: The text has lint findings, the binding edit's name is taken or missing, or an archive names an item, a binding, or a created project it cannot change, or leaves an attached created project without a choice; nothing was written.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SaveInvalid"
+    RemoteError:
+      description: The remote refused the push or could not be reached.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SaveRemoteError"
+  schemas:
+    Commit:
+      type: string
+      pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    DeclarationPath:
+      enum: [bindings.yml, task-metadata.yml, portfolio.yml, accounts.yml]
+    DecisionModelPath:
+      description: >-
+        A process repository path ending in `.yml` that is not a blueprint
+        path, a declaration path, `prices.yml`, or `manifold.yml`.
+      type: string
+      pattern: "^(?!.*(^|/)\\.{1,2}(/|$))(?!blueprints/)(?!(bindings|task-metadata|portfolio|accounts|prices|manifold)\\.yml$)[^/\\\\]+(/[^/\\\\]+)*\\.yml$"
+    ModelText:
+      type: object
+      additionalProperties: false
+      required: [path, text]
+      properties:
+        path:
+          $ref: "#/components/schemas/DecisionModelPath"
+        text:
+          type: string
+    DecisionModelList:
+      type: object
+      additionalProperties: false
+      required: [commit, models]
+      properties:
+        commit:
+          $ref: "#/components/schemas/Commit"
+        intake:
+          $ref: "#/components/schemas/DecisionModelPath"
+        models:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, exists, intake]
+            properties:
+              path:
+                $ref: "#/components/schemas/DecisionModelPath"
+              exists:
+                type: boolean
+              intake:
+                type: boolean
+    DecisionModelSource:
+      allOf:
+        - $ref: "#/components/schemas/Findings"
+        - type: object
+          required: [path, commit, exists, text]
+          properties:
+            path:
+              $ref: "#/components/schemas/DecisionModelPath"
+            commit:
+              $ref: "#/components/schemas/Commit"
+            exists:
+              type: boolean
+            text:
+              type: string
+      unevaluatedProperties: false
+    DecisionModelLintRequest:
+      type: object
+      additionalProperties: false
+      required: [path, text]
+      properties:
+        path:
+          $ref: "#/components/schemas/DecisionModelPath"
+        text:
+          type: string
+        base:
+          $ref: "#/components/schemas/Commit"
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelText"
+    DecisionModelEvaluateRequest:
+      type: object
+      additionalProperties: false
+      required: [path, text, input]
+      properties:
+        path:
+          $ref: "#/components/schemas/DecisionModelPath"
+        text:
+          type: string
+        base:
+          $ref: "#/components/schemas/Commit"
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelText"
+        input:
+          type: object
+    DecisionModelEvaluation:
+      type: object
+      additionalProperties: false
+      required: [evaluation]
+      properties:
+        evaluation:
+          description: The `decision-model-evaluation` record of the `decision-models` schema.
+          $ref: "https://manifold.wyrd.company/schemas/decision-models#/$defs/decision-model-evaluation"
+    PublishRequest:
+      allOf:
+        - $ref: "#/components/schemas/SaveFields"
+        - type: object
+          required: [files]
+          properties:
+            files:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                additionalProperties: false
+                required: [path, text]
+                properties:
+                  path:
+                    anyOf:
+                      - type: string
+                        pattern: "^blueprints/.+\\.ya?ml$"
+                      - $ref: "#/components/schemas/DecisionModelPath"
+                  text:
+                    type: string
+      unevaluatedProperties: false
+    PublishConflict:
+      type: object
+      additionalProperties: false
+      required: [error, message, reason, head, files]
+      properties:
+        error:
+          const: conflict
+        message:
+          type: string
+        reason:
+          enum: [file-changed, branch-moved]
+        head:
+          $ref: "#/components/schemas/Commit"
+        files:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [path]
+            properties:
+              path:
+                type: string
+              text:
+                description: The file's text at the branch's head; absent when the file is not there.
+                type: string
+    DeclaredName:
+      type: string
+      maxLength: 64
+      pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum:
+            - bad-request
+            - cross-site
+            - not-found
+            - method-not-allowed
+            - too-large
+            - unsupported-media-type
+            - unavailable
+        message:
+          type: string
+    Finding:
+      type: object
+      description: >-
+        The declaration lint's finding, with `range` when it is in the
+        linted text and has a place there, and with `file` only in an
+        answer for `portfolio.yml` or `accounts.yml`, in an archive's
+        answer, and in a decision model or publish answer. Members beyond
+        those listed are the lint's finding details.
+      required: [kind, location, message]
+      properties:
+        file:
+          description: >-
+            `portfolio`, `bindings`, `accounts`, or `prices` in an answer for
+            a declaration file or an archive; the repository path of the file
+            in a decision model or publish answer.
+          type: string
+        kind:
+          type: string
+        location:
+          type: string
+          description: The RFC 6901 JSON Pointer of the failing value in the document.
+        message:
+          type: string
+        range:
+          $ref: "#/components/schemas/Range"
+    Range:
+      type: object
+      additionalProperties: false
+      required: [from, to, line, column]
+      properties:
+        from:
+          type: integer
+          minimum: 0
+          description: Offset into the text in UTF-16 code units.
+        to:
+          type: integer
+          minimum: 0
+        line:
+          type: integer
+          minimum: 1
+        column:
+          type: integer
+          minimum: 1
+    TaskField:
+      type: object
+      additionalProperties: false
+      description: >-
+        One field row of a parsed draft, with the draft's values as
+        written; a value the declaration does not accept is kept so that
+        the row shows what its finding names.
+      required: [binding, name, lifecycle, location]
+      properties:
+        binding:
+          type: string
+          description: The Project's key as written; a declared name in a valid draft.
+        name:
+          type: string
+        storage:
+          type: string
+          description: The storage kind as written; a StorageKindName in a valid draft.
+        type:
+          type: string
+          description: The type as written; text, number, date, or single-select in a valid draft.
+        settings:
+          type: object
+          additionalProperties:
+            type: string
+        options:
+          type: array
+          items:
+            type: string
+        lifecycle:
+          type: boolean
+        whenChanged:
+          type: string
+          description: The choice as written; `revert` or `accept` in a valid draft.
+        scope:
+          description: >-
+            For a valid draft's field, where its configuration lives: the
+            Project, an organization's login, the repositories of the
+            binding's scope, or each issue's body; absent while the draft
+            has a finding at the field.
+          type: object
+          additionalProperties: false
+          required: [kind, names]
+          properties:
+            kind:
+              enum: [project, organization, repository, issue]
+            names:
+              description: >-
+                `<owner>/<number>` for the Project, the login for an
+                organization, each repository in scope for a repository
+                kind, and empty for front matter.
+              type: array
+              items:
+                type: string
+            sharedWith:
+              description: The other bindings of the draft whose fields reach the same organization or repository.
+              type: array
+              items:
+                type: string
+        onGitHub:
+          type: object
+          additionalProperties: false
+          required: [state, detail]
+          properties:
+            state:
+              enum: [present, missing, differs]
+            detail:
+              type: string
+        location:
+          type: string
+        range:
+          $ref: "#/components/schemas/Range"
+    StorageKindName:
+      enum: [project-field, issue-field, issue-type, label, milestone, front-matter]
+    TaskFieldType:
+      enum: [text, number, date, single-select]
+    StorageKind:
+      type: object
+      additionalProperties: false
+      required: [kind, types, settings]
+      properties:
+        kind:
+          $ref: "#/components/schemas/StorageKindName"
+        types:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskFieldType"
+        settings:
+          type: array
+          items:
+            type: string
+        optionProperties:
+          description: The option properties the kind owns.
+          type: array
+          items:
+            enum: [color, description]
+        color:
+          description: The form of a color the kind owns; absent when it owns none.
+          enum: [named, hex]
+        scope:
+          description: Where the kind's configuration lives.
+          enum: [project, organization, repository, issue]
+    ProjectImpact:
+      type: object
+      additionalProperties: false
+      required: [binding]
+      description: >-
+        One bound Project's plan counts for the linted declaration; with no
+        counts, the service has not observed the Project yet.
+      properties:
+        binding:
+          $ref: "#/components/schemas/DeclaredName"
+        creates:
+          type: integer
+          minimum: 0
+        changes:
+          type: integer
+          minimum: 0
+        removes:
+          type: integer
+          minimum: 0
+      dependentRequired:
+        creates: [changes, removes]
+        changes: [creates, removes]
+        removes: [creates, changes]
+    Findings:
+      type: object
+      required: [findings, warnings]
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskField"
+        storageKinds:
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageKind"
+        impact:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectImpact"
+        preview:
+          type: array
+          description: >-
+            For a `portfolio.yml` text with no finding, the sharing rule's
+            answer on the fixed scenario, one entry per account.
+          items:
+            $ref: "#/components/schemas/SharingPreview"
+    SharingPreview:
+      type: object
+      additionalProperties: false
+      required: [account, items]
+      properties:
+        account:
+          $ref: "#/components/schemas/DeclaredName"
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [item, alone, allWaiting]
+            properties:
+              item:
+                type: string
+                minLength: 1
+              alone:
+                $ref: "#/components/schemas/Percent"
+              allWaiting:
+                $ref: "#/components/schemas/Percent"
+    Percent:
+      type: number
+      minimum: 0
+      maximum: 100
+      description: A percentage of the scenario's window capacity with at most two decimal places.
+    DeclarationSource:
+      allOf:
+        - $ref: "#/components/schemas/Findings"
+        - type: object
+          required: [path, commit, exists, text]
+          properties:
+            path:
+              $ref: "#/components/schemas/DeclarationPath"
+            commit:
+              $ref: "#/components/schemas/Commit"
+            exists:
+              type: boolean
+            text:
+              type: string
+            environments:
+              description: For `accounts.yml`, the environment names of service configuration in its order.
+              type: array
+              items:
+                $ref: "#/components/schemas/DeclaredName"
+      unevaluatedProperties: false
+    LintRequest:
+      type: object
+      additionalProperties: false
+      required: [path, text]
+      properties:
+        path:
+          $ref: "#/components/schemas/DeclarationPath"
+        text:
+          type: string
+    LintResponse:
+      allOf:
+        - $ref: "#/components/schemas/Findings"
+      unevaluatedProperties: false
+    TaskFieldEditRequest:
+      type: object
+      additionalProperties: false
+      required: [text, edit]
+      properties:
+        text:
+          type: string
+        edit:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind, binding]
+              properties:
+                kind:
+                  const: add-field
+                binding:
+                  type: string
+                  minLength: 1
+                  description: >-
+                    A Project key of the text, as written, or a declared
+                    name for a new Project entry.
+            - type: object
+              additionalProperties: false
+              required: [kind, location, values]
+              properties:
+                kind:
+                  const: set-field
+                location:
+                  type: string
+                values:
+                  type: object
+                  additionalProperties: false
+                  minProperties: 1
+                  properties:
+                    name:
+                      type: string
+                    type:
+                      $ref: "#/components/schemas/TaskFieldType"
+                    storage:
+                      $ref: "#/components/schemas/StorageKindName"
+                    settings:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    options:
+                      type: array
+                      items:
+                        type: string
+                    whenChanged:
+                      enum: [revert, accept]
+            - type: object
+              additionalProperties: false
+              required: [kind, location]
+              properties:
+                kind:
+                  const: remove-field
+                location:
+                  type: string
+            - type: object
+              additionalProperties: false
+              required: [kind, binding, repositories]
+              properties:
+                kind:
+                  const: set-repositories
+                binding:
+                  type: string
+                  minLength: 1
+                repositories:
+                  description: The binding's `repositories` in order; empty removes the key.
+                  type: array
+                  items:
+                    type: string
+    TaskFieldEditResponse:
+      allOf:
+        - $ref: "#/components/schemas/Findings"
+        - type: object
+          required: [text, location]
+          properties:
+            text:
+              type: string
+            location:
+              type: string
+      unevaluatedProperties: false
+    SaveFields:
+      type: object
+      required: [base, message, saveId]
+      properties:
+        base:
+          $ref: "#/components/schemas/Commit"
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: "\\S"
+        saveId:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+    SaveRequest:
+      allOf:
+        - $ref: "#/components/schemas/SaveFields"
+        - type: object
+          required: [path, text]
+          properties:
+            path:
+              $ref: "#/components/schemas/DeclarationPath"
+            text:
+              type: string
+      unevaluatedProperties: false
+    ArchiveItemRequest:
+      allOf:
+        - $ref: "#/components/schemas/SaveFields"
+        - type: object
+          required: [item, projects]
+          properties:
+            item:
+              type: string
+              minLength: 1
+            projects:
+              type: array
+              items:
+                $ref: "#/components/schemas/ProjectChoice"
+      unevaluatedProperties: false
+    ProjectChoice:
+      description: >-
+        One attached project's choice. The project is a binding by `binding`,
+        or a created project by `created` with `name`, the T3code project
+        binding the choice declares.
+      allOf:
+        - oneOf:
+            - type: object
+              required: [binding]
+              properties:
+                binding:
+                  type: string
+            - type: object
+              required: [created, name]
+              properties:
+                created:
+                  type: object
+                  additionalProperties: false
+                  required: [environment, project]
+                  properties:
+                    environment:
+                      $ref: "#/components/schemas/DeclaredName"
+                    project:
+                      type: string
+                      minLength: 1
+                name:
+                  $ref: "#/components/schemas/DeclaredName"
+        - oneOf:
+            - type: object
+              required: [choice]
+              properties:
+                choice:
+                  enum: [move, archive]
+                item: false
+            - type: object
+              required: [choice, item]
+              properties:
+                choice:
+                  const: reassign
+                item:
+                  type: string
+                  minLength: 1
+      properties:
+        binding: true
+        created: true
+        name: true
+        choice: true
+        item: true
+      unevaluatedProperties: false
+    BindingSaveRequest:
+      allOf:
+        - $ref: "#/components/schemas/SaveFields"
+        - type: object
+          required: [edit]
+          properties:
+            edit:
+              oneOf:
+                - $ref: "#/components/schemas/GitHubProjectEdit"
+                - $ref: "#/components/schemas/T3codeProjectEdit"
+      unevaluatedProperties: false
+    GitHubProjectEdit:
+      type: object
+      additionalProperties: false
+      required: [kind, mode, name, owner, number, environment, item, t3codeProjects]
+      properties:
+        kind:
+          const: github-project
+        mode:
+          enum: [add, replace]
+        name:
+          type: string
+        owner:
+          type: string
+        number:
+          type: integer
+        environment:
+          type: string
+        item:
+          type: string
+        t3codeProjects:
+          type: array
+          items:
+            type: string
+    T3codeProjectEdit:
+      type: object
+      additionalProperties: false
+      required: [kind, mode, name, environment, project, item]
+      properties:
+        kind:
+          const: t3code-project
+        mode:
+          enum: [add, replace]
+        name:
+          type: string
+        environment:
+          type: string
+        project:
+          type: string
+        item:
+          type: string
+    SaveResponse:
+      type: object
+      additionalProperties: false
+      required: [outcome, commit, loaded]
+      properties:
+        outcome:
+          enum: [saved, already-saved, unchanged]
+        commit:
+          $ref: "#/components/schemas/Commit"
+        loaded:
+          type: boolean
+          description: The latest applied revision holds the commit.
+    SaveConflict:
+      type: object
+      additionalProperties: false
+      required: [error, message, reason, head]
+      properties:
+        error:
+          const: conflict
+        message:
+          type: string
+        reason:
+          enum: [file-changed, branch-moved]
+        head:
+          $ref: "#/components/schemas/Commit"
+        text:
+          type: string
+    SaveInvalid:
+      type: object
+      additionalProperties: false
+      required: [error, message, findings, warnings]
+      properties:
+        error:
+          const: invalid
+        message:
+          type: string
+        findings:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+    SaveRemoteError:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error:
+          enum: [rejected, authentication, remote]
+        message:
+          type: string
+    BindingsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          repository,
+          commit,
+          findings,
+          githubProjects,
+          t3codeProjects,
+          createdProjects,
+          items,
+          environments,
+        ]
+      properties:
+        repository:
+          type: object
+          additionalProperties: false
+          required: [url, branch]
+          properties:
+            url:
+              type: string
+            branch:
+              type: string
+        commit:
+          $ref: "#/components/schemas/Commit"
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        githubProjects:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, owner, number, environment, item, t3codeProjects, archived]
+            properties:
+              name:
+                $ref: "#/components/schemas/DeclaredName"
+              owner:
+                type: string
+              number:
+                type: integer
+                minimum: 1
+              environment:
+                $ref: "#/components/schemas/DeclaredName"
+              item:
+                type: string
+                minLength: 1
+              t3codeProjects:
+                type: array
+                items:
+                  type: string
+                  minLength: 1
+              archived:
+                type: boolean
+        t3codeProjects:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, environment, project, item, archived]
+            properties:
+              name:
+                $ref: "#/components/schemas/DeclaredName"
+              environment:
+                $ref: "#/components/schemas/DeclaredName"
+              project:
+                type: string
+                minLength: 1
+              item:
+                type: string
+                minLength: 1
+              archived:
+                type: boolean
+        createdProjects:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [environment, project, actorId, item]
+            properties:
+              environment:
+                $ref: "#/components/schemas/DeclaredName"
+              project:
+                type: string
+                minLength: 1
+              actorId:
+                type: string
+                minLength: 1
+              item:
+                type: string
+                minLength: 1
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id]
+            properties:
+              id:
+                type: string
+                minLength: 1
+              title:
+                type: string
+        environments:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name:
+                $ref: "#/components/schemas/DeclaredName"
+              projects:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [id, title, workspaceRoot, activeThreads]
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                    title:
+                      type: string
+                    workspaceRoot:
+                      type: string
+                    activeThreads:
+                      type: integer
+                      minimum: 0

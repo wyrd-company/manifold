@@ -1,0 +1,268 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: usage-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold usage API
+  version: 0.1.0
+  description: >-
+    The operator's usage endpoints of Manifold's API: the read of unowned
+    usage and the usage move.
+security: []
+paths:
+  /api/usage/unowned:
+    get:
+      operationId: readUnownedUsage
+      summary: Read the usage of every ledger actor of unowned usage.
+      responses:
+        "200":
+          description: The ledger actors of unowned usage with their usage.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageUnownedResponse"
+        "404":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedGet"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/usage/moves:
+    post:
+      operationId: moveUsage
+      summary: Move one ledger actor's unowned usage to a portfolio item or an actor.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsageMoveRequest"
+      responses:
+        "200":
+          description: The calls the move moved, which is none when nothing was left to move.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageMoveResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedPost"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+components:
+  headers:
+    NoStore:
+      schema:
+        const: no-store
+  responses:
+    Error:
+      description: An error with its kind and message.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowedGet:
+      description: A method the endpoint does not take.
+      headers:
+        Allow:
+          schema:
+            const: GET
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowedPost:
+      description: A method the endpoint does not take.
+      headers:
+        Allow:
+          schema:
+            const: POST
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Instant:
+      type: string
+      format: date-time
+      description: An ISO 8601 UTC instant with milliseconds.
+    Amount:
+      type: integer
+      minimum: 0
+      description: An amount in the account's native unit, as the ledger holds it; millionths of a US dollar for `usd`.
+    UnownedActor:
+      type: string
+      pattern: "^(thread:[^:]+:.+|session:[^:]+:[^:]+:.+)$"
+      description: A ledger actor of unowned usage.
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid-request
+            - not-found
+            - method-not-allowed
+            - too-large
+            - unsupported-media-type
+            - unknown-actor
+            - invalid-target
+            - internal
+        message:
+          type: string
+    UsageUnownedResponse:
+      type: object
+      additionalProperties: false
+      required: [unowned]
+      properties:
+        unowned:
+          type: array
+          items:
+            $ref: "#/components/schemas/UnownedEntry"
+    UnownedEntry:
+      type: object
+      additionalProperties: false
+      required: [actor, kind, environment, lastUsedAt, pending, unmetered, usage]
+      properties:
+        actor:
+          $ref: "#/components/schemas/UnownedActor"
+        kind:
+          enum: [thread, session]
+        environment:
+          type: string
+          minLength: 1
+        threadId:
+          type: string
+          minLength: 1
+          description: Present for `thread`.
+        provider:
+          type: string
+          minLength: 1
+          description: Present for `session`.
+        providerSessionId:
+          type: string
+          minLength: 1
+          description: Present for `session`.
+        project:
+          type: string
+          minLength: 1
+          description: For `thread`, the T3code project id the T3 Code environment source holds.
+        title:
+          type: string
+          description: For `thread`, the title the T3 Code environment source holds.
+        lastUsedAt:
+          $ref: "#/components/schemas/Instant"
+        pending:
+          type: integer
+          minimum: 0
+        unmetered:
+          type: integer
+          minimum: 0
+          description: The number of its calls whose provider records no token counts.
+        usage:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [item, account, amount, calls]
+            properties:
+              item:
+                type: string
+                minLength: 1
+              account:
+                type: string
+                minLength: 1
+              amount:
+                $ref: "#/components/schemas/Amount"
+              calls:
+                type: integer
+                minimum: 1
+    UsageMoveRequest:
+      type: object
+      additionalProperties: false
+      required: [from, to]
+      properties:
+        from:
+          $ref: "#/components/schemas/UnownedActor"
+        to:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [item]
+              properties:
+                item:
+                  type: string
+                  minLength: 1
+                  description: A portfolio item id, `other` or `<parent>/other` included.
+            - type: object
+              additionalProperties: false
+              required: [actor]
+              properties:
+                actor:
+                  type: string
+                  minLength: 1
+                  description: An actor id the usage intake module has seen saved.
+    UsageMoveResponse:
+      type: object
+      additionalProperties: false
+      required: [status, from, to, moved, accounts]
+      properties:
+        status:
+          const: moved
+        from:
+          $ref: "#/components/schemas/UnownedActor"
+        to:
+          type: object
+          additionalProperties: false
+          required: [actor, item]
+          description: >-
+            The target as resolved: for an item, `from` and the item; for an
+            actor, the actor and its portfolio item, or `other`.
+          properties:
+            actor:
+              type: string
+              minLength: 1
+            item:
+              type: string
+              minLength: 1
+        moved:
+          type: integer
+          minimum: 0
+        accounts:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [account, amount]
+            properties:
+              account:
+                type: string
+                minLength: 1
+              amount:
+                $ref: "#/components/schemas/Amount"

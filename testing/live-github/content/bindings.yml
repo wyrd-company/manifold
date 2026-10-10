@@ -1,0 +1,6 @@
+githubProjects:
+  board:
+    owner: example-org
+    number: 1
+    item: sample
+    environment: local

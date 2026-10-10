@@ -1,3 +1,7 @@
+// ---
+// relationships:
+//   implements: operator-console
+// ---
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
@@ -5,18 +9,33 @@ export default defineConfig({
     "*": "vp fmt --no-error-on-unmatched-pattern",
   },
   fmt: {
-    ignorePatterns: ["coverage", "dist", "node_modules", "pnpm-lock.yaml", "*.tsbuildinfo"],
+    ignorePatterns: [
+      "coverage",
+      "dist",
+      "node_modules",
+      "pnpm-lock.yaml",
+      "*.tsbuildinfo",
+      "packages/service/src/decision-model-fixtures/editor-export.yml",
+    ],
     sortPackageJson: {},
   },
   lint: {
-    ignorePatterns: ["coverage", "dist", "node_modules", "pnpm-lock.yaml", "*.tsbuildinfo"],
-    plugins: ["eslint", "oxc", "unicorn", "typescript"],
+    ignorePatterns: [
+      "coverage",
+      "dist",
+      "node_modules",
+      "pnpm-lock.yaml",
+      "*.tsbuildinfo",
+      "packages/shared/src/blueprint-validator.js",
+    ],
+    plugins: ["eslint", "oxc", "unicorn", "typescript", "react"],
     categories: {
       correctness: "warn",
       suspicious: "warn",
       perf: "warn",
     },
     rules: {
+      "react/react-in-jsx-scope": "off",
       "unicorn/no-array-sort": "off",
       "unicorn/consistent-function-scoping": "off",
       "oxc/no-map-spread": "off",

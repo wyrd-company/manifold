@@ -1,0 +1,48 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - github-event-source
+    - task-metadata
+description: >-
+  A task field stored as front matter is written by reading the issue's
+  body, setting one key, and writing the whole body back. GitHub offers no
+  conditional body write, so a person's edit that GitHub takes between the
+  read and the write is replaced. The source checks the issue's edit
+  history after the write and can find the replaced edit and, through its
+  `diff`, its text. Each write that puts the replaced text back is itself
+  an unconditional write, open to the same race. Manifold must decide how
+  far it goes to keep a person's text before it stops and reports.
+considered-options:
+  "1": >-
+    Repair at most once. When the write replaced one edit and is itself
+    the newest edit, set the key on the replaced text and write it as a
+    second attempt with its own persisted basis. Any other outcome, and
+    any edit by another account around the repair, ends the write as a
+    durable `body-conflict` with no further write.
+  "2": >-
+    Repair until a check passes: after each write that replaced an edit,
+    set the key on the replaced text and write again.
+  "3": >-
+    Never repair: a write that replaced any edit fails `body-conflict` at
+    once and leaves the body as Manifold wrote it.
+  "4": >-
+    Write without a check, so a replaced edit is never seen.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 keeps a person's text in the common case, one edit landing in
+    the one-request window, and always terminates: a replay or a restart
+    finds the same persisted attempt and check, and reports the same
+    `body-conflict`. Option 2 has no bound while a person keeps editing,
+    and each repair can replace a newer edit, so its outcome depends on
+    timing a test cannot fix. Option 3 turns every collision into work for
+    a person although the replaced text is usually recoverable. Option 4
+    drops a person's text with no trace in Manifold.
+expected-outcomes:
+  positive:
+    - A person's edit replaced by a front matter write is restored with the key set, when GitHub's history gives its text.
+    - Every front matter write ends after at most two body writes, and a replay reports the same outcome.
+    - A write that cannot restore the text fails as `body-conflict`, which the blueprint handles and the operator sees.
+  negative:
+    - An edit that lands just before the repair write is replaced in the body; it stays in GitHub's edit history and the `body-conflict` names it.
+    - Recovery relies on `UserContentEdit.diff` holding an edit's whole text, which GitHub does not document.

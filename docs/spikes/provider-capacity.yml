@@ -1,0 +1,893 @@
+$schema: https://refinery.systems/ontology/spike
+title: Provider quota sources, reset windows, and token relationships
+relationships:
+  mitigates:
+    - task-usage-unattributable
+  # GAP-EDGE: the spike schema declares only mitigates; references names the
+  # designs and specifications these findings inform.
+  references:
+    - usage-decoder
+    - usage-intake
+    - portfolio-ledger
+    - operator-console
+    - accounts-declaration
+    - t3code-session-mapping
+objective:
+  - Establish a percentage source for each provider the stable T3 Code release runs, without a Manifold subprocess integration.
+  - Distinguish five-hour, weekly, monthly, model-scoped, absent, and unverified windows.
+  - Establish whether provider quota percentages have a stable relationship to decoded tokens.
+background:
+  current-design: >-
+    The usage decoder produces calls and token classes. Usage intake prices calls
+    in USD. The accounts declaration budgets a subscription by one declared
+    estimate of API-equivalent USD capacity and a fixed reset series. The console
+    displays the ledger's used share of that estimate. Those values are not the
+    provider's observed subscription percentage.
+  problems:
+    - Providers have different windows, model limits, account kinds, and credential owners.
+    - Account usage includes work outside the environment and outside Manifold's actors.
+    - Quota reads can omit windows, fail, be stale, or change after a granted reset.
+ideas:
+  - Read quota observations through an authorized T3 Code caller or a direct HTTP or non-secret file source.
+  - Preserve raw window identifiers, units, reset boundaries, and missing values before any display conversion.
+  - Pair account observations with token deltas only within an unchanged account, window, plan, model, and speed.
+environment:
+  location: Isolated spike/provider-capacity worktree; artifact branch contains evidence only.
+  tools:
+    - Node 24.21.0, fetch, node:test, read-only public source and provider rollout inspection
+    - T3 Code v0.0.45 at commit 6c8fed35dded9ff71c5b46807125457acbb76be6
+    - Installed Claude Code 2.1.294, Codex CLI 0.160.1, Cursor Agent 2026.10.01-14929f9,
+      OpenCode 1.18.34
+    - Codex rust-v0.162.1 source contract; installed 0.160.1 file and RPC shapes measured live
+    - T3 Code Claude Agent SDK dependency ^0.3.276
+  resources:
+    - https://github.com/pingdotgg/t3code/releases/tag/v0.0.45
+    - https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/server/src/provider/builtInDrivers.ts
+    - https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/usage.md
+    - https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/protocol/src/protocol.rs
+    - https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/rollout/src/policy.rs
+    - https://learn.chatgpt.com/docs/pricing
+    - https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work
+    - https://opencode.ai/docs/go/
+    - https://www.antigravity.google/docs/plans
+  credentials:
+    - Provider CLIs own their credentials. No secret file or token value is read by spike code;
+      account ids and emails are not retained in evidence.
+    - Live evidence uses the authorized installed Claude and Codex CLIs and non-secret
+      ~/.codex/sessions JSONL records. CLI subprocesses are spike tools, not an application
+      integration.
+    - Cursor about output is filtered in memory to field names only. OpenCode stats reports
+      local tokens/cost, not quota. No direct HTTP credential is read.
+    - Direct HTTP production access still needs a named credential-owner binding under existing
+      approval. Grant redemption and a production subprocess remain separate decisions; no
+      grant is redeemed.
+findings:
+  release-and-evidence:
+    verdict: Source inventory confirmed; Claude CLI and Codex file/RPC sources observed live.
+    measurements:
+      release-discovery: GitHub latest release API reports v0.0.45, non-prerelease, published
+        2026-10-02T18:17:31Z.
+      source-providers: [codex, claudeAgent, cursor, grok, opencode, antigravity]
+      live-quota-responses:
+        claude: 3
+        codex: 2
+      live-paired-call-intervals:
+        claudeControlled: 2
+        codexHistorical: 7875
+      live-resets-observed: 0
+      scope: Released source and synthetic fixtures in the spike worktree; authorized
+        credential-owning provider CLIs and non-secret Codex sessions on this machine.
+    notes: >-
+      builtInDrivers.ts supplies the exhaustive built-in inventory at the tested release.
+      Driver kind is open to extensions; this is not a claim about arbitrary user-installed
+      drivers. Source-confirmed means that the released reader and its response contract exist,
+      not that a live account answered. Fixture-confirmed means an in-process experiment
+      accepted synthetic data. Unverified means access or measurement is missing. Missing from
+      the released reader does not falsify existence of an undiscovered provider API.
+  account-and-observation-seam:
+    verdict: Environment and instance select credentials; they do not alone establish account identity.
+    measurements:
+      identity: [environment, provider, instance, declared-account, source-account-identity]
+      observation: [source, observed-at, provider-timestamp, availability, error-category, windows]
+      window:
+        [raw-id, scope, percentage-unit, used-percent, duration-if-reported, reset-if-reported]
+      evidence-status:
+        - source-confirmed
+        - fixture-confirmed
+        - live-confirmed
+        - unverified
+        - disabled
+        - absent-from-tested-contract
+      t3-read: server.getConfig returns provider snapshots; server.refreshProviders refreshes an
+        instance or all providers.
+      t3-contract: ServerProviderUsageLimits has checkedAt, windows, unavailable, optional
+        resetCredits and credentialFingerprint.
+      required-existing-caller: T3 Code connection using the already approved orchestration access;
+        quota coverage of that scoped connection requires verification.
+    notes: >-
+      Bind observations using the declared environment/provider/instance mapping, with an
+      explicit operator account binding when the source supplies no stable identity. Several
+      environments can use the same account; their percentages must not be summed. A provider
+      instance can switch its login; stale data must not silently transfer to the replacement
+      account. Capture observed-at locally when the response has no provider observation
+      timestamp. Never expose credential fingerprints or account identifiers in examples. T3
+      Code's browser RPC carries quota snapshots in release source; this does not prove that
+      Manifold's orchestration protocol already exposes them.
+  codex-percentage-source:
+    verdict: Non-secret file source and native credential-owning RPC caller confirmed live; direct
+      HTTP unverified.
+    measurements:
+      release-source: https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/server/src/provider/Layers/codexUsageLimits.ts
+      direct-http: GET https://chatgpt.com/backend-api/wham/usage
+      direct-http-evidence: T3 Code usage/cliproxyApi.ts reads rate_limit.primary_window and
+        secondary_window through its hub caller.
+      direct-file: CODEX_HOME/sessions and archived_sessions rollout JSONL event_msg/token_count
+        payload.rate_limits
+      file-proof: Codex rust-v0.162.1 TokenCountEvent carries info and optional rate_limits; rollout
+        policy persists TokenCount.
+      rpc-source: account/rateLimits/read and account/rateLimits/updated; the native caller runs
+        codex app-server as a subprocess.
+      units: HTTP used_percent and file used_percent are 0–100; native RPC usedPercent is 0–100.
+      windows: primary and secondary are positions; use reported duration, not position, to identify
+        a five-hour or weekly window.
+      reset: HTTP reset_at and file resets_at are epoch seconds; native resetsAt is epoch seconds;
+        all nullable.
+      model-caps: Native rateLimitsByLimitId and limitId distinguish main codex allowance from
+        model-specific buckets.
+      granted-resets:
+        Native rateLimitResetCredits includes availableCount and optional status/expiry
+        records; credits balance is a separate quantity.
+      credential-name: Suggested host-local codex-quota binding to the selected instance's ChatGPT
+        OAuth identity; no value supplied.
+      credential-owner:
+        CODEX_HOME and selected provider instance; ChatGPT account/workspace identity
+        where the authorized caller supplies it.
+      permission: Existing signed-in account's quota read. Direct endpoint access through a named
+        credential needs operator authorization; no new OAuth scope is established here.
+      access: Read 200 recent non-secret session files and called account/rateLimits/read twice
+        through installed codex app-server. No credential file is read by spike code; no direct
+        HTTP request made.
+      errors:
+        Null rate_limits, missing windows, unreadable or partial rollout, signed-out or API-key
+        account, HTTP 401/403/429, transport or parse failure.
+      rate-limit-policy: No documented quota-query request allowance established. Record 429 and
+        Retry-After if returned; no polling or timeout policy introduced.
+    notes: >-
+      Subscription accounts can expose five-hour and weekly buckets, but not every plan does.
+      Current official pricing documents Pro without a five-hour limit, flexible Enterprise/Edu
+      without fixed rate limits, and possible weekly limits. API-key accounts have API metering
+      rather than this ChatGPT quota contract. T3 Code infers durations for old responses,
+      including a monthly Free/Go fallback; that inference is not a provider observation and
+      must be marked as inferred. Preserve all model buckets: T3 Code's main-quota mapper
+      deliberately filters non-codex limit ids. Rollouts yield the last recorded observation,
+      not an on-demand fresh account read; a token_count event can carry only quota or only
+      tokens. No Manifold integration may spawn codex app-server without the reserved
+      subprocess decision. Reading existing rollouts and direct HTTP are in-process candidates.
+      The HTTP endpoint is implementation evidence, not a documented public API stability
+      guarantee.
+  claude-percentage-source:
+    verdict: Credential-owning CLI /usage confirmed live; direct OAuth HTTP and SDK paths
+      source-confirmed.
+    measurements:
+      release-source: https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/server/src/provider/Layers/claudeUsageLimits.ts
+      direct-http: GET https://api.anthropic.com/api/oauth/usage
+      http-evidence: T3 Code usage/cliproxyApi.ts and provider/Layers/claudeResetCredits.ts.
+      library-source: Claude Agent SDK get_usage and rate_limit_event; the SDK controls a Claude CLI
+        subprocess, not a purely in-process quota reader.
+      units: get_usage and HTTP utilization are 0–100; streamed rate_limit_event utilization is 0–1
+        and needs multiplication by 100.
+      windows: five_hour and seven_day, nullable; model_scoped and HTTP limits weekly_scoped add
+        named model buckets.
+      reset: Snapshot resets_at is an ISO date-time or null; streamed resetsAt is epoch seconds.
+      granted-resets: cedar_ember eligible/grants/next_grant_id; grant has resets_left, ends_at,
+        paused, usable_now. No grant redeemed.
+      overage: extra_usage and model overage-included limits are not the ordinary account bucket.
+      credential-name: Suggested host-local claude-quota binding to the selected instance's Claude
+        OAuth account; no value supplied.
+      credential-owner: CLAUDE_CONFIG_DIR and its authenticated account; macOS may keep login in Keychain.
+      permission: Existing account usage read; released caller sends anthropic-beta oauth-2025-04-20
+        and CLI user-agent. Exact granted OAuth scopes and direct-use permission remain
+        unverified.
+      access: Three timed /usage reads and two tiny calls through installed Claude CLI, which owns
+        the login. No secret file, Keychain API or direct OAuth request is read by spike code.
+      account-kinds: Pro, Max, Team and seat-based Enterprise share subscription limits; usage-based
+        Enterprise, API-key and proxy configurations require their own billing contract.
+      errors: rate_limits_available false, null utilization, missing scoped bucket, expired login,
+        401/403/429, parse or transport failure.
+      rate-limit-policy: No published allowance for quota reads established; 429 must remain
+        unavailable with retry metadata rather than zero usage.
+      live-command: claude --no-session-persistence --output-format json -p "/usage"
+    notes: >-
+      The official help article establishes five-hour and weekly limits and shared consumption
+      across Claude surfaces. The released mapper's SDK path and direct HTTP path establish a
+      source candidate under a credential owner. They do not authorize agent credential reads.
+      Streamed updates are partial; a missing bucket is not zero or a reset. Extra usage can
+      continue after an included limit is exhausted. Banked reset state can change
+      independently of decoded calls; a percentage drop cannot be posted as negative task
+      usage.
+  cursor-percentage-source:
+    verdict: Monthly percentage source confirmed in source; five-hour and weekly absent from tested
+      contract.
+    measurements:
+      release-source: https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/server/src/provider/Layers/cursorUsageLimits.ts
+      direct-http: POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage
+        with an empty JSON body
+      headers: Bearer authentication, connect-protocol-version 1, x-cursor-client-type cli.
+      units: planUsage.totalPercentUsed, autoPercentUsed, apiPercentUsed are 0–100 used percentages.
+      windows: Three monthly views of one billing cycle; not independent capacities to add together.
+      reset: billingCycleEnd is converted from epoch milliseconds; observation time supplied by
+        caller.
+      model-caps-and-resets:
+        Bonus usage is included in reported percentages. No early-reset grant or
+        five-hour/weekly model bucket established.
+      credential-name:
+        Suggested host-local cursor-quota binding; selected instance CURSOR_AUTH_TOKEN
+        or its CLI file login. CURSOR_API_KEY alone is not this source.
+      credential-owner: Instance environment, platform login store, endpoint and explicit token precedence.
+      permission: Dashboard read using CLI login; macOS Keychain access requires its separate
+        existing operator opt-in. Custom endpoints do not reuse default Keychain login.
+      access: Live source unverified; no Cursor auth.json, Keychain, or token is read.
+      errors: Missing planUsage or fields, memory-only login, wrong auth kind, denied Keychain,
+        401/403/429, transport or parse failure.
+      rate-limit-policy: Undocumented query allowance; no new timeout or polling schedule inferred
+        from T3 Code's implementation.
+      live-cli-check: Cursor Agent 2026.10.01-14929f9 help has no quota subcommand; about JSON
+        exposes subscriptionTier but no usage/quota/limit/reset field. Identity values
+        discarded in memory. A percentage source remains unverified.
+    notes: >-
+      The released reader uses HTTP directly in process on file-token paths. Its macOS helper
+      uses @napi-rs/keyring in process; access still needs the operator opt-in and is not
+      authorized by this spike. Percentages include account usage outside T3 Code and bonus
+      usage, so spend divided by a nominal plan limit need not equal the reported percentage.
+      The existence of an undocumented shorter window is unverified, not falsified. Cursor
+      transcript decoding and session mapping are separate evidence.
+  grok-percentage-source:
+    verdict: Billing-period source confirmed in source; provider disabled in this T3 Code environment.
+    measurements:
+      release-source: https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/server/src/provider/Layers/grokUsageLimits.ts
+      direct-http: GET https://cli-chat-proxy.grok.com/v1/billing?format=credits
+      units: config.creditUsagePercent is 0–100.
+      windows: config.currentPeriod.type is WEEKLY, MONTHLY or another reported type; no five-hour
+        field in tested contract.
+      reset:
+        config.currentPeriod.end is an ISO date-time, optional; no start or duration supplied by
+        this reader.
+      model-caps-and-resets: No separate model percentage or granted reset established.
+      credential-name: Suggested host-local grok-quota binding to default grok.com CLI OAuth login,
+        selected by GROK_HOME or GROK_AUTH.
+      credential-owner: Default issuer/client entry of the selected CLI login. Custom auth command,
+        issuer, endpoint or XAI_API_KEY is not the default subscription account.
+      permission: Billing read with existing OAuth bearer; granted scopes and custom deployments
+        remain unverified.
+      access: Provider disabled in T3 Code by orchestrator ruling; no billing probe or agent call
+        attempted. Direct live usage remains unverified.
+      errors: Successful read without creditUsagePercent means no percentage observed, not zero.
+        Missing period, API-key/custom auth, 401/403/429, malformed response or transport
+        failure.
+      rate-limit-policy: No published query allowance established.
+    notes: >-
+      The released default subscription reader is an in-process HTTP reader. Weekly
+      availability is conditional on the response's period type. It must not be assumed for
+      every subscription. API-key xAI metering and arbitrary alternate auth deployments need
+      their own source; using a default stored login could report a different account. Account
+      email in an authorized response can assist identity binding, but is not a fixture.
+  opencode-percentage-source:
+    verdict: Go five-hour, weekly and monthly source confirmed in source; other upstream accounts
+      require separate sources.
+    measurements:
+      release-source: https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/server/src/provider/Layers/openCodeUsageLimits.ts
+      direct-http: GET https://opencode.ai/zen/go/v1/usage
+      units: usage.rolling.percent, weekly.percent and monthly.percent are 0–100.
+      windows: Go rolling five-hour, weekly seven-day, monthly billing window; response resetsAt is
+        ISO date-time.
+      model-caps: Official Go documentation describes model-dependent allowances and token-class
+        prices; a single global tokens-per-percent ratio is not the contract.
+      granted-resets: No grant or early-reset field established by the released reader.
+      credential-name: Suggested host-local opencode-go-quota binding. opencode-go API key from the
+        authorized owner; stored key overrides OPENCODE_API_KEY in released source.
+      credential-owner: Local OpenCode data home and OPENCODE_AUTH_CONTENT; a remote OpenCode server
+        owns its own credentials, not the host's login.
+      permission: Go usage read with subscription API key; no additional permission grant established.
+      access: Live source unverified; no OpenCode auth.json or secret environment value is read.
+      account-kinds: Go subscription; Zen pay-as-you-go; upstream BYOK and upstream subscriptions or
+        OAuth; external OpenCode server.
+      errors: 403 can mean valid Zen key without Go subscription; missing key, malformed windows,
+        401/429 or transport failure.
+      rate-limit-policy: No published usage-query allowance established.
+      live-cli-check: Installed OpenCode 1.18.34 stats --days 1 returned zero local
+        sessions/messages/tokens and no quota percentages or resets. Help exposes token/cost
+        statistics, not a Go quota command; Go subscription and direct percentage access remain
+        unverified.
+    notes: >-
+      Direct HTTP is in process. OpenCode is a harness for many upstream providers; its driver
+      identity is not a billing account. Zen pay-as-you-go and arbitrary BYOK accounts have no
+      Go windows in this tested contract. Their upstream billing sources remain unverified
+      here. The official Go pricing and model allowances support weighted cost calculations
+      under their own plan; the correspondence to this released aggregate response requires
+      authenticated verification, not substitution of API prices.
+  antigravity-percentage-source:
+    verdict: Supported provider and plan windows confirmed; provider disabled locally and direct
+      percentage source unverified.
+    measurements:
+      release-source: https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/server/src/provider/Drivers/AntigravityDriver.ts
+      official-plan-source: https://www.antigravity.google/docs/plans
+      account-kinds: Individual baseline, Google AI Pro, Google AI Ultra, and Gemini Enterprise deployments.
+      five-hour:
+        Official individual Pro/Ultra plans describe five-hour refreshes; baseline describes
+        weekly quota.
+      weekly: Official individual plans describe weekly limits; exact per-account boundaries
+        unavailable.
+      model-caps: Quota varies with model and work; paid plans can spend AI credits for overages.
+      direct-source: No quota reader or response contract found in the released T3 Code provider
+        implementation. No direct authenticated API, library or non-secret file proven.
+      credential-name: A future host-local antigravity-quota binding would need the selected Google
+        account/profile owner; no credential kind or permission scope established.
+      access: Provider disabled in T3 Code by orchestrator ruling. No Google credential or profile
+        database read, and no agent call attempted.
+      errors-and-rate-limits: Unverified. Model unavailable, login failure, exhaustion and denied
+        access must not be reported as observed percentages.
+      granted-resets: Refreshes and overage credits documented; no early-reset grant response established.
+    notes: >-
+      T3 Code can run Antigravity without exposing subscription quota. Absence of a T3 Code
+      reader is not evidence that Google has no such source. Do not infer quota from Gemini API
+      limits or from an unrelated Gemini CLI credential. The usage decoder's five-provider set
+      also lacks this released provider; a complete observed-capacity implementation must
+      retain its unavailable state and establish its independent source and call coverage.
+  reproducible-fixtures:
+    verdict: Synthetic response and file boundaries; no captured live provider response.
+    measurements:
+      provenance: Hand-authored generic numbers in the public contracts cited above. No prompt text,
+        account identifiers or credentials.
+      experiment: Nine Node public-boundary tests pass against loopback HTTP fixtures and non-secret
+        JSONL files, after the empty implementation failed the source/unit/error assertions.
+      experiment-limits:
+        The synthetic reader implements the cited shapes and does not run T3 Code or
+        a provider SDK. Those fixture tests make no authenticated request and claim no grant
+        redemption, transport-fault test or real process restart; separate live findings use
+        authorized CLIs.
+      schema-validation: Owning spike artifact-type content contract, retrieved at refinery-ontology
+        e2693cb219f5a637330ee60e1a4a9ce54683feed, compiled with Ajv 2020 and allowUnionTypes;
+        metadata and GAP-EDGE inspected separately.
+      observed-at: "2026-01-01T00:00:00.000Z"
+      fixtures:
+        codex-http:
+          plan_type: plus
+          rate_limit:
+            primary_window: { used_percent: 12, limit_window_seconds: 18000, reset_at: 1767243600 }
+            secondary_window:
+              { used_percent: 47, limit_window_seconds: 604800, reset_at: 1767830400 }
+        codex-rollout:
+          timestamp: "2026-01-01T00:00:00Z"
+          type: event_msg
+          payload:
+            type: token_count
+            info:
+              total_token_usage:
+                {
+                  input_tokens: 10000,
+                  cached_input_tokens: 8000,
+                  output_tokens: 1000,
+                  reasoning_output_tokens: 500,
+                  total_tokens: 11000,
+                }
+              last_token_usage:
+                {
+                  input_tokens: 10000,
+                  cached_input_tokens: 8000,
+                  output_tokens: 1000,
+                  reasoning_output_tokens: 500,
+                  total_tokens: 11000,
+                }
+              model_context_window: 200000
+            rate_limits:
+              limit_id: codex
+              primary: { used_percent: 12, window_minutes: 300, resets_at: 1767243600 }
+              secondary: { used_percent: 47, window_minutes: 10080, resets_at: 1767830400 }
+              credits: null
+              plan_type: plus
+        claude-http:
+          five_hour: { utilization: 12, resets_at: "2026-01-01T05:00:00Z" }
+          seven_day: { utilization: 47, resets_at: "2026-01-08T00:00:00Z" }
+          limits:
+            - kind: weekly_scoped
+              percent: 25
+              resets_at: "2026-01-08T00:00:00Z"
+              scope: { model: { display_name: Model A } }
+        claude-sdk-event: { rateLimitType: five_hour, utilization: 0.12, resetsAt: 1767243600 }
+        cursor-http:
+          billingCycleEnd: 1769904000000
+          planUsage: { totalPercentUsed: 25, autoPercentUsed: 10, apiPercentUsed: 15 }
+        grok-http:
+          config:
+            creditUsagePercent: 25
+            currentPeriod: { type: USAGE_PERIOD_TYPE_MONTHLY, end: "2026-02-01T00:00:00Z" }
+        opencode-go-http:
+          usage:
+            rolling: { percent: 12, resetsAt: "2026-01-01T05:00:00Z" }
+            weekly: { percent: 47, resetsAt: "2026-01-08T00:00:00Z" }
+            monthly: { percent: 25, resetsAt: "2026-02-01T00:00:00Z" }
+        unavailable:
+          { availability: unverified, windows: [], error: authorized-caller-not-supplied }
+    notes: >-
+      These fixtures are sufficient to reproduce unit and timestamp conversion without the
+      spike branch: JSON-serialize each HTTP object and return it from a loopback fixture
+      server; JSON-serialize codex-rollout as one newline-terminated file record. Read both
+      with Node fetch and fs. Expect Codex primary 12% at 300 minutes and secondary 47% at
+      10080 minutes; Claude snapshot and event both 12%, with model-scoped 25% separate; Cursor
+      three monthly views, Grok one monthly window, Go three windows. Omit any nullable bucket
+      and expect absence, not zero. Send 401, 403, 429 with Retry-After, malformed JSON, and a
+      partial final JSONL record and expect an availability/error result. These are contract
+      experiments, not claims that those errors or values were observed on a provider.
+  percentage-and-token-ratio:
+    verdict: "No stable empirical ratio established: Claude session and all-model weekly changes
+      are below displayed precision; Codex account-wide deltas are confounded."
+    measurements:
+      live-pairs:
+        claude: 2
+        codex: 7875
+      models-measured-live:
+        - claude-haiku-5-5
+        - claude-sonnet-5-5
+        - gpt-6.1-sol
+        - gpt-6-luna
+        - gpt-5.6-sol
+        - gpt-6-astra
+      cache-transitions-measured-live: 0
+      resets-measured-live: 0
+      documentary-counterexample: OpenCode Go publishes different input, output, cache and model
+        prices and allowances; OpenAI states credit prices alone do not determine included
+        subscription usage.
+      synthetic-rounding-example: Two observations displayed as 12% and 13% at nearest-integer
+        precision permit a true delta approaching 0 to 2 percentage points.
+      synthetic-external-usage-example: An observed 2-point increase with 10000 local tokens is
+        compatible with entirely local spend, entirely external spend or any mixture; it
+        identifies no local ratio.
+      synthetic-reset-example: A fall from 90% to 5% with positive token growth is compatible with a
+        reset, not negative task usage.
+      estimate-classification: Any locally fitted ratio is an estimate indexed by account, window,
+        plan, model, token class and speed, not an observed actual.
+      observed-cache-coverage: Claude cache creation on two models; all 7875 Codex intervals have
+        cached input. No controlled cold/warm transition.
+    notes: >-
+      Claude reports unchanged integer percentages for 1678 tokens across two small completed
+      calls, so their true quota cost cannot be estimated from the display. Codex exact-reset
+      pairs range from zero to 43.1951 percentage points per million raw tokens; that is an
+      apparent account-delta/thread-token ratio, not an isolated charge rate. Coarse reports,
+      overlapping sessions and long idle intervals make it unsuitable as task actual. This
+      fails to establish a stable empirical ratio and does not falsify a plan-specific
+      relationship under controlled isolation. Published weighting and different allowances
+      also reject a universal raw-token scalar as the contract. Reset timestamp jitter is
+      observed; no natural reset, early reset or grant redemption is observed. Cached input and
+      reasoning are subsets and must not be added again. Reporting lag, plan/model/speed
+      weighting, external usage, login replacement and retained-history gaps remain
+      confounders. API-equivalent USD is not quota percentage.
+  paired-measurement-procedure:
+    verdict: Executed with authorized Claude and Codex callers; isolation, cold/warm controls and
+      actual resets remain unverified.
+    measurements:
+      required-inputs: Authorized caller returning sanitized account/window readings and token-only
+        records for the same account across all known surfaces.
+      isolation: One unchanged plan, account, model and speed per interval, with other account use
+        stopped or measured. No prompt contents retained.
+      sample: Read each percentage and reset before and after completed calls, recording response
+        time, provider timestamp, model and disjoint token classes.
+      coverage: Observed two small Claude model calls and four Codex models across existing events.
+        Stop active calls at unchanged/coarse displayed precision. Controlled
+        cache-cold/cache-warm and actual-reset intervals remain unverified.
+      reset-boundary: Split intervals when raw window id, reset, scope, plan or credential identity
+        changes; do not infer window start from a missing end.
+      ratio: For each valid interval compute percentage-point delta divided by disjoint token delta,
+        and separately by native weighted spend when documented.
+      acceptance: Report intervals and uncertainty bounds, including zero displayed deltas; test
+        whether one ratio's uncertainty overlaps every isolated interval. No accuracy threshold
+        invented here.
+      unavailable: Record per-source failure and preserve last-good age separately; unavailable is
+        not 0% or 100% used.
+    notes: >-
+      The operator can authorize an existing credential-owning caller to return these sanitized
+      observations without letting an agent read credentials. Grant redemption changes account
+      capacity and needs its own explicit authorization; the spike does not redeem one. Report
+      evidence gaps for inactive or unsupported providers instead of creating calls solely to
+      assume a billing contract. Transport rate limits and precision determine useful sampling;
+      no new runtime timing mechanic is selected.
+  design-contradictions:
+    verdict: Declared USD budgets remain valid; they cannot stand in for provider-observed capacity.
+    measurements:
+      usage-decoder: Calls discard Codex quota snapshots; no Antigravity call decoder exists. Its five-provider coverage is not the full released T3 Code set.
+      usage-intake: Prices and posts calls in USD; push and stored usage have no quota observation record, source freshness or account-window identity.
+      accounts-declaration: One operator-estimated USD capacity and fixed reset series do not represent concurrent, conditional and early-reset provider windows.
+      portfolio-ledger: One account's disjoint fixed windows and priced actuals cannot exactly represent simultaneous rolling, weekly and model-scoped quota observations.
+      operator-console: Accounts/Portfolio used-to-capacity meters and pricing text describe declared budgets, not observed provider allowance, missing windows or stale/error states.
+    notes: >-
+      The designs explicitly call subscription capacity an operator estimate;
+      observed data does not invalidate that budget. The contradiction arises
+      if those meters are presented as the actual provider limit, or if every
+      stable provider is claimed to have call coverage. Keep budget actuals,
+      quota observations and ratio estimates distinct. Evidence links in the
+      affected designs identify this boundary; selecting the reconciliation
+      policy and its store/API shapes belongs to the observed-capacity design.
+      Cursor transcript findings remain owned by the Cursor decoding spike.
+  next-implementation-scope:
+    verdict: Evidence defines the full observed-capacity work before 0.1.0; no production integration added.
+    measurements:
+      sources: In-process host quota readers for direct sources, credential-owner selection, Codex historical file observations, and explicit unavailable states for all six providers/account kinds.
+      protocol: Push record, JSON Schema in YAML, durable storage and API for account/instance identity, raw scoped windows, timestamps, freshness, units, errors, reset grants and evidence class.
+      reconciliation: Account deduplication across environments, login replacement, partial versus full snapshots, out-of-order data, simultaneous windows, external usage, early resets and bounds without invented starts.
+      budget: Preserve declared budgets and task token/USD actuals; design how observations constrain reservations, allocations, pacing and selected budgeting windows without claiming exact task quota attribution.
+      console: Accounts and Portfolio show observed windows and sublimits, reset times, source/freshness, unavailable/error, native units, grants and separately labelled estimates; preserve sharing preview and account editing.
+      decoder: Antigravity call coverage and separate Cursor ACP work; quota reading must not depend on estimated transcript token counts.
+      validation: Sanitized fixtures, meaningful live authorized checks, duplicate and crash/restart behavior, all provider/account/window variants, rounding, errors, external consumption and resets.
+      reserved-choices: Named credential access and permission scopes, any integration subprocess fallback, polling/timeout mechanics, and any narrowing of existing operator capability.
+    notes: >-
+      No reserved implementation choice is taken by this evidence artifact.
+      Every observation import must converge on its source identity and time,
+      rather than append duplicate percentage actuals. A stopped or repeated
+      read changes no provider state. Future mutation design must make an
+      accepted observation and its reconciliation atomic, reject older data
+      without losing history, and restore the same last-good state after a
+      crash. No reset is inferred from a process restart. Existing schema
+      steps are edited in place; no migration or store conversion is proposed.
+  claude-live-pairs:
+    verdict: Live session, all-model weekly and Fable weekly readings; two completed calls show
+      no displayed movement in the session and all-model weekly windows.
+    measurements:
+      caller: Claude Code 2.1.294, existing default subscription login; account identity omitted.
+      readings:
+        - observedAt: 2026-10-10T03:02:05.250Z
+          finishedAt: 2026-10-10T03:02:07.533Z
+          reportedWindowLines:
+            - "Current session: 2% used · resets Oct 10, 7:59am (UTC)"
+            - "Current week (all models): 12% used · resets Oct 14, 4:59pm (UTC)"
+            - "Current week (Fable): 2% used · resets Oct 14, 4:59pm (UTC)"
+          quotaReadInputTokens: 0
+          quotaReadOutputTokens: 0
+          quotaReadApiEquivalentUsd: 0
+        - observedAt: 2026-10-10T03:02:09.550Z
+          finishedAt: 2026-10-10T03:02:11.844Z
+          reportedWindowLines:
+            - "Current session: 2% used · resets Oct 10, 7:59am (UTC)"
+            - "Current week (all models): 12% used · resets Oct 14, 4:59pm (UTC)"
+            - "Current week (Fable): 2% used · resets Oct 14, 4:59pm (UTC)"
+          quotaReadInputTokens: 0
+          quotaReadOutputTokens: 0
+          quotaReadApiEquivalentUsd: 0
+        - observedAt: 2026-10-10T03:02:13.313Z
+          finishedAt: 2026-10-10T03:02:15.684Z
+          reportedWindowLines:
+            - "Current session: 2% used · resets Oct 10, 7:59am (UTC)"
+            - "Current week (all models): 12% used · resets Oct 14, 4:59pm (UTC)"
+            - "Current week (Fable): 2% used · resets Oct 14, 4:59pm (UTC)"
+          quotaReadInputTokens: 0
+          quotaReadOutputTokens: 0
+          quotaReadApiEquivalentUsd: 0
+      calls:
+        - observedAt: 2026-10-10T03:02:07.534Z
+          finishedAt: 2026-10-10T03:02:09.550Z
+          model: claude-haiku-5-5
+          inputTokens: 2
+          cacheCreationTokens: 818
+          cacheReadTokens: 0
+          outputTokens: 33
+          reasoningSubset: 30
+          speed: standard
+          apiEquivalentUsd: 0.00030450000000000003
+          sessionPercentBefore: 2
+          sessionPercentAfter: 2
+          allModelsWeeklyBefore: 12
+          allModelsWeeklyAfter: 12
+        - observedAt: 2026-10-10T03:02:11.844Z
+          finishedAt: 2026-10-10T03:02:13.313Z
+          model: claude-sonnet-5-5
+          inputTokens: 2
+          cacheCreationTokens: 820
+          cacheReadTokens: 0
+          outputTokens: 3
+          reasoningSubset: 0
+          speed: standard
+          apiEquivalentUsd: 0.003314
+          sessionPercentBefore: 2
+          sessionPercentAfter: 2
+          allModelsWeeklyBefore: 12
+          allModelsWeeklyAfter: 12
+      fableOverageIncludedWeekly:
+        reportedWindow: Current week (Fable)
+        usedPercentReadings: [2, 2, 2]
+        scope: Fable overage-included weekly bucket returned by /usage.
+        applicability: This is not a model-scoped quota measurement for either the Haiku or
+          Sonnet call; only session and all-model weekly readings are paired with those calls.
+      totalApiEquivalentUsd: 0.0036185
+      observedUnits: Integer used percentages; five-hour session, all-model weekly and Fable
+        overage-included weekly. Exact rounding rule is not reported.
+      observedResets: CLI reports Oct 10 07:59 UTC for session and Oct 14 16:59 UTC for both
+        weeklies; retains reported minute precision, not an invented exact second.
+      cacheScope: Both calls report one-hour cache creation, zero cache reads. No warm-cache
+        comparison available from these tiny prompts.
+      preliminaryRead: Before controlled sampling, an untimed /usage read showed session 0%,
+        all-model weekly 11%, Fable weekly 2%; the first timed baseline already showed 2%, 12%,
+        2%.
+      stop: Two tiny completed calls, 1678 disjoint top-level tokens including cache creation. No
+        displayed movement in session or all-model weekly usage; stop rather than spend enough
+        to force a percentage tick.
+      counterMismatch: First call top-level usage input/output 2/33 differs from modelUsage
+        input/output 1174/47. Pairing uses top-level per-request usage; discrepancy is
+        retained, not silently combined.
+    notes: "The three timed reads succeeded and reported zero inference tokens/cost for /usage
+      itself. Haiku and Sonnet are requested through their CLI aliases; reported concrete
+      models are recorded. Sampling supplies no point estimate of true quota cost: a zero
+      displayed delta is consistent with positive consumption below precision or delayed
+      reporting. Other Claude sessions on this machine use the same account concurrently. The
+      baseline moved before the controlled calls, so total account consumption cannot be
+      assigned to these calls. Prompt and response text, session ids and account details are
+      omitted."
+  codex-live-pairs:
+    verdict: Live weekly-only Pro snapshot, reset grants and many paired historical events;
+      account-wide ratio is not isolated.
+    measurements:
+      caller: Codex CLI 0.160.1 owns credentials; stdio initialize, initialized,
+        account/rateLimits/read; terminate only the captured spawned process.
+      rpcReads:
+        - observedAt: 2026-10-10T03:03:05.499Z
+          finishedAt: 2026-10-10T03:03:06.004Z
+          plan: pro
+          limitId: codex
+          primary:
+            usedPercent: 11
+            windowMinutes: 10080
+            resetsAt: 1791948762
+          secondary: null
+          availableResetCredits: 3
+        - observedAt: 2026-10-10T03:03:37.150Z
+          finishedAt: 2026-10-10T03:03:37.573Z
+          plan: pro
+          limitId: codex
+          primary:
+            usedPercent: 12
+            windowMinutes: 10080
+            resetsAt: 1791948761
+          secondary: null
+          availableResetCredits: 3
+      resetCreditExpiries:
+        - status: available
+          expiresAt: 1792702283
+        - status: available
+          expiresAt: 1793300666
+        - status: available
+          expiresAt: 1794008057
+      filesDiscovered: 3051
+      filesRead: 200
+      selection: Walk only ~/.codex/sessions; sort JSONL files by descending modification time; read
+        the first 200. Archived sessions are not sampled.
+      eventsWithQuota: 10739
+      firstEvent: 2026-10-05T21:07:19.009Z
+      lastEvent: 2026-10-10T03:04:01.732Z
+      malformedLines: 0
+      pairing: Read each file in record order. Carry the latest preceding turn_context payload
+        model forward to each token_count event in that file. Pair adjacent token_count events
+        with quota; compute token deltas by subtracting their cumulative
+        payload.info.total_token_usage fields, not info.last_token_usage. Require a positive
+        total_tokens delta, nondecreasing used percentage, equal carried model/plan/limit
+        id/window minutes and identical reset field. Skip missing info and fields. Record
+        input_tokens, cached_input_tokens, output_tokens and reasoning_output_tokens deltas;
+        reasoning is an output subset. Split counts by the carried model and compute points
+        per million tokens as (used_percent after minus before) times 1000000 divided by the
+        cumulative total_tokens delta.
+      intervals: 7875
+      zeroPercentDelta: 7747
+      positivePercentDelta: 128
+      uniqueExactPairs: 7875
+      cachePositiveIntervals: 7875
+      cacheZeroIntervals: 0
+      byModel:
+        gpt-6.1-sol:
+          primary:
+            intervals: 7300
+            zeroPercentDelta: 7177
+            positivePercentDelta: 123
+            totalTokens: 880127382
+            minPointsPerMillion: 0
+            maxPointsPerMillion: 43.19505157489158
+          secondary:
+            intervals: 0
+            zeroPercentDelta: 0
+            positivePercentDelta: 0
+            totalTokens: 0
+            minPointsPerMillion: null
+            maxPointsPerMillion: null
+        gpt-6-luna:
+          primary:
+            intervals: 239
+            zeroPercentDelta: 238
+            positivePercentDelta: 1
+            totalTokens: 27856261
+            minPointsPerMillion: 0
+            maxPointsPerMillion: 15.35650117477234
+          secondary:
+            intervals: 0
+            zeroPercentDelta: 0
+            positivePercentDelta: 0
+            totalTokens: 0
+            minPointsPerMillion: null
+            maxPointsPerMillion: null
+        gpt-5.6-sol:
+          primary:
+            intervals: 263
+            zeroPercentDelta: 263
+            positivePercentDelta: 0
+            totalTokens: 24294161
+            minPointsPerMillion: 0
+            maxPointsPerMillion: 0
+          secondary:
+            intervals: 0
+            zeroPercentDelta: 0
+            positivePercentDelta: 0
+            totalTokens: 0
+            minPointsPerMillion: null
+            maxPointsPerMillion: null
+        gpt-6-astra:
+          primary:
+            intervals: 73
+            zeroPercentDelta: 69
+            positivePercentDelta: 4
+            totalTokens: 5943365
+            minPointsPerMillion: 0
+            maxPointsPerMillion: 14.181580962645716
+          secondary:
+            intervals: 0
+            zeroPercentDelta: 0
+            positivePercentDelta: 0
+            totalTokens: 0
+            minPointsPerMillion: null
+            maxPointsPerMillion: null
+      pointsPerMillionTokenRange:
+        - 0
+        - 43.19505157489158
+      samples:
+        - model: gpt-6.1-sol
+          from: 2026-10-10T02:48:58.287Z
+          to: 2026-10-10T02:49:06.087Z
+          minutes: 10080
+          reset: 1791948762
+          percentFrom: 11
+          percentTo: 11
+          tokenDelta: 39968
+          inputDelta: 39665
+          cachedInputDelta: 29824
+          outputDelta: 303
+          reasoningDelta: 10
+          pointsPerMillionTokens: 0
+        - model: gpt-6.1-sol
+          from: 2026-10-05T22:31:46.112Z
+          to: 2026-10-06T01:38:02.250Z
+          minutes: 10080
+          reset: 1791584891
+          percentFrom: 22
+          percentTo: 27
+          tokenDelta: 115754
+          inputDelta: 115615
+          cachedInputDelta: 12160
+          outputDelta: 139
+          reasoningDelta: 0
+          pointsPerMillionTokens: 43.19505157489158
+        - model: gpt-6.1-sol
+          from: 2026-10-05T22:28:11.743Z
+          to: 2026-10-06T01:47:11.252Z
+          minutes: 10080
+          reset: 1791584891
+          percentFrom: 22
+          percentTo: 27
+          tokenDelta: 119048
+          inputDelta: 118901
+          cachedInputDelta: 12160
+          outputDelta: 147
+          reasoningDelta: 0
+          pointsPerMillionTokens: 41.99986560043008
+        - model: gpt-6-luna
+          from: 2026-10-05T21:54:18.565Z
+          to: 2026-10-05T21:54:23.330Z
+          minutes: 10080
+          reset: 1791584891
+          percentFrom: 19
+          percentTo: 20
+          tokenDelta: 65119
+          inputDelta: 64974
+          cachedInputDelta: 62208
+          outputDelta: 145
+          reasoningDelta: 0
+          pointsPerMillionTokens: 15.35650117477234
+        - model: gpt-6-astra
+          from: 2026-10-06T00:10:32.329Z
+          to: 2026-10-06T00:10:38.406Z
+          minutes: 10080
+          reset: 1791584891
+          percentFrom: 24
+          percentTo: 25
+          tokenDelta: 88355
+          inputDelta: 88118
+          cachedInputDelta: 79744
+          outputDelta: 237
+          reasoningDelta: 53
+          pointsPerMillionTokens: 11.317978609020429
+        - model: gpt-5.6-sol
+          from: 2026-10-06T04:55:29.410Z
+          to: 2026-10-06T04:55:33.205Z
+          minutes: 10080
+          reset: 1791584891
+          percentFrom: 29
+          percentTo: 29
+          tokenDelta: 36336
+          inputDelta: 36179
+          cachedInputDelta: 28160
+          outputDelta: 157
+          reasoningDelta: 49
+          pointsPerMillionTokens: 0
+      windowSemantics: All observed plans are pro. Every defined primary duration is 10080 minutes;
+        no sampled secondary exists. No five-hour window is observed. Percentages are
+        integer-valued in all sampled quota records.
+      resetFieldChanges: 2512
+      oneSecondResetFieldChanges: 2506
+      largerResetFieldChanges: 6
+      actualResetOrPercentageDropObserved: 0
+      resetFieldExamples:
+        - from: 2026-10-08T23:06:40.501Z
+          to: 2026-10-08T23:06:58.239Z
+          before:
+            used_percent: 11
+            window_minutes: 10080
+            resets_at: 1791948761
+          after:
+            used_percent: 11
+            window_minutes: 10080
+            resets_at: 1791948763
+        - from: 2026-10-08T01:16:01.535Z
+          to: 2026-10-08T01:16:06.606Z
+          before:
+            used_percent: 0
+            window_minutes: 10080
+            resets_at: 1791948761
+          after:
+            used_percent: 0
+            window_minutes: 10080
+            resets_at: 1791948764
+      attemptedNewCall:
+        model: gpt-6-luna
+        observedAt: 2026-10-10T03:03:36.909Z
+        finishedAt: 2026-10-10T03:03:36.962Z
+        exitCode: 1
+        completedTurnEvents: 0
+        tokenSample: null
+      stop: A new exec attempt returned no completed-turn event. The surrounding quota reads moved
+        11% to 12% at one-point precision; stop further billable attempts. Historical calls
+        provide the multi-model/cache observations.
+    notes: Historical interval counts are descriptive, not independent account experiments. Every
+      paired interval has cached input; no cache-cold control exists. Each model summary
+      totalTokens is the sum of per-file interval deltas, not a deduplicated account actual.
+      Intervals overlap in wall time and other sessions use the account. The largest apparent
+      ratio covers about three hours of one thread being idle while account usage advanced five
+      points; it is not a measured cost of that thread. Raw reset timestamps jitter by one or a
+      few seconds, without any percentage decrease; field changes do not prove resets or
+      grants. The account reads confirm three available grants but none is redeemed. No
+      isolated-account scalar is fitted. Direct HTTP is still only source-confirmed; invoking
+      this native CLI in application code remains a reserved subprocess choice.
+conclusion: >-
+  The stable released T3 Code supports six providers. Claude CLI /usage and Codex non-secret
+  rollout/native RPC sources are observed live through credential-owning installed CLIs. Claude
+  exposes session, all-model weekly and Fable weekly readings; tiny Haiku and Sonnet calls
+  produce no displayed movement in session or all-model weekly usage. The observed Codex Pro
+  account has a weekly primary window, no secondary and three
+  available reset credits. Its 7875 exact-reset paired historical intervals across four models
+  do not establish an isolated quota/token ratio: concurrent account use, integer percentages
+  and reporting lag confound thread-local tokens. No actual reset or controlled cold/warm
+  transition is observed. Cursor and OpenCode quota remain unverified through installed
+  callers; Grok and Antigravity are disabled locally. Direct HTTP candidates retain their
+  source evidence without credential reads. Declared budgets, observed account quota, task
+  actuals and ratio estimates remain separate values. The artifact preserves sanitized live
+  readings, response fixtures, procedures, design boundaries and the full next implementation
+  scope without requiring spike code.
+next-steps:
+  - Implement the full observed-capacity scope before 0.1.0 after ruling the observation and
+    account seams and applying existing access approvals.
+  - Verify direct HTTP production callers, Cursor/OpenCode quota and any isolated-account ratio
+    through credential owners; retain unavailable and unverified states instead of fabricating
+    windows.
+  - Establish an Antigravity quota source and call coverage, preserve disabled/unavailable
+    states, and reconcile independent Cursor transcript findings.

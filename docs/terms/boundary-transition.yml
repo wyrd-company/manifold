@@ -1,0 +1,10 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `references`
+  # names the artifacts that define and use this term.
+  references:
+    - operator-console
+title: Boundary transition
+description: >-
+  A transition with exactly one end inside a canvas scope, drawn between
+  the state inside and a node that stands for the state outside.

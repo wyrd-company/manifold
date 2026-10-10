@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Actual
+description: >-
+  Exact usage recorded for a task actor from provider session data.

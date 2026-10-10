@@ -1,0 +1,43 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: Cursor sessions that T3 Code runs carry no token counts, so their cost and the variance of their tasks are unknown
+
+# GAP-EDGE: the risk schema declares no relationship-types; `related-to`
+# names the designs that carry unmetered calls and the evidence.
+relationships:
+  related-to:
+    - usage-decoder
+    - usage-intake
+    - t3code-session-mapping
+    - task-usage-unattributable
+    - count-cursor-calls-as-unmetered
+
+description: >-
+  Cursor keeps a session that T3 Code runs in its ACP session store, which
+  records each model response with its model and time and no token
+  counts, and T3 Code records none for Cursor threads. The usage decoder
+  yields each such call as an unmetered call, and the service counts it on
+  its thread, actor, and account with no amount. A task that runs on
+  Cursor then has an actual that covers only its metered calls, an
+  estimate built from that history is too low, its variance misreads, and
+  a Cursor account's capacity does not fall with the work Manifold runs on
+  it. The store is undocumented, so a Cursor release can also move the
+  fields the decoder reads; the golden fixtures and the `unknown-record`
+  and `malformed-record` source errors make that visible, not silent.
+
+categories:
+  - technical
+  - project
+
+likelihood: 5
+impact: 3
+
+response-strategy: mitigate
+# Mitigation: unmetered calls are counted and shown on every task, unowned
+# entry, and the Pricing card, so the gap is visible and never priced as
+# zero or from text length. The open mitigation is a source of exact
+# per-request Cursor token counts that Manifold can read without a
+# subprocess, as the `t3code-session-mapping` spike's next steps name.
+
+status: open

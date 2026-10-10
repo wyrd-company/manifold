@@ -1,0 +1,28 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: comparator-sandbox-configuration
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/comparator-sandbox-configuration
+title: Comparator sandbox configuration
+description: The value of the `comparatorSandbox` section of the service configuration.
+type: object
+additionalProperties: false
+properties:
+  timeoutMs:
+    description: Per-evaluation timeout in milliseconds.
+    type: integer
+    minimum: 1
+    default: 100
+  memoryLimitMiB:
+    description: >-
+      Maximum linear memory per loaded comparator in mebibytes, including
+      the engine's allocations. The comparator's heap cannot grow beyond this
+      bound. The maximum lies within the 16 MiB to 2 GiB memory the QuickJS
+      wasm binary imports.
+    type: integer
+    minimum: 16
+    maximum: 2048
+    default: 32

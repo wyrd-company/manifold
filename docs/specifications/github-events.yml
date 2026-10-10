@@ -1,0 +1,218 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose events these are.
+  realizes:
+    - github-event-source
+  references:
+    - router-events
+    - durable-event-delivery
+terms:
+  - event-source
+  - topic
+  - tracked-issue
+  - github-mirror
+  - webhook-delivery
+  - sweep
+description: |-
+  Defines what the GitHub event source accepts from GitHub and what it
+  publishes to the router: the webhook deliveries it verifies, the event
+  types and payloads it publishes, the topics each event is published
+  under, and the event id of each. `docs/specifications/github-events.schema.yml`
+  is the machine-readable definition of every published event and of the
+  fields the source reads from each webhook delivery it handles. The source
+  publishes through the seam `router-events` defines, with source name
+  `github`.
+
+  Webhook deliveries. A delivery is one HTTP `POST` from an organization or
+  repository webhook whose content type is `application/json`. It carries:
+
+  - `X-GitHub-Delivery`, the delivery's GUID. A delivery received by an
+    organization hook and a repository hook carries one GUID, and a
+    redelivery carries the GUID of the delivery it repeats.
+  - `X-GitHub-Event`, the event name.
+  - `X-GitHub-Hook-ID`, the numeric id of the hook that sent it.
+  - `X-Hub-Signature-256`, `sha256=` followed by the lower-case hexadecimal
+    HMAC-SHA256 of the raw body under the hook's secret.
+
+  The source verifies a delivery in this order, and the first failure
+  rejects it: every header above is present and the hook id is an integer
+  (`malformed`); the hook id names a hook in service configuration
+  (`unknown-hook`); the signature equals the HMAC of the raw body bytes
+  under that hook's secret, compared in constant time (`signature`); the
+  body parses as JSON (`malformed`); and, for an event the source handles,
+  the body validates against that event's `$defs/delivery-*` definition
+  (`malformed`). A rejected delivery records nothing and publishes nothing.
+  An accepted delivery's GUID is recorded once, so a second delivery with
+  the same GUID, from either hook or from a redelivery, is a duplicate that
+  changes nothing.
+
+  The handled deliveries, and the entities each names:
+
+  | `X-GitHub-Event` | Fields read | Names |
+  |---|---|---|
+  | `issues` | `issue.node_id` | the issue |
+  | `issue_dependencies` | `blocked_issue.node_id`, `blocking_issue.node_id`, each when present | each issue present |
+  | `sub_issues` | `parent_issue.node_id`, `sub_issue.node_id`, each when present | each issue present |
+  | `projects_v2_item` | `projects_v2_item.node_id`, `projects_v2_item.project_node_id` | the item, when its Project is bound |
+  | `projects_v2` | `projects_v2.node_id` | the Project, when it is bound |
+  | `push` | `ref`, `after`, `deleted`, `repository.clone_url`, `repository.html_url` | the process repository, when it matches |
+
+  A dependency or sub-issue delivery between issues in two repositories
+  carries only the issue in the hook's repository, and GitHub sends one
+  such delivery for each end, so each end is named by the delivery that
+  carries it. Every other event, `ping` included, is accepted and names
+  nothing. A
+  delivery does not carry the facts the source publishes: it names the
+  entities whose current state the source reads from the GitHub GraphQL
+  API, and the source publishes the difference between that state and its
+  mirror. A webhook delivery and a sweep that learn of the same change
+  therefore publish it once, under one event id.
+
+  Process repository pushes. A `push` delivery matches the process
+  repository when `ref` is `refs/heads/<branch>` for the configured branch,
+  `deleted` is false, and the configured URL equals `repository.clone_url`
+  or `repository.html_url` after each is normalized: scheme and host
+  lower-cased, one trailing `/` removed, then one trailing `.git` removed,
+  and the path compared case-insensitively. A matching push calls the
+  process repository's `pull` with `commit` set to `after`, and publishes
+  nothing.
+
+  Tracked issues. An issue is tracked when a present item of a bound
+  Project has it as its content. Bound Projects are the GitHub Project
+  bindings of the current process repository revision, named by owner and
+  number; the source resolves each to its Project node id.
+
+  Published events. Every event's `type` starts with `github.`. Issues,
+  items, and Projects are named by their GraphQL node ids. An issue
+  reference carries `nodeId`, `repository` as `owner/name`, `number`,
+  `state` (`open` or `closed`), and `stateReason` (`completed`,
+  `not_planned`, `duplicate`, `reopened`, or `null`). A Project reference
+  carries `nodeId`, `owner` as the login GitHub returns, and `number`. An
+  item reference carries `nodeId`, `contentType` (`issue`, `pull-request`,
+  or `draft-issue`), and `contentNodeId`.
+
+  | `type` | Payload | Topics |
+  |---|---|---|
+  | `github.issue.closed`, `github.issue.reopened` | `issue`, `blocks`, `parent` | the issue, each issue in `blocks`, and `parent` when it is not `null` |
+  | `github.dependency.added`, `github.dependency.removed` | `blocked`, `blocking` | both issues |
+  | `github.sub-issue.added`, `github.sub-issue.removed` | `parent`, `subIssue` | both issues |
+  | `github.project-item.added` | `project`, `item`, `issue`, `archived`, `fields` | the Project, and the issue when `contentType` is `issue` |
+  | `github.project-item.removed`, `github.project-item.archived`, `github.project-item.restored` | `project`, `item` | the Project, and the issue when `contentType` is `issue` |
+  | `github.project-item.field-changed` | `project`, `item`, `field`, `from`, `to`, `movedBy`, `lifecycle` | the Project, and the issue when `contentType` is `issue` |
+  | `github.task-field.changed` | `issue`, `project`, `binding`, `field`, `storage`, `from`, `to`, `setBy` | the issue |
+  | `github.project.closed`, `github.project.reopened` | `project` | the Project |
+
+  `blocks` lists the node ids of the issues the mirror shows the issue
+  blocking, and `parent` is the node id of its parent issue or `null`, so
+  that a blocked issue's actor and a parent issue's actor each hear the
+  close and reopen of the issues they wait on. One event reaches every one
+  of them as one source event with one topic per issue. `issue` in
+  `github.project-item.added` is the content issue's reference, or `null`
+  for a pull request or draft issue. `fields` lists the item's custom
+  field values when it was added; `field-changed` carries one field's value
+  before and after. `movedBy` names the card move whose option the new
+  value is, as `github-event-source` attributes it:
+  `{ "actorId": "<actor id>", "confirmed": true }` when GitHub confirmed
+  that actor's write and no change Manifold did not make has followed it;
+  `{ "actorId": "<actor id>", "confirmed": false }` when that actor
+  attempted the value and the source cannot show that its write set it,
+  as after a write whose fate is unknown; and `null` when no write
+  Manifold recorded or attempted set the value: a person, a Project
+  workflow, or another integration. `lifecycle` is true when the changed
+  field is the lifecycle field the task metadata declaration in force
+  declares for the item's Project, compared by the field's name as the
+  source read it, and false otherwise, so a blueprint guards on
+  `event.lifecycle` whatever its Project calls that field. A value whose
+  single-select option id, or iteration id, is unchanged is not a change,
+  whatever its name: renaming an option does not move a card. A
+  card move reaches the actors of its item's issue through the same read,
+  comparison, topics, and event id as any other change. A field is a custom field of data type `TEXT`,
+  `NUMBER`, `DATE`, `SINGLE_SELECT`, or `ITERATION`, named by `nodeId` and
+  `name`. A field value is `null` or one of:
+
+  ```json
+  { "kind": "text", "text": "Example" }
+  { "kind": "number", "number": 3 }
+  { "kind": "date", "date": "2026-01-02" }
+  { "kind": "single-select", "optionId": "a1b2c3d4", "name": "Todo" }
+  { "kind": "iteration", "iterationId": "e5f6a7b8", "title": "Iteration 1", "startDate": "2026-01-05", "duration": 14 }
+  ```
+
+  `github.task-field.changed` carries one task field's value before and
+  after, as `task-metadata` computes it from the GitHub mirror with the
+  task metadata declaration in force, whatever storage kind holds the
+  field: a Project field, an organization issue field or issue type, a
+  repository label or milestone, or a key of the issue body's front
+  matter. A task field value is `{ "state": "set", "value": ... }`, `{
+  "state": "empty" }`, or `{ "state": "invalid" | "unavailable", "detail":
+  "..." }`, `#/$defs/task-field-value`. `field` is the task field's name,
+  `binding` the binding whose declaration names it, and `storage` its
+  storage kind. `setBy` names the task field write whose value `to` is,
+  attributed by the rules `movedBy` follows. A change of a task field
+  stored as a Project field publishes this event beside its
+  `github.project-item.field-changed`. A change of the declaration alone
+  publishes nothing.
+
+  ```json
+  { "state": "set", "value": "Heavy" }
+  { "state": "empty" }
+  { "state": "invalid", "detail": "The issue has two labels of this field: size: small and size: large." }
+  { "state": "unavailable", "detail": "example-org/annex is outside the repositories of parcels." }
+  ```
+
+  Topics. An issue's topic is `github.issue.<nodeId>` and a Project's is
+  `github.project.<nodeId>`. A node id holds only ASCII letters, digits,
+  `_`, `-`, `=`, `+`, and `/`, so it is a topic segment as it stands; the
+  source rejects a delivery or a GraphQL answer whose node id holds any
+  other character, as `malformed` or as an API failure.
+
+  Event ids. Each published event's `eventId` names the mirror entity that
+  changed and the revision the change gave it. An entity's revision starts
+  at 0 when the mirror first records it and rises by one with each change
+  the source publishes for it.
+
+  | Change | `eventId` |
+  |---|---|
+  | issue state | `issue:<issueNodeId>:<revision>` |
+  | dependency | `dependency:<blockedNodeId>:<blockingNodeId>:<revision>` |
+  | sub-issue | `sub-issue:<parentNodeId>:<subIssueNodeId>:<revision>` |
+  | item added, removed, archived, restored | `item:<itemNodeId>:<revision>` |
+  | field value | `field:<itemNodeId>:<fieldNodeId>:<revision>` |
+  | Project closed, reopened | `project:<projectNodeId>:<revision>` |
+  | task field value | `task-field:<issueNodeId>:<projectNodeId>:<field digest>:<revision>` |
+
+  A task field value's `<field digest>` is the first 16 hexadecimal
+  characters of the SHA-256 of the task field's name, and `<revision>`
+  the revision of the issue's content, or of the item's field value for
+  a Project field, that the change raised.
+
+  First observation. The mirror records an entity it has not seen before
+  without publishing a change for it, with three exceptions that publish:
+  an item of a bound Project, as `github.project-item.added` with its field
+  values; a dependency or sub-issue added or removed where either endpoint
+  is a tracked issue already baselined; and the state change of an issue
+  the mirror already holds. When an issue becomes tracked, its
+  dependencies, sub-issues, and parent are read in full and recorded as
+  its baseline in the transaction that publishes its
+  `github.project-item.added`, so an actor that takes that event finds
+  the issue's complete relationships in the mirror.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/github-events.schema.yml` is a valid JSON Schema
+  2020-12 document. Every event the source publishes in its test suite
+  validates against `#/$defs/event`, and the `type` of each selects the
+  matching definition. Every recorded delivery fixture of a handled event
+  validates against its `$defs/delivery-*` definition, and each fixture
+  with a required field removed, or a node id holding `.`, is rejected as
+  `malformed` and publishes nothing. A delivery with a wrong signature, one
+  signed with another hook's secret, and one whose body differs by one byte
+  from the signed body are each rejected as `signature`. Every published
+  `github.project-item.field-changed` carries `movedBy` and `lifecycle`,
+  and `lifecycle` is true only for the field the declaration names as
+  the Project's lifecycle field. Renaming an option that an item holds
+  publishes no `field-changed` for that item. A label added to a tracked
+  issue whose Project declares a `label` task field publishes one
+  `github.task-field.changed` from `empty` to `set` with `setBy` `null`,
+  and the same change read again publishes nothing. Each published
+  event's topics and event id match the tables above.

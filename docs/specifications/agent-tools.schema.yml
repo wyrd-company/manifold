@@ -1,0 +1,504 @@
+# ---
+# relationships:
+#   realizes: agent-tools
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/agent-tools
+title: Agent tools
+description: >-
+  The shapes of the agent tools: the input of `handoff`, `escalate`, and
+  `get-messages`, the request the harness plugin sends the service for a
+  tool call, the service's response, the events the service publishes to
+  the actors that follow the calling thread, the contract of the
+  `send-message` actor, and the mail notice request and response.
+$defs:
+  tool:
+    enum:
+      - handoff
+      - escalate
+      - get-messages
+  thread-argument:
+    description: >-
+      The T3 Code thread id, given when the prompt names it; used when the
+      provider sends no call id.
+    type: string
+    minLength: 1
+  handoff-input:
+    description: The input of the `handoff` tool.
+    type: object
+    additionalProperties: false
+    required:
+      - handoff
+    properties:
+      handoff:
+        description: The handoff, checked against the handoff schema of the task's process.
+      thread:
+        $ref: "#/$defs/thread-argument"
+  escalate-input:
+    description: >-
+      The input of the `escalate` tool. Choice ids are unique within one
+      input, a rule the service checks.
+    type: object
+    additionalProperties: false
+    required:
+      - question
+    properties:
+      question:
+        type: string
+        minLength: 1
+        maxLength: 8000
+      title:
+        description: >-
+          A short name for the question. The service names the task beside
+          it, so the title need not.
+        type: string
+        minLength: 1
+        maxLength: 120
+      choices:
+        $ref: https://manifold.wyrd.company/schemas/escalation-contract#/$defs/choices
+        default: []
+      freeText:
+        type: boolean
+        default: false
+      thread:
+        $ref: "#/$defs/thread-argument"
+    anyOf:
+      - required:
+          - choices
+        properties:
+          choices:
+            type: array
+            minItems: 1
+      - required:
+          - freeText
+        properties:
+          freeText:
+            const: true
+  get-messages-input:
+    description: The input of the `get-messages` tool.
+    type: object
+    additionalProperties: false
+    properties:
+      thread:
+        $ref: "#/$defs/thread-argument"
+  call-request:
+    description: The body of `POST /api/agent-tools/calls`.
+    type: object
+    additionalProperties: false
+    required:
+      - environment
+      - tool
+      - arguments
+      - meta
+    properties:
+      environment:
+        $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+      tool:
+        $ref: "#/$defs/tool"
+      arguments:
+        type: object
+      meta:
+        description: The MCP request's `_meta` object as the provider sent it.
+        type: object
+  issue:
+    type: object
+    additionalProperties: false
+    required:
+      - path
+      - message
+    properties:
+      path:
+        description: RFC 6901 JSON Pointer into the tool's arguments.
+        type: string
+      message:
+        type: string
+        minLength: 1
+  refusal-code:
+    enum:
+      - invalid-request
+      - unknown-environment
+      - caller-unidentified
+      - not-followed
+      - not-accepted
+      - task-held
+      - invalid-handoff
+      - invalid-escalation
+      - environment-unavailable
+      - service-unreachable
+  call-response:
+    oneOf:
+      - type: object
+        additionalProperties: false
+        required:
+          - status
+          - replay
+          - eventId
+          - threadId
+          - turnId
+          - message
+        properties:
+          status:
+            const: accepted
+          replay:
+            type: boolean
+          eventId:
+            type: string
+          threadId:
+            type: string
+          turnId:
+            type: string
+          message:
+            type: string
+      - type: object
+        additionalProperties: false
+        required:
+          - status
+          - replay
+          - escalationId
+          - threadId
+          - turnId
+          - message
+        properties:
+          status:
+            const: raised
+          replay:
+            type: boolean
+          escalationId:
+            $ref: https://manifold.wyrd.company/schemas/escalation-contract#/$defs/escalation-id
+          threadId:
+            type: string
+          turnId:
+            type: string
+          message:
+            type: string
+      - type: object
+        additionalProperties: false
+        required:
+          - status
+          - threadId
+          - turnId
+          - messages
+          - message
+        properties:
+          status:
+            const: read
+          threadId:
+            type: string
+          turnId:
+            type: string
+          messages:
+            type: array
+            items:
+              $ref: "#/$defs/thread-message"
+          message:
+            type: string
+      - type: object
+        additionalProperties: false
+        required:
+          - status
+          - code
+          - message
+        properties:
+          status:
+            const: refused
+          code:
+            $ref: "#/$defs/refusal-code"
+          message:
+            type: string
+            minLength: 1
+          issues:
+            type: array
+            minItems: 1
+            items:
+              $ref: "#/$defs/issue"
+  agent-handoff-event:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - environment
+      - threadId
+      - turnId
+      - handoff
+    properties:
+      type:
+        const: agent.handoff
+      environment:
+        type: string
+      threadId:
+        type: string
+      turnId:
+        type: string
+      handoff: {}
+  agent-escalated-event:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - environment
+      - threadId
+      - turnId
+      - escalationId
+      - title
+      - question
+      - choices
+      - freeText
+    properties:
+      type:
+        const: agent.escalated
+      environment:
+        type: string
+      threadId:
+        type: string
+      turnId:
+        type: string
+      escalationId:
+        $ref: https://manifold.wyrd.company/schemas/escalation-contract#/$defs/escalation-id
+      title:
+        description: The escalation's title, which names the task.
+        type: string
+      question:
+        type: string
+      choices:
+        $ref: https://manifold.wyrd.company/schemas/escalation-contract#/$defs/choices
+      freeText:
+        type: boolean
+  agent-escalation-answered-event:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - environment
+      - threadId
+      - escalationId
+      - answer
+      - channel
+      - messageId
+      - turnId
+    properties:
+      type:
+        const: agent.escalation.answered
+      environment:
+        type: string
+      threadId:
+        type: string
+      escalationId:
+        $ref: https://manifold.wyrd.company/schemas/escalation-contract#/$defs/escalation-id
+      answer:
+        $ref: https://manifold.wyrd.company/schemas/escalation-contract#/$defs/answer
+      channel:
+        $ref: https://manifold.wyrd.company/schemas/escalation-contract#/$defs/channel
+      messageId:
+        type: string
+      turnId:
+        description: >-
+          The turn that holds the answer, started by it or running when it
+          arrived; null when no turn can be told or the message was rejected.
+        type:
+          - string
+          - "null"
+  message-id:
+    description: A UUID derived as `agent-tools/message` from the sending invocation and the thread.
+    type: string
+    pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+  message-text:
+    description: Markdown.
+    type: string
+    minLength: 1
+    maxLength: 8000
+  message-sender:
+    description: The task that sent a message.
+    type: object
+    additionalProperties: false
+    required:
+      - actorId
+      - issue
+      - task
+    properties:
+      actorId:
+        type: string
+        minLength: 1
+      issue:
+        description: The issue node id of the sender's identity, or null when it holds none.
+        type:
+          - string
+          - "null"
+      task:
+        description: >-
+          The sending task's name, read from the GitHub mirror when the message was
+          sent; null when the identity holds no issue or the mirror did not track it.
+        oneOf:
+          - $ref: "#/$defs/message-sender-task"
+          - type: "null"
+  message-sender-task:
+    description: The tracked issue that names a sending task.
+    type: object
+    additionalProperties: false
+    required:
+      - repository
+      - number
+    properties:
+      repository:
+        description: "`owner/name`."
+        type: string
+        minLength: 1
+      number:
+        type: integer
+        minimum: 1
+      title:
+        description: The issue's title; absent until the GitHub mirror has read it.
+        type: string
+        minLength: 1
+  thread-message:
+    description: A message as `get-messages` answers it.
+    type: object
+    additionalProperties: false
+    required:
+      - messageId
+      - from
+      - text
+      - sentAt
+      - deliveredAt
+    properties:
+      messageId:
+        $ref: "#/$defs/message-id"
+      from:
+        $ref: "#/$defs/message-sender"
+      text:
+        $ref: "#/$defs/message-text"
+      sentAt:
+        type: string
+        format: date-time
+      deliveredAt:
+        type: string
+        format: date-time
+  agent-message-event:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - environment
+      - threadId
+      - messageId
+      - from
+      - text
+    properties:
+      type:
+        const: agent.message
+      environment:
+        type: string
+      threadId:
+        type: string
+      messageId:
+        $ref: "#/$defs/message-id"
+      from:
+        $ref: "#/$defs/message-sender"
+      text:
+        $ref: "#/$defs/message-text"
+  send-message-input:
+    description: The input of the `send-message` actor.
+    type: object
+    additionalProperties: false
+    required:
+      - to
+      - text
+    properties:
+      to:
+        oneOf:
+          - description: A task, by its issue node id.
+            type: object
+            additionalProperties: false
+            required:
+              - issue
+            properties:
+              issue:
+                type: string
+                minLength: 1
+          - description: One thread on a declared environment.
+            type: object
+            additionalProperties: false
+            required:
+              - environment
+              - threadId
+            properties:
+              environment:
+                $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+              threadId:
+                type: string
+                minLength: 1
+      text:
+        $ref: "#/$defs/message-text"
+  send-message-output:
+    type: object
+    additionalProperties: false
+    required:
+      - messages
+    properties:
+      messages:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required:
+            - messageId
+            - environment
+            - threadId
+          properties:
+            messageId:
+              $ref: "#/$defs/message-id"
+            environment:
+              type: string
+            threadId:
+              type: string
+  send-message-error:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - kind
+      - message
+    properties:
+      type:
+        const: send-message
+      kind:
+        enum:
+          - input
+          - no-recipient
+          - not-accepted
+      message:
+        type: string
+        minLength: 1
+  notice-request:
+    description: The body of `POST /api/agent-tools/notices`.
+    type: object
+    additionalProperties: false
+    required:
+      - environment
+    properties:
+      environment:
+        $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+      threadId:
+        description: The T3 Code thread the hook mapped the provider session to.
+        type: string
+        minLength: 1
+      callId:
+        description: The provider's id of the tool call the hook runs after.
+        type: string
+        minLength: 1
+    anyOf:
+      - required:
+          - threadId
+      - required:
+          - callId
+  notice-response:
+    type: object
+    additionalProperties: false
+    required:
+      - notice
+    properties:
+      notice:
+        description: The notice text, or null when there is nothing to tell.
+        type:
+          - string
+          - "null"

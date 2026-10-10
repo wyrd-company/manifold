@@ -1,0 +1,10 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - service-assembly
+title: Stop Stage
+description: >-
+  One of the ordered points at which the service's stop closes what wiring
+  parts registered, the latest registered first within a stage.

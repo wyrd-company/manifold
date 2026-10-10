@@ -1,0 +1,53 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose command this is.
+  realizes:
+    - expressions
+  references:
+    - blueprint-expressions
+    - blueprint
+description: >-
+  Defines the host CLI command `manifold-host expressions lint`, which runs
+  the blueprint expression lint of `blueprint-expressions` on the host. It
+  is the same `lintBlueprintExpressions` function the service runs, from
+  `packages/shared`. `docs/specifications/host-cli-expressions-lint.cli.yml`
+  is the machine-readable definition.
+
+  The command reads each file argument as a YAML document with the
+  `ExpressionBlueprint` shape: a `machine` mapping, the machine
+  configuration, and a `schemas` mapping, the expression schemas, whose
+  `events` is a mapping. Every schema the file gives, `input`, `output`,
+  `context`, each event schema, and each actor's `input` and `output`, is a
+  mapping or a boolean, and `actors`, when present, is a mapping of
+  mappings. An absent schema is left to the lint, which reports it as
+  `schema-missing`, and other keys are accepted. A blueprint file of
+  `blueprint` has this shape, so the command lints a blueprint file as it
+  is; `manifold-host blueprint lint` runs every rule of the blueprint lint
+  on it. A file that cannot be read,
+  does not parse as YAML, or does not have that shape is reported on standard error as
+  `<file>: <reason>` and ends the command with exit code 2 before any file
+  is linted. Otherwise the command reports every finding on standard output
+  as one line, `<file>:<location> <kind> <message>`, with the file as given
+  on the command line, the location the RFC 6901 JSON Pointer of the site,
+  and the kind the finding's kind. A finding that names a sample ends with
+  ` (sample <sample>)`, or ` (sample <sample>, event <type>)` when it names
+  an event type. Files are reported in argument order, and findings in the
+  lint's order within a file. The command prints nothing when every file
+  is clean.
+format: cli
+validation-criteria: >-
+  `docs/specifications/host-cli-expressions-lint.cli.yml` validates against
+  the CLI Command Specification schema. A test compiles the host CLI for the
+  current platform and runs `expressions lint` from a directory with no
+  `node_modules`. It observes exit 0 and no output for a clean blueprint;
+  exit 1 with a `result` line for a guard whose result is not a boolean and
+  a `syntax` line for a guard that does not parse; and exit 2 with no
+  standard output for no file, an unreadable file, a file without the
+  blueprint shape, and a file whose context, event, or actor schema is not
+  a mapping or a boolean, each after a valid file. The same test runs
+  `expressions lint` and `blueprint lint` on one blueprint file of
+  `blueprint` with a `description` and a guard whose result is not a
+  boolean: `expressions lint` exits 1 with the `result` line at the
+  machine location, and `blueprint lint` exits 1 with the `result` line at
+  the same location under `/machine`.

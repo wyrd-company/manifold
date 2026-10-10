@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Variance
+description: >-
+  Actual less estimate for one task.

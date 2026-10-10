@@ -1,0 +1,39 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design
+# or to the root it composes into; `realizes` names the design this
+# contract serves and `references` the root.
+relationships:
+  realizes:
+    - service-assembly
+  references:
+    - service-configuration
+description: |-
+  Defines the `http` section of the service configuration.
+  `docs/specifications/http-host-configuration.schema.yml` is its
+  machine-readable definition. The root of the service configuration
+  names the section under `properties` as `http`, optional with default
+  `{}`, by `$ref` to
+  `https://manifold.wyrd.company/schemas/http-host-configuration`.
+
+  The section sets where the service's one HTTP host listens.
+
+  - `host` is the address the host binds: an IP address or a host name.
+    Default `127.0.0.1`.
+  - `port` is the TCP port the host binds, from 0 to 65535; 0 binds a free
+    port the operating system chooses. Default 7480.
+
+  The API is always served without authentication. Access control belongs
+  to the deployment: loopback by default, or a proxy in front.
+
+  ```yaml
+  http:
+    host: 127.0.0.1
+    port: 7480
+  ```
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/http-host-configuration.schema.yml` is a valid JSON
+  Schema 2020-12 document. Loading a configuration with no `http` section
+  gives `host` `127.0.0.1` and `port` 7480. A `port` outside 0 to 65535,
+  an empty `host`, and an unknown property each fail with an issue at its
+  JSON Pointer.

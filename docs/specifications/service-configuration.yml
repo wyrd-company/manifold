@@ -1,0 +1,107 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design this contract serves.
+  realizes:
+    - service-configuration
+description: |-
+  Defines the service configuration file: one YAML document holding what is
+  host-local to a Manifold service: where the process repository and the
+  store are, where the service listens, how it reaches GitHub and T3 Code,
+  and the credentials behind each name the repository uses.
+  `docs/specifications/service-configuration.schema.yml` is the
+  machine-readable definition of the root document and of the `credentials`
+  section.
+
+  The root is an object of sections. A section other than `credentials` is
+  owned by one module, specified in that module's specification, and has a
+  JSON Schema with its own `$id`; the root names it under `properties` with a
+  `$ref` to that `$id`. A key the root does not name is an error, so a
+  misspelled section fails at load instead of taking its defaults.
+
+  The sections are:
+
+  - `processRepository`, required, specified by
+    `process-repository-configuration`.
+  - `store`, required, specified by `store-configuration`.
+  - `credentials`, optional, default `{}`, specified here.
+  - `comparatorSandbox`, optional, default `{}`, specified by
+    `comparator-sandbox-configuration`.
+  - `expressions`, optional, default `{}`, specified by
+    `expressions-configuration`.
+  - `github`, optional, default `{}`, specified by
+    `github-source-configuration`.
+  - `environments`, optional, default `{}`, specified by
+    `t3code-environments-configuration`, which also specifies the
+    `t3code-token` credential kind.
+  - `escalations`, optional, default `{}`, specified by
+    `escalations-configuration`, which also specifies the `ntfy-token`
+    credential kind.
+  - `http`, optional, default `{}`, specified by `http-host-configuration`.
+  - `blueprintLint`, optional, default `{}`, specified by
+    `blueprint-lint-configuration`.
+  - `agentTools`, optional, default `{}`, specified by
+    `agent-tools-configuration`.
+  - `retention`, optional, default `{}`, specified by
+    `retention-configuration`.
+
+  An optional section that is absent takes `{}` and then the defaults of
+  its own properties, so the loaded configuration has every section and
+  every defaulted property present.
+
+  A declared name, such as a credential or environment name, is a
+  lower-case slug of at most 64 characters matching
+  `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`. The root schema defines it once as
+  `$defs/declared-name`, and a section that holds a declared name references
+  `https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name`.
+
+  `credentials` maps a credential name to a credential. The process repository and
+  other sections refer to a credential only by its name, and the credential
+  itself exists only in this file and the files it points to. A credential
+  has a `kind`, and the kind fixes its other properties. Kind `github-app`
+  is specified here; kind `t3code-token` by
+  `t3code-environments-configuration`. The root lists each kind and composes the
+  kind's schema by `$ref`.
+
+  Kind `github-app` is a GitHub App installation. `appId` is the App's
+  numeric app ID. `installationId` is the numeric installation ID on the
+  account that owns the repositories the credential reaches. `privateKeyFile`
+  is the path of the App's PEM private key; a relative path resolves against
+  the directory of the configuration file. The service reads the key file
+  each time it mints an installation token, so a replaced key file applies
+  without a restart. `apiUrl` is the base URL of the GitHub REST API that
+  mints the tokens. Default `https://api.github.com`.
+
+  `docs/specifications/service-configuration.example.yml` is a complete
+  example: every section the root names, with a comment on each value an
+  operator sets, and the sections left at their defaults written `{}`. A
+  section that joins the root joins the example in the same change.
+
+  Beyond the schema, the file is valid only when every credential name a
+  section uses is a key of `credentials`, and every credential file it names
+  is a readable file: each credential's `privateKeyFile` or `tokenFile`, and
+  each GitHub hook's `secretFile`. A failure of either is an issue at the
+  path of the property that holds the name or the file path.
+
+  The schemas are bundled once, in `packages/shared`, which exports one
+  constant per schema file, `serviceConfigurationSchemas`, the list of
+  them all, and `serviceConfigurationSchemaId`, the root's `$id`. The
+  service's configuration loader and every host CLI lint that checks a
+  declared name or a configuration value compile these same constants.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/service-configuration.schema.yml` is a valid JSON
+  Schema 2020-12 document, and resolves every `$ref` against the section
+  schemas in `docs/specifications/`. The schema constants
+  `packages/shared` exports equal these files, checked by a test that parses
+  each YAML file.
+  Loading a file the schema rejects fails with a `ServiceConfigurationError`
+  whose issues name each failing property by JSON Pointer. Loading a file
+  with no optional sections returns every section with its defaults,
+  including `comparatorSandboxDefaults`. A credential name that `credentials`
+  does not define fails with an issue at the property that uses it.
+  `docs/specifications/service-configuration.example.yml` loads with no
+  issue once each credential file it names exists (every `privateKeyFile`,
+  `tokenFile`, and hook `secretFile`), its top-level keys are
+  the root's `properties`, and each of its scalar values has a comment,
+  checked by a test.

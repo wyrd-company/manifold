@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Ceiling
+description: >-
+  The most of its parent's limit a portfolio item may use, its allocation and borrowed unallocated remainder together.

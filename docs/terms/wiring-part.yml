@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - service-assembly
+title: Wiring Part
+description: >-
+  The code in a module's directory that opens the module inside the
+  service from the members of the parts listed before it, mounts its
+  endpoints, and registers what stop closes; the service's start list
+  names it once.

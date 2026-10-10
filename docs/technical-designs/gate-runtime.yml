@@ -1,0 +1,731 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - gates
+    - durable-event-delivery
+    - store
+    - portfolio-ledger
+    - portfolio
+    - comparator-sandbox
+    - escalations
+    - blueprint-loader
+    - github-event-source
+    - blueprint-migration
+    - retention
+  mitigates:
+    - github-mirror-read-scale
+    - gate-durability-unproven
+terms:
+  - grant-round
+  - gate
+  - token
+  - holder
+  - population
+  - reservation
+  - comparator
+  - snapshot
+  - inbox
+  - tracked-issue
+objective: >-
+  Build the gates that `gates` describes as one module behind one interface
+  in `packages/service`, so that each gate holds its population across every
+  version of its blueprint, runs its comparator in the sandbox, grants one
+  token at a time with its reservation in one transaction, returns every
+  token at its return point or at the actor's end, escalates a holder that
+  can no longer return its token and a comparator that cannot run, and
+  converges after a crash at any point.
+background:
+  current-design: >-
+    `gates` states what a gate is: the declaration, the comparator contract,
+    the loop, the token, the token lint, the stranded token, the population
+    across versions, the reservation, and the restore. The `gate-xstate`
+    spike proved grants from token rows and inbox rows, holders counted from
+    consumed and pending token rows, rebuild from snapshot rows with no
+    actor loaded, and exactly-once tokens at three crash points under a real
+    `SIGKILL`. The module reads the router, store, ledger, portfolio,
+    comparator sandbox, blueprint loader, GitHub event source, token lint,
+    actor host, and escalations through their public interfaces.
+  problems:
+    - >-
+      A return state left by an eventless transition is absent from the
+      saved snapshot. Entry callbacks record that return for the save hook.
+    - >-
+      Comparator inputs need age, dependency facts, critical-path length,
+      and portfolio balances beside each actor's snapshot. Grant rounds
+      gather those facts through module interfaces.
+design-challenges:
+  one-round-one-input: >-
+    Every evaluation of one grant round must see the population, the holders, and
+    the balances as the previous grant of that grant round left them, and no event
+    may change them between an evaluation and its grant.
+  writes-with-the-save: >-
+    A return, an entry into the gated state, and a trap check depend on a
+    snapshot, and must commit with that snapshot's save or not at all.
+  version-mix: >-
+    Actors on several versions of one blueprint wait in one gate. Each
+    returns its token at its own version's return point and is checked
+    against its own version's traps, while the comparator comes from one
+    version.
+  growth: >-
+    Every grant round records every evaluation with its input, and an input holds
+    the whole population.
+proposed-design:
+  high-level-overview: >-
+    The gates module is `packages/service/src/gates/`. It owns four tables
+    in the store's file, migrated with `migrate("gates", steps)` and
+    specified in `gates-database-schema`: a declaration row per gate, an
+    entry row per actor in a gated state, a token row per grant, and an
+    evaluation row per comparator call. It learns every blueprint version it
+    needs from the blueprint loader, every comparator from the process
+    repository revision of the newest version that declares the gate, and
+    every trap set from the token lint. It sees every snapshot save through
+    the actor host's save hook, inside the save's transaction, and writes
+    entries, returns, and stranded-token escalations there. It runs grant rounds
+    after the router's resume drain and then after each change of a gate's
+    input. A grant round reads the population with the store's state query, the
+    holders from token rows, and the balances from the ledger, evaluates the
+    comparator, and commits each grant as one transaction of a token row, an
+    inbox row, the reservations, and the evaluation row. It then asks the
+    router to drain the holder. The module reads and writes rows and never
+    an actor's memory.
+  gate-identity: >-
+    A gate is named by its key, `<blueprintPath>#<statePath>`: the
+    repository-relative path of its blueprint and the state path of its
+    gated state, the state's keys from the root joined with `.`. The key is
+    the same on every version of the blueprint. The escalation subject, the
+    token rows, the entry rows, and the evaluation rows name a gate by its
+    key.
+  versions: >-
+    The module keeps a map from blueprint version key to that version's gate
+    view: for each gate the version declares, its state path, return point,
+    token event type, dependencies region, and the token lint's verdict and
+    trap set for it, from `lintTokens` over the version's document. It adds
+    a version when `revision` loads it, and when `prepare` finds it in an
+    active snapshot or a declaration row. A version is immutable, so its
+    view is computed once.
+  declaring-version: >-
+    Each gate key has one declaring version, which gives its comparator and
+    whether a reservation accompanies the token. It is the version of the
+    blueprint path in the newest revision passed to `revision` that declares
+    the gate. The module keeps it durably in a declaration row per gate key:
+    `revision` writes, in one transaction, the row of every gate the
+    revision's version of each blueprint path declares, with that version
+    key and the revision's commit, and leaves the row of every gate the
+    revision does not declare as it was. A row is replaced only by a later
+    revision that declares the gate, so a revision that removes a gate keeps
+    its last declaring version in force. `prepare` reads every declaration
+    row, loads each version through the loader's `version`, and loads its
+    comparator from `revisionAt` at the row's commit, so a restart resumes
+    the same comparator and reservation policy whether or not any active
+    actor runs that version and whether or not the head revision still
+    declares the gate. A gate with no declaration row has no comparator and
+    grants nothing.
+  comparators: >-
+    `revision(load, revision)` loads the comparator of each gate whose
+    declaration row it writes or changes: it reads the comparator file with
+    `revision.read` and loads it with the sandbox. `prepare` loads the
+    comparator of every declaration row through `revisionAt`. A loaded
+    comparator replaces the gate's earlier one, which is disposed. A file
+    that is absent, or a load that fails, leaves the gate with no
+    comparator, raises a `comparator-failed` escalation, and reports it to
+    `onError`; the gate grants nothing until a load succeeds, at a later
+    revision or at the operator's `retry`. An evaluation that
+    returns kind `engine` marks the comparator spent; the module disposes it
+    and loads the same source again before the gate's next grant round.
+  comparator-failures: >-
+    A gate whose comparator cannot run raises a `comparator-failed`
+    escalation through the escalations module's `raise`, with subject `{
+    gate }`, the gate key, the title `Comparator failed`, the choices
+    `retry` (`Retry`) and `dismiss` (`Dismiss`), and a question naming the
+    gate, the comparator file, the declaring version key, the cause, and
+    the message. The cause is `missing` when the declaring version no
+    longer declares the gate or its comparator file is absent, the load
+    failure's kind when the sandbox refuses the source, and the evaluation
+    failure's kind when an evaluation fails: `transpile`, `module`,
+    `timeout`, `memory`, `thrown`, `invalid-output`, or `engine`. An
+    evaluation failure raises in the transaction that inserts its
+    evaluation row. A missing comparator and a failed load have no row of
+    their own, so the escalation, raised in its own transaction, is their
+    durable record. Each failure calls `raise`, and `raise` returns the
+    gate's open escalation while one is open, so a comparator that fails at
+    every grant round keeps one escalation and its question names the failure
+    that raised it. After the escalation is answered and handled, the next
+    failure raises the next occurrence, as `escalations` (occurrences)
+    states. A refused reservation is not a comparator failure and raises
+    nothing. `revision` withdraws the gate's open escalation when it loads
+    a comparator for the gate without a failure, in the transaction after
+    the load, so a revision that brings a working comparator closes it;
+    `prepare` and the reload of a spent comparator withdraw nothing, since
+    they load the comparator that failed. The module's `comparatorFailed`
+    is the `comparator-failed` handler. For `retry` it writes nothing and
+    returns a call that, when the gate has a loaded comparator, marks the
+    gate dirty, and, when it has none, loads the comparator of the gate's
+    declaration row through `revisionAt`, as the reload of a spent
+    comparator does, which marks the gate dirty when the load succeeds and
+    raises the next occurrence when it fails. For `dismiss`, and for a gate
+    with no declaration row, it does nothing. A crash after the handling
+    commits and before the call runs is covered by `prepare` and
+    `afterDrain`, which load every declared comparator and run every gate.
+  population: >-
+    The population of a gate is every actor whose stored snapshot is
+    `active`, whose version key names the gate's blueprint path, whose state
+    paths hold the gated state path, and which holds no unreturned token of
+    the gate. The module reads it with `store.findActorsInState({ statePath
+    })`, which returns the actors in that state path on every machine, keeps
+    the rows whose machine parses with `parseBlueprintVersionKey` to the
+    gate's blueprint path, and removes holders. The query reads rows only,
+    so a push that adds a version neither splits the population nor resets
+    the holders. The comparator is given the members that can take a token
+    now: each member whose entry into the gated state no token row names,
+    and which has no pending inbox row. A member with a pending row waits,
+    so that no earlier event moves it out of the gated state before its
+    token arrives; a held actor keeps its pending row and so is never
+    granted a token. A child state machine has no stored snapshot of its
+    own, so a gate declared in a blueprint that runs only as a child has no
+    members and grants nothing.
+  comparator-input: >-
+    The module builds each evaluation's input from rows and from the
+    snapshot JSON the state query returns. For each member given to the
+    comparator: `id` is the actor id; `fields` is `context.fields` when it
+    is a JSON object, and `{}` otherwise; `age` is the clock's time less the
+    member's entry time in whole milliseconds, and 0 when that is negative;
+    `dependencies` is the active child of the region its version names in
+    `meta.gate.dependencies`, `blocked` or `clear`, and `clear` when the
+    version names no region; `criticalPath` is described below; `item` is
+    `context.manifold.portfolioItem`, and `other` when the context has none.
+    Each holder is `{ id, item }` from its token row and its snapshot.
+    `balances` holds, for each item of the population and the holders that
+    the portfolio in force holds, and for each account any allocation row of
+    the portfolio in force names, the ledger's `reservable` for that item
+    and account, with `waiting` set to the items of the population. An item
+    the ledger refuses is left out. The input is sorted: population and
+    holders by id, item and account keys by code point, so that one state
+    gives one input text.
+  critical-path: >-
+    `criticalPath` is computed from one `trackedIssueIndex()` of the GitHub
+    mirror per grant round. A member whose context names no
+    `manifold.issue`, or whose issue the index does not hold, has 1.
+    Otherwise it is 1 plus the greatest `criticalPath` of the open tracked
+    issues its issue blocks, found by a depth-first walk in node id order
+    that ignores an edge back to an issue already on the walk's path, so a
+    dependency cycle ends the walk. The grant round takes the index at the
+    first lookup of an issue, so a grant round whose members name no issue
+    reads the mirror not at all, and every later lookup in that grant round,
+    of a member's issue or of an issue a walk reaches, and in every
+    evaluation of the grant round, reads the same index. A walk's length
+    from each member's issue is memoized for one grant round. The grant
+    round is synchronous and writes no mirror row, so the index holds the
+    mirror as it is through the grant round, and the next grant round takes
+    a new one and sees every change committed since.
+  entries: >-
+    The entry row of a gate and an actor records one entry of the actor into
+    the gated state: an `entry_id`, the host's entry id of that state entry,
+    and the entry time. The host's entry id is the one the save hook gives
+    in `entries` for the gated state path, the same id the host lists with
+    deadlines and invokes: a repeated or replayed save of one entry gives
+    the same id, and every exit and re-entry, in one delivery or across
+    several, gives a new one. The save hook, in the save's transaction,
+    writes the row when the saved configuration holds the gated state path
+    and the actor has no entry row for the gate, and replaces it with a new
+    `entry_id` and entry time when its host entry id differs from the row's.
+    It deletes the row when the saved configuration no longer holds the
+    gated state path or the actor has ended. So a save repeated for one
+    entry keeps the entry id, the age, and the one token the entry may be
+    granted, and a real re-entry gets a new entry id. `entry_id` is an
+    `AUTOINCREMENT` key, so no two entries share one.
+  bootstrap-entries: >-
+    `afterDrain` and the first grant round after a live revision introduces a gate
+    write the entry row of a population member that has none,
+    such as an actor already in a state that a new revision gates, with the
+    snapshot's saved time as its entry time and no host entry id, since the
+    host gives that id only with a save. A grant to such an entry copies the
+    missing id into its token row. The next save of the actor whose
+    configuration holds the gated state path settles the identity. When the
+    save's `entered` list does not hold the gated state path, the actor has
+    stayed in the same entry: the hook adopts the save's host entry id on
+    the entry row and on every token row of that entry, and keeps the
+    `entry_id`, the entry time, and every token held. When the `entered`
+    list holds it, the actor left and entered again: the hook returns the
+    entry's `exit` tokens and replaces the row as for any new entry. A save
+    whose configuration does not hold the gated state path deletes the row
+    and returns its `exit` tokens. A missing host entry id is never compared
+    with a present one, so a restored entry never returns a token without an
+    exit.
+  grant-round: >-
+    A grant round of one gate is synchronous. It starts when the gate has a
+    comparator. Each step reads the members that can take a token, the
+    holders, and the balances; when there is no such member it ends with no
+    evaluation. Otherwise it draws a seed from a uniform 32-bit random
+    source, evaluates the comparator over the input and the seed, and acts
+    on the result. A failure is recorded as an evaluation, raises a
+    `comparator-failed` escalation in the same transaction, and ends the
+    grant round.
+    `null` is recorded and ends the grant round. A selection is granted, as `grant`
+    states, and the grant round takes its next step, so it runs until the
+    comparator returns `null`. A grant makes one member a holder, so a grant round
+    ends. Since the grant round runs on the service's one thread and nothing it
+    calls yields, no event is handled during it, and each step's input is
+    the state the previous grant left.
+  triggers: >-
+    The module keeps a set of dirty gates and runs their grant rounds in one
+    `setImmediate` callback, so many changes in one turn of the event loop
+    give one grant round per gate. The callback takes the set and clears it before
+    its first grant round; a gate marked dirty while the callback runs is added to
+    a new set and runs in the next callback, so each grant round keeps one input
+    and every change after it is seen by a later grant round. A gate becomes dirty
+    on a save of an actor that has an entry row of the gate before or after
+    the save, so an entry, an exit, and a change of a member's dependencies
+    region or pending rows each run the gate; when a save returns one of its
+    tokens; when a `return` answer returns one; when `revision`, `prepare`,
+    or a reload gives it a comparator; after a grant of another gate commits
+    reservations, since the ledger's balances changed; and when
+    `inputChanged` is called. A grant does not mark its own gate dirty,
+    since its grant round continues until the comparator returns `null` over the
+    balances that grant left. The module never runs a grant round before
+    `afterDrain`, and marks every gate dirty there.
+  input-changes: >-
+    Two inputs change outside the module: the ledger, when the service posts
+    an actual, credits a window, or applies a new portfolio, and the GitHub
+    mirror, which gives `criticalPath` through `trackedIssueIndex`. A change to
+    the mirror can change a member's `criticalPath` through a transitive
+    dependent that no member's actor hears, and some mirror changes publish
+    no event that names the change, such as the removal of an issue's last
+    Project item or an issue observed absent. So the module relies neither
+    on member saves nor on event types for it. `inputChanged()` marks every
+    gate dirty. The service calls it after each ledger write it makes
+    outside a gate, and from the GitHub event source's `onMirrorChanged`,
+    which the source calls after each transaction it
+    commits that changes a mirror row, whatever it publishes, as
+    `github-event-source` states. The grant round runs in a later `setImmediate`
+    callback, after that transaction has committed. Time is not an input
+    change: pacing that grows an item's reservable amount as its window
+    elapses runs no grant round by itself, and the gate sees the larger amount at
+    its next input change.
+  grant: >-
+    A grant for selection `s` runs in one `store.connection.transaction`.
+    Its token id is `token:<entry_id>` of the selected member's entry row,
+    so one entry into the gated state can be granted one token. In the
+    transaction it inserts the evaluation row; inserts the token row with
+    the gate, the actor, the entry id and its host entry id, the evaluation
+    id, and the grant time; when the declaring version sets `reservation`,
+    calls the ledger's `reserve` once per account of `s.reservations`, the
+    amounts of one account summed, for the member's item, with the key
+    `<tokenId>/<account>`; and writes the token's inbox row with
+    `store.writeInbox`, with event id `gate:<tokenId>`, topic `gate`, and
+    payload `{ type, gate, tokenId, reservations }`, where `type` is the
+    token event type of the member's own version. When the declaring version
+    does not set `reservation`, the selection's reservations are recorded in
+    the evaluation row and none is written. After the commit it calls the
+    probe with `granted` and the router's `schedule` with the actor id. A
+    `LedgerError` from `reserve` rolls the grant back; the module records
+    the evaluation with kind `reservation` and the error's message in a new
+    transaction, and ends the grant round.
+  token-event: >-
+    The token event's type is `meta.gate.token` of the actor's version,
+    default `token`. Its payload names the gate key, the token id, and the
+    reservations written, each `{ account, amount }`. A blueprint takes it
+    in an orthogonal region, as `gates` describes, so the guarded transition
+    out of the gated state reads that region's state.
+  returns: >-
+    The save hook checks every unreturned token of the saved actor, in the
+    save's transaction. An actor has ended when the saved snapshot's status
+    is `done` or `stopped`; a save whose status is `error` is a held actor,
+    not an end, and the hook writes nothing for it. When the actor has
+    ended, the hook returns every token with reason `ended` and the snapshot
+    status as its state. Else, for each token, it reads the return point of
+    the gate in the actor's own version. A return point of `exit` is reached
+    when the saved configuration no longer holds the gated state path; or,
+    when the token row records a host entry id, when the gated state's id in
+    `entries` differs from it; or, when the token row records none, when the
+    hook's `entered` list holds the gated state path. The last two mark an
+    exit and a re-entry. The hook checks returns before it writes entries. A
+    return point of `{ state: <path> }` is reached when the saved
+    configuration holds the path or the hook's `entered` list holds it, so a
+    return state that an eventless transition leaves in the same step still
+    returns the token. A reached return point returns the token with reason
+    `return-point` and the return point's path as its state. A return writes
+    `returned_at`, `return_reason`, and `return_state` on the token row
+    where `returned_at` is null, so a second return of the same token
+    changes nothing. A token is never returned on any other condition,
+    except an escalation answer of `return`. Every token return also calls
+    the escalations module's `withdraw` with kind
+    `stranded-token` and the token's subject, in the same transaction, so an
+    escalation whose token came back by another path is closed.
+  stranded-tokens: >-
+    After the return check, for each token still unreturned whose gate has a
+    trap set in the actor's own version, the hook computes the token lint's
+    `configurationKey(snapshot)`. A key in the trap set marks the token row
+    `trapped` and, when it was not marked before, raises a `stranded-token`
+    escalation through the escalations module's `raise`, with subject `{
+    gate, tokenId }`, choices `return` and `dismiss`, and a question naming
+    the actor, the gate, the token, and the configuration. A key outside the
+    set clears `trapped`. The flag is written in the save's transaction with
+    the raise, so an escalation is raised once per move into a trap, and a
+    restart does not raise it again. A gate whose verdict in that version is
+    `unknown` has no trap set and raises nothing.
+  stranded-token-handler: >-
+    The module gives the escalations module the `stranded-token` handler. An
+    answer of `return` writes the token's return with reason `escalation`
+    and the actor's state paths at the time as its state, where the token is
+    unreturned, inside the transaction the escalations module records the
+    handling in, and returns a function that marks the gate dirty, which the
+    escalations module runs after that transaction commits. An answer of
+    `dismiss` writes nothing. A `return` for a token already returned, by
+    its return point or by the actor's end, writes nothing.
+  save-hook: >-
+    The actor host calls the module's `saved` hook for every snapshot save,
+    inside its transaction, with the actor id, the version key the snapshot
+    is saved with (`machine`), the persisted snapshot, the active invokes,
+    the state paths entered by any microstep since the previous save in
+    order (`entered`), and the host's entry id of every active state path
+    (`entries`). The hook writes entries, returns, and trap flags, raises
+    and withdraws escalations as above, and marks gates dirty. It reads only
+    its own tables and the version views it holds. A save of a version the
+    module has no view of returns tokens only at the actor's end, and
+    reports the version to `onError`.
+  migrations: >-
+    An actor that migrates, as `blueprint-migration` states, is saved
+    through the actor host with the new version key and the same host entry
+    ids, an empty `entered`, and the same active invokes. The save hook
+    takes it like any save, in the new version's view, which `revision`
+    added before any actor migrates to it: the configuration still holds
+    the gated state and its entry id is unchanged, so the entry row, its
+    age, and an unreturned token stay. The actor host refuses the
+    migration of a holder whose gate the new version does not declare at
+    the gated state, whose migrated configuration already reaches the new
+    version's return point for the gate, or whose migrated configuration
+    is in the new version's trap set for the gate, reading the holder's
+    tokens through `heldTokens`; so the migration's save returns no token
+    and strands none, and the save hook's rules apply to it unchanged. `heldTokens(actorId)` reads the actor's token rows whose
+    `returned_at` is null.
+  restore: >-
+    The router's `afterDrain` calls the module's `afterDrain` with the
+    router after every restored actor's inbox is drained. The module keeps
+    the router for `schedule`, writes missing entry rows, marks every gate
+    dirty, and runs every grant round before it returns, so the router delivers the
+    tokens of those grant rounds when resume ends. Before the router starts, the
+    service awaits `revision` with the head revision and then `prepare`,
+    which adds the view of every version an active snapshot is saved with
+    and of every declaring version, loading each through the blueprint
+    loader's `version`, and loads every declaring version's comparator.
+    Holders are counted from unreturned token rows, consumed or pending in
+    the inbox, so a token in flight at a crash is held and never granted
+    twice.
+  replay: >-
+    `replay(evaluationId)` reads an evaluation row, loads the comparator of
+    the version it names through the loader's revision of that commit, and
+    evaluates the recorded input with the recorded seed. It returns the
+    recorded and the replayed result. A comparator is pure and a version is
+    immutable, so a recorded grant replays to the same selection. An
+    evaluation that retention has deleted cannot be replayed: its id no
+    longer exists, and `replay` throws as `errors` states.
+  public-interface: |-
+    `packages/service/src/gates/index.ts` exports exactly these names.
+
+    ```ts
+    import type { ComparatorSandbox, ComparatorEvaluation } from "../comparator-sandbox/index.ts";
+    import type { PersistedSnapshot, Store, StoreConnection } from "../store/index.ts";
+    import type { Router } from "../router/index.ts";
+    import type { BlueprintDocument } from "@wyrd-company/manifold-shared";
+
+    export function createGates(options: GatesOptions): Gates;
+
+    /** Migration steps for owner `gates`, applied by the store's migrate. */
+    export const gatesMigrationSteps: readonly string[];
+
+    /** Deletes up to `limit` evaluations past the cutoff; returns how many. */
+    export function pruneGateEvaluations(
+      connection: StoreConnection,
+      request: {
+        readonly evaluatedBefore: number;
+        /** Gate keys whose evaluations are kept. */
+        readonly keepGates: ReadonlySet<string>;
+        readonly limit: number;
+      },
+    ): number;
+
+    export interface GatesOptions {
+      readonly store: Store;
+      /** The blueprint loader's `version`. */
+      version(version: { commit: string; path: string }): Promise<GateVersionLoad>;
+      /** The process repository's `revisionAt`. */
+      revisionAt(commit: string): Promise<GateRevision | undefined>;
+      readonly sandbox: ComparatorSandbox;
+      readonly portfolio: GatePortfolio;
+      /** The token lint over one version's document, with the bound in force. */
+      lintTokens(document: BlueprintDocument): GateTokenLint;
+      /** The tracked issues of one read of the GitHub mirror, keyed by node id. */
+      trackedIssueIndex(): GateTrackedIssueIndex;
+      /** The escalations module's `raise` and `withdraw`. */
+      readonly escalations: GateEscalations;
+      readonly clock?: { now(): number };
+      /** Defaults to a uniform 32-bit draw from `node:crypto`. */
+      readonly seed?: () => number;
+      /** `granting` and `granted` name a token id; `comparator-failed` a gate key. */
+      readonly probe?: (step: "granting" | "granted" | "comparator-failed", id: string) => void;
+      readonly onError?: (error: GateError) => void;
+    }
+
+    export interface Gates {
+      /** Takes the gates and comparators of a newly loaded revision. */
+      revision(load: GateRevisionLoad, revision: GateRevision): Promise<void>;
+      /** Adds the view of every version an active snapshot is saved with. */
+      prepare(): Promise<void>;
+      /** Passed to the router as `afterDrain`. */
+      afterDrain(router: Pick<Router, "schedule">): void;
+      /** Registered with the actor host as a save hook. */
+      saved(save: GateSave): void;
+      /** The `stranded-token` handler; the function it returns runs after the handling commits. */
+      strandedToken(escalation: GateStrandedEscalation): (() => void) | undefined;
+      /** The `comparator-failed` handler; the function it returns runs after the handling commits. */
+      comparatorFailed(escalation: GateComparatorEscalation): (() => void) | undefined;
+      /** Marks every gate dirty: a ledger or GitHub mirror change outside the module. */
+      inputChanged(): void;
+      replay(evaluationId: number): Promise<GateReplay>;
+      /** The actor id of a token's holder, returned or not; undefined for an unknown token. */
+      tokenHolder(tokenId: string): string | undefined;
+      /** Every unreturned token the actor holds, by gate key then token id. */
+      heldTokens(actorId: string): readonly { readonly gate: string; readonly tokenId: string }[];
+      stop(): void;
+    }
+
+    export interface GateSave {
+      readonly actorId: string;
+      readonly machine: string;
+      readonly snapshot: PersistedSnapshot;
+      readonly activeInvokes: readonly { readonly invokeId: string; readonly entryId: string }[];
+      readonly entered: readonly string[];
+      /** The host's entry id of every active state path. */
+      readonly entries: Readonly<Record<string, string>>;
+    }
+
+    export interface GateError {
+      readonly gate: string | undefined;
+      readonly version: string | undefined;
+      readonly message: string;
+    }
+
+    export interface GateReplay {
+      readonly recorded: GateEvaluationResult;
+      readonly replayed: ComparatorEvaluation;
+    }
+    ```
+
+    `GateVersionLoad`, `GateRevision`, `GateRevisionLoad`,
+    `GatePortfolio`, `GateTokenLint`, `GateTrackedIssue`, `GateTrackedIssueIndex`,
+    `GateEscalations`, `GateStrandedEscalation`,
+    `GateComparatorEscalation`, and `GateEvaluationResult` are declared
+    structurally in the module as the members it uses: the loader's
+    `VersionLoad` and `RevisionLoad`, the process repository's revision
+    `read`, the portfolio's `ledger.reserve`, `ledger.balance`, and
+    `current().declaration.ledger.allocations`, the token lint's
+    `TokenLintResult` with its `configurationKey` and its `gates[]` with
+    `statePath`, `verdict`, and `traps`, a `ReadonlySet<string>`, the GitHub source's `TrackedIssue`
+    with its `issue` and `blocking` node ids and states, the `get` of the
+    GitHub source's `TrackedIssueIndex`, and the
+    escalations module's `raise({ kind, subject, question, choices, title
+    })` and `withdraw({ kind, subject })` for the kinds `stranded-token`
+    and `comparator-failed`, and the escalation's `subject` and answer that
+    a handler receives.
+    Each module's own type satisfies them, and a test may supply a fixture
+    of the same shape.
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `gates.ts`
+    implements `createGates`: the version map, the comparators, the dirty
+    set, and the grant rounds. `save-hook.ts` holds the save hook and the
+    stranded-token handler. `input.ts` holds the pure functions from rows
+    and snapshots to a comparator input, `critical-path.ts` the pure
+    critical-path walk, and `declaration.ts` the pure function from a
+    blueprint document to its gate declarations. `tables.ts` holds every SQL
+    statement of the module's tables. `migrations.ts` holds the steps, whose
+    step 1 is the script of `docs/specifications/gates-database-schema.sql`.
+    Tests live beside the module and import only `index.ts` and the
+    `index.ts` of the store, the router, the ledger, the portfolio, and the
+    comparator sandbox.
+  router-and-store-changes: >-
+    The router's `schedule(actorId)` schedules a loaded actor to drain rows
+    another module wrote with `store.writeInbox`, and supplies itself to
+    `afterDrain`; `durable-event-delivery` states both. The store's
+    `StateQuery` takes `machine` as optional, so that one query returns the
+    actors in a state path on every machine through its state-path index;
+    `store` and `store-database-schema` define both. The actor host's save
+    hook carries `machine`, `entered`, and `entries` with the snapshot and
+    event identity, as `actor-host` defines.
+  service-wiring: >-
+    The service applies `gatesMigrationSteps`, creates the gates with its
+    store, loader, process repository, comparator sandbox, portfolio, GitHub
+    mirror, and escalations, where the portfolio's `ledger` is the capacity
+    module's, so a balance read and a reservation credit the window they
+    need first, as `portfolio` states in `capacity-crediting`, registers
+    `saved` with the actor host, and `strandedToken` and `comparatorFailed`
+    with the escalations module as the handlers of their kinds, awaits
+    `revision` with the
+    head revision and then `prepare`, and starts the router with
+    `afterDrain`. The router can run a grant round before the GitHub event
+    source starts, so the gates read the mirror itself: `trackedIssueIndex`
+    calls the mirror's `read` once and gives that state, and the Projects
+    in it that the portfolio in force binds, to `trackedIssueIndex(state,
+    bound)`, as `github-event-source` states. It calls `revision` with every later revision it loads, in
+    the order it pulls them. It calls `inputChanged` after each ledger write
+    it makes outside a gate, and from the GitHub source's
+    `onMirrorChanged`, which also calls intake's `mirrorChanged`.
+  convergence: >-
+    One entry into the gated state is granted at most one token: the token
+    id is derived from the entry id and is the token row's primary key, and
+    a member whose entry already names a token is not given to the
+    comparator. A second insert of one token id fails and rolls back its
+    inbox row, its reservations, and its evaluation row with it. A crash
+    inside a grant rolls back the token row, the inbox row, the
+    reservations, and the evaluation row, and the grant round that resume runs
+    evaluates again. A crash after the grant commits leaves the token held
+    and its inbox row pending, which resume delivers once. A crash after the
+    token is sent and before the holder's save replays the token into the
+    snapshot saved before it. A reservation replayed by key writes nothing.
+    A save hook twice for one save writes the same entry, with the same
+    entry id, since an entry row is replaced only for a new host entry id,
+    and the same returns and trap flag, since each write is conditional on
+    the row's present state, and raises no second escalation. A crash inside
+    a save rolls back the hook's writes with the snapshot. The
+    stranded-token handler twice returns once. A comparator failure raised
+    twice keeps one open escalation; a crash inside an evaluation
+    failure's transaction leaves neither the row nor the escalation, and
+    the grant round that resume runs evaluates again; a crash after it commits
+    leaves both, and the grant round after the restart fails again into the same
+    open escalation. A `retry` handled twice runs the gate twice, and a
+    grant round grants only to members without a token. `afterDrain` twice writes the
+    missing entries once and runs grant rounds that grant only to actors without a
+    token. `revision` twice writes the same declaration rows, and a crash
+    inside it rolls them back, so the next `revision` writes them; `prepare`
+    twice computes the same views and loads the same comparators. Migration
+    convergence belongs to the store's `migrate`.
+  errors: >-
+    A comparator failure, a refused reservation, a missing comparator file,
+    and a save of an unknown version are recorded or reported to `onError`,
+    never thrown, so one gate's fault stops only that gate. Misuse by
+    service code throws a `TypeError`: a grant round requested after `stop`, and
+    `replay` of an evaluation id that does not exist. SQLite errors and
+    errors the ledger throws for any reason other than a refused reservation
+    propagate unchanged.
+  growth: >-
+    The evaluation table grows by one row per evaluation, with the input
+    JSON in it. A grant round runs only on a change to its gate's input, so the
+    rate follows the rate of entries, exits, returns, and balance changes.
+    Rows are kept until their evaluation time is past the gate evaluation
+    window, as `pruning` states.
+  pruning: >-
+    Retention deletes evaluations through `pruneGateEvaluations`, as
+    `retention` states. In one transaction it deletes, in evaluation id
+    order, at most `limit` rows whose `evaluated_at` is before
+    `evaluatedBefore`, whose gate is not in `keepGates`, and that no
+    unreturned token names, read through the `gates_evaluation_by_time`
+    and `gates_token_by_evaluation` indexes, and returns how many it
+    deleted. The foreign key sets `evaluation_id` to null on each
+    returned token whose evaluation it deletes, so a returned token keeps
+    its row, its actor, its reservations' key, and its return, and no
+    longer names an evaluation. A held token's evaluation is never
+    deleted, and the token table's constraint fails the delete if one is
+    tried. It reads no actor, no snapshot, and no other module's table.
+    Called again with the same cutoff after it deleted fewer than `limit`
+    rows, it deletes nothing.
+  tests: >-
+    Tests import only the `index.ts` files named in the module layout, run
+    against a real file in a temporary directory, and start from a populated
+    fixture: twenty actors of a generic blueprint at
+    `blueprints/parcels/sorting.yml` whose root is a parallel state with a
+    `lifecycle` region (`waiting`, `working`, `packed`, `shipped`), a
+    `dependencies` region (`blocked`, `clear`), and a `slot` region (`free`,
+    `held`) that takes the token event; the gated state is
+    `open.lifecycle.waiting`, guarded on `in` `slot.held` and
+    `dependencies.clear`. Their entry times are permuted against their ids.
+    A fixture host behind the router's `ActorHost` runs each actor with
+    XState and calls `saved` with each save, its `entered` list from
+    XState's microstep inspection, and an `entries` map that gives each
+    state entry a new id as the actor host does. The ledger and portfolio
+    run on the same file with account `acct`, items `left` and `right`, and
+    one window. The comparators are inline: oldest-first with a fixed
+    reservation, and one-at-a-time. Behaviours proved, each red before
+    green: the schema matches `gates-database-schema`; grants follow the
+    comparator's order, one per evaluation, until it returns `null`; a grant
+    writes the token row, the inbox row, and the reservation in one
+    transaction, and the test reads the reservation from the ledger's tables
+    on the file; a reservation for a declaration without `reservation`
+    writes nothing to the ledger; a refused reservation records kind
+    `reservation` and grants nothing; with actors on two versions of the
+    blueprint, after a push of the second version while actors on the first
+    wait, the population holds both and the holders are unchanged, and the
+    comparator is the second version's; after a revision that changes a
+    gate's comparator with no actor started on it, then a revision that
+    removes the gate, and a restart on the same file whose head is the last
+    revision, the gate grants with the second revision's comparator and
+    reservation policy; a save repeated for one entry keeps its entry id and
+    age and is granted one token, and an exit and re-entry gets a new entry
+    id; each actor returns its token at its own version's return point, one
+    at `exit` and one at a later `packed` state; a return state left by an
+    eventless transition in the same step returns the token; an actor saved
+    `done` or `stopped` returns every token with reason `ended`, and a save
+    with status `error` returns none; a holder whose save enters a trap
+    configuration raises one `stranded-token` escalation, a second save in a
+    trap raises none, and an answer of `return` records the return and
+    grants the next member, and a trapped token returned by the actor's end
+    withdraws its escalation; an actor with a pending inbox row is not given
+    to the comparator; every evaluation is recorded with its input, output,
+    and seed, and `replay` of a grant returns the same selection; a
+    comparator that throws, then a comparator that times out, each record a
+    failure and the next input change runs the gate again; the throw
+    raises one `comparator-failed` escalation whose subject is the gate
+    key, the timeout keeps it, and no second escalation opens while it is
+    open; a comparator file absent from the revision, and one the sandbox
+    refuses, each raise one with cause `missing` and the load failure's
+    kind, and the gate grants nothing; a `retry` answer through the
+    escalations module, once the test's `revisionAt` answers a source the
+    sandbox loads at the declaration's commit, loads it and grants, and one while the cause stays raises the next
+    occurrence; a later revision that loads a working comparator withdraws
+    the open escalation, and `prepare` over the same failing declaration
+    withdraws nothing; a `dismiss` answer changes no row of the module; a
+    refused reservation raises nothing; an actor in the
+    gated state whose issue blocks two open tracked issues in a chain has
+    `criticalPath` 3, and a dependency cycle ends the walk; with the gates
+    wired to a real GitHub mirror on the store file, whose tables a fixture
+    writes with 10 and with 1,000 tracked issues, the store's `prepare`
+    counted, and a gate population that names many of them, among them
+    issues whose blockers are transitive, issues in a dependency cycle, an
+    issue on no bound Project, and members that name no issue, a grant
+    round whose comparator grants several members, one per evaluation, and
+    so evaluates several times, prepares one `SELECT` of `github_issue`,
+    and each evaluation's recorded input holds each member's
+    `criticalPath` as the fixture's graph gives it, 1 for the issue on no
+    bound Project and for the members that name none, and the members are
+    granted in the comparator's order; a grant round whose members name no
+    issue prepares none; after a blocker closes in the mirror, the next
+    grant round's input holds the smaller `criticalPath`; with the GitHub
+    source's `onMirrorChanged` wired to `inputChanged` and no save of the
+    waiting actor, its gate evaluates again with the smaller `criticalPath`
+    when a transitive dependent's issue closes, when only that dependent's
+    last Project item is removed, and when a reconcile observes it absent
+    and publishes no event; a population member restored with no entry row
+    is granted a token, saves in the same entry, and keeps the token across
+    a restart, while the same start followed by an exit and re-entry returns
+    an `exit` token; with two gates over one item and account, a reservation
+    granted by one gate runs the other gate again with the smaller balance,
+    with no actor save. Fault tests run the grant loop in a child Node
+    process that sends itself `SIGKILL` at each crash point the
+    `gate-xstate` spike names, after the token's inbox row is written
+    (`granted`), after the token is sent (the store's `sent`), and after the
+    holder's save (the store's `saved`), and at `granting`, inside the
+    grant's transaction, and at `comparator-failed`, after an evaluation
+    failure and its escalation commit and before the next save. The parent
+    asserts the kill signal, starts a
+    router, gates, and ledger on the same file, and shows each token granted
+    once, one reservation per token, holders counted once, and the grants
+    that follow in the comparator's order; after the kill at
+    `comparator-failed`, one open `comparator-failed` escalation for the
+    gate. A holder's save with a later version key, the same entry ids,
+    and an empty `entered` keeps its entry row and its token; `heldTokens` lists a holder's unreturned
+    tokens and drops a returned one. `pruneGateEvaluations` deletes exactly
+    the evaluations before the cutoff that no held token names and whose
+    gate is not kept, at most `limit` per call; a returned token whose
+    evaluation it deletes keeps its row with no evaluation, and `replay`
+    of that evaluation throws a `TypeError`; an evaluation inside the
+    window replays to its recorded selection; and a second call deletes
+    nothing. Values are generic and never drawn from Manifold's own
+    domain.

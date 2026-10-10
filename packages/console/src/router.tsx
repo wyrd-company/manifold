@@ -1,0 +1,153 @@
+// ---
+// relationships:
+//   implements: operator-console
+// ---
+import { createRootRoute, createRoute, createRouter, Link, redirect } from "@tanstack/react-router";
+import type { ComponentType } from "react";
+import { SearchX } from "lucide-react";
+import { AppShell } from "./shell/AppShell.tsx";
+import { navigation } from "./shell/navigation.ts";
+import { PageTitle, EmptyState } from "./screens/EmptyContent.tsx";
+import { OverviewContent } from "./screens/OverviewContent.tsx";
+import { TaskContent } from "./screens/board/TaskContent.tsx";
+import { boardSearch } from "./screens/BoardContent.tsx";
+import { BoardContent } from "./screens/BoardContent.tsx";
+import { EpicsContent, epicsSearch } from "./screens/EpicsContent.tsx";
+import { ActorContent, actorViewSearch } from "./screens/actors/ActorContent.tsx";
+import { ActorsContent, actorsSearch } from "./screens/ActorsContent.tsx";
+import { PortfolioContent, portfolioSearch } from "./screens/PortfolioContent.tsx";
+import { BlueprintsContent } from "./screens/BlueprintsContent.tsx";
+import { ProjectsContent } from "./screens/ProjectsContent.tsx";
+import { EnvironmentsContent } from "./screens/EnvironmentsContent.tsx";
+import { SettingsContent, GeneralContent } from "./screens/SettingsContent.tsx";
+import { TaskFieldsContent } from "./screens/TaskFieldsContent.tsx";
+import { AccountsContent } from "./screens/AccountsContent.tsx";
+const root = createRootRoute({
+  component: AppShell,
+  notFoundComponent: () => (
+    <EmptyState
+      icon={SearchX}
+      title="Page not found"
+      description="Choose a screen from the sidebar."
+    >
+      <Link to="/">Overview</Link>
+    </EmptyState>
+  ),
+});
+const contents: readonly ComponentType[] = [
+  OverviewContent,
+  BoardContent,
+  EpicsContent,
+  ActorsContent,
+  PortfolioContent,
+  BlueprintsContent,
+  ProjectsContent,
+  EnvironmentsContent,
+  SettingsContent,
+];
+const portfolioRoute = createRoute({
+  getParentRoute: () => root,
+  path: "/portfolio",
+  validateSearch: portfolioSearch,
+  component: PortfolioContent,
+});
+const routes = navigation.map((item, index) => {
+  if (item.path === "/portfolio") return portfolioRoute;
+  const Content = contents[index]!;
+  return createRoute({
+    getParentRoute: () => root,
+    path: item.path,
+    ...(item.path === "/board" ? { validateSearch: boardSearch } : {}),
+    ...(item.path === "/epics" ? { validateSearch: epicsSearch } : {}),
+    ...(item.path === "/actors" ? { validateSearch: actorsSearch } : {}),
+    component: () => (
+      <>
+        <PageTitle title={item.label} description={item.description} />
+        <Content />
+      </>
+    ),
+  });
+});
+const blueprintEditorRoute = createRoute({
+  getParentRoute: () => root,
+  path: "/blueprints/$",
+  validateSearch: (search: Record<string, unknown>): { view?: "yaml" } =>
+    search["view"] === "yaml" ? { view: "yaml" } : {},
+  component: () => (
+    <>
+      <PageTitle title="Blueprints" description="Blueprints / editor" />
+      <BlueprintsContent />
+    </>
+  ),
+});
+const settings = routes[8]!;
+settings.addChildren([
+  createRoute({
+    getParentRoute: () => settings,
+    path: "/",
+    beforeLoad: () => {
+      throw redirect({ to: "/settings/task-fields" });
+    },
+  }),
+  createRoute({
+    getParentRoute: () => settings,
+    path: "task-fields",
+    component: () => (
+      <>
+        <TaskFieldsContent />
+      </>
+    ),
+  }),
+  createRoute({
+    getParentRoute: () => settings,
+    path: "accounts",
+    component: () => (
+      <>
+        <h2>Accounts</h2>
+        <AccountsContent />
+      </>
+    ),
+  }),
+  createRoute({ getParentRoute: () => settings, path: "general", component: GeneralContent }),
+]);
+export const router = createRouter({
+  routeTree: root.addChildren([
+    ...routes,
+    blueprintEditorRoute,
+    createRoute({
+      getParentRoute: () => root,
+      path: "/actors/$actorId",
+      validateSearch: actorViewSearch,
+      component: ActorContent,
+    }),
+    createRoute({
+      getParentRoute: () => root,
+      path: "/projects/$binding",
+      component: () => (
+        <>
+          <PageTitle title="GitHub Projects" description="Project configuration" />
+          <ProjectsContent />
+        </>
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => root,
+      path: "/board/task/$actorId",
+      validateSearch: boardSearch,
+      component: TaskContent,
+    }),
+    createRoute({
+      getParentRoute: () => root,
+      path: "/epics/task/$actorId",
+      validateSearch: epicsSearch,
+      component: () => <TaskContent origin="epics" />,
+    }),
+  ]),
+  basepath: "/console",
+});
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}

@@ -1,0 +1,66 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: process-manifest
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/process-manifest
+title: Process manifest
+description: >-
+  The document in `manifold.yml` at the root of the process repository, and
+  a finding of the manifest lint.
+$ref: "#/$defs/manifest"
+$defs:
+  repository-path:
+    description: >-
+      A repository-relative, `/`-separated path with no empty, `.`, or `..`
+      segment and no leading or trailing `/`.
+    type: string
+    pattern: "^(?!.*(^|/)\\.{1,2}(/|$))[^/\\\\]+(/[^/\\\\]+)*$"
+  model-path:
+    description: The path of a decision model, the key the model is evaluated by.
+    allOf:
+      - $ref: "#/$defs/repository-path"
+      - pattern: "\\.yml$"
+  manifest:
+    type: object
+    required: [intake]
+    additionalProperties: false
+    properties:
+      intake:
+        type: object
+        required: [decisionModel]
+        additionalProperties: false
+        properties:
+          decisionModel:
+            description: The path of the intake decision model.
+            $ref: "#/$defs/model-path"
+  finding:
+    description: One problem the manifest lint reports.
+    type: object
+    required: [file, location, severity, kind, message]
+    additionalProperties: false
+    properties:
+      file:
+        description: The repository-relative path of the file the finding is in.
+        $ref: "#/$defs/repository-path"
+      location:
+        description: The RFC 6901 JSON Pointer of the failing value in the file's document.
+        type: string
+      severity:
+        enum: [error, warning]
+      kind:
+        enum:
+          - manifest-missing
+          - syntax
+          - schema
+          - model-key-invalid
+          - model-missing
+          - model-syntax
+          - decision-model
+      message:
+        type: string
+      finding:
+        description: The decision model finding, for kind `decision-model`.
+        $ref: https://manifold.wyrd.company/schemas/decision-models#/$defs/decision-model-finding

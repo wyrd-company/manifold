@@ -1,0 +1,63 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - usage-intake
+    - portfolio-ledger
+    - usage-api
+description: >-
+  A posted call is attributed to an actor and posted to the ledger as an
+  actual on an item, in the window of its use. Calls of threads an
+  operator opens outside Manifold post under a ledger actor of unowned
+  usage, on the item of the thread's T3code project or on Other, and
+  only the operator knows which item or task they were for. A late
+  attribution, the re-attribution a late mapping or a late thread
+  ownership gives, records whose usage a call is and leaves its actual
+  where it posted, so balances, lifetime cost, and the sharing rule keep
+  reading the item it posted on. The ledger never rewrites an entry. The
+  operator's move must keep the call's account, amount, and window, so
+  that capacity stays right.
+considered-options:
+  "1": >-
+    Record the move as a late attribution only. The usage module records
+    the target actor and item beside the posting, the actor usage read
+    counts it for the target, and the ledger is unchanged.
+  "2": >-
+    Carry the move in the ledger. A ledger reattribution operation writes
+    the call's amount as a negative entry on the item and actor it leaves
+    and a positive entry on the target, in the window of its use, and
+    every balance read counts the pair with the actuals. The usage module
+    records the move beside the posting as a reattribution of cause
+    `move`, and late attributions stay balance-neutral.
+  "3": >-
+    Carry every re-attribution in the ledger. Late mappings and late
+    ownerships also write ledger reattributions, so item balances follow
+    whose usage each call is.
+  "4": >-
+    Adjust balances in the portfolio read. The portfolio read adds the
+    usage module's moves to each item's actual and lifetime, and the
+    ledger is unchanged.
+decision-outcome:
+  chosen-option: 2
+  justification: >-
+    Option 2 makes a move do what the operator asks: a call moved to an
+    item counts in that item's current usage, available balance,
+    reservable amount, and lifetime cost, and no longer in the item it
+    left, while the two entries cancel in the window, so the account's
+    capacity and window usage do not change and no entry is rewritten.
+    Option 1 changes no number a screen or a gate reads for a move to an
+    item, since balances read the item the ledger holds, so the move
+    would have no effect the operator can see. Option 3 changes the
+    meaning of the late attribution of a mapping, which keeps a late
+    call on the item it posted on, and it moves balances on facts the
+    operator did not act on. Option 4 makes the Portfolio screen
+    disagree with the balance a gate reads, since the sharing rule reads
+    the ledger.
+expected-outcomes:
+  positive:
+    - A move to an item or a task shows at once in the Portfolio screen's usage and lifetime columns and in the task's actual.
+    - Gates read the same balances the Portfolio screen shows, moves included.
+    - Capacity and window usage stay as the calls spent them.
+  negative:
+    - The ledger gains an operation kind, and its operations and entries tables are rebuilt by a migration step.
+    - A late-attributed call counts for its task but stays in the balance of the item it posted on, so a task's actual and its item's usage can differ.
+    - A move of a call into the current window lowers the target item's reservable amount at once, which can hold back a gate on that item.

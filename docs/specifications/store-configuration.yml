@@ -1,0 +1,36 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design
+# or to the root it composes into; `realizes` names the designs this
+# contract serves and `references` the root.
+relationships:
+  realizes:
+    - store
+    - service-assembly
+  references:
+    - service-configuration
+description: |-
+  Defines the `store` section of the service configuration: where the
+  store's SQLite database file is.
+  `docs/specifications/store-configuration.schema.yml` is the
+  machine-readable definition of the section's value. The root of the
+  service configuration names the section under `properties` as `store`,
+  required, by `$ref` to
+  `https://manifold.wyrd.company/schemas/store-configuration`.
+
+  `file` is the path of the database file that holds everything the
+  service observes and remembers: snapshots, inboxes, deadlines, ledgers,
+  and each source's state. A relative path resolves against the directory
+  of the configuration file. The service creates the file, and its
+  directory, when absent. Required.
+
+  ```yaml
+  store:
+    file: /var/lib/example/manifold.sqlite
+  ```
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/store-configuration.schema.yml` is a valid JSON
+  Schema 2020-12 document. A configuration with no `store` section, a
+  `store` with no `file`, an empty `file`, and an unknown property each
+  fail with an issue at its JSON Pointer. A relative `file` loads as an
+  absolute path resolved against the configuration file's directory.

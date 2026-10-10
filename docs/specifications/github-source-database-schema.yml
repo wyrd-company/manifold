@@ -1,0 +1,150 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - github-event-source
+  references:
+    - retention
+    - store-database-schema
+    - router-database-schema
+    - github-events
+terms:
+  - github-mirror
+  - tracked-issue
+  - redelivery
+  - webhook-delivery
+  - card-move
+description: |-
+  Defines the tables the GitHub event source owns in Manifold's SQLite
+  database file. `docs/specifications/github-source-database-schema.sql` is
+  the machine-readable definition: the schema that the source's migrations
+  produce. The source receives the connection from the store and migrates its
+  tables with `migrate("github", steps)`; its owner is `github`, so every
+  table it creates is named `github_<name>`. Times are milliseconds since the
+  Unix epoch. Node ids are GitHub GraphQL node ids.
+
+  Deliveries. `github_delivery` holds one row per accepted webhook delivery,
+  keyed by its GUID, with the id of the hook that delivered it first, its
+  event name, and the time it was accepted. A row is never updated, so a
+  later delivery with the same GUID is a duplicate while the row stays.
+  `github_redelivery` holds one row per GUID the source has asked GitHub to
+  redeliver, with the hook, the id of the failed attempt it named, and the
+  time of the request, so the source asks once per GUID while the row
+  stays. `github_hook_scan` holds, per hook, the `delivered_at` time of the
+  newest delivery the last completed redelivery scan read. Retention
+  deletes a delivery or redelivery row past the source event window of
+  `github` once its time is before its hook's `scanned_through`, or its
+  hook has none, as `retention` states; `github_delivery_received` and
+  `github_redelivery_requested` order those deletes by time.
+
+  Pending reconciles. `github_pending` is the set of entities whose current
+  state the source has yet to read and compare with the mirror: a tracked
+  issue, a Project item, or a bound Project, keyed by kind and node id.
+  `requested_at` is the time of the first request, which orders the work.
+  `generation` is 1 for the first request, and each later request of an
+  entity already pending raises it by one. A reconcile deletes the row in
+  the transaction that applies its result, only when `generation` still
+  equals the value it noted before its read, so a request made during the
+  read survives it. `project_node_id` records the Project an item delivery
+  names, so a new or archived item can be read with its owner's credential
+  before the mirror holds that item. It is null for other pending kinds.
+
+  Task field writes. `github_task_field_write` records one invocation's
+  issue, Project, declared field, storage and value before its request.
+  Its status distinguishes sent, confirmed and refused writes; `attributed`
+  consumes attribution on the first observed change without deleting the
+  recovery basis. Front matter attempts persist `attempt` (0, 1 or 2),
+  `basis_edited_at` and `basis_body`, `original_edited_at`, the repair body, `check_state`
+  (none, pending, passed or conflict), and `conflict_edited_at`. A pending
+  check runs before a replay's equal-value shortcut. Attempt 2 cannot repair
+  again. A write sequence orders attribution, which consumes writes through
+  the latest matching value and preserves newer writes. `github_issue.content_revision`
+  increments on issue content changes; Project fields use the item field-value
+  revision for task field event identity.
+
+  Shared scopes. `github_scope` records each storage scope, its status,
+  message and read time. `github_issue_field`, `github_issue_type`,
+  `github_label` and `github_milestone` hold its ordered configuration,
+  with stable entity node ids and each kind's properties. A complete
+  observation replaces these rows in one transaction. All five kinds use
+  this single migration step.
+
+  Issue content. `github_issue` holds body, last body edit time, milestone
+  and issue type. `github_issue_label` and `github_issue_field_value` hold
+  labels and normalized issue field values in GitHub order. Every content
+  member joins the same mirror read as issue identity and relationships;
+  absent body means content has not been observed.
+
+  Card moves. `github_card_move` holds one row per card move write whose
+  value GitHub may hold and the source has not yet attributed: the move's
+  invocation, its actor id, invoke id, and entry id, with the field node
+  id and option id the move resolved, as its key; the item; `state`; and
+  `sequence`, which orders the moves. A move writes its row with state
+  `sent` before it sends the write, with a `sequence` one more than the
+  largest in the table, when its invocation has no row for the field and
+  option it resolved; a move that one state entry repeats and that
+  resolves the same ids keeps the row it finds, with its state and
+  `sequence`, and one that resolves other ids, after the field or option
+  was recreated, writes a row of its own beside it. A write GitHub takes sets the row `confirmed`, a write
+  GitHub refuses deletes the row only when that attempt wrote it, and a
+  write whose fate is unknown leaves the row as it is. A reconcile that publishes a change of the item's
+  field deletes the rows it attributes or rules out, in its transaction, as
+  `github-event-source` states. Retention deletes every row of an actor
+  whose history it has pruned, as `retention` states.
+
+  Mirror. The remaining tables are the GitHub mirror: the last state the
+  source read of each entity, with the revision each published change gave
+  it. A relationship or item that goes away keeps its row with `present` 0,
+  so its revision carries on if it returns.
+
+  - `github_project`: a Project's owner login as GitHub returns it, its
+    number, and whether it is closed. Owner and number are unique without
+    regard to the owner's case.
+
+  - `github_item`: an item's Project, its content's type and node id, whether
+    it is present on the Project, and whether it is archived.
+
+  - `github_field_value`: an item's value of one custom field, as the JSON of
+    a field value `github-events` defines, `NULL` for no value, and the
+    field's name when last read.
+
+  - `github_project_field`: a custom field of a bound Project, as the last
+    field observation read it: its `position` in GitHub's order from 0,
+    its name, its data type in lower case with `_` read as `-`, and
+    `options`, the JSON array of a single-select field's options in order,
+    each `{ "id", "name", "color", "description" }` with the color in
+    lower case, and `[]` for another type. A field observation replaces
+    the Project's rows, so a field GitHub no longer shows has no row.
+    `github_project.fields_read_at` is when the last field observation of
+    the Project committed, `NULL` before the first.
+
+  - `github_issue`: an issue's repository as `owner/name`, number, state,
+    and state reason, and its title and web URL when last read, `NULL`
+    until a read writes them. `present` is 0 after an issue read reports its node absent
+    and 1 after its next complete read. Its last observed state and revisions
+    remain stored; no removal event is published. `baselined` is 1 once the issue has been read as a tracked
+    issue, after which a change to a dependency or sub-issue it takes part in
+  publishes, whichever endpoint's read finds it.
+
+  - `github_dependency`: that one issue is blocked by another.
+
+  - `github_sub_issue`: that one issue is a sub-issue of another.
+
+  An issue is tracked when a `github_item` row with `present` 1 and
+  `content_type` `issue` names it as content and belongs to a bound Project.
+  Bound Projects are not stored: they come from the current process
+  repository revision.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/github-source-database-schema.sql` runs without
+  error on an empty SQLite database. A test starts the GitHub event source
+  on a store over an empty file and compares the `type`, `name`,
+  `tbl_name`, and `sql` of every `sqlite_schema` row whose name starts with
+  `github_` with the rows the same file's statements produce on a second
+  empty database, with each run of whitespace in `sql` read as one space;
+  they are equal. After the source starts, `schema_migration` holds the row
+  `('github', 1)`.

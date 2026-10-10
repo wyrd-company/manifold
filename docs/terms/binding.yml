@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Binding
+description: >-
+  A declaration in the process repository that ties a GitHub Project or a T3code project to a portfolio item.

@@ -4,21 +4,104 @@
   "private": true,
   "description": "Types, JSON Schemas, and utilities shared by the Manifold service and host CLI.",
   "license": "Apache-2.0",
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./comparator.d.ts": {
+      "types": "./dist/comparator.d.ts",
+      "bun": "./dist/comparator.d.ts",
+      "default": "./dist/comparator.d.ts"
+    },
+    "./expressions": {
+      "types": "./dist/expressions.d.ts",
+      "import": "./dist/expressions.js"
+    },
+    "./actors-api": {
+      "types": "./dist/actors-api.d.ts",
+      "import": "./dist/actors-api.js"
+    },
+    "./tasks-api": {
+      "types": "./dist/tasks-api.d.ts",
+      "import": "./dist/tasks-api.js"
+    },
+    "./escalations-api": {
+      "types": "./dist/escalations-api.d.ts",
+      "import": "./dist/escalations-api.js"
+    },
+    "./blueprints-api": {
+      "types": "./dist/blueprints-api.d.ts",
+      "import": "./dist/blueprints-api.js"
+    },
+    "./declarations-api": {
+      "types": "./dist/declarations-api.d.ts",
+      "import": "./dist/declarations-api.js"
+    },
+    "./amounts": {
+      "types": "./dist/amounts.d.ts",
+      "import": "./dist/amounts.js"
+    },
+    "./portfolio-api": {
+      "types": "./dist/portfolio-api.d.ts",
+      "import": "./dist/portfolio-api.js"
+    },
+    "./blueprint-graph": {
+      "types": "./dist/blueprint-graph.d.ts",
+      "import": "./dist/blueprint-graph.js"
+    },
+    "./implementation-catalog": {
+      "types": "./dist/implementation-catalog.d.ts",
+      "import": "./dist/implementation-catalog.js"
+    },
+    "./epics-api": {
+      "types": "./dist/epics-api.d.ts",
+      "import": "./dist/epics-api.js"
+    },
+    "./environments-api": {
+      "types": "./dist/environments-api.d.ts",
+      "import": "./dist/environments-api.js"
+    },
+    "./usage-api": {
+      "types": "./dist/usage-api.d.ts",
+      "import": "./dist/usage-api.js"
+    },
+    "./actor-usage-api": {
+      "types": "./dist/actor-usage-api.d.ts",
+      "import": "./dist/actor-usage-api.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && cp src/comparator.d.ts dist/comparator.d.ts && cp src/blueprint-validator.js dist/blueprint-validator.js && cp src/decision-model-validators.js dist/decision-model-validators.js",
     "typecheck": "tsc --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "generate:blueprint-schema": "node scripts/generate-blueprint-schema.mjs && vp fmt src/blueprint-schema.ts && node scripts/generate-graph-validator.mjs && vp fmt src/blueprint-validator.js",
+    "generate:portfolio-schemas": "node scripts/generate-portfolio-schemas.mjs && vp fmt src/portfolio-declaration-schema.ts",
+    "generate:implementation-contracts": "node scripts/generate-implementation-contracts.mjs && vp fmt src/implementation-contracts.ts",
+    "generate:decision-model-validators": "node scripts/generate-decision-model-validators.mjs && vp fmt src/decision-model-validators.js"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "json-schema-faker": "^0.6.3",
+    "jsonata": "^2.2.2",
+    "xstate": "^5.33.2",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "relationships": {
+    "implements": [
+      "actors-api",
+      "operator-console",
+      "blueprints-api",
+      "declarations-api"
+    ]
   }
 }

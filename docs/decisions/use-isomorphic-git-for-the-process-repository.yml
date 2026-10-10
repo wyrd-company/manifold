@@ -1,0 +1,46 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - process-repository
+description: >-
+  The service clones the process repository and pulls it on push, and git
+  operations run in process through an adopted library, with no `git`
+  subprocess. The approved credentials for the repository's remote are a
+  GitHub App installation token and a deploy key. An installation token
+  authenticates git over HTTPS; GitHub accepts a deploy key only over SSH.
+considered-options:
+  "1": >-
+    isomorphic-git 1.43: pure JavaScript git with smart HTTP fetch, clone,
+    and object reads; 8.4k GitHub stars; releases several times a month. It
+    has no SSH transport.
+  "2": >-
+    es-git 0.7: libgit2 bound through napi-rs with prebuilt native binaries,
+    with HTTPS and SSH transports; 0.3k GitHub stars.
+  "3": >-
+    nodegit 0.27: libgit2 bound through a native addon, with HTTPS and SSH
+    transports; 5.7k GitHub stars; its last stable release predates current
+    Node versions and builds from source on them.
+  "4": >-
+    isomorphic-git for HTTPS, and an SSH transport built on the ssh2 package
+    that carries git's pack protocol into isomorphic-git's HTTP client
+    interface.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    isomorphic-git meets the adoption bar on regard and maintenance, adds no
+    native code to the service or its Bun-compiled tools, and reads objects
+    at any commit without a working tree, which is the read path every
+    loader uses. es-git falls below the adoption bar, and nodegit is not
+    maintained for current Node. Bridging SSH onto an HTTP client interface
+    builds git transport infrastructure, which the adoption rules route to
+    a separate project. The GitHub App installation token, the first
+    approved credential, works over HTTPS.
+expected-outcomes:
+  positive:
+    - Clone, fetch, and reads run in the service process with no native addon and no subprocess.
+    - A revision reads blobs and trees at any fetched commit straight from the object database.
+    - The library's HTTP client is the one seam for authentication, so a credential reaches only `onAuth`.
+  negative:
+    - A deploy key, which GitHub accepts only over SSH, cannot authenticate the process repository's remote.
+    - isomorphic-git writes refs and pack files in place, so the module recovers from a crashed fetch itself.
+    - isomorphic-git loads each fetched pack into memory before writing it, which bounds a process repository by the service's memory.

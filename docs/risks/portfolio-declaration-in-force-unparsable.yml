@@ -1,0 +1,34 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: A stricter ledger rule can stop the stored portfolio declaration from parsing at start
+
+# GAP-EDGE: the risk schema declares no relationship-types; `related-to`
+# names the designs whose start path carries the exposure.
+relationships:
+  related-to:
+    - portfolio
+    - portfolio-ledger
+
+description: >-
+  The portfolio module persists the declaration in force and, at start,
+  validates it again with `parseLedgerPortfolio` before it builds the
+  ledger. A later Manifold release whose ledger rules are stricter than the
+  release that accepted the declaration would reject that stored row, and
+  the service would not start until the operator pushes a declaration the
+  new rules accept, which needs a pull, which needs the service.
+
+categories:
+  - technical
+
+likelihood: 2
+impact: 4
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: a release that makes a ledger rule stricter ships a portfolio
+# migration step that rewrites or retires each stored declaration the new
+# rule rejects, so the declaration in force always parses under the running
+# release's rules.

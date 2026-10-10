@@ -1,0 +1,1488 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - retention
+    - durable-event-delivery
+    - service-assembly
+    - service-configuration
+    - process-repository
+    - portfolio
+    - task-metadata
+  mitigates:
+    - github-events-incomplete
+    - github-reads-lag-deliveries
+objective: >-
+  Turn GitHub webhook deliveries, and the changes GitHub never delivers,
+  into router events for the issues and Projects Manifold tracks, so that
+  each change reaches its actors once, a blocked issue's actor hears its
+  blocker close, and a push to the process repository pulls it; set a
+  task's lifecycle field on its Project for a card move, so that each move
+  leaves GitHub holding one value and reaches the actor as its own; and
+  read and write a bound Project's custom fields and the shared scopes of
+  task fields stored outside it, an organization's issue fields and issue
+  types and a repository's labels and milestones, so that the task
+  metadata module can plan and apply their configuration; and read and
+  write each tracked issue's task field values in every storage kind.
+background:
+  current-design: >-
+    The router publishes source events through the seam `router-events`
+    defines, and `durable-event-delivery` names the GitHub topics. The
+    `github-dependency-events` spike measured that every dependency,
+    sub-issue, Project item, and Project change produces a delivery to the
+    organization hook, that a repository hook repeats a repository event
+    with the same GUID, that GitHub makes one attempt per delivery and keeps
+    failed ones for redelivery through the hook deliveries API, that a
+    blocking issue's close names only the blocker, and that an issue's
+    `updatedAt` does not move when a dependency, sub-issue, or Project item
+    changes. The process repository's `pull` takes the commit a push
+    names. Bindings name each bound Project by owner and number.
+  problems:
+    - >-
+      A delivery that fails is never retried by GitHub, and a delivery sent
+      while the service is down is a failure, so an actor waiting on it waits
+      forever unless the source recovers it.
+    - >-
+      A delivery describes a change at the moment GitHub sent it. A
+      redelivered or late delivery describes a state that may since have
+      changed back.
+    - >-
+      A blocker's close names no blocked issue, and Project item deliveries
+      name no issue number and no Project number.
+    - >-
+      Adding a field to a Project, or changing one, sends no delivery, so a
+      change to a Project's configuration is learned only by reading it.
+design-challenges:
+  once: >-
+    One change can arrive through two hooks, a redelivery, and a sweep, and
+    must reach each actor once.
+  recovery: >-
+    A change whose delivery never arrived, including one made while the
+    service was down for longer than GitHub keeps deliveries, must still be
+    published.
+  staleness: >-
+    A delivery applied as a fact can publish a state that is no longer true.
+  acknowledgement: >-
+    GitHub marks a delivery failed when the answer takes longer than ten
+    seconds, and reading GitHub's current state can take longer than that.
+  attribution: >-
+    GitHub reports a card move Manifold made the same way it reports a
+    person's: a delivery that names the item, and a field value read from
+    the API. An actor must tell its own move from a person's, by webhook or
+    by sweep, after a crash, and when a read lags the write, and whether or
+    not the field or option was recreated between a crash and the move's
+    replay.
+  configuration: >-
+    A Project's fields must be read and written in step with the card moves
+    and observations that read and set their values, and a write to the
+    fields must never be taken for a card moving.
+proposed-design:
+  high-level-overview: >-
+    The GitHub event source is `packages/service/src/github-source/`, whose
+    only public file is `index.ts`. `startGitHubSource` migrates the
+    source's tables, `github-source-database-schema`, and returns a source
+    whose `receive` verifies a webhook delivery, records its GUID once, and
+    records the entities it names as pending reconciles, in one
+    transaction, before the HTTP answer. A delivery is a notice that an
+    entity changed, never the change itself. One serial runner reads each
+    pending entity's current state from the GitHub GraphQL API, compares it
+    with the GitHub mirror, and in one transaction writes the mirror and
+    publishes each difference to the router under the topics and event ids
+    `github-events` defines. The same comparison runs for every bound
+    Project and tracked issue on each sweep, and a redelivery scan asks
+    GitHub to redeliver each failed delivery once. A webhook delivery, a
+    redelivery, and a sweep that learn of one change all compare against
+    the same mirror, so the first publishes it and the rest find no
+    difference. The decision record
+    `reconcile-github-deliveries-against-fetched-state` records the choice.
+  public-interface: |-
+    `packages/service/src/github-source/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { IncomingMessage, ServerResponse } from "node:http";
+    import type { PullOutcome, PullRequest } from "../process-repository/index.ts";
+    import type { Router, RouterClock } from "../router/index.ts";
+    import type { Credentials } from "../service-configuration/index.ts";
+    import type { Store } from "../store/index.ts";
+
+    export function startGitHubSource(options: GitHubSourceOptions): GitHubSource;
+
+    export interface GitHubSourceOptions {
+      readonly configuration: GitHubConfiguration;
+      readonly credentials: Credentials;
+      readonly store: Store;
+      readonly router: Router;
+      /** The GitHub Project bindings of the current process repository revision. */
+      readonly boundProjects: () => readonly ProjectReference[];
+      readonly processRepository: ProcessRepositoryTrigger;
+      /** Defaults to Date.now and setTimeout. */
+      readonly clock?: RouterClock;
+      /** Called for each failure the source recovers from by itself. */
+      readonly onError?: (error: GitHubSourceError) => void;
+      /** Called after each reconcile's read, before its transaction. */
+      readonly probe?: () => void;
+      /** Called after each transaction that publishes an item addition commits, with the content issues' node ids. */
+      readonly onTracked?: (issueNodeIds: readonly string[]) => void;
+      /** Called after each committed transaction that changed a mirror row. */
+      readonly onMirrorChanged?: () => void;
+      /** Called after a card move's write returns from GitHub, before its promise resolves. */
+      readonly probeMove?: (move: CardMove) => void;
+      /** Called after each field write returns from GitHub, before its promise resolves. */
+      readonly probeFieldWrite?: (write: ProjectFieldWrite) => void;
+      /** The name of the lifecycle field the declaration in force declares for a Project, by node id. */
+      readonly lifecycleField: (projectNodeId: string) => string | undefined;
+    }
+
+    /** The `github` section of the service configuration, defaults applied. */
+    export interface GitHubConfiguration {
+      readonly apiUrl: string;
+      readonly owners: Readonly<Record<string, GitHubOwnerConfiguration>>;
+      readonly sweepIntervalMs: number;
+      readonly redeliveryIntervalMs: number;
+      readonly requestTimeoutMs: number;
+    }
+
+    export interface GitHubOwnerConfiguration {
+      readonly credential: string;
+      readonly hooks: readonly GitHubHookConfiguration[];
+    }
+
+    export interface GitHubHookConfiguration {
+      readonly id: number;
+      /** Absent for an organization hook. */
+      readonly repository: string | undefined;
+      /** Absolute; resolved against the configuration file's directory. */
+      readonly secretFile: string;
+    }
+
+    export interface ProjectReference {
+      readonly owner: string;
+      readonly number: number;
+    }
+
+    export interface ProcessRepositoryTrigger {
+      readonly url: string;
+      readonly branch: string;
+      pull(request?: PullRequest): Promise<PullOutcome>;
+    }
+
+    export interface GitHubSource {
+      receive(delivery: WebhookDelivery): DeliveryOutcome;
+      /** Reads the request body and answers from `receive`. */
+      readonly requestListener: (request: IncomingMessage, response: ServerResponse) => void;
+      /** Runs a sweep next, after the work running now. */
+      requestSweep(): void;
+      /** The mirror's view of a tracked issue, or undefined when it is not tracked. */
+      trackedIssue(nodeId: string): TrackedIssue | undefined;
+      /** The node id of every issue trackedIssue answers for, sorted by code point. */
+      trackedIssueIds(): readonly string[];
+      /** trackedIssue's answer for each of trackedIssueIds, in that order, from one read of the mirror. */
+      trackedIssues(): readonly TrackedIssue[];
+      /** trackedIssue's answer for every tracked issue, keyed by node id, from one read of the mirror. */
+      trackedIssueIndex(): TrackedIssueIndex;
+      /** The mirror's Project of a node id, or undefined when the mirror holds none. */
+      project(nodeId: string): GitHubProject | undefined;
+      /** The mirror's Project of an owner and number, the owner compared without regard to case. */
+      projectByNumber(owner: string, number: number): GitHubProject | undefined;
+      /** Sets a single-select field of an issue's item; resolves once GitHub holds the option. */
+      moveCard(move: CardMove, signal?: AbortSignal): Promise<void>;
+      /** The mirror's custom fields of a Project, or undefined before the source has read them. */
+      projectFields(projectNodeId: string): ProjectFields | undefined;
+      /** Reads a bound Project's custom fields into the mirror, after the work in hand. */
+      observeProjectFields(projectNodeId: string, signal?: AbortSignal): Promise<ProjectFields>;
+      /** Makes one change to a bound Project's fields; resolves with the field as GitHub answers it, undefined for a delete. */
+      writeProjectField(write: ProjectFieldWrite, signal?: AbortSignal): Promise<ProjectField | undefined>;
+      stop(): Promise<void>;
+    }
+
+    export interface ProjectFields {
+      readonly projectNodeId: string;
+      /** When the mirror last read them, in epoch milliseconds. */
+      readonly readAt: number;
+      /** In the order GitHub lists them. */
+      readonly fields: readonly ProjectField[];
+    }
+
+    export interface ProjectField {
+      readonly nodeId: string;
+      readonly name: string;
+      readonly type: "text" | "number" | "date" | "single-select" | "multi-select" | "iteration";
+      /** A single-select field's options in order; empty for another type. */
+      readonly options: readonly ProjectFieldOption[];
+    }
+
+    export interface ProjectFieldOption {
+      readonly id: string;
+      readonly name: string;
+      readonly color: ProjectFieldOptionColor;
+      readonly description: string;
+    }
+
+    export type ProjectFieldOptionColor =
+      | "gray" | "blue" | "green" | "yellow" | "orange" | "red" | "pink" | "purple";
+
+    /** An option to write: `id` keeps an existing option, and with it every item value that holds it. */
+    export interface ProjectFieldOptionWrite {
+      readonly id?: string;
+      readonly name: string;
+      readonly color: ProjectFieldOptionColor;
+      readonly description: string;
+    }
+
+    export type ProjectFieldWrite =
+      | {
+          readonly kind: "create";
+          readonly projectNodeId: string;
+          readonly name: string;
+          readonly type: "text" | "number" | "date" | "single-select";
+          /** Required for `single-select`, absent otherwise. */
+          readonly options?: readonly ProjectFieldOptionWrite[];
+        }
+      | {
+          readonly kind: "update";
+          readonly projectNodeId: string;
+          readonly fieldNodeId: string;
+          readonly name?: string;
+          /** The field's whole option list, in order. */
+          readonly options?: readonly ProjectFieldOptionWrite[];
+        }
+      | { readonly kind: "delete"; readonly projectNodeId: string; readonly fieldNodeId: string };
+
+    export interface CardMove {
+      /** The invocation of the `github-card-move` invoke that asks for the move. */
+      readonly actorId: string;
+      readonly invokeId: string;
+      readonly entryId: string;
+      readonly projectNodeId: string;
+      readonly issueNodeId: string;
+      /** The name of a single-select field of the Project. */
+      readonly field: string;
+      /** The name of an option of that field. */
+      readonly option: string;
+    }
+
+    export class GitHubWriteError extends Error {
+      readonly kind:
+        | "field-missing"
+        | "option-missing"
+        | "item-missing"
+        | "forbidden"
+        | "transport"
+        | "rejected";
+      /** The HTTP status of the failed request, when there was one. */
+      readonly status: number | undefined;
+    }
+
+    export interface WebhookDelivery {
+      /** Header names in any case. */
+      readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
+      readonly body: Uint8Array;
+    }
+
+    export type DeliveryOutcome =
+      | { readonly status: "accepted"; readonly deliveryId: string; readonly duplicate: boolean }
+      | { readonly status: "rejected"; readonly error: GitHubDeliveryError };
+
+    export class GitHubDeliveryError extends Error {
+      readonly kind: "malformed" | "unknown-hook" | "signature";
+      /** The `X-GitHub-Delivery` header, when present. */
+      readonly deliveryId: string | undefined;
+    }
+
+    export class GitHubSourceError extends Error {
+      readonly kind: "api" | "unconfigured-owner" | "unresolved-project" | "secret-file" | "pull";
+      /** The HTTP status of a failed API request, when there was one. */
+      readonly status: number | undefined;
+    }
+
+    export interface GitHubIssue {
+      /** The issue's title and web URL as last read; absent until a read writes them. */
+      readonly title?: string;
+      readonly url?: string;
+      readonly nodeId: string;
+      readonly repository: string;
+      readonly number: number;
+      readonly state: "open" | "closed";
+      readonly stateReason: "completed" | "not_planned" | "duplicate" | "reopened" | null;
+    }
+
+    export interface GitHubProject {
+      readonly nodeId: string;
+      readonly owner: string;
+      readonly number: number;
+    }
+
+    export interface TrackedIssue {
+      readonly issue: GitHubIssue;
+      readonly blockedBy: readonly GitHubIssue[];
+      readonly blocking: readonly GitHubIssue[];
+      readonly subIssues: readonly GitHubIssue[];
+      readonly parent: GitHubIssue | undefined;
+      readonly projects: readonly GitHubProject[];
+      /** The issue's present items on bound Projects, in the order of `projects`. */
+      readonly items: readonly TrackedItem[];
+    }
+
+    export interface TrackedItem {
+      readonly project: GitHubProject;
+      readonly nodeId: string;
+      readonly archived: boolean;
+      /** The item's field values in the mirror, keyed by field name. */
+      readonly fields: Readonly<Record<string, GitHubFieldValue>>;
+    }
+
+    /** The tracked issues of one mirror read, keyed by node id, in code point order of node id. */
+    export interface TrackedIssueIndex extends ReadonlyMap<string, TrackedIssue> {}
+
+    /** A field value of `github-events`, or null. */
+    export type GitHubFieldValue =
+      | { readonly kind: "text"; readonly text: string }
+      | { readonly kind: "number"; readonly number: number }
+      | { readonly kind: "date"; readonly date: string }
+      | { readonly kind: "single-select"; readonly optionId: string; readonly name: string }
+      | {
+          readonly kind: "iteration";
+          readonly iterationId: string;
+          readonly title: string;
+          readonly startDate: string;
+          readonly duration: number;
+        }
+      | null;
+    ```
+  additional-storage-interface: |-
+    The source's public interface gains these members for task fields
+    stored outside a Project, beside those above, exported from
+    `index.ts`.
+
+    ```ts
+    import type { StorageScope, TaskFieldStorage, TaskFieldValue } from "@wyrd-company/manifold-shared";
+
+    export interface GitHubSourceOptions {
+      /** The task field values of a tracked issue on a Project, by the declaration in force; undefined when none is declared. */
+      readonly taskFieldValues: (
+        projectNodeId: string,
+        issue: TrackedIssue,
+      ) => Readonly<Record<string, TaskFieldValueWithStorage>> | undefined;
+      /** The shared scopes the declaration in force reaches, read at each sweep. */
+      readonly scopes: () => readonly StorageScope[];
+      /** Called after each task field write returns from GitHub, before its promise resolves. */
+      readonly probeTaskFieldWrite?: (write: TaskFieldWrite) => void;
+    }
+
+    export interface TaskFieldValueWithStorage {
+      readonly storage: TaskFieldStorage["kind"];
+      readonly value: TaskFieldValue;
+    }
+
+    export interface GitHubSource {
+      /** The mirror's configuration of a shared scope, or undefined before the source has read it. */
+      scopeConfiguration(scope: StorageScope): ScopeConfiguration | undefined;
+      /** Reads a shared scope's configuration into the mirror, after the work in hand. */
+      observeScope(scope: StorageScope, signal?: AbortSignal): Promise<ScopeConfiguration>;
+      /** Makes one change to a shared scope; resolves with the entity as GitHub answers it, undefined for a delete. */
+      writeScopeEntity(write: ScopeEntityWrite, signal?: AbortSignal): Promise<ScopeEntity | undefined>;
+      /** Sets or clears one task field value of an issue; resolves once GitHub holds it. */
+      writeTaskField(write: TaskFieldWrite, signal?: AbortSignal): Promise<void>;
+    }
+
+    export interface TrackedIssue {
+      /** The issue's labels, milestone, issue type, issue field values, and body as last read; absent until a read writes them. */
+      readonly content: IssueContent | undefined;
+    }
+
+    export interface IssueContent {
+      /** In GitHub's order. */
+      readonly labels: readonly { readonly nodeId: string; readonly name: string }[];
+      readonly milestone: { readonly nodeId: string; readonly number: number; readonly title: string } | null;
+      readonly issueType: { readonly nodeId: string; readonly name: string } | null;
+      /** Every issue field value the issue holds, in GitHub's order; a multi-select value is left out. */
+      readonly issueFields: readonly {
+        readonly fieldNodeId: string;
+        readonly name: string;
+        readonly value: Exclude<GitHubFieldValue, null | { readonly kind: "iteration" }>;
+      }[];
+      /** The body as GitHub holds it, the empty string for none. */
+      readonly body: string;
+      /** When GitHub last recorded an edit of the body, in epoch milliseconds, or null. */
+      readonly lastEditedAt: number | null;
+    }
+
+    export type ScopeConfiguration =
+      | {
+          readonly scope: StorageScope;
+          readonly status: "ready";
+          readonly readAt: number;
+          /** For an organization scope; empty for a repository. */
+          readonly issueFields: readonly IssueFieldConfiguration[];
+          readonly issueTypes: readonly IssueTypeConfiguration[];
+          /** For a repository scope; empty for an organization. */
+          readonly labels: readonly LabelConfiguration[];
+          readonly milestones: readonly MilestoneConfiguration[];
+        }
+      | {
+          readonly scope: StorageScope;
+          readonly status: "unsupported" | "forbidden" | "unconfigured" | "missing";
+          readonly readAt: number;
+          readonly message: string;
+        };
+
+    export interface IssueFieldConfiguration {
+      readonly nodeId: string;
+      readonly name: string;
+      readonly type: "text" | "number" | "date" | "single-select" | "multi-select";
+      /** A single-select field's options in GitHub's order; empty for another type. */
+      readonly options: readonly ProjectFieldOption[];
+    }
+
+    export interface IssueTypeConfiguration {
+      readonly nodeId: string;
+      readonly name: string;
+      readonly color: ProjectFieldOptionColor | null;
+      readonly description: string;
+      readonly enabled: boolean;
+    }
+
+    export interface LabelConfiguration {
+      readonly nodeId: string;
+      readonly name: string;
+      /** Six lower-case hexadecimal digits. */
+      readonly color: string;
+      readonly description: string;
+    }
+
+    export interface MilestoneConfiguration {
+      readonly nodeId: string;
+      readonly number: number;
+      readonly title: string;
+      readonly description: string;
+      readonly state: "open" | "closed";
+    }
+
+    export type ScopeEntity =
+      | IssueFieldConfiguration
+      | IssueTypeConfiguration
+      | LabelConfiguration
+      | MilestoneConfiguration;
+
+    export type ScopeEntityWrite =
+      | { readonly kind: "issue-field-create"; readonly organization: string; readonly name: string; readonly type: "text" | "number" | "date" | "single-select"; readonly options?: readonly ProjectFieldOptionWrite[] }
+      | { readonly kind: "issue-field-update"; readonly organization: string; readonly nodeId: string; readonly name?: string; readonly options?: readonly ProjectFieldOptionWrite[] }
+      | { readonly kind: "issue-field-delete"; readonly organization: string; readonly nodeId: string }
+      | { readonly kind: "issue-type-create"; readonly organization: string; readonly name: string; readonly color: ProjectFieldOptionColor; readonly description: string }
+      | { readonly kind: "issue-type-update"; readonly organization: string; readonly nodeId: string; readonly name?: string; readonly color?: ProjectFieldOptionColor; readonly description?: string; readonly enabled?: true }
+      | { readonly kind: "label-create"; readonly repository: string; readonly name: string; readonly color: string; readonly description: string }
+      | { readonly kind: "label-update"; readonly repository: string; readonly nodeId: string; readonly name?: string; readonly color?: string; readonly description?: string }
+      | { readonly kind: "label-delete"; readonly repository: string; readonly nodeId: string }
+      | { readonly kind: "milestone-create"; readonly repository: string; readonly title: string; readonly description: string }
+      | { readonly kind: "milestone-update"; readonly repository: string; readonly number: number; readonly title?: string; readonly description?: string };
+
+    export interface TaskFieldWrite {
+      /** The invocation of the `github-task-field-set` invoke that asks for the write. */
+      readonly actorId: string;
+      readonly invokeId: string;
+      readonly entryId: string;
+      readonly issueNodeId: string;
+      readonly projectNodeId: string;
+      /** The task field's name, for attribution and errors. */
+      readonly field: string;
+      readonly storage: TaskFieldStorage;
+      /** For a `label` field, the label name of each option; empty otherwise. */
+      readonly labels: readonly string[];
+      /** For a `label` or `milestone` field, the repositories of the binding's scope; empty otherwise. */
+      readonly repositories: readonly string[];
+      /** A string, a finite number, or null to clear; an option's name for a single-select field. */
+      readonly value: string | number | null;
+    }
+    ```
+
+    `GitHubWriteError["kind"]` gains `missing`, a field, option, issue
+    type, label, or milestone GitHub does not hold; `out-of-scope`;
+    `unavailable`, a scope whose status is not `ready`;
+    `front-matter-invalid`; and `body-conflict`. The `issue` of a
+    `TrackedIssue` and every `GitHubIssue` keep their shapes, and
+    `trackedIssueIndex()` builds `content` from the same one read of the
+    mirror as every other member, so a pass's snapshot holds each issue's
+    content as the mirror held it at that read.
+  issue-content: >-
+    The `GitHubIssues` query reads, for each tracked issue it reads,
+    `body`, `lastEditedAt`, `labels(first: 100)` with each label's id and
+    name, `milestone` with its id, number, and title, `issueType` with its
+    id and name, and `issueFieldValues(first: 50)` with each value's field
+    id, name, and data type, every page of each connection read to its
+    end. A neighbor issue read only as a reference, through
+    `GitHubIssueRef`, reads no content. The comparison writes the content
+    to the issue's `github_issue` row, its `github_issue_label` rows, and
+    its `github_issue_field_value` rows, in the github source's one schema
+    step with its `github-source-database-schema` specification and SQL.
+    A content difference is no `github.*` event of its own: the
+    reconcile computes `taskFieldValues` for the issue on each bound
+    Project that holds it, from the mirror before its writes and after
+    them, inside its transaction, and publishes one
+    `github.task-field.changed` for each task field whose value differs,
+    as `github-events` defines, raising the issue row's
+    `content_revision` by one for the event ids. An item comparison does
+    the same for a change of a field value that a task field stored as a
+    Project field reads. A first read of an issue's content, before which
+    `content` is absent, publishes no change. An `issues` delivery with
+    action `edited`, `labeled`, `unlabeled`, `milestoned`, `demilestoned`,
+    `typed`, `untyped`, `field_added`, or `field_removed` makes its issue a
+    pending `issue`, as every `issues` delivery does, and the sweep reads
+    every tracked issue's content, so the source needs no other webhook
+    event.
+  scope-configuration: >-
+    A scope observation reads one shared scope with the credential of its
+    owner, every page, and in one transaction writes its `github_scope`
+    row: the scope's key, status, message, configuration as JSON, and
+    `read_at`. An organization reads `organization(login) { issueFields
+    issueTypes }` with each field's id, name, data type, and options, and
+    each type's id, name, color, description, and `isEnabled`; a
+    repository reads `repository(owner, name) { labels milestones }`, with
+    each label's id, name, color, and description and each milestone's
+    id, number, title, description, and state, open and closed both. The
+    status is `ready` for a complete read; `unconfigured` when `owners`
+    names no credential for the owner; `forbidden` for a `401`, a `403`, or
+    a `FORBIDDEN` error; `unsupported` for an organization login that
+    resolves to a user account and for a schema that lacks
+    `issueFields` or `issueTypes`, as a GitHub Enterprise Server without
+    them answers; and `missing` for a login or repository that does not
+    resolve. A transport failure or a timeout leaves the row as it was
+    and rejects a queued observation with `transport`. Each sweep observes
+    each scope `scopes()` gives, after the bound Projects, so drift a
+    person makes in a scope shows within one sweep interval, since GitHub
+    sends no webhook for an organization's issue fields and issue types
+    and the source subscribes to no `label` or `milestone` event.
+    `observeScope` queues an observation as a field job, and
+    `scopeConfiguration` reads the row synchronously.
+  scope-writes: >-
+    `writeScopeEntity(write, signal)` queues a field job and runs it as
+    one request under `requestTimeoutMs`, with the credential of the
+    scope's owner, as a field write runs: `createIssueField`,
+    `updateIssueField`, `deleteIssueField`, `createIssueType`, and
+    `updateIssueType` for an organization, with each option's id sent to
+    keep it, since GitHub replaces an issue field's option list and
+    recreates an option sent without its id; and `createLabel`,
+    `updateLabel`, `deleteLabel`, `POST .../milestones`, and `PATCH
+    .../milestones/{number}` for a repository, the label renamed in place
+    so every issue keeps it. An issue field option is sent with its
+    declared position as its priority and `gray` when its color is not
+    owned and GitHub holds none. The answer is written to the scope's
+    `github_scope` row in one transaction before the promise resolves, and
+    the source adds no retry: a failure rejects with a `GitHubWriteError`
+    classified as a field write's, with `missing` for a `NOT_FOUND` at the
+    entity. A write whose outcome is unknown leaves GitHub's state to the
+    next observation, which the Apply makes before it plans again.
+  task-field-writes: >-
+    `writeTaskField(write, signal)` queues the write as a card move is queued, and the runner runs it in these steps. (1) Scope: a `label` or
+    `milestone` write whose issue's repository is not in `repositories`,
+    and an `issue-field` or `issue-type` write whose issue's repository
+    another owner owns, fail `out-of-scope`; a scope whose row is not
+    `ready` fails `unavailable`; neither sends a request. (2) Resolve:
+    the Project field and option, the issue field and option, the issue
+    type, the label, or the milestone, by name as the storage kind
+    compares names, from a read of the Project field, the organization, or
+    the issue's repository made now; none is `missing`, and an item the
+    issue does not have is `item-missing`. (3) In one transaction the
+    write's `github_task_field_write` row is written, as a card move's row
+    is: state `sent`, keyed by the invocation, the issue, and the task
+    field, with the resolved ids and the value, only when the invocation
+    has no row for the same resolved ids; a front matter write's row also
+    holds its check state, as front-matter-writes states. (4) Write: a Project field
+    with `updateProjectV2ItemFieldValue`, or `clearProjectV2ItemFieldValue`
+    for `null`; an issue field with `setIssueFieldValue`, or
+    `deleteIssueFieldValue` for `null`, a `NOT_FOUND` for a value the
+    issue does not hold being success; an issue type with
+    `updateIssueIssueType`; a label with `addLabelsToLabelable` for the
+    option's label, then `removeLabelsFromLabelable` for each of the
+    field's other labels the issue holds, or only the removal for `null`;
+    a milestone with `updateIssue` and its `milestoneId`; and front matter
+    as front-matter-writes states. (5) When it returns, the issue becomes
+    a pending `issue`, the row is `confirmed`, `probeTaskFieldWrite` is
+    called, and the promise resolves. Failures are classified as a card
+    move's. `setBy` on `github.task-field.changed` follows the card move
+    rows' rules under attribution, with the rows of the issue and task
+    field in place of an item's and field's, and the value in place of the
+    option. A write of the value the issue already holds sends nothing
+    after step 2 for a front matter field and the same request otherwise,
+    which leaves GitHub as it was.
+  front-matter-writes: >-
+    GitHub has no conditional write of an issue body: `PATCH` and
+    `updateIssue` take no version, so the source guards a body write with
+    a read before, a recorded basis, and a check after, and a crash at any
+    point leaves a check still to run. The write's `github_task_field_write`
+    row holds, for a front matter write, `attempt`, the number of the
+    latest body write it sent, 1 for the write and 2 for its one repair;
+    `basis_edited_at`, the time of the newest edit GitHub held when that
+    attempt was computed, with the body read at that basis in `basis_body`;
+    for an issue with no edit its creation time is the basis, since GitHub
+    includes creation in its edit history. An edit with a different body
+    at the basis, or two later edits with the same timestamp, fail
+    `body-conflict`: GitHub's timestamps have one-second precision and do
+    not order these edits. The attempt's own edit must be newer; and `check`,
+    one of `none`, `pending`, `passed`, or `conflict`, with the
+    conflicting edit's time for `conflict`. (0) When the invocation's row
+    holds `check` `pending`, or `none` after an attempted write, the source runs step (d) first, against the
+    row's `basis_edited_at`, before anything else; a row whose `check` is
+    `conflict` fails `body-conflict` again with no request, so a replay
+    reports the same failure. (a) It reads the issue's `body` and
+    `lastEditedAt` now. (b) It computes the new body with `setFrontMatter`
+    on that body; an `invalid` block fails `front-matter-invalid`, and a
+    body that already holds the value resolves with no write, which step
+    (0) makes safe, since a write of this invocation that reached GitHub
+    has had its check run first. (c) In one transaction it sets the row's
+    `attempt`, its `basis_edited_at` to the attempt's basis, the
+    `lastEditedAt` (a) read for the first write, and `check` to `pending`,
+    and then writes the body with `updateIssue`. (d) It reads the issue's
+    `userContentEdits` newer than the row's `basis_edited_at`, oldest
+    first, up to the 100 GitHub keeps. Since each attempt has its own
+    basis, the write's edit is at or before the repair's basis, and the
+    first edit by the App's account among them is the latest attempt's.
+    No such edit leaves the outcome unknown: `check` becomes
+    `none` and the attempt runs again from (a), or for a repair from the
+    replaced edit's text again. GitHub can expose the new body before its
+    edit history; when (a) already holds the attempted body, `check` stays
+    `pending` and the invocation fails `transport` without another write,
+    so its replay checks the history again before taking the equal-value
+    shortcut. With the attempt's edit the newest and no edit by
+    another account before it, `check` becomes `passed`. A write repairs
+    at most once. When the check of attempt 1 finds an edit by another
+    account before the write's edit, the write replaced it; when the
+    write's edit is also the newest edit, the source repairs once: it
+    takes the replaced edit's text from its `diff`, sets the key on it
+    with `setFrontMatter`, and writes it from (c) as attempt 2, whose
+    basis is the time of the write's edit, so the repair's check finds
+    the repair's edit and never the write's, and the person's text stays
+    with the key set. Every other outcome writes nothing more and makes
+    `check` `conflict` with the time of the other account's edit: attempt
+    1's check finding the replaced text unavailable or an edit newer than
+    the write's, and attempt 2's check finding any edit by another
+    account newer than its basis, before or after the repair's edit, or
+    the repair's edit not the newest. Then the write fails `body-conflict`, and the body keeps what GitHub holds,
+    so a person's edit made after Manifold's stays in the body, a replaced
+    text stays in GitHub's edit history, and the failure names it.
+    Each change of `check` commits before the next request, so a crash
+    after the body write and before its check leaves `pending`, and the
+    restored invoke's step (0) runs the check before the equal-value
+    shortcut of step (b) can resolve. The window between (a) and (c) is
+    one request in the serial runner, so a person's edit lands in it
+    rarely, and is never dropped without the check finding it.
+  scope-permissions: >-
+    Task fields outside a Project use these permissions of the App's
+    installation on each owner, beside those under permissions:
+    organization `Issue Fields: read and write`, to read an organization's
+    issue fields and to create, update, and delete them; organization
+    `Issue Types: read and write`, to read and to create and update its
+    issue types; and repository `Issues: read and write`, to read each
+    issue's labels, milestone, issue type, issue field values, and body,
+    to read and write a repository's labels and milestones, and to set an
+    issue's labels, milestone, issue type, issue field values, and body.
+    With them the source writes to issues and repositories: a task field
+    value, and a label or milestone an Apply plans. It still needs no
+    `Contents` permission and subscribes to no webhook event beyond those
+    under webhooks.
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `verify.ts`
+    holds the pure checks of a delivery's headers, signature, and body.
+    `receive.ts` implements `receive` and `requestListener`. `reconcile.ts`
+    holds the pure functions from a mirror view and an observed state to the
+    mirror writes and the events to publish. `events.ts` holds the pure
+    functions that build each event's topics and event id. `fields.ts`
+    holds the pure functions from a Project's observed fields and its
+    mirror rows to the rows to write, and from a field write to its
+    mutation's variables. `mirror.ts`
+    holds every SQL read and write of the source's tables, the card move
+    rows included. `attribution.ts` holds the pure function from a field
+    change and the card move rows of its item and field to its `movedBy`
+    and the rows to delete. `github-api.ts` holds the GraphQL queries, the
+    card move mutation, and the REST calls, and nothing else talks to
+    GitHub. `runner.ts` holds the serial runner, the card move queue, the
+    sweep, the redelivery scan, and the timers. `migrations.ts` holds the migration steps.
+    `test-fixtures/` holds the synthetic delivery payloads. Tests live beside the
+    module and import only `index.ts`, the router's and the store's
+    `index.ts`, and the service configuration's `index.ts`.
+  library: >-
+    GraphQL requests go through `@octokit/graphql`, and REST requests
+    through `@octokit/request`, which service configuration adds for the
+    `github-app` credential. Both are Octokit, GitHub's own maintained
+    JavaScript client family. `@octokit/graphql` derives the GraphQL URL of
+    GitHub Enterprise Server from the REST base URL and raises a
+    `GraphqlResponseError` that carries the partial data and each error's
+    path, which the source reads to tell a missing node from a failed
+    request. Signatures are HMAC-SHA256 from `node:crypto` compared with
+    `timingSafeEqual`, a few lines that need no dependency. Delivery bodies
+    and published events are validated with Ajv against
+    `github-events.schema.yml`, embedded as a constant in `packages/shared`
+    as the other specification schemas are.
+  configuration: >-
+    The `github` section is specified by `github-source-configuration`.
+    `GitHubConfiguration` is its type, exported here as the comparator
+    sandbox exports its section's type, and service configuration's loader
+    adds the section to `ServiceConfiguration` as `github`. Each owner's
+    `credential` resolves through `credentials.resolve` to a `github-app`
+    credential, whose `installationToken({ signal })` gives the token for
+    every request about that owner's entities. The token goes to Octokit
+    through `reveal()` and nowhere else.
+  permissions: >-
+    The installation token of each owner's `github-app` credential carries
+    the App's permissions on that account. The source uses these, and no
+    other: repository `Metadata: read`, which every App holds, for each
+    issue's `repository { nameWithOwner }`; repository `Issues: read`, for
+    each issue's state, `blockedBy`, `blocking`, `subIssues`, and `parent`;
+    repository `Pull requests: read`, so that a pull request item on a
+    Project shows its content node id instead of `REDACTED`; organization
+    `Projects: read and write`, to resolve a Project by owner and number
+    and read its `closed`, items, fields, and field values (read), and to
+    set an item's single-select field value for a card move and to create,
+    update, and delete a bound Project's custom fields for a field write
+    (write);
+    organization `Webhooks: read and
+    write`, on an account with an organization hook, to list the hook's
+    deliveries (read) and ask for a redelivery (write); and repository
+    `Webhooks: read and write`, on a repository with a repository hook, for
+    the same. The source writes nothing to GitHub but an item's
+    single-select field value for a card move, a bound Project's custom
+    fields for a field write, the redelivery requests, and the scope and
+    task field writes that scope-permissions names with the permissions
+    they use. It needs no `Contents` permission: a push reaches a hook
+    without it, the process repository's own `contents: read` token fetches
+    the pushed commit, and the source never links a repository to a
+    Project.
+  webhooks: >-
+    Each configured hook delivers `application/json` with a secret and
+    SSL verification on. An organization hook subscribes to `issues`,
+    `issue_dependencies`, `sub_issues`, `projects_v2_item`, `projects_v2`,
+    and `push`; it reaches every repository of the organization, and GitHub
+    sends Project events to organization hooks only. A repository hook
+    subscribes to `issues`, `issue_dependencies`, `sub_issues`, and `push`,
+    and serves a repository whose account has no organization hook, such as
+    a repository a user account owns. Both kinds may be configured for one
+    repository; the second delivery of each GUID is a duplicate. A Project
+    a user account owns has no Project deliveries, and the sweep alone
+    reads it. An account owner creates each hook in GitHub and copies its
+    id and secret into service configuration.
+  receive: >-
+    `receive(delivery)` runs synchronously. It verifies the delivery as
+    `github-events` defines, reading the hook's `secretFile` with
+    `readFileSync` at each call so a replaced secret applies at once. A
+    failed check returns `rejected` with a `GitHubDeliveryError` of that
+    kind, and writes and calls nothing. An unreadable secret file throws a
+    `GitHubSourceError` of kind `secret-file`. A verified delivery opens
+    one `store.connection.transaction`, inserts its `github_delivery` row,
+    and, when the GUID was already there, returns `accepted` with
+    `duplicate` true and writes nothing more. Otherwise it records the
+    pending reconciles the delivery names and commits. After the commit it
+    calls the process repository's `pull` for a matching push, sends a
+    rejection of that promise to `onError` as kind `pull`, and wakes the
+    runner. It returns `accepted` with `duplicate` false.
+  pending: >-
+    An issue a delivery names becomes a pending `issue` when it is tracked.
+    When it is not, each tracked issue the mirror shows beside it, through a
+    present dependency or sub-issue row in either direction, becomes a
+    pending `issue` instead, so a blocker outside every bound Project still
+    reaches the issues it blocks. An item becomes a pending `item`, with its Project node id stored on the pending row, and a
+    Project a pending `project` only when the Project is bound. A new
+    pending row has generation 1 and `requested_at` now. Recording a pending
+    row that exists raises its generation by one and keeps its
+    `requested_at`, so a request made during a read of the entity is told
+    apart from the request the read serves, within one clock tick too.
+  bound-projects: >-
+    The runner keeps the bound Projects as a map from Project node id to
+    Project reference, rebuilt at the start of each sweep from
+    `boundProjects()`. A reference whose owner and number match a
+    `github_project` row, without regard to the owner's case, takes that
+    row's node id. Any other is resolved with the `GitHubProjectByNumber`
+    query, and its row is written with the Project's `closed` as its
+    baseline and revision 0. An owner that `owners` does not name is an
+    `unconfigured-owner` error, and a Project the query does not find is
+    `unresolved-project`; each is sent to `onError` and left out of the map
+    until a later sweep resolves it. A delivery about a Project outside the
+    map names nothing.
+  runner: >-
+    One runner does all of the source's GitHub work, one step at a time, so
+    no two requests to GitHub overlap and no two reconciles write at once.
+    It holds a queue of writes, card moves and field jobs, in the order
+    they were asked for, and three flags: a redelivery scan is due, a sweep
+    is due, and pending rows exist. A field job is a field observation or a
+    field write. On waking it runs every queued write first, then a due
+    scan, then a due sweep, then the pending reconciles, and sleeps when
+    the queue is empty and all three flags are clear. The runner's mirror work is a series of observations.
+    An observation is every request whose answers one transaction applies:
+    a batch of pending issues or items, or one page of a Project's items,
+    with every later page of each connection it reads and every content
+    issue an item addition in it reads, from its first request to the
+    commit or the abandonment of its transaction. The runner takes queued
+    writes again after each observation and before each request of a
+    redelivery scan, and never inside an observation, so a move or a field
+    job waits at most for the observation in hand. No observation holds an answer read
+    before a move's write and an answer read after it, and every
+    observation that starts after a move's write returns starts after
+    GitHub took the write.
+    `startGitHubSource` sets the scan and the sweep due and wakes it. After
+    each scan it arms one timer for `redeliveryIntervalMs`, and after each
+    sweep one for `sweepIntervalMs`, through the clock; a timer sets its
+    flag and wakes the runner. `receive` and `requestSweep` wake it too.
+    The intervals run from the end of the work, so a slow sweep never
+    overlaps the next.
+  reconcile-pending: >-
+    The runner takes pending rows oldest `requested_at` first. Issues are
+    read up to 50 at a time with the `GitHubIssues` query, grouped by the
+    credential that reads them; items up to 50 at a time with `GitHubItems`;
+    and a Project alone, as the sweep reconciles it. Before each read it
+    notes each row's generation. After the read it opens one transaction
+    that applies each entity's comparison in turn, publishes each resulting
+    event with `router.publish` inside the transaction, and deletes each
+    pending row whose generation still equals the noted one. A row whose
+    generation rose during the read stays pending and is read again. A failed request,
+    a request that runs past `requestTimeoutMs`, or a rate limit answer
+    stops the runner's pending work for this wake, leaves every unread row
+    pending, and sends a `GitHubSourceError` of kind `api` with the status
+    to `onError`; the next timer wakes it to try again. The source adds no
+    retry or backoff of its own. A failed reconcile preserves a due scan or
+    sweep wake, so a timer that fired during the read still runs and re-arms;
+    pending work alone is not retried immediately. A `publish` that returns `rejected` is a
+    defect in the source and throws, which rolls the transaction back.
+  card-moves: >-
+    `moveCard(move, signal)` queues the move, wakes the runner, and returns
+    a promise the runner settles. A `signal` that aborts while the move is
+    queued removes it from the queue and rejects with the signal's reason;
+    one that aborts while its request is in flight aborts the request, and
+    the move's fate is GitHub's. `moveCard` after `stop` throws a
+    `TypeError`. The runner runs one move in these steps. (1) The item: the
+    present item on the Project whose content is the issue, read from the
+    mirror; none is `item-missing`. (2) The field: the `GitHubProjectField`
+    query with the Project's node id and the field name, with the
+    credential of the Project's owner. No field of that name, a field that
+    is not single-select, and a Project the query does not find are
+    `field-missing`; the option is the field's option whose name equals the
+    move's option exactly, and none is `option-missing`. (3) In one
+    transaction, the move's `github_card_move` row is written, as
+    `github-source-database-schema` states. (4) The `GitHubCardMove`
+    mutation sets the item's field to the option. (5) When it returns, the
+    item becomes a pending `item`, in one transaction, so the runner reads
+    it next, calls `probeMove`, and resolves the move. The promise
+    therefore resolves only once GitHub has taken the write and answered
+    for it. Each request runs under `requestTimeoutMs`, as every request of
+    the source does, and the source adds no retry of a write: a failure
+    rejects the move with a `GitHubWriteError`. A `NOT_FOUND` error at the
+    item is `item-missing`; a `FORBIDDEN` error, a `401` or `403` answer,
+    and an owner that `owners` does not name are `forbidden`; a request
+    that fails before GitHub answers, runs past `requestTimeoutMs`, or is
+    answered with a `5xx` or a rate limit is `transport`; any other GraphQL
+    error is `rejected`, with GitHub's message. Step 3 writes the row with state `sent` only when the
+    invocation has no row for the field and option step 2 resolved; a
+    repeated move of one invocation that resolves the same ids, such as
+    the invoke a restored actor runs again, keeps the row it finds with its
+    state and `sequence`, since that row may be evidence of an earlier
+    write GitHub took. A repeated move that resolves other ids, because a
+    person or an Apply deleted and recreated the field or the option
+    between the first attempt and the repeat, writes a row of its own with
+    state `sent` and the next `sequence`. The earlier row stays, with its
+    own ids, as the evidence of the earlier write: a value GitHub still
+    shows under those ids is attributed by it, and the repeat's value under
+    the new ids by the repeat's row. Step 5 sets the row
+    `confirmed`, since a mutation that returns its item is GitHub's
+    evidence that it took the write. A mutation that GitHub refuses deletes
+    the row in its own transaction only when this attempt wrote it in step
+    3; a refusal proves only that the repeated request set nothing, so a
+    row an earlier attempt wrote keeps its state. A `transport` failure,
+    and a crash between steps 3 and 5, leave the row as it is: GitHub may
+    have taken the write or not. A move's failure is not sent to `onError`: its caller takes it.
+  project-fields: >-
+    A field observation reads one bound Project's fields with the
+    `GitHubProjectFields` query, every page, with the credential of the
+    Project's owner, and in one transaction writes the Project's
+    `github_project_field` rows, as `github-source-database-schema`
+    states, and its `fields_read_at`. It keeps every field whose data type
+    is `TEXT`, `NUMBER`, `DATE`, `SINGLE_SELECT`, `MULTI_SELECT`, or
+    `ITERATION` and whose `isIssueField` is false, in GitHub's order, with
+    a single-select field's options; it deletes the row of each field the
+    read did not show. It publishes no event: a field's configuration is
+    not a task's change, and an item value a field change clears or keeps
+    reaches the actors through the item comparison as any other value
+    does. A transaction that changes a row calls `onMirrorChanged`. A field
+    observation runs in three ways: first in each Project comparison, so a
+    sweep and a `projects_v2` delivery read the fields; as a queued field
+    job, for `observeProjectFields`; and as the end of each field write,
+    for the field the write answers. A failed read leaves the rows as they
+    were, and a queued observation rejects with a `GitHubWriteError`, of
+    kind `forbidden` or `transport` as a card move classifies its failure,
+    or `rejected` with GitHub's message. `projectFields(nodeId)` reads the
+    rows synchronously, and answers `undefined` for a Project whose fields
+    the mirror has never read.
+  field-writes: >-
+    `writeProjectField(write, signal)` queues a field job, wakes the
+    runner, and returns a promise the runner settles; a signal aborts it as
+    it aborts a card move. The runner runs it as one mutation,
+    `GitHubCreateProjectField`, `GitHubUpdateProjectField`, or
+    `GitHubDeleteProjectField`, with the credential of the Project's owner
+    and under `requestTimeoutMs`. An option with an `id` is sent with it,
+    so GitHub keeps the option and every item value that holds it; an
+    update's `options` is the field's whole option list, since GitHub
+    replaces the list with the one it is given. A created or updated
+    field's answer is written to its `github_project_field` row in one
+    transaction, and the promise resolves with it; a delete deletes the
+    row and resolves with `undefined`. It calls `probeFieldWrite` between
+    GitHub's answer and that transaction. The source adds no retry: a
+    failure rejects with a `GitHubWriteError`, classified as a card move's
+    is, with `field-missing` for a `NOT_FOUND` error at the field. A write
+    whose outcome is unknown, a `transport` failure or a crash, leaves
+    GitHub's state to the next observation, which the caller makes before
+    it plans again. The source writes nothing else about the write: the
+    caller decides each write from an observation, so a write repeated
+    after a crash is planned from what GitHub holds.
+  lifecycle-flag: >-
+    Each `github.project-item.field-changed` carries `lifecycle`, true when
+    the changed field's name as the observation read it equals
+    `lifecycleField(projectNodeId)` for the item's Project, read inside
+    the reconcile's transaction, and false otherwise, so a blueprint
+    guards on its Project's lifecycle field whatever that field is named.
+  attribution: >-
+    The card move rows decide `movedBy` on each
+    `github.project-item.field-changed` a reconcile publishes, inside the
+    reconcile's transaction, from the rows of the change's item and field.
+    A row's state is `sent`, a write whose fate is unknown; `confirmed`, a
+    write GitHub took; or `doubtful`, a write that a change no move made
+    has since followed in the mirror, so GitHub's value may be that change
+    or a later one. Take the row with the largest `sequence` whose option
+    is the new value. When it is `confirmed`, `movedBy` is `{ actorId,
+    confirmed: true }`. When it is `sent` or `doubtful`, `movedBy` is `{
+    actorId, confirmed: false }`: the actor attempted this value and the
+    source cannot show that its write, and not someone else's, set it.
+    Either way that row and every row of the item and field with a smaller
+    `sequence` are deleted, since GitHub applied those writes before the
+    value read. When no row's option is the new value, `movedBy` is `null`,
+    which is true whatever the timing, since no write Manifold recorded or
+    attempted set that value; every row of the item and field becomes
+    `doubtful`. A change of the item's other fields reads no row. Removing
+    an item deletes its rows. Because no observation spans a move's write,
+    every row an observation finds was written before the observation
+    began, so a read that lags shows a value from before the row or after
+    it, never a mix. A read that lags a move and shows the field's earlier
+    value finds no difference and publishes nothing, and the delivery's
+    read or the sweep that reads the move publishes it, attributed. A row
+    whose value never shows as a change, such as a move to the option the
+    card already held, stays until a later change deletes it or makes it
+    `doubtful`; a `doubtful` row is never claimed as confirmed. A `null`
+    `movedBy` is therefore never a Manifold write, and a `confirmed` one is
+    the actor's write, with one exception: a person who changes the field
+    away and back to the value a confirmed move set, both before the source
+    reads it, is reported as that move, since the mirror sees one change to
+    the value both chose. The cases the source cannot decide, a write whose
+    fate is unknown and a write a change no move made has followed, are
+    reported unconfirmed rather than as a person's or as Manifold's.
+  credentials-per-entity: >-
+    A Project, its fields, and its items are read, and a card move
+    and a field write written, with the credential of the Project's owner. A tracked issue is read with the credential of its repository's
+    owner when `owners` names that owner, and otherwise with the credential
+    of the owner of a bound Project that holds it.
+  queries: |-
+    Every query is named, so the test's GitHub fake answers by operation
+    name, and none filters by time.
+
+    ```graphql
+    query GitHubProjectByNumber($login: String!, $number: Int!) {
+      repositoryOwner(login: $login) {
+        ... on ProjectV2Owner {
+          projectV2(number: $number) { id number closed owner { ... on Organization { login } ... on User { login } } }
+        }
+      }
+    }
+
+    query GitHubProject($id: ID!, $after: String) {
+      node(id: $id) {
+        ... on ProjectV2 {
+          id number closed
+          items(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { ...GitHubItem } }
+        }
+      }
+    }
+
+    query GitHubItems($ids: [ID!]!) {
+      nodes(ids: $ids) { ...GitHubItem }
+    }
+
+    query GitHubIssues($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Issue {
+          ...GitHubIssueRef
+          parent { ...GitHubIssueRef }
+          blockedBy(first: 50) { pageInfo { hasNextPage endCursor } nodes { ...GitHubIssueRef } }
+          blocking(first: 50) { pageInfo { hasNextPage endCursor } nodes { ...GitHubIssueRef } }
+          subIssues(first: 50) { pageInfo { hasNextPage endCursor } nodes { ...GitHubIssueRef } }
+        }
+      }
+    }
+
+    fragment GitHubIssueRef on Issue {
+      id number state stateReason title url repository { nameWithOwner }
+    }
+
+    fragment GitHubItem on ProjectV2Item {
+      id type isArchived project { id }
+      content {
+        ... on Issue { ...GitHubIssueRef }
+        ... on PullRequest { id }
+        ... on DraftIssue { id }
+      }
+      fieldValues(first: 50) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          ... on ProjectV2ItemFieldTextValue { text field { ...GitHubField } }
+          ... on ProjectV2ItemFieldNumberValue { number field { ...GitHubField } }
+          ... on ProjectV2ItemFieldDateValue { date field { ...GitHubField } }
+          ... on ProjectV2ItemFieldSingleSelectValue { optionId name field { ...GitHubField } }
+          ... on ProjectV2ItemFieldIterationValue { iterationId title startDate duration field { ...GitHubField } }
+        }
+      }
+    }
+
+    fragment GitHubField on ProjectV2FieldConfiguration {
+      ... on ProjectV2FieldCommon { id name dataType }
+    }
+
+    query GitHubProjectFields($id: ID!, $after: String) {
+      node(id: $id) {
+        ... on ProjectV2 {
+          id
+          fields(first: 100, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes { ...GitHubFieldConfiguration }
+          }
+        }
+      }
+    }
+
+    fragment GitHubFieldConfiguration on ProjectV2FieldConfiguration {
+      ... on ProjectV2FieldCommon { id name dataType isIssueField }
+      ... on ProjectV2SingleSelectField { options { id name color description } }
+    }
+
+    mutation GitHubCreateProjectField(
+      $project: ID!, $type: ProjectV2CustomFieldType!, $name: String!,
+      $options: [ProjectV2SingleSelectFieldOptionInput!]
+    ) {
+      createProjectV2Field(
+        input: { projectId: $project, dataType: $type, name: $name, singleSelectOptions: $options }
+      ) {
+        projectV2Field { ...GitHubFieldConfiguration }
+      }
+    }
+
+    mutation GitHubUpdateProjectField(
+      $field: ID!, $name: String, $options: [ProjectV2SingleSelectFieldOptionInput!]
+    ) {
+      updateProjectV2Field(input: { fieldId: $field, name: $name, singleSelectOptions: $options }) {
+        projectV2Field { ...GitHubFieldConfiguration }
+      }
+    }
+
+    mutation GitHubDeleteProjectField($field: ID!) {
+      deleteProjectV2Field(input: { fieldId: $field }) {
+        projectV2Field { ... on ProjectV2FieldCommon { id } }
+      }
+    }
+
+    query GitHubProjectField($id: ID!, $name: String!) {
+      node(id: $id) {
+        ... on ProjectV2 {
+          field(name: $name) {
+            ... on ProjectV2SingleSelectField { id name options { id name } }
+          }
+        }
+      }
+    }
+
+    mutation GitHubCardMove($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+      updateProjectV2ItemFieldValue(
+        input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }
+      ) {
+        projectV2Item { id }
+      }
+    }
+    ```
+
+    A connection whose `pageInfo.hasNextPage` is true is read to its end
+    with a query on that one node's connection, `after` its `endCursor`,
+    before the comparison runs, so every comparison sees whole lists. A node
+    that `nodes(ids:)` answers with `null` and a `NOT_FOUND` error at its
+    path is absent; any other GraphQL error fails the request. An item of
+    type `REDACTED` is skipped. Field values whose field `dataType` is not
+    `TEXT`, `NUMBER`, `DATE`, `SINGLE_SELECT`, or `ITERATION` are skipped.
+    Enum values are lower-cased into the shapes `github-events` defines, and
+    a node id outside the node id pattern fails the request. Option colors
+    and field data types are lower-cased with `_` read as `-`, so
+    `SINGLE_SELECT` is `single-select`. An absent issue
+    is recorded with `present` 0, retains its pending row, and is skipped
+    for the remainder of that wake; other issues in its batch still
+    reconcile. A later wake reads it again. A complete read restores
+    `present` 1.
+  compare-issues: >-
+    The comparison of a tracked issue `T` takes its observed state and
+    lists, the mirror rows of `T`, of every issue in its lists, and of every
+    dependency and sub-issue row that names `T`, and the set of tracked
+    issues. (1) Each issue it observed, `T` and every issue in its lists,
+    is written to `github_issue`; one whose row existed with another state
+    is a state change. (2) Each dependency and sub-issue `T` takes part in
+    that the lists show and the mirror holds absent is an addition, and
+    each the mirror holds present that the lists do not show is a removal.
+    A relationship difference is a change when either of its endpoints is a
+    tracked issue that was baselined before this comparison; otherwise it
+    is written without a change. A shared relationship is therefore
+    published for the endpoint that already holds a baseline, whichever
+    endpoint is read first, and the later read finds the row as it
+    observes it. `T` is marked baselined at the end of its comparison. (3)
+    Each change raises its row's revision by one and becomes one event:
+    relationship changes first, in list order, then state changes, so a
+    close's `blocks` and `parent` already reflect the relationships read
+    with it. `blocks` and `parent` are read from the mirror after the
+    writes. A batch applies its issues in turn, each against the mirror the
+    previous left, so a neighbor two tracked issues share changes state
+    once.
+  compare-items: >-
+    The comparison of an item takes its observed node, or absence, and its
+    mirror rows. An item with no row, or with `present` 0, that is observed
+    is an addition: its row and field values are written, and it publishes
+    `github.project-item.added` with its field values and its content issue.
+    When the content is an issue that is not yet baselined, the runner reads
+    that issue with `GitHubIssues`, its lists read to their end, after the
+    item read and before the transaction, and the transaction applies the
+    issue's comparison right after the item addition. The added event and
+    the issue's baseline commit together, so no consumer takes
+    `github.project-item.added` before `trackedIssue` answers with the
+    issue's complete dependencies, sub-issues, and parent; a failed read of
+    the issue leaves the item pending with nothing written. After a
+    transaction that publishes one or more `github.project-item.added`
+    events whose content is an issue commits, the runner calls `onTracked`
+    once with those issues' node ids, so intake takes each issue in as soon
+    as `trackedIssue` answers for it. A throw from `onTracked` is sent to
+    `onError` and changes nothing the transaction wrote. A present item observed absent is
+    a removal. A change of `isArchived` is an archive or a restore. Each
+    field whose value differs from its row, a field with no value read as
+    `null`, is one `field-changed` event; a field with no row whose value is
+    not `null` is one too. Each `field-changed` takes its `movedBy` from the
+    card move rows, as described under attribution, and its `lifecycle`
+    as described under lifecycle-flag. Item changes publish before field
+    changes. A field's latest name is written without a change. A
+    single-select value whose `optionId` equals its row's, and an iteration
+    value whose `iterationId` equals its row's, is written without a change
+    whatever its other properties, since a renamed option or iteration has
+    not moved the card; the next change of the field carries the new name
+    in `from`.
+  compare-projects: >-
+    A Project's comparison first observes its fields, as project-fields
+    states, as one observation of its own, then reads its `closed` and
+    every page of its items. A change of `closed` is `github.project.closed` or
+    `github.project.reopened`. Each page's items compare as items, in one
+    transaction per page, after the content issues the page adds are read
+    as an item addition requires. After the last page, each item the mirror holds
+    present on the Project that no page showed becomes a pending `item`, so
+    its own read decides whether it was removed or is archived and outside
+    the list. Every tracked issue of the Project then becomes a pending
+    `issue`, and the Project's pending row is deleted under the same rule as
+    any other.
+  sweep: >-
+    A sweep rebuilds the bound Projects, makes each bound Project a pending
+    `project`, calls the process repository's `pull` with no commit and
+    sends a rejection to `onError` as kind `pull`, and runs the pending
+    reconciles. A sweep is therefore a full comparison of every bound
+    Project's items and every tracked issue's relationships against the
+    mirror, by list and never by an updated time, and it publishes any
+    change no delivery brought, including one made while the service was
+    down. `requestSweep()` sets the sweep due; the service calls it after a
+    pull advances the process repository, so a newly bound Project is read
+    without waiting for the interval.
+  redelivery: >-
+    A redelivery scan runs for each configured hook. A hook with no
+    `github_hook_scan` row gets one whose `scanned_through` is now, and is
+    scanned from the next scan on. Otherwise the scan lists the hook's
+    deliveries, `GET /orgs/{owner}/hooks/{id}/deliveries` for an
+    organization hook and `GET /repos/{owner}/{repository}/hooks/{id}/deliveries`
+    for a repository hook, 100 per page, newest first. It follows the Link
+    header's `next` cursor and stops when there is no next cursor or at the
+    first page that reaches a `delivered_at` earlier than
+    `scanned_through`. A cursor that repeats fails the scan as an API error.
+    A GUID is failed when none of its listed attempts
+    has a status code from 200 to 299, it has no `github_delivery` row, and
+    it has no `github_redelivery` row. For each failed GUID the scan calls
+    `POST .../deliveries/{attempt_id}/attempts` with its newest attempt and
+    then writes its `github_redelivery` row, so the source asks once per
+    GUID. When every page is read it sets `scanned_through` to the newest
+    `delivered_at` it read. A redelivered delivery arrives at `receive` with
+    its GUID as any delivery does. A delivery older than GitHub keeps is
+    recovered by the sweep alone. Retention removes delivery and
+    redelivery rows past their window that the hook's scan has passed, as
+    `retention` states.
+  retention: >-
+    The index exports `pruneDeliveries(connection, { receivedBefore,
+    limit })` and `pruneRedeliveries(connection, { requestedBefore, limit
+    })` for retention, as `retention` states. Each deletes, in one
+    statement, at most `limit` rows whose time is before the given cutoff
+    and before their hook's `scanned_through`, or whose hook has no
+    `github_hook_scan` row, and answers how many it deleted. A row at or
+    after its hook's cursor stays, so a scan never meets an attempt whose
+    GUID it has forgotten while GitHub can still list the attempt. The
+    deletes read no other module's table, make no GitHub call, and leave
+    the mirror and `github_pending` as they are; the mirror's revisions
+    name the events the source publishes, so a delivery GitHub sends again
+    after its row is gone publishes nothing a first delivery did not. The
+    index also exports `cardMoveActors(connection, { after, limit })`,
+    the distinct actor ids of `github_card_move` rows in id order after
+    `after`, and `pruneCardMoves(connection, actorIds)`, which deletes
+    every row of those actors in one statement and answers how many.
+    Retention passes only actors whose history is pruned, so a move that
+    an invocation repeats always finds its row; a change that shows a
+    pruned actor's value afterwards is published with `movedBy` `null`.
+  push: >-
+    A push that matches the process repository, as `github-events` defines,
+    calls `processRepository.pull({ commit: after })` once per GUID. The
+    process repository serializes pulls and returns `unchanged` for a
+    commit it already holds, and every sweep calls `pull()`, so a push
+    whose delivery never arrived is pulled at the next sweep.
+  request-listener: >-
+    `requestListener` answers `405` to any method but `POST`. It reads the
+    body up to 26214400 bytes, GitHub's payload limit of 25 MB, and answers
+    `413` and stops reading beyond it. It then calls `receive` and answers
+    `202` for a new delivery, `200` for a duplicate, `400` for `malformed`,
+    `404` for `unknown-hook`, and `401` for `signature`. A throw answers
+    `500` and is sent to `onError`. Every answer is sent after `receive`
+    returns, so a `2xx` answer means the delivery's GUID and pending rows are
+    committed. The service mounts the listener on its HTTP host at
+    `/webhooks/github`, as `service-assembly` states, so each hook's payload
+    URL reaches the service at that path.
+  tracked-issue: >-
+    `trackedIssue(nodeId)` reads the mirror: the issue, the present
+    dependencies in each direction, the present sub-issues and parent, and
+    the bound Projects with a present item for it. It returns `undefined`
+    for an issue that is not tracked, not yet baselined, or observed absent, so every answer
+    it gives holds the issue's complete relationship lists. Intake's record
+    checks and reconciles, and the gates' grant rounds, read the dependency
+    graph through `trackedIssueIndex`. `items` lists the issue's present item on each bound
+    Project, with its `archived` flag and every field value row the mirror
+    holds for it, keyed by the field's latest name, a row with no value as
+    `null`. The `title` and `url` of `issue`, and of each related issue,
+    are the issue's as the mirror last read them. Each read of an issue writes its title and URL to its
+    `github_issue` row without a change, as a field's latest name is
+    written, so a title edit publishes no event and the next reconcile or
+    sweep of the issue brings the mirror up to date. `trackedIssueIds()` reads the node id of every issue for which
+    `trackedIssue` answers. `trackedIssues()` answers every tracked issue
+    of the bound Projects at once: element `i` is `trackedIssue`'s answer
+    for element `i` of `trackedIssueIds()`, so a reader that wants every
+    tracked issue makes one call. `trackedIssueIndex()` answers the same
+    issues as a `TrackedIssueIndex`: a map from node id to `trackedIssue`'s
+    answer, whose keys are `trackedIssueIds()` in order, so a reader that
+    looks up many issues, or follows their relationships, makes one call
+    and reads every lookup from it. Each of `trackedIssue`,
+    `trackedIssueIds`, `trackedIssues`, and `trackedIssueIndex` reads the
+    mirror once per call: one call of the mirror's `read`, which is one
+    `SELECT` of each mirror table, against the bound Projects of that
+    moment, which hold for the whole answer. A pure function,
+    `trackedIssueIndex(state, bound)` in `mirror.ts`, groups that read's
+    present items, field values, dependencies, and sub-issues by the node
+    id they name in one pass over each table, and builds every answer from
+    the groups, so a call's work grows with the mirror's rows and not with
+    their square. It returns the `TrackedIssueIndex`, and the four members
+    answer from it. The mirror's own `trackedIssueIndex(bound)` reads once
+    and returns it, for a module that starts before the source and names
+    its bound Projects itself, as `gate-runtime` states. No member keeps a
+    result between calls, so each call sees the mirror as it is, and a
+    caller that holds an index holds it only for work that runs in one
+    synchronous run of the event loop, in which no reconcile can commit. A
+    member that a later change adds to `TrackedIssue` or `TrackedItem` is
+    built by the same function from the same read; a mirror table it needs
+    joins `read`, so every member still answers from one read.
+    `project(nodeId)` reads the mirror's Project
+    row of a node id, so the service maps an actor's Project to its
+    binding, and `projectByNumber(owner, number)` reads the row of a
+    binding's Project. They read the mirror synchronously, so a caller
+    that reads them and acts in the same turn of the event loop sees no
+    reconcile between. Intake reconciles against `trackedIssueIds`.
+    After each transaction that commits a change to a mirror row, whether or not
+    it publishes an event, the source calls `onMirrorChanged`. A transaction
+    that writes no mirror change, and a rolled-back one, call nothing.
+  stop: >-
+    `stop()` clears both timers, aborts the request in flight, and resolves
+    when the runner has returned; the aborted work stays pending. A queued
+    card move, and one whose request it aborts, is left unsettled, so its
+    actor saves no outcome for it and the invoke the restored actor runs
+    sends it again. A queued field job, and one whose
+    request it aborts, rejects with a `GitHubWriteError` of kind
+    `transport`. `receive`, `observeProjectFields`, and
+    `writeProjectField` after `stop` throw a `TypeError`, and `stop` twice does nothing more.
+  convergence: >-
+    `receive` twice with one GUID writes one `github_delivery` row and one
+    set of pending rows, and calls `pull` once. A crash before its commit
+    leaves nothing and GitHub sees no `2xx`, so the redelivery scan asks for
+    it again. A crash after the commit and before the answer leaves the GUID
+    accepted; the redelivery is a duplicate and the pending rows do the
+    work. A reconcile twice against the same GitHub state publishes the
+    first time and finds no difference the second, since its mirror writes
+    and its events commit in one transaction. A crash during a read or
+    before that commit leaves the pending row, and the next wake reads
+    again. A redelivery request that GitHub took before a crash, with no
+    `github_redelivery` row yet, is asked again once, and the second
+    arrival is a duplicate. A sweep twice publishes nothing the second time
+    that the first published. A card move twice for one invocation writes
+    one row and sets one option twice, which leaves GitHub holding one value
+    and the mirror publishing one change. A crash before the row commits
+    leaves nothing, and the restored actor's invoke sends the move as the
+    first time. A crash after the row commits and before the write leaves a
+    `sent` row; the restored invoke writes it again with the same key and
+    confirms it. A crash after GitHub takes the write and
+    before the pending row commits leaves the row; the restored invoke
+    writes again and confirms the row, and the read that follows publishes
+    one change, confirmed. A crash after a person recreates the move's
+    field or option and before the restored invoke runs leaves the earlier
+    row; the restored invoke resolves the new ids, writes its own row,
+    and the read that follows publishes the new value attributed to the
+    actor, confirmed. A field observation twice writes the same rows, and a
+    crash before its commit leaves the rows as they were. A field write
+    twice is two mutations: a create twice, where GitHub refuses a second
+    field of one name, fails the second with `rejected`, and an update or a
+    delete twice leaves GitHub as the first did; the caller observes before
+    it plans, so it does not repeat a write GitHub has taken.
+  errors: >-
+    A delivery that fails verification is a `rejected` outcome, never a
+    throw, since GitHub and anyone who can reach the endpoint send it.
+    Failures of GitHub's API and of `pull` are `GitHubSourceError`s sent to
+    `onError`, and the runner recovers from them on its next wake. SQLite
+    errors and an unreadable secret file throw from `receive`; in the
+    runner they stop the wake, are sent to `onError`, and leave the work
+    pending. A card move's failure is a `GitHubWriteError` that rejects its
+    promise, and leaves the runner's other work as it was. Misuse by
+    service code throws a `TypeError`. Inputs from service code are trusted
+    otherwise.
+  tests: >-
+    Tests run against a real store file in a temporary directory, with a
+    router started on it and a recording actor host whose actors subscribe
+    to issue and Project topics. A local `node:http` server stands in for
+    GitHub: it mints installation tokens for a key generated by
+    `node:crypto`, answers each named GraphQL operation from an in-memory
+    model of issues, dependencies, sub-issues, Projects, items, and field
+    values, lists hook deliveries from its own delivery log, and answers a
+    redelivery request by signing and posting the logged delivery to the
+    source's listener with its GUID. The fake refuses any query with a
+    variable or argument that filters by time. Delivery fixtures are
+    synthetic, with generic owners, repositories, and node ids, in the
+    shapes the spike recorded. Nothing calls GitHub. A fake clock drives the
+    timers. Behaviours proved, each written red before green: a valid
+    delivery is accepted; a missing header, a non-JSON body, and a handled
+    event missing a field it reads are `malformed`; an unknown hook id is
+    `unknown-hook`; a body signed with the wrong secret, with another
+    hook's secret, or changed by one byte is `signature`; and no rejected
+    delivery writes a row, calls the fake, or publishes. One GUID from the
+    organization hook and then a repository hook is accepted once and read
+    once. A cross-repository dependency, whose two deliveries each carry
+    one end, publishes `github.dependency.added` once. With a populated dependency graph, tracked issues A, B, and C
+    blocked by an issue X outside every bound Project and D blocked by A,
+    closing X publishes one `github.issue.closed` under the topics of X, A,
+    B, and C, whose actors each take it once and D's none, and closing A
+    reaches A and D. A dropped delivery: the model gains a dependency and
+    no delivery is sent; the sweep publishes `github.dependency.added`
+    once; the delivery then arrives and publishes nothing new. A failed
+    delivery: the fake logs it as failed; the scan asks once, the
+    redelivery publishes it, a second scan asks nothing, and the next sweep
+    publishes nothing. An item added, edited, archived, restored, and
+    removed publishes each event once with its field values; the first
+    sweep of a newly bound Project publishes `added` for each item and no
+    `field-changed`; an issue's first read publishes no relationship
+    between it and an issue that is not baselined; with A tracked and
+    baselined and B newly added to a bound Project and blocking A, reading
+    A first and reading B first each publish `github.dependency.added`
+    once; with the first relationship read of a newly added issue held
+    open by the fake and the issue blocked by an open issue, neither
+    `github.project-item.added` nor a defined `trackedIssue` answer is
+    observable until the read completes, and then `trackedIssue` lists the
+    blocker; a
+    Project closed and reopened publishes both. With the fake clock held
+    still, a request and its read in one tick clear the row and the runner
+    goes idle, and a second request made during that read, in the same
+    tick, leaves the row pending and is read again. A `502`, a
+    rate limit answer, and a request that never answers, past
+    `requestTimeoutMs` on the fake clock, each leave the work pending and
+    report `api`, and the next wake completes it. Each transaction that
+    publishes an item addition with issue content calls `onTracked` once,
+    after its commit, with those issues' node ids; a field change, a
+    removal, and a sweep that finds nothing new do not call it.
+    `trackedIssue` lists an item's field values by name, and
+    `trackedIssueIds` lists exactly the issues `trackedIssue` answers for.
+    On a mirror with tracked issues blocked by and blocking each other, an
+    issue outside every bound Project, a sub-issue tree, an archived item,
+    an item on a Project that is not bound, an issue observed absent, and
+    an issue not yet baselined, `trackedIssues()` equals
+    `trackedIssueIds().map(trackedIssue)`, and `trackedIssueIndex()` maps
+    each id of `trackedIssueIds()`, in that order, to `trackedIssue`'s
+    answer. With the store's `prepare` counted, `trackedIssues()` and
+    `trackedIssueIndex()` each prepare one `SELECT` of `github_issue` on
+    a mirror of 10 tracked issues and on one of 1,000. A matching push calls
+    `pull` with its head once, a push to another branch or repository does
+    not, and each sweep calls `pull()`. Every published event validates
+    against `github-events.schema.yml`. `onMirrorChanged` is called once
+    after a reconcile that removes an issue's last Project item, once after
+    one that marks an issue absent with no event, and not after a reconcile
+    that finds nothing changed. The source's tables match
+    `github-source-database-schema`. Fault test, in a child Node process
+    that sends itself `SIGKILL` from `probe`, between a reconcile's read
+    and its commit, and whose kill signal the parent asserts: after a restart on the same
+    file the change is published once.
+    Card moves, through the fake, which also answers `GitHubProjectField`
+    and `GitHubCardMove` from its model and logs each mutation: a move sets
+    the item's field to the option and resolves; the item is read next and
+    `field-changed` is published once with `movedBy` the move's actor; the
+    delivery GitHub sends for the move then publishes nothing. With the
+    fake's first read after the mutation answering the earlier value, the
+    read publishes nothing and the delivery's read publishes the change,
+    attributed; with no delivery, the next sweep publishes it, attributed.
+    A person's change in the fake publishes `movedBy` `null`, and so does a
+    change to another option after a move whose value never showed. Two
+    moves of one actor whose first read shows only the first value publish
+    two changes, each confirmed. A move to the option the card holds
+    resolves and publishes nothing. With an item whose field values span
+    two pages and the lifecycle field on the first, a person's change read
+    on the first page and a move queued while the fake holds the second
+    page's answer: the move waits until the observation commits, the
+    person's change publishes with `movedBy` `null`, and the next read
+    publishes the move confirmed. A mutation that fails with `transport`
+    before the fake applies it, followed by a person selecting the same
+    option, publishes `movedBy` unconfirmed for that actor, never
+    confirmed. A person's change between two moves of one actor, read by a
+    lagging read, publishes `null`, and the second move then publishes
+    unconfirmed. A replayed move after its change was attributed, followed
+    by a person's change away and back, publishes `null` and then
+    unconfirmed. A move that GitHub takes, then a restart before the
+    actor's save, with the first read after the restart lagging at the
+    earlier value and the restored invoke's repeated mutation refused with
+    `FORBIDDEN`: the invoke fails with `forbidden`, the row stays
+    `confirmed`, and the next read publishes the original move with
+    `movedBy` confirmed for the actor. While a sweep's observation is held open by the fake, a
+    queued move waits, and is sent after that observation commits.
+    A field the Project lacks, a text field of that name, an option the
+    field lacks, an issue with no item on the Project, a `NOT_FOUND` at the
+    item, a `FORBIDDEN` error, a `403`, a `502`, a rate limit answer, a
+    mutation that never answers past `requestTimeoutMs` on the fake clock,
+    and another GraphQL error each reject with their kind; the refused ones
+    leave no row and the `transport` ones keep it. A move aborted while
+    queued sends nothing. Every published `field-changed` validates against
+    `github-events.schema.yml` with its `movedBy` and its `lifecycle`.
+    Fields, through the fake, which models each Project's fields and
+    options with GitHub's ids, keeps an option whose `id` an update sends
+    and the item values that hold it, gives a new id to an option sent
+    without one and clears the item values of an option the list leaves
+    out, refuses a second field of one name, and logs each mutation: a
+    sweep writes the Project's fields and publishes no event; an
+    observation lists a single-select field's options in order and leaves
+    out a built-in field and an organization issue field; a create, an
+    update that renames an option by its id, and a delete each answer with
+    the field as GitHub then holds it and update the mirror; the rename
+    publishes no `field-changed` for an item that holds the option, and the
+    item's next move publishes `from` with the new name; a field write
+    queued while a sweep's observation is held open waits until that
+    observation commits; a `502` and a `FORBIDDEN` answer reject with their
+    kinds and leave the mirror as it was. `lifecycle` is true on the change
+    of the field `lifecycleField` names and false on another field's, and
+    false after the lifecycle field is renamed. Recreation during a
+    restart: a move that GitHub takes, then a restart before the actor's
+    save, then the fake deleting and recreating the option with the same
+    name, so the item's value is cleared: the restored invoke resolves the
+    new option id and sets it, and the reads publish the clearing with
+    `movedBy` `null` and the new value with `movedBy` the actor, confirmed;
+    the same with the field deleted and recreated publishes the new
+    field's value with `movedBy` the actor, confirmed.

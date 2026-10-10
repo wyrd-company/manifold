@@ -1,0 +1,2 @@
+intake:
+  decisionModel: decision-models/intake.yml

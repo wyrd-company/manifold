@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Snapshot
+description: >-
+  The persisted state of an actor: its state value and context.

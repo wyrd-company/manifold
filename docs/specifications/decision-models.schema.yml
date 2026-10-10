@@ -1,0 +1,529 @@
+# ---
+# relationships:
+#   realizes: decision-models
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/decision-models
+title: Decision Models
+description: >-
+  The shapes of a Manifold decision model: the GoRules JDM graph with the node
+  types Manifold evaluates, the configuration of the JSONata decision table,
+  JSONata expression node, and JSONata switch, the decision model finding the lint reports,
+  the error detail of a failed evaluation, and the evaluation record kept for
+  explainability.
+$defs:
+  decision-model:
+    description: >-
+      A GoRules JDM graph as parsed from its YAML file. Properties the editor
+      writes beside `nodes` and `edges` are kept and ignored.
+    type: object
+    required:
+      - nodes
+      - edges
+    properties:
+      nodes:
+        type: array
+        items:
+          $ref: "#/$defs/node"
+      edges:
+        type: array
+        items:
+          $ref: "#/$defs/edge"
+  edge:
+    type: object
+    required:
+      - id
+      - sourceId
+      - targetId
+    properties:
+      id:
+        type: string
+        minLength: 1
+      sourceId:
+        type: string
+        minLength: 1
+      targetId:
+        type: string
+        minLength: 1
+      sourceHandle:
+        type: string
+  node:
+    description: >-
+      One node of the graph. Input, output, and decision (sub-graph) nodes
+      are stock JDM and keep their stock content. A custom node is one of the
+      three Manifold kinds.
+    type: object
+    required:
+      - id
+      - type
+    properties:
+      id:
+        type: string
+        minLength: 1
+      name:
+        type: string
+      type:
+        enum:
+          - inputNode
+          - outputNode
+          - decisionNode
+          - customNode
+    allOf:
+      - if:
+          properties:
+            type:
+              const: customNode
+        then:
+          required:
+            - content
+          properties:
+            content:
+              $ref: "#/$defs/custom-node-content"
+      - if:
+          properties:
+            type:
+              enum:
+                - inputNode
+                - outputNode
+        then:
+          properties:
+            content:
+              type: object
+      - if:
+          properties:
+            type:
+              const: decisionNode
+        then:
+          required:
+            - content
+          properties:
+            content:
+              type: object
+              required:
+                - key
+              properties:
+                key:
+                  description: The key of another decision model in the same set.
+                  type: string
+                  minLength: 1
+  custom-node-content:
+    oneOf:
+      - type: object
+        required:
+          - kind
+          - config
+        properties:
+          kind:
+            const: jsonataDecisionTable
+          config:
+            $ref: "#/$defs/jsonata-decision-table"
+      - type: object
+        required:
+          - kind
+          - config
+        properties:
+          kind:
+            const: jsonataExpression
+          config:
+            $ref: "#/$defs/jsonata-expression"
+      - type: object
+        required:
+          - kind
+          - config
+        properties:
+          kind:
+            const: jsonataSwitch
+          config:
+            $ref: "#/$defs/jsonata-switch"
+  node-settings:
+    description: The settings on the card of both custom node kinds.
+    type: object
+    properties:
+      passThrough:
+        description: Merge the node's output over its input.
+        type: boolean
+        default: false
+      inputField:
+        description: >-
+          A dotted path into the node's input. When present, the value at the
+          path is the node input.
+        $ref: "#/$defs/dotted-path"
+      outputPath:
+        description: >-
+          A dotted path. When present, the node's result is written at this
+          path of a new object.
+        $ref: "#/$defs/dotted-path"
+      executionMode:
+        description: >-
+          `single` evaluates the node once. `loop` evaluates it once per element
+          of the array at `inputField`.
+        enum:
+          - single
+          - loop
+        default: single
+  jsonata-decision-table:
+    allOf:
+      - $ref: "#/$defs/node-settings"
+    type: object
+    required:
+      - hitPolicy
+      - inputs
+      - outputs
+      - rules
+    unevaluatedProperties: false
+    properties:
+      hitPolicy:
+        enum:
+          - first
+          - collect
+      inputs:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+          properties:
+            id:
+              $ref: "#/$defs/column-id"
+            name:
+              type: string
+            field:
+              description: >-
+                A JSONata expression over the node input whose result is the
+                column value. Absent or blank, the column value is the node
+                input.
+              type: string
+      outputs:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+            - field
+          properties:
+            id:
+              $ref: "#/$defs/column-id"
+            name:
+              type: string
+            field:
+              description: The dotted path the cell's result is written at.
+              $ref: "#/$defs/dotted-path"
+      rules:
+        description: >-
+          Rules in evaluation order. Each rule maps a column id to the cell's
+          JSONata source.
+        type: array
+        items:
+          type: object
+          required:
+            - _id
+          properties:
+            _id:
+              type: string
+              minLength: 1
+            _description:
+              type: string
+          additionalProperties:
+            type:
+              - string
+              - "null"
+  jsonata-expression:
+    allOf:
+      - $ref: "#/$defs/node-settings"
+    type: object
+    required:
+      - expression
+    unevaluatedProperties: false
+    properties:
+      expression:
+        description: The JSONata source whose result is the node's result.
+        type: string
+        minLength: 1
+  jsonata-switch:
+    description: >-
+      A switch whose conditions are JSONata. An edge leaving the switch names
+      a statement by its `id` in `sourceHandle`. A blank condition is a
+      default, taken when no other condition matched.
+    type: object
+    required:
+      - hitPolicy
+      - statements
+    additionalProperties: false
+    properties:
+      hitPolicy:
+        enum:
+          - first
+          - collect
+      statements:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+          properties:
+            id:
+              type: string
+              minLength: 1
+            condition:
+              description: The JSONata source of the condition.
+              type:
+                - string
+                - "null"
+  column-id:
+    type: string
+    minLength: 1
+    not:
+      enum:
+        - _id
+        - _description
+  dotted-path:
+    description: Property names joined by `.`, none empty.
+    type: string
+    pattern: ^[^.]+(\.[^.]+)*$
+  location:
+    description: >-
+      Where an expression or setting is in a decision model:
+      `<model>#/nodes/<nodeId>` followed by `/rules/<ruleId>/<columnId>` for a
+      cell, `/inputs/<columnId>/field` for an input column field,
+      `/expression` for an expression node, `/statements/<statementId>` for a
+      switch condition, or `/<setting>` for a setting.
+      Each segment after `#` is escaped as in RFC 6901.
+    type: string
+  decision-model-finding:
+    description: One problem the lint reports in one decision model.
+    type: object
+    required:
+      - severity
+      - kind
+      - model
+      - message
+    additionalProperties: false
+    properties:
+      severity:
+        enum:
+          - error
+          - warning
+      kind:
+        description: >-
+          `syntax`: a JSONata source does not parse. `never-boolean`: an input
+          cell's result can never be `true`. `structure`: the model does not
+          validate against `#/$defs/decision-model`. `node-unsupported`: a node
+          type or custom kind Manifold does not evaluate. `duplicate-id`: two
+          nodes, two columns of one table, or two rules of one table share an
+          id. `output-field-conflict`: one output field of a table is a prefix
+          of another. `pass-through-needs-object`: pass-through on a node whose
+          result is always an array. `loop-needs-input-field`: loop mode
+          without `inputField`. `switch-handle-unknown`: an edge leaving a
+          switch names no statement of it. `model-missing`: a decision node
+          names a key that is not in the set.
+        enum:
+          - syntax
+          - never-boolean
+          - structure
+          - node-unsupported
+          - duplicate-id
+          - output-field-conflict
+          - pass-through-needs-object
+          - loop-needs-input-field
+          - switch-handle-unknown
+          - model-missing
+      model:
+        description: The key of the decision model.
+        type: string
+      location:
+        $ref: "#/$defs/location"
+      nodeId:
+        type: string
+      ruleId:
+        type: string
+      columnId:
+        type: string
+      statementId:
+        type: string
+      expression:
+        description: The JSONata source, for `syntax` and `never-boolean`.
+        type: string
+      message:
+        type: string
+      code:
+        description: The JSONata error code, for `syntax`.
+        type: string
+      position:
+        description: The character position JSONata reports, for `syntax`.
+        type: integer
+        minimum: 0
+      instancePath:
+        description: The JSON Pointer of the failing value, for `structure`.
+        type: string
+  decision-model-error-detail:
+    description: Why an evaluation failed, and where.
+    type: object
+    required:
+      - kind
+      - model
+      - message
+    additionalProperties: false
+    properties:
+      kind:
+        description: >-
+          `evaluation`: a JSONata expression threw. `result`: an expression
+          gave a value the node cannot use. `engine`: the Zen engine failed
+          outside a Manifold node.
+        enum:
+          - evaluation
+          - result
+          - engine
+      model:
+        description: The key of the decision model that holds the failing node.
+        type: string
+      location:
+        $ref: "#/$defs/location"
+      nodeId:
+        type: string
+      ruleId:
+        type: string
+      columnId:
+        type: string
+      statementId:
+        type: string
+      expression:
+        type: string
+      message:
+        type: string
+      code:
+        type: string
+      position:
+        type: integer
+        minimum: 0
+  trace-entry:
+    description: The Zen engine's trace of one node.
+    type: object
+    required:
+      - id
+      - name
+      - order
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      input: true
+      output: true
+      performance:
+        type: string
+      order:
+        type: integer
+      traceData: true
+  table-trace-match:
+    description: >-
+      One matched rule in a JSONata decision table's `traceData`. `first`
+      gives one match or `null`; `collect` gives an array. In loop mode the
+      node's `traceData` is an array with one entry per element.
+    type: object
+    required:
+      - index
+      - rule
+      - reference_map
+    properties:
+      index:
+        description: The rule's position in `rules`.
+        type: integer
+        minimum: 0
+      rule:
+        type: object
+        required:
+          - _id
+        properties:
+          _id:
+            type: string
+      reference_map:
+        description: Each input column's id mapped to its column value.
+        type: object
+  switch-trace:
+    description: A JSONata switch's `traceData`, listing the taken statements in order.
+    type: object
+    required:
+      - statements
+    properties:
+      statements:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+          properties:
+            id:
+              type: string
+  decision-model-evaluation:
+    description: >-
+      One evaluation, as recorded for explainability. A failed evaluation
+      carries the partial trace up to the failing node, whose `traceData.error`
+      is the error detail.
+    oneOf:
+      - type: object
+        required:
+          - model
+          - input
+          - outcome
+          - result
+          - trace
+        additionalProperties: false
+        properties:
+          model:
+            type: string
+          input:
+            type: object
+          outcome:
+            const: result
+          result: true
+          trace:
+            type: object
+            additionalProperties:
+              $ref: "#/$defs/trace-entry"
+      - type: object
+        required:
+          - model
+          - input
+          - outcome
+          - error
+          - trace
+        additionalProperties: false
+        properties:
+          model:
+            type: string
+          input:
+            type: object
+          outcome:
+            const: error
+          error:
+            $ref: "#/$defs/decision-model-error-detail"
+          trace:
+            type: object
+            additionalProperties:
+              $ref: "#/$defs/trace-entry"
+  decision-model-invoke-error:
+    description: >-
+      The error an invoke of a decision model fails with: an input that is
+      not an object, or an evaluation that resolved to an `error` record.
+    type: object
+    required:
+      - type
+      - path
+      - reason
+      - message
+    additionalProperties: false
+    properties:
+      type:
+        const: decision-model
+      path:
+        description: The invoked decision model path.
+        type: string
+      reason:
+        enum:
+          - input
+          - evaluation
+      message:
+        type: string
+      evaluation:
+        description: For `evaluation`, the evaluation record, with outcome `error`.
+        $ref: "#/$defs/decision-model-evaluation"

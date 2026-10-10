@@ -1,0 +1,437 @@
+/* ---
+relationships:
+  implements: operator-console
+--- */
+.canvas-editor {
+  display: flex;
+  height: 100%;
+  min-height: 480px;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+}
+.canvas-surface {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  outline: none;
+  background: var(--background);
+}
+.canvas-surface.stale .react-flow {
+  opacity: 0.45;
+}
+.canvas-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 2px 8px #0002;
+}
+.canvas-toolbar [aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--primary);
+}
+.canvas-toolbar-separator {
+  height: 20px;
+  width: 1px;
+  background: var(--border);
+  margin: 0 4px;
+}
+.canvas-add {
+  display: flex;
+  align-items: center;
+  padding: 0 5px;
+}
+.canvas-add select {
+  background: transparent;
+  border: 0;
+  font-size: 12px;
+  max-width: 115px;
+}
+.canvas-state {
+  height: 100%;
+  width: 100%;
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  background: var(--tile);
+  padding: 8px 12px;
+  font-size: 12px;
+  position: relative;
+}
+.canvas-state-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-weight: 600;
+}
+.canvas-state-title > .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-state-icon {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--info) 16%, var(--tile));
+  color: var(--info-foreground);
+}
+.canvas-state small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-state-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 32px;
+  min-width: 0;
+}
+.canvas-state-detail small {
+  min-width: 0;
+}
+.canvas-state-detail .blueprint-gate {
+  flex-shrink: 0;
+  margin: 0;
+  color: var(--info-foreground);
+  background: color-mix(in srgb, var(--info) 16%, var(--tile));
+}
+.canvas-state.compound,
+.canvas-state.parallel {
+  background: var(--lane);
+  padding: 10px 12px;
+}
+.canvas-state.compound[data-depth="0"],
+.canvas-state.parallel[data-depth="0"] {
+  background: var(--card);
+}
+.canvas-state.parallel {
+  border-width: 2px;
+}
+.parallel-region .canvas-state {
+  border-style: dashed;
+}
+.canvas-state.final {
+  border-style: double;
+  border-width: 3px;
+  border-color: var(--success-foreground);
+}
+.canvas-state.final .canvas-state-icon {
+  color: var(--success-foreground);
+  background: color-mix(in srgb, var(--success) 16%, var(--tile));
+}
+.canvas-state.history {
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-color: var(--warning-foreground);
+  color: var(--warning-foreground);
+}
+.canvas-state.selected {
+  border: 2px solid var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent);
+}
+.canvas-changed {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+.canvas-initial {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--foreground);
+}
+.canvas-state .react-flow__handle {
+  opacity: 0;
+}
+.canvas-state:hover .react-flow__handle {
+  opacity: 1;
+}
+.canvas-edge-label {
+  background: var(--card);
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--edge);
+}
+.canvas-surface .react-flow__edgelabel-renderer {
+  z-index: 1002;
+}
+.canvas-edge-label.done {
+  color: var(--success-foreground);
+}
+.canvas-edge-label.after {
+  color: var(--warning-foreground);
+}
+.canvas-edge-label.error {
+  color: var(--error-foreground);
+}
+.canvas-edge-label.error {
+  border-color: var(--error);
+}
+.canvas-edge-label.warning {
+  border-color: var(--warning);
+}
+.canvas-edge-label.selected {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.canvas-message {
+  position: absolute;
+  top: 64px;
+  left: 12px;
+  z-index: 5;
+  background: var(--card);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+}
+.canvas-inspector {
+  width: 320px;
+  min-width: 0;
+  max-width: 100%;
+  flex-shrink: 0;
+  overflow: auto;
+  background: var(--popover);
+  border-left: 1px solid var(--input);
+  padding: 16px;
+  font-size: 12px;
+  z-index: 6;
+  overflow-wrap: anywhere;
+}
+.inspector-path {
+  color: var(--link);
+  line-height: 1.6;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.canvas-inspector > *,
+.canvas-inspector section > *,
+.inspector-field,
+.inspector-value,
+.inspector-value > div {
+  min-width: 0;
+  max-width: 100%;
+}
+.canvas-inspector header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: auto;
+  min-height: 36px;
+  padding: 0 0 12px;
+}
+.canvas-inspector h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.canvas-inspector h4 {
+  font-weight: 600;
+  margin: 16px 0 8px;
+}
+.canvas-inspector section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+.inspector-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.canvas-inspector input,
+.canvas-inspector select,
+.canvas-event-picker input,
+.canvas-event-picker select {
+  border: 1px solid var(--input);
+  border-radius: 4px;
+  background: var(--background);
+  padding: 6px;
+  width: 100%;
+}
+.canvas-inspector input[type="checkbox"] {
+  width: auto;
+}
+.inspector-value {
+  margin: 8px 0;
+}
+.inspector-value > span {
+  display: block;
+  margin-bottom: 4px;
+}
+.inspector-value > div {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.has-finding {
+  border-color: var(--error) !important;
+}
+.invoke-card,
+.inspector-reference {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 8px 0;
+}
+.invoke-card pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.canvas-event-picker {
+  position: absolute;
+  top: 80px;
+  left: 24px;
+  width: 280px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: 0 8px 24px #0003;
+  z-index: 10;
+}
+.canvas-event-picker label {
+  display: block;
+  margin: 12px 0;
+}
+.blueprint-view-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.blueprint-view-toggle [aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--primary);
+}
+.blueprint-panes.canvas-only {
+  display: block !important;
+  grid-template-columns: 1fr !important;
+}
+.blueprint-panes.yaml-only {
+  display: block !important;
+  grid-template-columns: 1fr !important;
+}
+.blueprint-panes.yaml-only .blueprint-source {
+  display: flex !important;
+  width: 100%;
+}
+.blueprint-panes.canvas-only .blueprint-graph {
+  display: block !important;
+}
+@media (max-width: 1023px) {
+  .canvas-inspector {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    box-shadow: -4px 0 16px #0002;
+  }
+  .canvas-toolbar {
+    max-width: calc(100% - 24px);
+    flex-wrap: wrap;
+  }
+  .canvas-editor {
+    min-height: 520px;
+  }
+}
+.has-finding.warning {
+  border-color: var(--warning) !important;
+}
+.canvas-inspector table {
+  width: 100%;
+  font-size: 11px;
+}
+.canvas-inspector th,
+.canvas-inspector td {
+  padding: 4px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.canvas-placement-ghost {
+  position: absolute;
+  z-index: 8;
+  width: 200px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  opacity: 0.65;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.canvas-placement-ghost.history {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+.canvas-placement-ghost.final {
+  border-style: double;
+}
+
+.canvas-history-key {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.invoke-source-input {
+  display: flex;
+}
+.invoke-source-input input {
+  flex: 1;
+  min-width: 0;
+}
+.invoke-source-menu {
+  z-index: 60;
+  max-height: 300px;
+  overflow: auto;
+  padding: 8px;
+  background: var(--popover);
+  color: var(--foreground);
+  border: 1px solid var(--input);
+  border-radius: 6px;
+}
+.invoke-source-menu [role="option"] {
+  padding: 6px;
+  cursor: pointer;
+}
+.invoke-source-menu [data-highlighted] {
+  background: var(--accent);
+}
+.invoke-source-menu [role="group"] {
+  margin-bottom: 8px;
+}
+.invoke-source-menu [role="option"] {
+  display: grid;
+  gap: 3px;
+}
+.invoke-source-input [aria-invalid="true"] {
+  border-color: var(--error);
+}

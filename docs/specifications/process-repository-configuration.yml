@@ -1,0 +1,60 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design this contract serves.
+  realizes:
+    - process-repository
+description: >-
+  Defines the `processRepository` section of the service configuration,
+  specified by `service-configuration`: which repository the service clones,
+  which branch it follows, how it authenticates, and where it keeps the
+  clone. `docs/specifications/process-repository-configuration.schema.yml`
+  is the machine-readable definition of the section's value.
+
+  `url` is the smart HTTP URL of the remote, `https://` or `http://`. It
+  carries no user information: the authority holds no `@`, and the URL's
+  parsed `username` and `password` are empty, so that `credential` is the
+  only way the service authenticates to the remote. A URL with `http://` is
+  valid only when `credential` is absent, so that a credential is never sent
+  in clear text. Required.
+
+  `branch` is the branch the service follows. Each pull moves the current
+  commit to the branch's commit on the remote. Default `main`.
+
+  `credential` is the name of a credential in the `credentials` section.
+  The service uses it to authenticate when the remote asks for
+  authentication. A `github-app` credential authenticates a pull with an
+  installation token scoped to this one repository with `contents: read`,
+  and a save's push with one scoped to this one repository with
+  `contents: write`. Absent for a repository that needs no
+  authentication; a remote that asks a save's push to authenticate then
+  refuses the save.
+
+  `directory` is the directory that holds the bare clone and the current
+  commit. A relative path resolves against the directory of the
+  configuration file. The service creates it when absent, and one service
+  process uses it at a time. Required.
+
+  `pullTimeoutMs` is the most time in milliseconds a pull's requests to the
+  remote may take, measured from the start of the pull, and the most time a
+  save's push may take, measured from the start of the push. A pull or push
+  whose requests run longer is aborted and fails with kind `remote`, and
+  the next pull runs. It is an integer of at least 1. Default 60000.
+
+  `commitAuthor` is the author and committer of every commit a save
+  writes: `name`, default `Manifold`, and `email`, default
+  `manifold@manifold.invalid`. Each is a string of 1 to 256 characters
+  with no `<`, `>`, or line break, so that it forms a valid git identity.
+  Default `{ name: Manifold, email: manifold@manifold.invalid }`; a value
+  that gives one member takes the other's default.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/process-repository-configuration.schema.yml` is a
+  valid JSON Schema 2020-12 document. The service rejects a configuration
+  whose `processRepository` value the schema rejects, naming the property;
+  rejects a `credential` that `credentials` does not define, naming it;
+  rejects an `http://` URL with a credential, at `/processRepository/url`;
+  rejects a `commitAuthor` member with `<`, `>`, or a line break, naming
+  it;
+  and rejects an `http://` or `https://` URL with a user name, a password,
+  or both, at `/processRepository/url`.

@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - task-metadata-declaration
+title: Lifecycle Field
+description: >-
+  The single-select field of a bound GitHub Project that shows where each
+  task is, declared with the option names a blueprint may set in the
+  process repository's task metadata declaration. It is the one field
+  Manifold sets on a task's card.

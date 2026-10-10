@@ -1,0 +1,214 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: actor-usage-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold actor usage API
+  version: 0.1.0
+  description: >-
+    The actor usage endpoint of Manifold's API: the usage counted for one
+    actor, in total and per state visit.
+security: []
+paths:
+  /api/usage/actors/{actorId}:
+    parameters:
+      - name: actorId
+        in: path
+        required: true
+        description: The actor id, percent-encoded as one path segment.
+        schema:
+          type: string
+          minLength: 1
+    get:
+      operationId: readActorUsage
+      summary: Read the usage counted for one actor.
+      responses:
+        "200":
+          description: The actor's usage, in total and per state visit.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorUsageResponse"
+        "404":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Error"
+components:
+  headers:
+    NoStore:
+      schema:
+        const: no-store
+  responses:
+    Error:
+      description: An error with its kind and message.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowed:
+      description: A method the endpoint does not take.
+      headers:
+        Allow:
+          schema:
+            const: GET
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+    Amount:
+      type: integer
+      minimum: 0
+      description: An amount in the account's native unit, as the ledger holds it.
+    Tokens:
+      type: object
+      additionalProperties: false
+      required: [input, output, cacheRead, cacheWrite, reasoning, total]
+      properties:
+        input:
+          type: integer
+          minimum: 0
+        output:
+          type: integer
+          minimum: 0
+        cacheRead:
+          type: integer
+          minimum: 0
+        cacheWrite:
+          type: integer
+          minimum: 0
+        reasoning:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+          description: Every class summed, with reasoning not counted for a provider whose output counts it.
+    Unmetered:
+      type: integer
+      minimum: 0
+      description: The number of counted calls whose provider records no token counts, which count in no token class and no account.
+    AccountActual:
+      type: object
+      additionalProperties: false
+      required: [account, actual]
+      properties:
+        account:
+          type: string
+          minLength: 1
+        actual:
+          $ref: "#/components/schemas/Amount"
+        unit:
+          type: string
+          minLength: 1
+          description: The unit the accounts declaration in force declares; absent when it does not declare the account.
+    VisitAccountActual:
+      type: object
+      additionalProperties: false
+      required: [account, actual]
+      properties:
+        account:
+          type: string
+          minLength: 1
+        actual:
+          $ref: "#/components/schemas/Amount"
+    VisitUsage:
+      type: object
+      additionalProperties: false
+      required: [visit, enteredAt, tokens, unmetered, accounts]
+      properties:
+        visit:
+          description: The number of the actor's state visit, as the actor's history numbers it.
+          type: integer
+          minimum: 1
+        enteredAt:
+          description: The visit's entry time, as the actor's history gives it.
+          type: string
+          format: date-time
+        tokens:
+          $ref: "#/components/schemas/Tokens"
+        unmetered:
+          $ref: "#/components/schemas/Unmetered"
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/VisitAccountActual"
+    CallUsage:
+      type: object
+      additionalProperties: false
+      required: [usedAt, thread, visit, total, account, actual]
+      properties:
+        usedAt:
+          type: string
+          format: date-time
+        thread:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [environment, threadId]
+              properties:
+                environment:
+                  type: string
+                  minLength: 1
+                threadId:
+                  type: string
+                  minLength: 1
+        visit:
+          oneOf:
+            - type: "null"
+            - type: integer
+              minimum: 1
+        total:
+          description: The call's tokens summed as `Tokens.total` sums them, or null for an unmetered call.
+          oneOf:
+            - type: "null"
+            - type: integer
+              minimum: 0
+        account:
+          type: [string, "null"]
+          minLength: 1
+        actual:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Amount"
+    ActorUsageResponse:
+      type: object
+      additionalProperties: false
+      required: [actorId, tokens, unmetered, accounts, visits, calls]
+      properties:
+        actorId:
+          type: string
+          minLength: 1
+        tokens:
+          $ref: "#/components/schemas/Tokens"
+        unmetered:
+          $ref: "#/components/schemas/Unmetered"
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountActual"
+        visits:
+          type: array
+          items:
+            $ref: "#/components/schemas/VisitUsage"
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallUsage"

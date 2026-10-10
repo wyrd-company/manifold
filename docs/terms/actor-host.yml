@@ -1,0 +1,10 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - actor-host
+title: Actor Host
+description: >-
+  The service module that creates, restores, and saves state machine actors
+  for the router, and derives each actor's subscription.

@@ -1,0 +1,246 @@
+$schema: https://refinery.systems/ontology/concept
+relationships:
+  shapes: task-orchestration-tool
+description:
+  - >-
+    Manifold is a process workflow engine for agentic work. A person describes
+    their process as blueprints, declarative state machines kept in a git
+    repository separate from Manifold, and Manifold runs them. It starts agent
+    threads on T3 Code at the points that need judgment, gives those agents
+    tools to hand off, escalate, and read messages, and keeps a GitHub Project
+    in step with where every issue is. The engine does the mechanical work;
+    agents do the judgment work; no agent orchestrates.
+  - >-
+    Manifold knows three things about a process: every issue on a bound
+    GitHub Project gets a task actor, intake chooses its blueprint and
+    portfolio item once before it is spawned, and a state may carry a gate that releases
+    tasks one at a time. Everything else, lifecycle states, epics, passes,
+    review loops, what a gate ranks by, is the user's process, expressed in
+    files Manifold does not need to understand. A different process is a
+    different repository bound to the same Manifold.
+properties:
+  blueprint: >-
+    A declarative workflow graph stored as YAML in the process repository and
+    run by XState. Every implementation, actor logic, guard, action, or delay,
+    is referenced by name, so the file is serializable and diffable. Every
+    blueprint declares an input schema and an output schema and ends at a
+    final state. A blueprint is the only source of a state machine; the
+    defaults Manifold ships are blueprints it bundles, each at a path
+    under `blueprints/` that a file of the process repository at the same
+    path replaces.
+  actor: >-
+    A running instance of actor logic. A state machine actor runs a
+    blueprint: Manifold spawns one per issue on a bound Project, in any
+    state, and resumes it after a restart. A state invokes what it owns, a
+    promise actor for one call or a callback actor for work that lives as
+    long as the state, and a child state machine for a blueprint the parent
+    owns. Work another actor owns is triggered by an event. Usage is
+    attributed to the actor, per state visit; a task's usage is the sum over
+    its actors.
+  event: >-
+    Anything that happens outside the current state: a task field changed on
+    GitHub, an issue closed, a thread settled, an escalation answered on
+    any channel, a tool call from an agent, a message from
+    another thread, a dispatch from a parent actor. A state declares the
+    events it accepts as transitions; the first to arrive wins. Every operator
+    interaction, in or out of Manifold, is an event an actor can subscribe to.
+  event-source: >-
+    A shared origin of events Manifold owns and routes: GitHub webhooks and
+    polling, and one thread stream per environment. An answer to an
+    escalation is not routed: it reaches the actor through the state that
+    asked. Usage is not routed either: each host CLI pushes it to
+    Manifold's usage endpoint, which posts it to the ledger. A blueprint declares event names; Manifold
+    derives the subscriptions from the actor's identity, its issue and
+    thread ids, over hierarchical topics.
+  durability: >-
+    Nothing important lives only in memory. Every routed event is written to
+    the target actor's inbox before delivery; an actor's snapshot is saved
+    before the inbox row is marked consumed; a resumed actor drains its inbox
+    before it takes live events. Events carry ids and actors are idempotent to
+    them. Deadlines are held outside the state machine and re-armed on
+    resume. Command ids are fixed before sending. The store never saves an
+    errored snapshot over a good one.
+  migration: >-
+    A blueprint version is a blueprint at one process repository commit,
+    named by the commit and the blueprint's path, and for a bundled
+    blueprint also by the bundle its text came from, so one version key
+    pins the blueprint and every file it names. State names are identity.
+    Migration is from a version to a later version at the same path, at a
+    child commit or from a later bundle, the repository's file or the
+    bundled one, only in states that are waiting on events, with
+    version-specific migration paths where schemas changed.
+  task: >-
+    A GitHub issue on a bound Project. Its metadata lives on GitHub in six
+    kinds of storage: Project fields, org issue fields, org issue types,
+    labels, milestones, and front matter in the issue description. The process
+    repository declares the fields as a JSON Schema, including the lifecycle
+    states and, per field, whether an unhandled change on GitHub is reverted
+    or accepted. Lifecycle state is the one field Manifold owns on the card;
+    which blueprint and which portfolio item a task has are in the store.
+  intake: >-
+    A decision model Manifold evaluates once when an issue is discovered on a
+    bound Project, before its task actor is spawned. It yields the blueprint
+    to run and the single lowest-level portfolio item, within the subtree of
+    the item its Project attaches to, that the task belongs to, and neither
+    changes afterward. An
+    operator may force intake again: the running actor is closed, its
+    reservation settled, its usage left where it was posted, and a new actor
+    started from a fresh intake.
+  gate: >-
+    An implementation declared on a state. It holds the population, the task
+    actors in that state holding no token, runs the process's comparator
+    over them, and hands out one token at a time, with a reservation when
+    the comparator asks for one. The transition out is guarded on holding a
+    token; other exits stay ungated. A blueprint may gate any state or none.
+  comparator: >-
+    A pure TypeScript function in the process repository, run in a sandbox
+    with a timeout and a memory limit. It receives the population, the
+    holders, the available balances per item and account, and a seeded
+    random, and returns one task, with optional reservations, or none.
+    Greedy, skip, all-or-none, lottery, and one-at-a-time are bodies for the
+    same signature. Every evaluation is recorded with its input, output, and
+    seed.
+  process-repository: >-
+    A user-supplied git repository holding everything the user declares: a
+    manifest naming the intake decision model, the task metadata schema,
+    blueprints with their schemas, comparators, Nunjucks prompt templates,
+    GoRules JDM decision models with JSONata cells, handoff schemas, the
+    portfolio, and bindings by name. Saving from the console is a commit and
+    push. Manifold clones it and pulls on push.
+  expressions: >-
+    JSONata is the expression language everywhere an expression appears:
+    guards, mappings at schema boundaries, event matches, and decision-table
+    cells. TypeScript in a QuickJS sandbox is used only for comparators, the
+    one function over a set. There is no third language.
+  storage: >-
+    Everything lives in one of three places. The process repository holds
+    what the user declares. Manifold's store holds what Manifold observes and
+    remembers: actor snapshots, inboxes, ledgers, usage, ephemeral
+    credentials. Service configuration holds what is host-local: where the
+    process repository is and the credentials behind each name it uses.
+  environment: >-
+    A T3 Code server. Each bound Project is assigned one environment, which
+    places every thread for that Project's tasks. Manifold connects to several
+    environments at once and works with stable released T3 Code servers, with
+    no fork and no dependence on an unmerged upstream change. Manifold can
+    create T3code projects on an environment with templated names and paths,
+    and starts threads with templated names.
+  binding: >-
+    A declaration in the process repository tying a GitHub Project or a
+    T3code project to Manifold by name: its environment and the portfolio
+    item it attaches to. An item may hold several projects of either kind.
+    A T3code project associated with a bound GitHub Project follows that
+    Project's item and needs no binding of its own. A T3code project a
+    process creates follows the item of the task that created it until a
+    binding names it. Threads in any other T3code project are attributed
+    to the top-level Other, and an operator can move them.
+  portfolio: >-
+    A tree of portfolio items the user declares. GitHub Projects and T3code
+    projects attach to items through their bindings. Every item with
+    sub-items has an Other sub-item for work that matches none of them, and a
+    top-level Other holds usage attached to nothing. Each item has an
+    allocation per account: a guaranteed percentage of its parent, an
+    optional ceiling, and optional pacing. Guarantees under one parent total
+    at most 100% at every level; the remainder is unallocated and
+    items borrow from it up to their ceiling, never from a sibling. Accounts
+    are provider profiles, API budgets or subscriptions, whose capacity
+    Manifold observes from reported usage. One ledger keyed by actor holds
+    credits, reservations, actuals, and settlements, and available balance
+    counts usage as it arrives.
+  host-cli: >-
+    A companion installed on each environment, shipped as a Bun binary for
+    Linux x64 and arm64, macOS arm64, and Windows x64. It processes harness
+    hooks, reads provider session files in-process through a pinned decoding
+    library and the T3 Code database for the session-to-thread mapping,
+    pushes usage to Manifold, and lints blueprints, expressions, decision
+    models, and comparators without running them.
+  harness-plugin: >-
+    Lifecycle hooks and MCP tools for every provider T3 Code supports:
+    `handoff`, `escalate` with up to three choices, and `get-messages`.
+    The host CLI serves the tools as an MCP server, and runs a hook after
+    each tool call, each registered in each provider's own configuration;
+    Manifold identifies the calling thread and its turn from what T3 Code
+    records of the call.
+  operator-console: >-
+    A web UI in T3 Code's visual language: Board, Epics, Task, Actors,
+    Portfolio, Blueprints with a graph editor, GitHub Projects, Environments,
+    and Settings. Its visual design is `DESIGN.md`.
+features:
+  run-a-declared-process: >-
+    Runs a user's process from blueprints in their own repository, and takes a
+    changed process on the next push without a redeploy of Manifold.
+  keep-github-in-step: >-
+    Owns each bound Project's configuration from the task metadata schema,
+    detects drift, applies changes, and moves cards as actors progress.
+  treat-external-activity-as-events: >-
+    Reacts to card moves, issue changes, pull request reviews, button presses,
+    and agent tool calls as events the blueprint decides on. Offers an
+    operator only the interactions the actor's current state accepts.
+  start-and-follow-agent-threads: >-
+    Creates threads on the right environment, starts turns from prompt
+    templates, waits for handoff or escalation, and re-attaches to the same
+    thread after a restart.
+  escalate-on-any-channel: >-
+    Sends an escalation through ntfy, with a button for each choice and a
+    page to answer it, and to the Task page and Manifold's API, takes the
+    first answer, and replaces the question on every ntfy client with how
+    it ended. The answer goes back to the T3 Code thread that raised the
+    escalation. An escalation raised by automation, with no thread, is
+    answered through Manifold's API, which takes a reply or an action from
+    any channel.
+  deliver-messages-between-threads: >-
+    Lets a process send a message to another task's threads, routes it
+    through the actor that follows each thread as an event its blueprint
+    takes, and tells the receiving agent it has mail after its next tool
+    call, without interrupting its turn.
+  gate-work-on-budget: >-
+    Releases a task past a gated state only when the process's comparator
+    picks it, reserving the estimate the comparator asks for against its
+    portfolio item, then lets it run to completion with no further budget
+    gate unless the process adds one.
+  create-projects-and-threads: >-
+    Creates T3code projects and threads on the right environment from
+    templated names and paths, so a process can give every epic its own
+    project and every thread a name that says what it is for.
+  attribute-operator-threads: >-
+    Attributes usage from threads an operator opened outside Manifold by the
+    T3code project's binding, by the item of the task whose process created
+    the project, or to the top-level Other, and lets the operator move it to
+    an item or a task.
+  attribute-cost-exactly: >-
+    Records tokens and dollars per actor and state visit from provider
+    session files, flags work on unpriced models, keeps estimate, actual,
+    and variance per task for the process to learn from, and learns the
+    ratio between provider percentages and tokens over time.
+  migrate-running-workflows: >-
+    Upgrades in-flight actors to a new blueprint version in waiting states, with
+    authored migration paths where a schema changed.
+  edit-blueprints-visually: >-
+    Edits a blueprint as a graph, shows the generated YAML, validates as it
+    changes, and publishes as a commit to the process repository.
+  show-actors-and-usage: >-
+    Shows every actor's current state, timeline, sequence diagram with the thread
+    and GitHub, and usage in tokens and dollars.
+benefits:
+  - The mechanical part of orchestrating agents costs no tokens.
+  - A process is data in a repository, so it is versioned, forkable, and readable by others.
+  - Every thread an agent runs is visible and steerable in T3 Code's own interface.
+  - Lifecycle state is on GitHub, readable without access to a development environment.
+  - Several projects share the same agents without running each other over.
+open-questions:
+  Q01: >-
+    Which implementations carry git and worktree operations, such as
+    confirming a merge and removing a worktree, so a process can express
+    cleanup without shelling out from Manifold.
+  Q03: >-
+    Whether an all-or-none release strategy needs a batch identity on tasks
+    beyond what the population carries.
+exclusions:
+  - Any built-in lifecycle, task type, or review flow. These belong to the process repository.
+  - Orchestration by an agent. An agent runs inside a pass; it never dispatches work.
+  - A state machine above the task. Projects have no actor; scheduling is gates on task states.
+  - Any built-in release strategy or cost estimate. Both are the comparator's.
+  - Providers outside T3 Code. A session no T3 Code provider ran is outside Manifold's accounting.
+  - Direct provider harness integration. Providers are reached through T3 Code.
+  - A fork of T3 Code, or any behavior that exists only in an unmerged upstream change.
+  - Applying a provider's granted reset on the operator's behalf.

@@ -1,0 +1,178 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no schema declares an edge from an asset to its
+#   # specification; `asset-of` names it.
+#   asset-of: host-cli-usage
+# ---
+$schema: https://commonclischema.org/draft/2026-04/schema
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+commands:
+  - name: usage
+    summary: Read provider usage on this environment.
+    mode: non-interactive
+    subcommands:
+      - name: decode
+        summary: Decode provider session files into usage records on standard output.
+        mode: non-interactive
+        options:
+          - name: root
+            flags: [--root]
+            kind: option
+            description: >-
+              A provider and the directory where it keeps its sessions,
+              written `<provider>=<path>`. The provider is one of `claude`,
+              `codex`, `cursor`, `grok`, and `opencode`. Repeatable; roots
+              decode in the order given. When absent, every provider's
+              default root decodes.
+            required: false
+            repeatable: true
+            value:
+              type: string
+            examples:
+              - claude=/home/example/.claude
+              - codex=/srv/agents/codex-home
+        output:
+          modes:
+            - name: jsonl
+              description: >-
+                One usage record per line on standard output, as defined by
+                `docs/specifications/usage-record.schema.yml`.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: >-
+                Every root decoded. Source errors, if any, are records on
+                standard output.
+            - code: 1
+              meaning: >-
+                The decode ended before every root decoded. Standard output
+                holds the records written before the failure, and standard
+                error names the failure.
+            - code: 2
+              meaning: >-
+                The command line is invalid: an unknown option, a `--root`
+                without `=`, an unknown provider, or an empty path. Nothing
+                is decoded.
+        examples:
+          - manifold-host usage decode
+          - manifold-host usage decode --root codex=/srv/agents/codex-home --root claude=/home/example/.claude
+      - name: push
+        summary: Decode provider session files and push the usage records to the service.
+        mode: non-interactive
+        options:
+          - name: service
+            flags: [--service]
+            kind: option
+            description: The base URL of the Manifold service, `http` or `https`.
+            required: true
+            repeatable: false
+            value:
+              type: string
+            examples:
+              - http://127.0.0.1:8080
+          - name: environment
+            flags: [--environment]
+            kind: option
+            description: >-
+              The name of this environment, as the service configuration's
+              `environments` section names it.
+            required: true
+            repeatable: false
+            value:
+              type: string
+            examples:
+              - env-one
+          - name: root
+            flags: [--root]
+            kind: option
+            description: >-
+              A provider and the directory where it keeps its sessions, as
+              for `usage decode`. When absent, every provider's default root
+              decodes.
+            required: false
+            repeatable: true
+            value:
+              type: string
+          - name: t3-home
+            flags: [--t3-home]
+            kind: option
+            description: >-
+              T3 Code's data directory, whose `userdata/state.sqlite` holds
+              each thread's provider session. When absent, `T3CODE_HOME`,
+              else `~/.t3`.
+            required: false
+            repeatable: false
+            value:
+              type: string
+          - name: state-dir
+            flags: [--state-dir]
+            kind: option
+            description: >-
+              The directory of the host CLI's state. When absent,
+              `XDG_STATE_HOME/manifold-host`, else
+              `~/.local/state/manifold-host`.
+            required: false
+            repeatable: false
+            value:
+              type: string
+        output:
+          modes:
+            - name: json
+              description: >-
+                One JSON object on standard output when the run ends, with
+                the counts `batches`, `requests`, and `skippedSources`, and
+                the summed `calls` and `threads` counts the service
+                answered.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: Every mapping request and every batch was acknowledged by the service.
+            - code: 1
+              meaning: >-
+                The run ended before every mapping request and batch was
+                acknowledged: a request did not answer 200, the connection
+                failed, or T3 Code's database could not be read. The push
+                state holds the mappings and batches acknowledged before the
+                failure, and standard error names it.
+            - code: 2
+              meaning: >-
+                The command line is invalid.
+                Nothing is decoded or sent.
+        examples:
+          - manifold-host usage push --service http://127.0.0.1:8080 --environment env-one
+      - name: lint
+        summary: Lint `accounts.yml` and `prices.yml` in a process repository checkout, and the accounts `portfolio.yml` allocates against `accounts.yml`.
+        mode: non-interactive
+        positional-arguments:
+          - name: repository
+            description: The process repository checkout directory. Defaults to the current directory.
+            position: 0
+            required: false
+            default: .
+            value:
+              type: path
+        output:
+          modes:
+            - name: text
+              description: >-
+                One line per finding on standard output,
+                `<file>:<location> <kind> <message>`, with the file
+                `accounts.yml` or `prices.yml`, then one line per
+                `account-undeclared` or `account-archived` warning in the
+                same form with the file `portfolio.yml`, ending with
+                ` (warning)`; nothing when
+                there is no finding and no warning.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: There is no finding; there may be warnings.
+            - code: 1
+              meaning: At least one file has a finding.
+            - code: 2
+              meaning: The directory or a file could not be read.
+        examples:
+          - manifold-host usage lint
+          - manifold-host usage lint ./process

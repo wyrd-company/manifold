@@ -1,0 +1,15 @@
+// ---
+// relationships:
+//   implements: operator-console
+// ---
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite-plus/client"],
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  },
+  "include": ["src", "vite.config.ts"]
+}

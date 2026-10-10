@@ -1,0 +1,664 @@
+description: Release a task on budget, run an agent thread, and finish on handoff.
+machine:
+  id: task
+  initial: todo
+  context:
+    task: {}
+    fields: {}
+    project: ""
+    model: {}
+    thread: ""
+    turn: ""
+    answerTurn: null
+    stall: null
+    handoff: null
+  on:
+    github.project-item.field-changed:
+      guard:
+        type: expression.guard
+        params:
+          expression: event.project.nodeId = context.manifold.project
+      actions:
+        - type: expression.assign
+          params:
+            expression: '{ "fields": $merge([context.fields, { event.field.name: event.to
+              }]) }'
+  states:
+    todo:
+      entry:
+        - type: expression.assign
+          params:
+            expression: |-
+              { "task": event.input.task, "fields": event.input.task.fields,
+                "project": event.input.binding.t3codeProjects[0],
+                "model": event.input.intake.model }
+      meta:
+        gate:
+          comparator: comparators/estimate.ts
+          return: exit
+          reservation: true
+      on:
+        token: starting
+        github.issue.closed:
+          target: closed
+          guard:
+            type: expression.guard
+            params:
+              expression: event.issue.nodeId = context.manifold.issue
+    starting:
+      invoke:
+        id: move-in-progress
+        src: github-card-move
+        input:
+          status: In Progress
+        onDone: active
+    active:
+      initial: working
+      on:
+        agent.handoff:
+          target: finishing
+          guard:
+            type: expression.guard
+            params:
+              expression: event.threadId = context.thread
+          actions:
+            - type: expression.assign
+              params:
+                expression: '{ "handoff": event.handoff }'
+        agent.escalated:
+          target: "#task.active.working.escalated"
+          guard:
+            type: expression.guard
+            params:
+              expression: event.threadId = context.thread
+        t3.thread.archived:
+          guard:
+            type: expression.guard
+            params:
+              expression: event.threadId = context.thread
+          actions:
+            - type: expression.assign
+              params:
+                expression: '{ "thread": "" }'
+        t3.thread.deleted:
+          guard:
+            type: expression.guard
+            params:
+              expression: event.threadId = context.thread
+          actions:
+            - type: expression.assign
+              params:
+                expression: '{ "thread": "" }'
+      states:
+        working:
+          initial: opening
+          on:
+            t3.turn.settled:
+              target: stalled
+              guard:
+                type: expression.guard
+                params:
+                  expression: event.threadId = context.thread and (event.messageId = context.turn
+                    or (context.answerTurn != null and event.turnId =
+                    context.answerTurn))
+              actions:
+                - type: expression.assign
+                  params:
+                    expression: '{ "stall": { "kind": "turn-" & event.state, "message": "The turn
+                      ended without a handoff." } }'
+            t3.session.failed:
+              target: stalled
+              guard:
+                type: expression.guard
+                params:
+                  expression: event.threadId = context.thread
+              actions:
+                - type: expression.assign
+                  params:
+                    expression: '{ "stall": { "kind": "session-failed", "message":
+                      $string(event.error) } }'
+            t3.thread.archived:
+              target: stalled
+              guard:
+                type: expression.guard
+                params:
+                  expression: event.threadId = context.thread
+              actions:
+                - type: expression.assign
+                  params:
+                    expression: '{ "thread": "", "stall": { "kind": "thread-archived", "message":
+                      "The thread was archived." } }'
+            t3.thread.deleted:
+              target: stalled
+              guard:
+                type: expression.guard
+                params:
+                  expression: event.threadId = context.thread
+              actions:
+                - type: expression.assign
+                  params:
+                    expression: '{ "thread": "", "stall": { "kind": "thread-deleted", "message":
+                      "The thread was deleted." } }'
+          states:
+            opening:
+              invoke:
+                id: open-thread
+                src: thread-create
+                input:
+                  type: expression.map
+                  params:
+                    expression: |-
+                      { "project": context.project,
+                        "title": "{{ issue.repository }}#{{ issue.number }}",
+                        "values": { "issue": context.task.issue },
+                        "model": context.model }
+                onDone:
+                  target: preparing
+                  actions:
+                    - follow-thread
+                    - type: expression.assign
+                      params:
+                        expression: '{ "thread": event.output.threadId }'
+                onError:
+                  target: "#task.active.stalled"
+                  actions:
+                    - type: expression.assign
+                      params:
+                        expression: '{ "stall": { "kind": event.error.kind, "message":
+                          event.error.message } }'
+            preparing:
+              invoke:
+                id: prepare-turn
+                src: turn-prepare
+                onDone:
+                  target: prompting
+                  actions:
+                    - type: expression.assign
+                      params:
+                        expression: '{ "turn": event.output.messageId, "answerTurn": null }'
+            prompting:
+              invoke:
+                id: start-turn
+                src: turn-start
+                input:
+                  type: expression.map
+                  params:
+                    expression: >-
+                      { "threadId": context.thread, "messageId": context.turn,
+                        "prompt": "templates/task.njk",
+                        "values": { "issue": context.task.issue, "fields": context.fields,
+                                    "thread": context.thread } }
+                onDone: waiting
+                onError:
+                  target: "#task.active.stalled"
+                  actions:
+                    - type: expression.assign
+                      params:
+                        expression: '{ "stall": { "kind": event.error.kind, "message":
+                          event.error.message } }'
+            waiting: {}
+            escalated:
+              on:
+                t3.turn.settled:
+                  guard:
+                    type: expression.guard
+                    params:
+                      expression:
+                        event.threadId = context.thread and (event.messageId = context.turn
+                        or (context.answerTurn != null and event.turnId =
+                        context.answerTurn))
+                agent.escalation.answered:
+                  target: waiting
+                  guard:
+                    type: expression.guard
+                    params:
+                      expression: event.threadId = context.thread
+                  actions:
+                    - type: expression.assign
+                      params:
+                        expression: '{ "turn": "", "answerTurn": event.turnId }'
+        stalled:
+          invoke:
+            id: ask
+            src: escalate
+            input:
+              type: expression.map
+              params:
+                expression: >-
+                  { "title": "Agent thread stopped",
+                    "question": "The agent thread for " & context.task.issue.repository & "#" &
+                      $string(context.task.issue.number) & " stopped (" & context.stall.kind & "): " &
+                      context.stall.message,
+                    "choices": [
+                      { "id": "retry", "label": "Retry" },
+                      { "id": "done", "label": "Mark done" },
+                      { "id": "stop", "label": "Stop" } ] }
+          on:
+            escalation.answered:
+              - target: "#task.active.working.preparing"
+                guard:
+                  type: expression.guard
+                  params:
+                    expression: event.answer.choice = "retry" and context.thread != ""
+              - target: "#task.active.working"
+                guard:
+                  type: expression.guard
+                  params:
+                    expression: event.answer.choice = "retry"
+              - target: "#task.finishing"
+                guard:
+                  type: expression.guard
+                  params:
+                    expression: event.answer.choice = "done"
+              - target: "#task.stopped"
+                guard:
+                  type: expression.guard
+                  params:
+                    expression: event.answer.choice = "stop"
+    finishing:
+      invoke:
+        id: move-done
+        src: github-card-move
+        input:
+          status: Done
+        onDone: done
+    done:
+      type: final
+      output:
+        type: expression.map
+        params:
+          expression: '{ "outcome": "done", "handoff": context.handoff }'
+    stopped:
+      type: final
+      output:
+        type: expression.map
+        params:
+          expression: '{ "outcome": "stopped", "handoff": context.handoff }'
+    closed:
+      type: final
+      output:
+        type: expression.map
+        params:
+          expression: '{ "outcome": "closed", "handoff": null }'
+schemas:
+  input:
+    type: object
+    required:
+      - task
+      - binding
+      - intake
+    properties:
+      task: &a2
+        type: object
+        required:
+          - issue
+          - fields
+        properties:
+          issue: &a5
+            type: object
+            required:
+              - nodeId
+              - repository
+              - number
+            properties:
+              nodeId: &a1
+                type: string
+              repository: *a1
+              number:
+                type: integer
+                minimum: 1
+          fields:
+            type: object
+      binding:
+        type: object
+        required:
+          - name
+          - item
+          - environment
+          - t3codeProjects
+        properties:
+          name: *a1
+          item: *a1
+          environment: *a1
+          t3codeProjects:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              minLength: 1
+      intake:
+        type: object
+        required:
+          - model
+        properties:
+          model: &a3
+            type: object
+            required:
+              - instanceId
+              - model
+            properties:
+              instanceId:
+                type: string
+                minLength: 1
+              model:
+                type: string
+                minLength: 1
+              options:
+                type: object
+  context:
+    type: object
+    required:
+      - task
+      - fields
+      - project
+      - model
+      - thread
+      - turn
+      - answerTurn
+      - stall
+      - handoff
+    properties:
+      manifold:
+        type: object
+        required: []
+        properties:
+          issue: *a1
+          project: *a1
+          environment: *a1
+          threads:
+            type: array
+            items: *a1
+      task: *a2
+      fields:
+        type: object
+      project: *a1
+      model: *a3
+      thread: *a1
+      turn: *a1
+      answerTurn: &a6
+        type:
+          - string
+          - "null"
+      stall:
+        type:
+          - object
+          - "null"
+        properties:
+          kind: *a1
+          message: *a1
+      handoff:
+        oneOf:
+          - &a4
+            type: object
+            required:
+              - summary
+            properties:
+              summary:
+                type: string
+                minLength: 1
+            additionalProperties: false
+          - type: "null"
+  output:
+    type: object
+    required:
+      - outcome
+      - handoff
+    properties:
+      outcome:
+        enum:
+          - done
+          - stopped
+          - closed
+      handoff:
+        oneOf:
+          - *a4
+          - type: "null"
+  events:
+    token:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          const: token
+    github.project-item.field-changed:
+      type: object
+      required:
+        - type
+        - project
+        - field
+        - to
+      properties:
+        type:
+          const: github.project-item.field-changed
+        project:
+          type: object
+          required:
+            - nodeId
+          properties:
+            nodeId: *a1
+        field:
+          type: object
+          required:
+            - name
+          properties:
+            name: *a1
+        to: {}
+    github.issue.closed:
+      type: object
+      required:
+        - type
+        - issue
+      properties:
+        type:
+          const: github.issue.closed
+        issue: *a5
+    agent.message:
+      $ref: https://manifold.wyrd.company/schemas/agent-tools#/$defs/agent-message-event
+    agent.handoff:
+      type: object
+      required:
+        - type
+        - threadId
+        - environment
+        - turnId
+        - handoff
+      properties:
+        type:
+          const: agent.handoff
+        threadId: *a1
+        environment: *a1
+        turnId: *a1
+        handoff: *a4
+    agent.escalated:
+      type: object
+      required:
+        - type
+        - threadId
+        - environment
+      properties:
+        type:
+          const: agent.escalated
+        threadId: *a1
+        environment: *a1
+    agent.escalation.answered:
+      type: object
+      required:
+        - type
+        - threadId
+        - environment
+        - turnId
+      properties:
+        type:
+          const: agent.escalation.answered
+        threadId: *a1
+        environment: *a1
+        turnId: *a6
+    t3.turn.settled:
+      type: object
+      required:
+        - type
+        - threadId
+        - environment
+        - messageId
+        - turnId
+        - state
+      properties:
+        type:
+          const: t3.turn.settled
+        threadId: *a1
+        environment: *a1
+        messageId: *a1
+        turnId: *a1
+        state: *a1
+    t3.session.failed:
+      type: object
+      required:
+        - type
+        - threadId
+        - environment
+        - error
+      properties:
+        type:
+          const: t3.session.failed
+        threadId: *a1
+        environment: *a1
+        error: {}
+    t3.thread.archived:
+      type: object
+      required:
+        - type
+        - threadId
+        - environment
+      properties:
+        type:
+          const: t3.thread.archived
+        threadId: *a1
+        environment: *a1
+    t3.thread.deleted:
+      type: object
+      required:
+        - type
+        - threadId
+        - environment
+      properties:
+        type:
+          const: t3.thread.deleted
+        threadId: *a1
+        environment: *a1
+    escalation.answered:
+      type: object
+      required:
+        - type
+        - answer
+      properties:
+        type:
+          const: escalation.answered
+        answer:
+          type: object
+          required:
+            - choice
+          properties:
+            choice:
+              enum:
+                - retry
+                - done
+                - stop
+  actors:
+    github-card-move:
+      input:
+        type: object
+        required:
+          - status
+        properties:
+          status:
+            type: string
+            minLength: 1
+      output:
+        type: object
+    thread-create:
+      input:
+        type: object
+        required:
+          - project
+          - title
+          - values
+          - model
+        properties:
+          project: *a1
+          title: *a1
+          values:
+            type: object
+            required:
+              - issue
+            properties:
+              issue: *a5
+          model: *a3
+      output:
+        type: object
+        required:
+          - threadId
+        properties:
+          threadId: *a1
+    turn-prepare:
+      input: true
+      output:
+        type: object
+        required:
+          - messageId
+        properties:
+          messageId: *a1
+    turn-start:
+      input:
+        type: object
+        required:
+          - threadId
+          - messageId
+          - prompt
+          - values
+        properties:
+          threadId: *a1
+          messageId: *a1
+          prompt: *a1
+          values:
+            type: object
+            required:
+              - issue
+              - fields
+              - thread
+            properties:
+              issue: *a5
+              fields:
+                type: object
+              thread: *a1
+      output:
+        type: object
+        required:
+          - threadId
+          - messageId
+        properties:
+          threadId: *a1
+          messageId: *a1
+    escalate:
+      input:
+        type: object
+        required:
+          - title
+          - question
+          - choices
+        properties:
+          title: *a1
+          question: *a1
+          choices:
+            type: array
+            minItems: 1
+            maxItems: 3
+            items:
+              type: object
+              required:
+                - id
+                - label
+              properties:
+                id: *a1
+                label: *a1
+      output: true

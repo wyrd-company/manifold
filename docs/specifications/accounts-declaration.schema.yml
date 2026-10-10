@@ -1,0 +1,110 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no schema declares an edge from an asset to its
+#   # specification; `asset-of` names it.
+#   asset-of: accounts-declaration
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/accounts-declaration
+title: Accounts declaration
+description: >-
+  The document in `accounts.yml` at the root of the process repository:
+  the accounts usage is charged to. An empty document declares no
+  accounts.
+type: object
+additionalProperties: false
+properties:
+  accounts:
+    description: Accounts, keyed by account name, a declared name.
+    type: object
+    propertyNames:
+      $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+    additionalProperties:
+      $ref: "#/$defs/account"
+$defs:
+  account:
+    type: object
+    additionalProperties: false
+    required:
+      - unit
+      - kind
+      - capacity
+    properties:
+      unit:
+        description: The account's native unit.
+        type: string
+        enum: [usd]
+      kind:
+        description: >-
+          `api` for an account billed by usage against a budget;
+          `subscription` for an account with a usage limit that resets.
+        type: string
+        enum: [api, subscription]
+      archived:
+        description: >-
+          True archives the account: it stays declared, charges no call,
+          and is credited no window.
+        type: boolean
+      capacity:
+        $ref: "#/$defs/capacity"
+      usage:
+        description: The usage that charges the account.
+        type: array
+        items:
+          $ref: "#/$defs/usage"
+  capacity:
+    description: What the account can spend in each window, and when its windows open.
+    type: object
+    additionalProperties: false
+    required:
+      - amount
+      - reset
+      - every
+    properties:
+      amount:
+        description: >-
+          The capacity of one window in the account's unit: a positive
+          decimal with at most six fractional digits.
+        type: number
+        exclusiveMinimum: 0
+      reset:
+        description: >-
+          An RFC 3339 date-time with `Z` or a numeric offset at which one
+          of the account's windows opens, from 0001-01-01T00:00:00.000Z to
+          9999-12-31T23:59:59.999Z once its offset is applied.
+        type: string
+        format: date-time
+      every:
+        description: The length of a window, in exactly one unit.
+        type: object
+        additionalProperties: false
+        minProperties: 1
+        maxProperties: 1
+        properties:
+          hours:
+            type: integer
+            minimum: 1
+            maximum: 87600
+          days:
+            type: integer
+            minimum: 1
+            maximum: 3650
+          months:
+            type: integer
+            minimum: 1
+            maximum: 120
+  usage:
+    type: object
+    additionalProperties: false
+    required:
+      - environment
+      - provider
+    properties:
+      environment:
+        $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+      provider:
+        $ref: https://manifold.wyrd.company/schemas/usage-record#/$defs/provider
+      instance:
+        description: The id of a T3 Code provider instance on the environment.
+        type: string
+        minLength: 1

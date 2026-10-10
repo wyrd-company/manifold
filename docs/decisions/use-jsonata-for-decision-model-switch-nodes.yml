@@ -1,0 +1,40 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - expressions
+    - decision-models
+description: >-
+  A decision model branches with a switch node. Zen's stock switch node
+  evaluates its conditions in Zen's own expression language. Every other
+  expression in a process repository is JSONata: blueprint guards, matches,
+  and mappings, and the cells and expressions of decision models. A Zen
+  custom node cannot choose which outgoing edges the graph follows; only the
+  stock switch routes.
+considered-options:
+  "1": >-
+    A custom `jsonataSwitch` node whose conditions are JSONata. The service
+    routes each one through a stock switch it generates in its in-memory
+    copy of the model, whose conditions read only the booleans the JSONata
+    handler computed. The lint rejects the stock switch in a process
+    repository.
+  "2": >-
+    No switch node. A model branches through a `first` hit-policy decision
+    table whose output selects the next step.
+  "3": >-
+    Keep the stock switch, with conditions in Zen's own expression language.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 keeps one expression language in every file the user writes,
+    so one lint, one error shape, and one set of semantics cover every
+    condition, and the stock editor and engine still route the graph.
+    Option 2 removes a branching shape authors expect from the editor and
+    routes through data instead of edges. Option 3 is a second expression
+    language beside JSONata, with its own semantics, errors, and lint.
+expected-outcomes:
+  positive:
+    - No file in a process repository holds an expression in Zen's own language.
+    - Switch conditions are linted and traced by the same code as cells and blueprint expressions.
+  negative:
+    - The evaluated graph holds one generated stock switch per JSONata switch, which the service filters out of results and traces by its exact generated identity.
+    - An engine upgrade that changes how the stock switch reads its input breaks routing, which the engine contract test guards.

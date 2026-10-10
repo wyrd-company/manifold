@@ -1,0 +1,857 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design that loads this format.
+  realizes:
+    - blueprint-loader
+  references:
+    - blueprint-expressions
+    - decision-models
+    - gates
+    - gate-runtime
+    - token-lint
+    - escalation-contract
+    - task-metadata-declaration
+    - github-events
+    - agent-tools
+    - agent-threads
+description: |-
+  Defines the blueprint file: the YAML document in a process repository
+  from which Manifold builds an XState v5 state machine, the version
+  identity the loader gives each loaded file, and the findings the
+  blueprint lint reports. `docs/specifications/blueprint.schema.yml` is the
+  machine-readable definition of the document, the version identity, and
+  the finding.
+
+  Location. A blueprint is a file under `blueprints/` in the process
+  repository whose name ends in `.yml` or `.yaml`, at any depth. Its path
+  is the repository-relative path with `/` separators, such as
+  `blueprints/parcels/delivery.yml`.
+
+  Bundled blueprints. Manifold bundles blueprints at paths of the same
+  form: the default task blueprint is `blueprints/task.yml`, as
+  `default-task-blueprint` specifies. A bundled blueprint is named by its
+  path wherever a blueprint path is named, such as the intake decision
+  model's `blueprint`. At a commit, a path names the process repository's
+  file when the repository holds one there, whether or not it lints
+  clean, and the bundled blueprint otherwise. A repository file therefore
+  replaces the bundled blueprint at its path: a process customizes a
+  bundled blueprint by committing its edited copy at the same path, and a
+  process that wants both commits its copy at another path. A bundled
+  blueprint reads every other file it names, a comparator, a template, or
+  a schema, from the process repository at the commit.
+
+  Bundle. The bundle is the set of bundled blueprints of one Manifold
+  build, by path. Its digest is the SHA-256 of the UTF-8 bytes of each
+  path and its file's text, each followed by U+0000, with paths in code
+  point order, written as 64 lowercase hexadecimal digits. One digest
+  names one set of texts.
+
+  Document. The file is one YAML 1.2 document under the core schema, with
+  no custom tags and unique mapping keys. Its value round-trips through
+  JSON unchanged. The document is a mapping with these keys:
+
+  - `machine`, required: the machine configuration, a serializable subset
+    of the XState v5 machine configuration.
+  - `schemas`, required: the expression schemas of `blueprint-expressions`,
+    `#/$defs/expression-schemas`. `input` is the machine's input schema
+    and `output` its output schema.
+  - `description`, optional: text for people.
+  - `layout`, optional: where the blueprint editor's canvas draws each
+    state, as under Layout. The machine never reads it.
+  - `migrations`, optional: the migration paths that map the context of
+    an actor on an earlier version of this blueprint to this version's
+    context, as under Migrations. The machine never reads it.
+
+  ```yaml
+  description: Moves a parcel from intake to delivery.
+  machine:
+    id: delivery
+    initial: sorting
+    context:
+      attempts: 0
+      depot: ""
+    states:
+      sorting:
+        entry:
+          - type: expression.assign
+            params:
+              expression: '{ "depot": event.input.depot }'
+        on:
+          parcel.scanned:
+            target: routing
+            guard:
+              type: expression.guard
+              params:
+                expression: event.depot = context.depot
+      routing:
+        invoke:
+          id: route
+          src: courier.route
+          input:
+            type: expression.map
+            params:
+              expression: '{ "depot": context.depot }'
+          onDone: delivered
+        after:
+          "3600000": sorting
+      delivered:
+        type: final
+        output:
+          type: expression.map
+          params:
+            expression: '{ "depot": context.depot }'
+  schemas:
+    input: { type: object, required: [depot], properties: { depot: { type: string } } }
+    output: { type: object, required: [depot], properties: { depot: { type: string } } }
+    context: { type: object, required: [depot], properties: { attempts: { type: integer }, depot: { type: string } } }
+    events:
+      parcel.scanned: { type: object, required: [type, depot], properties: { type: { const: parcel.scanned }, depot: { type: string } } }
+    actors:
+      courier.route:
+        input: { type: object, properties: { depot: { type: string } } }
+        output: { type: object }
+  ```
+
+  Layout. `layout` holds `states`, a mapping from a state path to the
+  point where the canvas draws that state's top-left corner: `{ x, y }`,
+  two integers in canvas pixels. A nested state's point is relative to
+  its parent state's top-left corner, and a top-level state's point is
+  relative to the canvas origin. A blueprint with no `layout` is laid out
+  automatically each time it is drawn. A blueprint with `layout` is
+  pinned: each state with an entry is drawn at its point, and a state
+  with no entry is placed beside its positioned siblings. An entry whose
+  path names no state is ignored. `layout` changes nothing a blueprint
+  runs: the loader, the lint rules after `shape`, and the engine read only
+  `machine` and `schemas`, so two texts that differ only in `layout` run
+  the same machine, though each commit is its own version.
+
+  ```yaml
+  layout:
+    states:
+      sorting: { x: 0, y: 0 }
+      routing: { x: 0, y: 136 }
+      delivered: { x: 0, y: 272 }
+  ```
+
+  Migrations. An actor runs one blueprint version at a time. A migration
+  moves an actor to the latest version at its blueprint's path, when that
+  version is later than the actor's and only while the actor waits on
+  events, as `blueprint-migration` states, which also states what starts
+  a migration. The actor keeps its state,
+  its identity, its threads, its gate token and reservation, its inbox,
+  and each deadline the later version still declares on its state, and
+  its context becomes the later version's context. State names are
+  identity: a state the later version does not declare at the same path
+  keeps the actor on its version. `migrations` is a list of migration
+  paths, each a mapping with these keys:
+
+  - `from`, required: a JSON Schema of draft 2020-12 that an earlier
+    version's context, without `manifold`, satisfies.
+  - `context`, required: a mapping, `{ type: expression.map, params: {
+    expression } }`, from the earlier context to this version's context.
+  - `description`, optional: text for people.
+
+  The context migrates by the first rule that applies. A context that
+  validates against this version's `schemas.context` migrates unchanged,
+  and no path runs. Otherwise the first path, in list order, whose `from`
+  accepts the context runs, and its result is the whole new context. A
+  context that neither the context schema nor any `from` accepts keeps
+  the actor on its version. A path is therefore needed exactly where the
+  context's shape changed, and one path covers every earlier version
+  whose context its `from` accepts. The mapping's binding and result are
+  those of `blueprint-expressions` (Migration mappings): `$` is `{
+  "context": <earlier context> }`, the earlier context holding
+  `manifold` for a top-level actor, and the result is an object with no
+  `manifold` that validates against this version's context schema. The
+  service puts the actor's identity back at `context.manifold`. A child
+  blueprint's context migrates with its parent, by the child version's
+  own `migrations`.
+
+  ```yaml
+  migrations:
+    - description: Splits the depot into its depot and its zone.
+      from:
+        type: object
+        required: [depot]
+        properties:
+          depot: { type: string, pattern: "^[^/]+/[^/]+$" }
+      context:
+        type: expression.map
+        params:
+          expression: >-
+            { "attempts": context.attempts,
+              "depot": $substringBefore(context.depot, "/"),
+              "zone": $substringAfter(context.depot, "/") }
+  ```
+
+  Machine configuration. The root is a state node with two more keys:
+  `id`, the machine id, and `context`, the initial context, a static
+  mapping with no `manifold` key. Context is set from input by an `entry`
+  assignment of an initial state, which sees the `xstate.init` event and
+  its `input`. A
+  state node has the keys `id`, `description`, `type` (`atomic`,
+  `compound`, `parallel`, `final`, or `history`), `initial`, `history`
+  (`shallow` or `deep`), `target` for a history state's default, `states`,
+  `on`, `always`, `after`, `onDone`, `entry`, `exit`, `invoke`, `meta`,
+  `tags`, and, on a top-level final state, `output`. Each key means what
+  it means in XState v5. A state key contains no `.` and no `#`, since
+  XState resolves targets by those characters and Manifold names a state
+  by its keys joined with `.`. `meta` is free for blueprint authors and for
+  the declarations Manifold reads from it, such as a gate.
+
+  A transition is a target string, an object, or an array of either. A
+  transition object has `target` (a string or an array of strings),
+  `guard`, `actions`, `reenter`, `description`, and `meta`. An `after` key
+  is a delay in milliseconds written as decimal digits, or the name of a
+  delay implementation. An invoke is an object, or an array of objects,
+  with `src`, `id`, `systemId`, `input`, `onDone`, `onError`, and
+  `onSnapshot`.
+
+  Gate declaration. A state node other than the root may declare a gate
+  in `meta.gate`, as `gates` describes. The state is the gated state, and
+  the gate's key is `<path>#<statePath>`, the blueprint's path and the
+  state's path. The declaration is a mapping with these keys:
+
+  - `comparator`, required: the repository-relative path of the
+    comparator's TypeScript file, ending in `.ts`, with no `.` or `..`
+    segment and no leading `/`. The comparator is read from the process
+    repository at the blueprint version's commit.
+  - `return`, required: where the token is returned. `exit` returns it
+    when the actor leaves the gated state. `{ state: <statePath> }` returns
+    it when the actor enters that state, named by its state path.
+  - `reservation`, optional, default `false`: whether the comparator's
+    reservations are written to the ledger with the token.
+  - `token`, optional, default `token`: the type of the event that
+    delivers the token to the actor.
+  - `dependencies`, optional: the state path of the region whose active
+    child, `blocked` or `clear`, the comparator reads as the task's
+    dependency state.
+
+  ```yaml
+  open:
+    type: parallel
+    states:
+      lifecycle:
+        initial: waiting
+        states:
+          waiting:
+            meta:
+              gate:
+                comparator: comparators/oldest-first.ts
+                return: { state: open.lifecycle.packed }
+                reservation: true
+                token: slot.granted
+                dependencies: open.dependencies
+  ```
+
+  Implementation references. Every implementation is referenced by name,
+  so the file is serializable and diffable:
+
+  - an actor: the `src` of an invoke;
+  - an action: an entry of `entry`, `exit`, or a transition's `actions`,
+    written as the name or as `{ type, params }`;
+  - a guard: the `guard` of a transition, written as the name or as
+    `{ type, params }`;
+  - a delay: an `after` key that is not decimal digits.
+
+  Child blueprints. An invoke whose `src` is a blueprint path,
+  `blueprints/` followed by a path ending in `.yml` or `.yaml` as under
+  Location, invokes that blueprint as a child state machine. The child
+  runs the version at its parent's commit, from its parent's source: a
+  repository blueprint's child is the repository's file at the path, and
+  a bundled blueprint's child is the bundled blueprint at the path in its
+  parent's bundle. The invoke's `input` is the
+  child's input, its `onDone` takes the child's output, and its `onError`
+  takes the child's error. A child that cannot run fails the invoke at
+  once with an error that validates against
+  `#/$defs/child-blueprint-error`: its `path`, and `reason` `missing` for
+  a file not at the commit, `invalid` with the lint's `findings`, `cycle`
+  for a child whose references at the commit lead back to the invoking
+  blueprint, or `schemas` when a schema the parent declares for the path
+  under `schemas.actors` differs from the child's own `input` or `output`
+  schema. The parent loads whatever its children do. A child receives
+  events from its parent and its own invokes.
+
+  ```yaml
+  states:
+    reviewing:
+      invoke:
+        id: review
+        src: blueprints/reviews/standard.yml
+        input:
+          type: expression.map
+          params:
+            expression: '{ "depot": context.depot }'
+        onDone: delivered
+        onError: sorting
+  ```
+
+  Decision models. An invoke whose `src` is a decision model path,
+  `decision-models/` followed by a path ending in `.yml`, with the path
+  rules of `ProcessRepositoryRevision`, evaluates that decision model, as
+  `decision-models` defines under Invoked models. The state is a state
+  that evaluates a decision model. The model is the process repository's
+  file at the path at the commit of the actor's blueprint version, for a
+  bundled blueprint as for a repository blueprint, with every model its
+  `decisionNode`s reach at that commit. The invoke's `input` is the
+  evaluation input, an object, static or a mapping; its `onDone` takes
+  the model's result; and its `onError` takes an error that validates
+  against `decision-models`' `#/$defs/decision-model-invoke-error`. An
+  invoke that one state entry runs again, before or after a restart,
+  evaluates again and writes nothing, so the result is the same unless
+  the model reads JSONata's clock or random functions.
+
+  ```yaml
+  states:
+    pricing:
+      invoke:
+        id: quote
+        src: decision-models/parcel-quote.yml
+        input:
+          type: expression.map
+          params:
+            expression: '{ "parcel": context.parcel }'
+        onDone:
+          target: quoted
+          actions:
+            - type: expression.assign
+              params:
+                expression: '{ "quote": event.output.quote }'
+        onError: unpriced
+  ```
+
+  The guard `in` is built in: `{ type: in, params: { states } }`, where
+  `states` is a non-empty list of state paths, each a state node's keys
+  from the root joined with `.`. It is true when every listed state is
+  active, and reads only the configuration, so the token lint evaluates it
+  exactly. It is how a transition reads an orthogonal region, such as the
+  region that holds a gate's token:
+
+  ```yaml
+  always:
+    target: loading
+    guard:
+      type: in
+      params:
+        states: [open.slot.held, open.dock.clear]
+  ```
+
+  A bare `guard: in`, and an `in` guard without `states`, are `shape`
+  findings. No implementation that code registers is named `in`.
+
+  `params` is a mapping passed to the implementation. Names beginning with
+  `expression.` belong to the four expression implementations of
+  `blueprint-expressions`, and every other name is an implementation that
+  Manifold's code registers. An expression implementation is always
+  written as an expression reference, `{ type, params: { expression } }`:
+  a bare name beginning with `expression.`, an invoke `src` beginning with
+  `expression.`, and an object whose `type` begins with `expression.`
+  without the expression reference shape are `shape` findings. An `input`
+  of an invoke or an `output` of a top-level final state that is an
+  object with `type: expression.map` is a mapping and has the expression
+  reference shape; any other value is static, as `blueprint-expressions`
+  defines.
+
+  Manifold implementations. Manifold's code registers these, each with a
+  contract its specification defines:
+
+  - `escalate`, an actor: puts a question to a person and sends its actor
+    `escalation.answered` with the answer, as `escalation-contract`
+    defines. A blueprint that invokes it declares its input under
+    `schemas.actors.escalate.input` and the event under
+    `schemas.events`, with schemas that the contract's
+    `#/$defs/escalate-input` and `#/$defs/escalation-answered-event`
+    satisfy.
+  - `github-card-move`, an actor: moves the invoking actor's card. It
+    sets the lifecycle field of the item of the actor's issue,
+    `context.manifold.issue`, on the actor's Project,
+    `context.manifold.project`, to the option named `status`, one of the
+    options `task-metadata-declaration` declares for that Project. It
+    resolves with `{}` once GitHub holds that value. Its input is
+    `#/$defs/card-move-input`, its output `#/$defs/card-move-output`, and
+    it fails with a card move error, `#/$defs/card-move-error`. A blueprint
+    that invokes it declares its input and output under
+    `schemas.actors.github-card-move`, with schemas that those definitions
+    satisfy.
+
+  ```yaml
+  packing:
+    invoke:
+      id: stage
+      src: github-card-move
+      input:
+        status: Packed
+      onDone: shipping
+      onError: stalled
+  ```
+
+  The input may be a mapping, so a blueprint can choose the option from
+  its context. Setting an option the card already holds succeeds. A card
+  move error is a plain object with `type` `card-move`, a `kind`, a
+  `message`, and the `status` it was asked for. The kinds:
+
+  - `input`: the input does not validate against
+    `#/$defs/card-move-input`.
+  - `identity`: the root task actor has no `project` or no `issue` in
+    `context.manifold`. A child blueprint's move uses its root task's identity.
+  - `undeclared`: the actor's Project has no GitHub Project binding, the
+    task metadata declaration in force declares no lifecycle field for
+    that binding, or its `options` do not list `status`.
+  - `field-missing`: the Project has no single-select field with the
+    declared field name.
+  - `option-missing`: the field has no option named `status`.
+  - `item-missing`: the issue has no item on the Project.
+  - `forbidden`: GitHub refuses the write for permission, or service
+    configuration names no credential for the Project's owner.
+  - `transport`: the request failed, ran past the GitHub source's
+    `requestTimeoutMs`, was rate limited, or GitHub answered with a server
+    error. GitHub may hold the value or not.
+  - `rejected`: GitHub refuses the write for any other reason, with its
+    message.
+
+  A move that one state entry repeats, such as the move a restored actor
+  runs again after a crash, sets the same option again and leaves one
+  value. A blueprint that retries after an error enters the state again.
+
+  - `github-task-field-set`, an actor: sets one task field value of the
+    invoking actor's task, whatever storage kind
+    `task-metadata-declaration` declares for the field on the actor's
+    Project: a Project field, an organization issue field or issue type,
+    a repository label or milestone, or a key of the issue body's front
+    matter. Its input is `#/$defs/task-field-set-input`, `{ field, value
+    }`, `value` `null` clearing the field; it resolves with
+    `#/$defs/task-field-set-output`, `{}`, once GitHub holds the value,
+    and fails with `#/$defs/task-field-set-error`. The change reaches the
+    actor as `github.task-field.changed` with `setBy` the actor, as
+    `github-events` defines. A blueprint that invokes it declares its
+    input and output under `schemas.actors.github-task-field-set`.
+
+  ```yaml
+  weighing:
+    invoke:
+      id: weight
+      src: github-task-field-set
+      input:
+        field: Size
+        value: large
+      onDone: packing
+      onError: stalled
+  ```
+
+  A task field set error is a plain object with `type`
+  `task-field-set`, a `kind`, a `message`, and the `field` it was asked
+  for. The kinds:
+
+  - `input`: the input does not validate against
+    `#/$defs/task-field-set-input`.
+  - `identity`: as for a card move.
+  - `undeclared`: the actor's Project has no binding, or the declaration
+    in force declares no task field `field` for it; the lifecycle field
+    is set by `github-card-move`, never by this actor.
+  - `value`: `value` is not of the field's type, or not one of its
+    options.
+  - `missing`: GitHub does not hold the field, option, issue type, label,
+    or milestone the value needs, such as before an Apply makes it.
+  - `item-missing`: for a Project field, the issue has no item on the
+    Project.
+  - `out-of-scope`: the issue's repository is outside the repositories
+    the binding owns labels and milestones in, or, for an issue field or
+    issue type, belongs to another owner than the field's organization.
+  - `unavailable`: the field's scope cannot hold values: an organization
+    that is a user account, an owner with no credential, or a platform
+    without the storage.
+  - `front-matter-invalid`: the issue body's front matter does not parse,
+    so Manifold does not rewrite it.
+  - `body-conflict`: a person's edit of the body landed while Manifold
+    wrote it, and Manifold's one repair could not keep it, or a further
+    edit followed; Manifold writes nothing more, the body holds what
+    GitHub holds, and an edit Manifold replaced stays in GitHub's edit
+    history. A replay of the same write fails the same way.
+  - `forbidden`, `transport`, `rejected`: as for a card move.
+
+  A write that one state entry repeats sets the same value again and
+  leaves one value.
+
+  - `t3code-project-create`, an actor: creates a T3code project on an
+    environment, the invoking actor's unless the input names another, with
+    a title and a workspace root rendered from Nunjucks templates, as
+    `agent-threads` defines. Its input is `#/$defs/project-create-input`
+    of the `agent-threads` schema asset, `{ environment, title,
+    workspaceRoot, values, createWorkspaceRoot }`. It resolves with
+    `#/$defs/project-create-output`, `{ projectId }`, which a
+    `thread-create` invoke takes as its `project`, and fails with
+    `#/$defs/error`, of kind `input`, `environment`, `archived`,
+    `template`, `rejected`, or `unauthorized`. A blueprint that invokes it
+    declares its input and output under
+    `schemas.actors.t3code-project-create`, with schemas that those
+    definitions satisfy. An invoke that one state entry runs again, before
+    or after a restart, creates one project; an invoke that fails creates
+    none and attributes none.
+  - `send-message`, an actor: sends a message to a task's threads or to
+    one thread, as `agent-tools` defines. Its input is
+    `#/$defs/send-message-input` of the `agent-tools` schema asset,
+    `{ to, text }`, where `to` is `{ issue }` or `{ environment, threadId
+    }`. It resolves with `#/$defs/send-message-output`, the message id and
+    thread of each message sent, and fails with
+    `#/$defs/send-message-error`, of kind `input`, `no-recipient`, or
+    `not-accepted`. Each recipient thread's followers take the message as
+    `agent.message`. A blueprint that invokes it declares its input and
+    output under `schemas.actors.send-message`, with schemas that those
+    definitions satisfy. An invoke that one state entry runs again sends
+    no second message.
+
+  Each move reaches the actor again as `github.project-item.field-changed`
+  when the GitHub event source reads it, with `movedBy` naming the actor,
+  as `github-events` states. `movedBy.confirmed` is true when GitHub
+  confirmed the actor's write, and false when the source cannot show that
+  the actor's write, and not someone else's, set the value, as after a
+  move that failed with `transport`. A change no write of Manifold's set
+  carries `movedBy` `null`, so a blueprint takes a person's move apart
+  from its own, and decides for itself how to take an unconfirmed one.
+  `lifecycle` is true when the changed field is the lifecycle field the
+  task metadata declaration declares for the task's Project, so a guard
+  names no field:
+
+  ```yaml
+  on:
+    github.project-item.field-changed:
+      target: sorting
+      guard:
+        type: expression.guard
+        params:
+          expression: >-
+            event.movedBy = null and event.lifecycle
+            and event.to.name = "Sorting"
+  ```
+
+  Agent tool events. The harness plugin's tools reach the actors that
+  follow the calling thread as three events, which `agent-tools` defines:
+  `agent.handoff` when the agent hands off, `agent.escalated` when it asks
+  a person, and `agent.escalation.answered` when the person answers. A
+  message that a task sends to a thread reaches the actors that follow it
+  as a fourth, `agent.message`. A message reaches the thread's agent only
+  once an actor whose blueprint declares `agent.message` takes the event;
+  what the actor does with it is the blueprint's, and a state with no
+  transition for it takes it all the same. A
+  blueprint takes one by declaring it under `schemas.events` with a schema
+  the event satisfies, such as `#/$defs/agent-handoff-event` of the
+  `agent-tools` schema asset. The schema a blueprint declares for
+  `agent.handoff` is its handoff schema: its `handoff` property describes
+  what the agent hands off, and a handoff that fails it is refused at the
+  call, with each failing path, and reaches no actor.
+
+  ```yaml
+  states:
+    sorting:
+      on:
+        agent.handoff:
+          target: routing
+          guard:
+            type: expression.guard
+            params:
+              expression: event.threadId = context.thread and event.handoff.outcome = "sorted"
+  schemas:
+    events:
+      agent.handoff:
+        type: object
+        required: [type, threadId, handoff]
+        properties:
+          type: { const: agent.handoff }
+          threadId: { type: string }
+          handoff:
+            type: object
+            required: [outcome]
+            properties:
+              outcome: { enum: [sorted, damaged] }
+  ```
+
+  Version identity. The loader gives each blueprint it loads a version:
+  the full id of the process repository commit it was read at, its path,
+  and, for a bundled blueprint, `bundle`, the digest of the bundle its
+  text came from. The commit of a bundled version is the commit it runs
+  against, whose files it reads. The version key is `<commit>:<path>`
+  for a repository blueprint and `<commit>:<path>@<bundle>` for a bundled
+  one, which is unambiguous because a commit id holds no `:` and a path
+  ends in `.yml` or `.yaml`. A blueprint version is immutable: the same
+  key always gives the same document. The service keeps the text of every
+  bundle it has run with, so a version whose bundle a later Manifold build
+  no longer ships still builds. The service saves every
+  snapshot of a state machine actor with its version key, so a restored
+  actor runs the version it was last saved with: the version it started
+  on until it migrates.
+
+  Identity. A top-level actor, one Manifold starts or restores and routes
+  events to, holds the engine's identity of the actor at
+  `context.manifold`, a value of `#/$defs/actor-identity`: the issue node
+  id, the Project node id, the environment name, the thread ids it
+  follows, the portfolio item, and the blueprint path, each when it
+  applies. Manifold writes it; expressions read it, as
+  `blueprint-expressions` states. The actor's routed events come from its
+  issue and its threads. A blueprint running as a child has no
+  `context.manifold`, and takes events only from its parent and its own
+  invokes.
+
+  Lint. The blueprint lint checks one file and reports findings, each
+  naming the file's path, a kind, and a location: the RFC 6901 JSON
+  Pointer of the failing value in the document, so an expression at
+  machine location `/states/sorting/on/parcel.scanned/guard` is at
+  `/machine/states/sorting/on/parcel.scanned/guard`. The rules run in this
+  order:
+
+  1. `yaml`: the text does not parse as one YAML document under the rules
+     above. The location is the root, `""`, and the finding carries the
+     1-based `line` and `column`. No other rule runs.
+  2. `shape`: the document does not validate against
+     `#/$defs/blueprint`. One finding per failing location, the failing
+     value or, when a key is not allowed, the key, with the message of the
+     first validation error there. No other rule runs.
+  3. `schema-invalid`: a schema under `schemas`, `input`, `output`,
+     `context`, an event schema, or an actor's `input` or `output`, or a
+     migration path's `from`, does not compile as a JSON Schema of draft
+     2020-12. Every schema is compiled, whether or not an expression site
+     reaches it. The finding is at the schema, such as `/schemas/context`
+     or `/migrations/0/from`, with the compiler's message.
+  4. `implementation-unknown`: a reference names no implementation of its
+     kind among the names the lint is given, and is not an expression
+     implementation of the right kind or the guard `in`. An invoke `src` that is a blueprint
+     path is a child blueprint, and one that is a decision model path
+     evaluates a decision model; neither is an unknown implementation, and
+     the lint reads no other file. The finding carries
+     `implementationKind` and `name`, at the reference.
+  5. `machine`: XState v5 rejects the configuration when it resolves a
+     state node, such as a target or an `initial` that names no state.
+     The finding is at the state node XState was resolving, with XState's
+     message. A state path in an `in` guard that names no state node is a
+     `machine` finding at that entry of `params/states`.
+  6. `final-state-missing`: the machine has no top-level final state,
+     at `/machine/states`.
+  7. `gate`: a gate declaration that the schema accepts names a state
+     that does not exist, at `meta.gate`: a `return` state path that
+     names no state node, or names the gated state or one of its
+     ancestors; a `dependencies` path that names no state node, or one
+     whose child states are not exactly `blocked` and `clear`; or a
+     `token` type that another gate of the same blueprint also declares.
+     A declaration on the root state node is a `gate` finding. A
+     declaration without `comparator` or `return` is a `shape` finding
+     under rule 2, so a gate with no return point does not load.
+  8. The expression lint of `blueprint-expressions`, with its kinds
+     `syntax`, `evaluation`, `result`, `schema`, `schema-missing`, and
+     `site-unsupported` and its fields, with a machine site's location
+     rewritten from the machine to the document, and a migration path's
+     mapping at its document location, such as `/migrations/0/context`.
+     It runs only when rule 3 found nothing.
+  9. The token lint of `token-lint`, for each gate: `token-violation`
+     when a fixed-choice path reaches a trap with no route to actor
+     completion, `token-potential` when traps exist and every fixed-choice
+     trap can reach actor completion, or every path to a trap takes an
+     expression guard, named guard, or raise choice, and `token-unknown` when the
+     configuration graph reached the lint's bound first. Each finding is
+     at the gate's `meta/gate` and carries `gate`, the gated state's path;
+     `token-violation` and `token-potential` carry `steps`, and
+     `token-potential` also `choices` when its path takes opaque choices;
+     `token-unknown` carries
+     `configurationBound` and `configurations`. It runs only when rules 1
+     to 8 found nothing.
+  10. `event-unknown`: an event type declared under `schemas.events`
+      begins with `agent.` and is not one of the event types Manifold
+      publishes, the `events` of the names the lint is given. The
+      finding carries `name`, at the declaration, such as
+      `/schemas/events/agent.hand-off`. It runs when rule 2 found
+      nothing.
+
+  11. `lifecycle-option`: an invoke whose `src` is `github-card-move` has
+      a static `input` whose `status` is a string that is not among the
+      lint's `lifecycleOptions`. The finding is at that `status`, such as
+      `/machine/states/packing/invoke/input/status`, and carries `name`,
+      the string. It runs only when the lint is given `lifecycleOptions`
+      and rule 2 found nothing. An `input` that is a mapping is not
+      checked; the move checks its `status` when it runs.
+
+  12. `task-field-value`: an invoke whose `src` is
+      `github-task-field-set` has a static `input` whose `field` is a
+      string that is not among the lint's `taskFields`, at that `field`;
+      or whose `field` is among them and whose `value` is a string,
+      number, or `null` that no declared type of the field takes, or a
+      string that is not among the field's options when every declared
+      type of it is `single-select`, at that `value`. The finding carries
+      `name`, the field's name. It runs only when the lint is given
+      `taskFields` and rule 2 found nothing. An `input` that is a mapping
+      is not checked; the write checks it when it runs.
+  13. `decision-model`: an invoke whose `src` is a decision model path
+      that the lint's `decisionModels` does not hold, or holds with an
+      error. The finding is at that `src`, such as
+      `/machine/states/pricing/invoke/src`, and carries `name`, the path,
+      and `reason`: `missing` when the map does not hold the path, and
+      `invalid` when it holds errors, which the finding carries as
+      `modelFindings`. It runs only when the lint is given
+      `decisionModels` and rule 2 found nothing.
+
+  Findings are ordered by rule, then by location; expression findings
+  keep the expression lint's order. A blueprint with no findings loads.
+  Every finding fails the blueprint, except `token-potential` and
+  `token-unknown`, which are warnings: they are reported apart from the
+  findings, and the blueprint loads with them. A blueprint with no findings builds
+  with `createBlueprintExpressions` without a throw: the lint reports
+  every syntax error, `schema-missing`, and `site-unsupported` site,
+  reachable or not, and rule 3 compiles every schema a site can use.
+
+  Shared function. `packages/shared` exports the lint and the version key:
+
+  ```ts
+  interface ImplementationNames {
+    readonly actors: ReadonlySet<string>;
+    readonly actions: ReadonlySet<string>;
+    readonly guards: ReadonlySet<string>;
+    readonly delays: ReadonlySet<string>;
+    /** Event types each named action may raise; an action not listed raises none. */
+    readonly raises?: ReadonlyMap<string, readonly string[]>;
+    /** Event types Manifold publishes whose prefix it reserves: `agent.handoff`, `agent.escalated`, `agent.escalation.answered`, `agent.message`. */
+    readonly events?: ReadonlySet<string>;
+  }
+  interface BlueprintLintOptions {
+    /** The token lint's configuration bound. Default `defaultConfigurationBound`, 20000. */
+    readonly configurationBound?: number;
+    /** The declared lifecycle options rule 11 checks a literal `status` against; absent skips rule 11. */
+    readonly lifecycleOptions?: ReadonlySet<string>;
+    /** The declared task fields rule 12 checks a literal `field` and `value` against, `declaredTaskFields` of the commit; absent skips rule 12. */
+    readonly taskFields?: ReadonlyMap<
+      string,
+      { readonly types: ReadonlySet<"text" | "number" | "date" | "single-select">; readonly options: ReadonlySet<string> }
+    >;
+    /**
+     * The decision models rule 13 checks an invoked path against: each path
+     * the commit holds a decision model file at, with the errors of the set
+     * rooted there, empty when it has none; absent skips rule 13.
+     */
+    readonly decisionModels?: ReadonlyMap<string, readonly ProcessManifestFinding[]>;
+  }
+  type BlueprintLint =
+    | {
+        readonly ok: true;
+        readonly blueprint: BlueprintDocument;
+        readonly warnings: readonly BlueprintFinding[];
+        readonly tokens: TokenLintResult;
+      }
+    | {
+        readonly ok: false;
+        readonly findings: readonly BlueprintFinding[];
+        readonly warnings: readonly BlueprintFinding[];
+      };
+  interface BlueprintVersion {
+    readonly commit: string;
+    readonly path: string;
+    /** The bundle digest of a bundled blueprint; absent for a repository blueprint. */
+    readonly bundle?: string;
+  }
+  function bundleDigest(files: ReadonlyMap<string, string>): string;
+  function lintBlueprint(
+    path: string,
+    text: string,
+    names: ImplementationNames,
+    options?: BlueprintLintOptions,
+  ): Promise<BlueprintLint>;
+  const manifoldImplementationNames: ImplementationNames;
+  function blueprintVersionKey(version: BlueprintVersion): string;
+  function parseBlueprintVersionKey(key: string): BlueprintVersion | undefined;
+  ```
+
+  `lintBlueprint` reads no file, network, clock, random source, or
+  environment; the same path, text, names, and options give the same
+  result. `warnings` is empty unless rule 9 ran. `tokens` is the token
+  lint's result, which the gate runtime reads for each gate's verdict and
+  trap set. `manifoldImplementationNames` lists every implementation name
+  Manifold's service registers, with the events each of its actions
+  raises and the agent tool events, so a lint outside the service checks
+  names against the same set the service loads with. The service and the
+  host CLI pass as `lifecycleOptions` the declared options of
+  `task-metadata-declaration` at the blueprint's commit, when that
+  declaration lints clean. They pass as `decisionModels` the decision
+  model paths the blueprint invokes, each that the commit holds with the
+  error findings `lintDecisionModelSet` of `decision-models` gives for
+  the set rooted there; the console's lint passes the same over the
+  draft's model texts, as `blueprints-api` states. `packages/shared` also exports
+  `agentToolDefinitions`, the name, description, and input schema of each
+  agent tool, from the `agent-tools` schema asset, which the host CLI
+  harness plugin serves. `parseBlueprintVersionKey` returns
+  `undefined` for a string that is not a version key. The
+  lint passes `migrations` to the expression lint with `machine` and
+  `schemas`, and `BlueprintDocument` carries it. `bundleDigest`
+  computes the digest of a bundle from its texts by path.
+format: json-schema
+validation-criteria: >-
+  Every blueprint, blueprint version, and blueprint finding validates
+  against `docs/specifications/blueprint.schema.yml`. The lint tests in
+  `packages/shared` call `lintBlueprint` on fixture text and check each
+  finding's kind, location, and order for: text that is not YAML, with
+  its line and column; a document with no `schemas`; a state key that
+  contains `.`; a bare `guard: expression.guard`, a bare
+  `entry: expression.assign`, an `expression.map` input with no
+  `params`, and an invoke `src` of `expression.map`, each a `shape`
+  finding; a context schema of `{ type: 17 }` used only by an
+  unreachable assignment, a `schema-invalid` finding at
+  `/schemas/context`; an action, a guard, an invoke `src`, and a named
+  delay that are not among the names given, each with its
+  implementation kind; an expression reference of the wrong kind, such
+  as `expression.assign` as a guard; a
+  target that names no state; a machine with no top-level final state;
+  a gate declaration with no `return`, a `shape` finding at its
+  `meta/gate`; a gate whose `return` state, or whose `dependencies`
+  region, names no state node, a `dependencies` region whose children are
+  not `blocked` and `clear`, a `return` state that is the gated state or
+  its ancestor, two gates with one `token` type, and a gate on the root
+  state node, each a `gate` finding;
+  a bare `guard: in`, a `shape` finding; an `in` guard whose state path
+  names no state, a `machine` finding at that entry; a gate whose token
+  reaches a trap on fixed choices with no actor-completion route, a
+  `token-violation` finding with its steps; a gate
+  whose strand needs a named guard's choice, a `token-potential` warning
+  on a blueprint that loads; a gate whose every fixed-choice trap can
+  reach actor completion, a `token-potential` warning with its trap set
+  retained; a gate whose graph passes a bound of 10, a
+  `token-unknown` warning; and a guard whose result is not a boolean,
+  located in the document. A
+  clean fixture returns the parsed document, and the same call twice
+  returns the same result. A test round-trips a version through its key,
+  including a path that contains `:` and a bundled version, and shows
+  that a string with no commit id, and one whose bundle digest is not 64
+  hexadecimal digits, is not a key. A test computes `bundleDigest` of a
+  fixture bundle and compares it with a fixed expected digest, and shows
+  that the digest does not depend on the map's insertion order. Lint tests show that an invoke `src` of
+  `blueprints/a.yml` lints clean with no actor names given, that a
+  blueprint declaring `agent.handoff` and `agent.message`, and invoking
+  `send-message`, lints clean with `manifoldImplementationNames` and one declaring `agent.hand-off` gives an
+  `event-unknown` finding at its declaration, and that a
+  root `context` holding `manifold` is a `shape` finding at
+  `/machine/context`. Lint tests show that the Layout example added to the
+  example in this specification lints clean and returns the same machine
+  as the example without it, that a `layout` entry whose path names no
+  state lints clean, and that a point whose `x` is not an integer and a
+  `layout` key other than `states` are each a `shape` finding. A test shows that the example in this
+  specification lints clean when `courier.route` is among the actor
+  names. Lint tests show that a `github-card-move` invoke whose static
+  `status` is not among `lifecycleOptions` is a `lifecycle-option` finding
+  at that `status` with its `name`; that the same blueprint lints clean
+  with no `lifecycleOptions`, and with `lifecycleOptions` that hold the
+  name; and that a mapping `input` lints clean with an empty
+  `lifecycleOptions`. Lint tests show that the Migrations example added
+  to the example in this specification, with `zone` added to its context
+  schema's properties and `required`, lints clean and returns the same
+  machine; that a `from` of `{
+  type: 17 }` is a `schema-invalid` finding at `/migrations/0/from`; that
+  a mapping whose result omits a property the context schema requires is
+  a `schema` finding at `/migrations/0/context` with its sample; that a
+  mapping whose result holds `manifold` is a `result` finding; and that a
+  migration path without `from`, and one whose `context` is a bare
+  `expression.map`, are each a `shape` finding. A test shows that the `github-card-move` example in
+  this specification lints clean with `lifecycleOptions` holding `Packed`
+  and `github-card-move` among the actor names. Lint tests show that the
+  Decision models example in this specification lints clean with no
+  `decisionModels` and with `decisionModels` holding
+  `decision-models/parcel-quote.yml` with no error, that the path
+  absent from `decisionModels` is a `decision-model` finding at
+  `/machine/states/pricing/invoke/src` with `reason` `missing`, that the
+  path held with a `syntax` error is one with `reason` `invalid` and that
+  error in `modelFindings`, and that no `decisionModels` and no actor
+  names give no `implementation-unknown` for the path. Fixtures use a
+  domain unrelated to Manifold.

@@ -1,0 +1,177 @@
+// ---
+// relationships:
+//   implements: store
+// ---
+import type { DatabaseSync } from "node:sqlite";
+
+export interface StoreOptions {
+  /** Path of the SQLite file. Created when absent; its directory exists. */
+  readonly path: string;
+  /** Milliseconds since the Unix epoch. Defaults to Date.now. */
+  readonly now?: () => number;
+  /** Called at each step of a delivery. */
+  readonly probe?: DeliveryProbe;
+}
+
+export interface Store {
+  /** The clock supplied at open, in milliseconds since the Unix epoch. */
+  readonly now: () => number;
+  readonly connection: StoreConnection;
+
+  saveSnapshot(write: SnapshotWrite): SaveOutcome;
+  activeSnapshots(): StoredSnapshot[];
+  endedSnapshots(): StoredSnapshot[];
+  prunableEnded(query: PrunableQuery): PrunableActor[];
+  pruneEnded(actorId: string): PruneOutcome;
+  loadSnapshot(actorId: string): StoredSnapshot | undefined;
+  loadErroredSnapshot(actorId: string): StoredErroredSnapshot | undefined;
+  findActorsInState(query: StateQuery): StoredSnapshot[];
+
+  writeInbox(event: InboxEvent, actorIds: readonly string[]): InboxRow[];
+  pendingInbox(actorId: string): InboxRow[];
+  actorInbox(actorId: string): InboxRow[];
+  markConsumed(actorId: string, eventId: string): void;
+  deliver(target: DeliveryTarget, row: InboxRow): DeliveryOutcome;
+  drain(target: DeliveryTarget): DrainResult;
+
+  nextDeadlineAt(): number | undefined;
+  dueDeadlines(at: number): DeadlineRow[];
+  fireDeadline(deadline: DeadlineRow, topic: string): InboxRow | undefined;
+
+  recordMigrationFailure(write: MigrationFailureWrite): "recorded" | "unchanged";
+  migrationFailure(actorId: string): StoredMigrationFailure | undefined;
+  migrationFailures(to: string): StoredMigrationFailure[];
+  clearMigrationFailures(to: string): number;
+  close(): void;
+}
+
+export interface StoreConnection {
+  readonly database: DatabaseSync;
+  transaction<T>(work: () => T): T;
+  afterCommit(work: () => void): void;
+  migrate(owner: string, steps: readonly string[]): void;
+}
+
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
+
+export type StateValue = string | { readonly [key: string]: StateValue };
+
+export type PersistedSnapshot =
+  | {
+      readonly status: "active" | "done" | "stopped";
+      readonly value: StateValue;
+      readonly [key: string]: unknown;
+    }
+  | { readonly status: "error"; readonly [key: string]: unknown };
+
+export interface SnapshotWrite {
+  readonly actorId: string;
+  readonly machine: string;
+  readonly snapshot: PersistedSnapshot;
+  readonly deadlines?: readonly DeadlineArm[];
+  readonly eventId?: string;
+}
+
+export type SaveOutcome = "saved" | "errored";
+
+export interface StoredSnapshot {
+  readonly actorId: string;
+  readonly machine: string;
+  readonly snapshot: PersistedSnapshot;
+  readonly savedAt: number;
+  readonly historyPrunedAt?: number;
+}
+
+export interface StoredErroredSnapshot extends StoredSnapshot {
+  readonly eventId: string | undefined;
+}
+
+export interface StateQuery {
+  readonly machine?: string;
+  readonly statePath: string;
+}
+
+export interface InboxEvent {
+  readonly eventId: string;
+  readonly topic: string;
+  readonly payload: JsonValue;
+}
+
+export interface InboxRow extends InboxEvent {
+  readonly sequence: number;
+  readonly actorId: string;
+  readonly receivedAt: number;
+  readonly consumedAt: number | undefined;
+}
+
+export interface DeliveryTarget {
+  readonly actorId: string;
+  send(row: InboxRow): void;
+  persist(): Omit<SnapshotWrite, "actorId" | "eventId">;
+  saved?(write: SnapshotWrite): void;
+  stop?(): void;
+}
+
+export type DeliveryOutcome = "delivered" | "already-consumed" | "errored";
+
+export interface DrainResult {
+  readonly delivered: number;
+  readonly erroredAt: InboxRow | undefined;
+}
+
+export type DeliveryStep = "sent" | "saved";
+export type DeliveryProbe = (step: DeliveryStep, row: InboxRow) => void;
+
+export interface DeadlineArm {
+  readonly statePath: string;
+  readonly eventName: string;
+  readonly fireAt: number;
+  readonly entryId: string;
+}
+
+export interface DeadlineRow extends DeadlineArm {
+  readonly deadlineId: number;
+  readonly actorId: string;
+  readonly firedAt: number | undefined;
+}
+
+export interface MigrationFailureWrite {
+  readonly actorId: string;
+  readonly from: string;
+  readonly to: string;
+  readonly kind:
+    | "version-invalid"
+    | "restore-mismatch"
+    | "gate-missing"
+    | "token-return"
+    | "token-trap"
+    | "no-path"
+    | "mapping-failed"
+    | "mapping-timeout"
+    | "context-rejected"
+    | "store";
+  readonly message: string;
+  readonly detail: Readonly<Record<string, JsonValue>>;
+}
+export interface StoredMigrationFailure extends MigrationFailureWrite {
+  readonly failedAt: number;
+}
+
+export interface PrunableActor {
+  readonly actorId: string;
+  readonly savedAt: number;
+}
+export interface PrunableQuery {
+  readonly endedBefore: number;
+  readonly after?: PrunableActor;
+  readonly limit: number;
+}
+export type PruneOutcome =
+  | { readonly status: "pruned"; readonly inboxRows: number }
+  | { readonly status: "unchanged" };

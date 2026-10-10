@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Estimate
+description: >-
+  A task's expected usage, produced by the user's process, in the account's native unit.

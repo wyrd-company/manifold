@@ -1,0 +1,68 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design
+# or to the seam it publishes through; `realizes` names the design this
+# contract serves and `references` the seam.
+relationships:
+  realizes:
+    - environment-control
+  references:
+    - router-events
+    - actor-host
+description: |-
+  Defines the operator events the environment control module publishes
+  when an operator pauses, resumes, disconnects, or reconnects a T3 Code
+  environment: their source name, topic, event types, payloads, and event
+  ids. `docs/specifications/environment-events.schema.yml` is the
+  machine-readable definition of each event. Every event is published
+  through `router-events` as a source event.
+
+  Source. The source name is `environment`. Each change of an operator
+  hold is one source event with one topic.
+
+  Topic. An environment's topic is `environment.<environment>`, where
+  `<environment>` is the environment's declared name from service
+  configuration, which holds no `.`. The actor host adds the topic to the
+  subscription of every actor whose identity holds `environment`, so every
+  task actor on the environment hears its events, and a blueprint takes
+  one by declaring its type under `schemas.events`.
+
+  Types.
+
+  | Type | Published when |
+  |---|---|
+  | `environment.paused` | The paused hold turns on. |
+  | `environment.resumed` | The paused hold turns off. |
+  | `environment.disconnected` | The disconnected hold turns on. |
+  | `environment.reconnected` | The disconnected hold turns off. |
+
+  An action that leaves its hold as it was publishes nothing. Each event
+  is published in the transaction that stores the change, before the
+  source or the agent threads module acts on it, so `environment.reconnected`
+  means the operator lifted the disconnect, not that the connection is
+  open. A blueprint that must know the connection is back takes the next
+  change of a thread it follows.
+
+  Payload. `{ type, environment, at }`: `environment` is the declared
+  name and `at` the time the change was stored, as an ISO 8601 UTC date
+  and time with milliseconds.
+
+  ```yaml
+  type: environment.paused
+  environment: build-host
+  at: "2026-01-05T10:15:30.000Z"
+  ```
+
+  Event id. `<environment>/<sequence>`, where `<sequence>` is the change
+  sequence of the environment's row in `environment_hold` after the
+  change, in decimal: 1 for the environment's first change, and one more
+  for each change after it. The row is never deleted, so an id is never
+  reused.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/environment-events.schema.yml` compiles with Ajv in
+  JSON Schema 2020-12 mode, and every `$defs` event validates as a routed
+  event of `router-events`. Every source event the environment control
+  module publishes in its test suite validates against
+  `#/$defs/environment-event`, has source `environment`, one topic equal to
+  `environment.<environment>`, the type of the hold change it records, and
+  the event id `<environment>/<sequence>` of the stored row.

@@ -1,8 +1,15 @@
+# ---
+# relationships:
+#   implements: operator-console
+# ---
 name: Check
 
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -40,5 +47,99 @@ jobs:
       - name: Install
         run: task install
 
+      - name: Install Chromium system dependencies
+        run: pnpm --filter @wyrd-company/manifold-service exec playwright install --with-deps chromium
+
       - name: Check
         run: task check
+
+  service-tests-floor:
+    name: Service tests (Node 24.11.0)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Reads the pnpm version from `packageManager` in package.json.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.11.0
+          cache: pnpm
+
+      - name: Setup Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+
+      - name: Install
+        run: task install
+
+      - name: Install Chromium system dependencies
+        run: pnpm --filter @wyrd-company/manifold-service exec playwright install --with-deps chromium
+
+      - name: Service tests
+        run: pnpm --filter @wyrd-company/manifold-service test
+
+  smoke-selection:
+    name: Select archive coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.smoke-mode.outputs.mode }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - name: Select smoke mode
+        id: smoke-mode
+        env:
+          SMOKE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SMOKE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: echo "mode=$(node packages/service/scripts/smoke-selection.mjs)" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: smoke-selection
+    name: Service archive (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    # Full: prior observed 44 minutes plus 31 minutes for setup and runner variance.
+    # Short: the acceptance ceiling; hosted timings must validate this bound.
+    timeout-minutes: ${{ needs.smoke-selection.outputs.mode == 'short' && 15 || 75 }}
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Setup Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Build service archive
+        run: task package:service
+      - name: Smoke service archive
+        run: task package:smoke MODE=${{ needs.smoke-selection.outputs.mode }}

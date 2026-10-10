@@ -1,0 +1,51 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose command this is.
+  realizes:
+    - intake
+  references:
+    - process-manifest
+    - decision-models
+description: >-
+  Defines the host CLI command `manifold-host manifest lint`, which lints
+  the manifest of a process repository checkout and the decision models it
+  reaches, on the host. It runs `lintProcessManifest` from
+  `packages/shared`, the function the service runs on every revision it
+  takes in from. `docs/specifications/host-cli-manifest-lint.cli.yml` is
+  the machine-readable definition.
+
+  The command takes one optional argument, the directory of a process
+  repository checkout, default the current directory. It calls the lint
+  with a reader that answers the text of the file at a repository-relative
+  path under that directory, and `undefined` when no file is there or
+  when the file, or any directory on the way to it, is a symbolic link, as
+  `process-manifest` states. A
+  directory that cannot be read, or a file that exists but cannot be read,
+  is reported on standard error as `<file>: <reason>` and ends the command
+  with exit code 2 with nothing on standard output. Otherwise the command
+  reports every finding on standard output as one line,
+  `<file>:<location> <kind> <message>`, with the file the finding's
+  repository-relative path, the location its RFC 6901 JSON Pointer, and
+  the kind and message the finding's. A `decision-model` finding's kind is
+  printed as the decision model finding's kind, and a warning's line ends
+  with ` (warning)`. Findings are printed in the lint's order. The command
+  prints nothing and exits 0 when there is no finding, exits 0 when every
+  finding is a warning, and exits 1 when there is an error.
+format: cli
+validation-criteria: >-
+  `docs/specifications/host-cli-manifest-lint.cli.yml` validates against
+  the CLI Command Specification schema. A test compiles the host CLI for
+  the current platform and runs `manifest lint` from a directory with no
+  `node_modules`. It observes exit 0 and no output for a clean checkout;
+  exit 1 with a `manifest-missing` line for an empty directory; exit 1 with
+  a `model-missing` line at `manifold.yml:/intake/decisionModel` for a
+  manifest naming an absent model; exit 1 with a `model-key-invalid` line
+  for a `decisionNode` key `../outside.yml`, with a file at that path
+  outside the checkout left unread; exit 1 with a `model-missing` line for
+  a `decisionNode` key naming a symbolic link to a model inside the
+  checkout; exit 1 with a `syntax` line naming the
+  model file for a cell that does not parse; exit 0 with a
+  `never-boolean` line ending in ` (warning)`; and exit 2 with no standard
+  output for a missing directory and for a `manifold.yml` that is a
+  directory.

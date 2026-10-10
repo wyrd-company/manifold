@@ -1,0 +1,420 @@
+$schema: https://refinery.systems/ontology/spike
+title: Two-ledger portfolio model and allocation schemes
+
+relationships:
+  mitigates:
+    - allocation-schemes-unproven
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the technical design these findings inform.
+  references:
+    - portfolio
+
+objective:
+  - Can the portfolio ledgers hold both usage and reservations in SQLite, keyed by actor, with allocation schemes as pure functions over them?
+  - Which of the four scheme primitives (guarantee, weight, ceiling, time shaping) deliver the behavior their terms promise?
+  - Which scheme combinations safely preserve item guarantees across resets, moves, and mid-flight usage?
+
+background:
+  current-design: >-
+    The portfolio design specifies a tree of items with allocations per item
+    and account, ledger entries keyed by actor, and four scheme primitives to
+    govern what an item may reserve. Allocation schemes are described in
+    natural language; their interaction with windows, resets, moves, and
+    mid-flight usage is untested against scenarios.
+  problems:
+    - Whether one append-only table or two separate ledgers is more
+      maintainable must be decided against scenarios.
+    - Allocation schemes' boundary behavior where items have no demand, where
+      allocations total less than 100%, across a reset, and when actors move
+      requires testing against the promises the terms make.
+    - The definitions of available-balance and guarantee need verification
+      that they hold under all operations.
+
+ideas:
+  - SQLite with one append-only entry table keyed by actor, item, account, and
+    window, carrying kind (credit, reserve, actual, settle, move) as a single
+    source of truth for both usage and reservation ledgers. Schema enforces
+    constraints (CHECK ties kind to ledger, sign, and actor presence). Window
+    boundaries cut by `open` credits; settlement and moves are pairs of
+    negating rows written in one transaction.
+  - Allocation operations as pure functions over a read-only view (credit
+    account, reserve for actor, post actual, settle actor retiring reservation
+    and keeping actuals, move outstanding reservation, read available balance
+    for item and account).
+  - Schemes (floor, weight, HTB-style borrow, pacing) as pure functions over
+    the view that answer "may item X reserve amount N now?" Each scheme takes
+    allocation tree, usage, reservations, and parameters (ceiling, borrow
+    weight, burst) and returns allowed boolean and limit number.
+  - Scenario runners shared between vitest unit tests and preview.ts output
+    with hard-coded allocations (50/50, 30/30, with/without remainder) and
+    sequences of reserves and posts to distinguish scheme behavior at boundaries
+    (no demand, reset mid-window, overrun, variance, forced re-intake, move).
+  - Two available-balance reads compared on every scenario — literal (allocation
+    less settled actuals less outstanding reservations) and drawdown (allocation
+    less all in-window actuals less per-actor unposted part of outstanding
+    reservation). Identify where literal breaks and what wording holds
+    everywhere.
+
+environment:
+  location: throwaway branch spike/ledger in wyrd-company/manifold
+  tools:
+    - node:sqlite
+    - Node 26.5.1 with TypeScript run by Node type stripping
+    - vitest 5.0.2
+  resources:
+    - docs/terms/allocation.yml
+    - docs/terms/available-balance.yml
+    - docs/terms/capacity.yml
+    - docs/terms/reservation.yml
+    - docs/terms/actual.yml
+    - docs/terms/settlement.yml
+    - docs/terms/variance.yml
+
+findings:
+  ledger-operations:
+    rating: GREEN
+    measurements:
+      schema-enforcement:
+        description: Constraints tested with adversarial inputs
+        rejected: "negative reserve, credit naming an actor, second root item, share above 100%"
+        rejected-by: "SQLite CHECK constraints"
+      idempotency:
+        description: Reserve replayed with same key
+        holds-once: true
+        count-with-key: 1
+        count-without-key: 2
+      operations-tested: 47
+      test-files: 2
+      test-result: "all pass"
+      linter: "tsc clean"
+    notes: >-
+      Measured: one entry table with signed amounts, actor keys, and ledger
+      kind (credit, reserve, actual, settle, move) holds both usage and
+      reservation ledgers. Schema enforces constraints via CHECK. Credits enter
+      at root item only. Actuals post to actor's current item; a child's
+      allocation is its share of its parent's amount (100 units at root gives
+      50/50/20 to 50%, 50%, and 40% grandchild). Reservations and settlements
+      carry an actor key so replayed operations hold once without writing
+      duplicate rows. Reserve with a key holds once; without a key holds twice.
+      Settle retires the reservation and keeps the actuals (reserve 20, actual
+      12, retire -20 leaves balance 12). An actual posted after settlement
+      counts immediately (reserve 20, actual after settle is written to settled
+      item). All operations: 47 tests across 2 files, all pass. tsc clean. No
+      native build needed.
+
+  available-balance-term:
+    verdict: "literal read wrong in-flight; drawdown read correct everywhere"
+    measurements:
+      method: >-
+        Two reads compared on every ledger scenario: literal (allocation less
+        settled actuals less outstanding reservations) and drawdown (allocation
+        less every in-window actual less, per open actor, the part of its
+        reservation not posted: max(0, reservation - actuals)).
+      in-flight-overrun:
+        scenario: "Reserve 20, post 35"
+        literal-balance: 30
+        drawdown-balance: 15
+        literal-reason: "settled actuals only: 20-0 or 0 posted? unclear"
+        drawdown-reason: "20 - (35 - 0) = 20 - 35 = -15 visible"
+      across-reset:
+        scenario: "Open 100, reserve 40, post 30, reset, measure at new window"
+        literal-balance: 10
+        drawdown-balance: 40
+        literal-reason: "counts full 40 reservation against new window (100 - 40 - 50 settled)"
+        drawdown-reason: "100 - 30 posted in old window - 30 unposted of reservation"
+      during-move:
+        scenario: "Reserve 30 on left, post 18, move to right (45 of 50), measure left"
+        literal-balance: 50
+        drawdown-balance: 32
+        literal-reason: "ignores 18 posted on old item"
+        drawdown-reason: "50 - 18 posted"
+    notes: >-
+      Measured: a literal read (allocation less settled actuals) is wrong while
+      an actor runs. Across a reset, literal counts an entire outstanding
+      reservation against the new window. During a move, literal ignores
+      posted actuals on the old item. Drawdown (allocation less usage as it
+      arrives less the unposted part of outstanding reservations) agrees with
+      literal only after every actor has settled and agrees everywhere else.
+      Both read types agree while actuals stay under the reservation. Drawdown
+      holds in all cases tested.
+
+  floor-scheme:
+    rating: GREEN
+    measurements:
+      scenario-50-50-left-spends:
+        capacity: 100
+        allocations: [50, 50]
+        grants: "left 30 once, right 30 once, denials at limit"
+        spare-at-root: 40
+      scenario-50-50-no-demand-right:
+        capacity: 100
+        allocations: [50, 50]
+        left-grants: "40 once, limit 10 on second ask"
+        right-gets: 0
+        spare-at-root: 60
+    notes: >-
+      Measured: floor allocation holds each item to its share and denies
+      reserves that would exceed it. Spare capacity (unallocated or
+      under-demanded sibling allocations) stays at the root; it does not flow
+      to siblings. With 50/50 allocations and left demanding, left gets one
+      grant of 30; right gets one grant of 30; 40 remains idle at root. With
+      right having no demand, left gets one grant of 40 (of its 50) and is
+      denied on the second ask (limit 10); 60 idle at root. This is the
+      specified behavior of floor: no sibling exceeds its guarantee, and spare
+      does not distribute.
+
+  weight-scheme-alone:
+    rating: RED
+    measurements:
+      scenario-50-50-left-spends:
+        capacity: 100
+        allocations: [50, 50]
+        "left reserve 30 #1": "granted, limit 100"
+        "left reserve 30 #2": "granted, limit 70"
+        "left reserve 30 #3": "granted, limit 40"
+        "right reserve 30 #1": "denied, limit 10"
+        "right reserve 30 #2": "denied, limit 10"
+        left-variance: "-40 to its 50 allocation"
+        right-variance: "starved at limit 10"
+    notes: >-
+      Measured: weight distributes all of capacity according to shares,
+      normalized over all sibling allocations, regardless of guarantee. The
+      first spender exceeds its allocation while the second is starved. With
+      50/50 allocations, left at 50% takes all three 30-unit reserves (90
+      total, leaving left at -40 against its 50 allocation); right at 50% is
+      denied at limit 10 on both asks. Weight violates the guarantee primitive:
+      it has no floor. This scheme cannot be used alone; it must be constrained
+      by floor or confined to distributing only the unallocated remainder.
+
+  weight-demands-gate-signal:
+    verdict: "weight normalized only over items with waiting tasks"
+    measurements:
+      scenario-50-50-left-spends:
+        allocations: [50, 50]
+        "when right marked waiting":
+          "left reserve 30 #1": "granted"
+          "left reserve 30 #2": "granted"
+          "right reserve 30": "granted"
+        "without gate signal, weight all-siblings":
+          "left reserve 10 #1": "granted"
+          "left reserve 10 #2": "granted"
+          "left gets": "9 grants of 10, then 10 stays at root"
+      scenario-30-30-40pct-unallocated:
+        allocations: [30, 30]
+        "unallocated remainder": "40%"
+        "left reserve 10": "8 grants (80 total), -50 to its 30 allocation"
+        "right reserve": "denied at limit 8.57"
+        issue: "remainder counted as sibling with demand, shrinks with each grant"
+    notes: >-
+      Measured: the weight share is computed over siblings that have tasks
+      waiting (per-actor, provided by the gate), not over all siblings with
+      allocations. The ledger cannot see waiting tasks; the query must pass
+      them. When right is marked waiting in a 50/50 split, left gets two 30-unit
+      grants and right gets one. Without the gate signal naming waiting items,
+      weight normalizes over all siblings and produces the starving behavior in
+      weight-scheme-alone. Inferred: the unallocated remainder is counted as a
+      sibling with unlimited demand when distributing via weight, shrinking with
+      each grant (30/30 split with 40% unallocated: left gets all eight 10-unit
+      grants, 80 total; right denied at 8.57). Weight cannot distinguish
+      remainder from a real sibling with demand.
+
+  htb-borrow-from-total:
+    rating: RED
+    measurements:
+      scenario-50-50-ceiling-80pct:
+        capacity: 100
+        allocations: [50, 50]
+        ceiling: "80%"
+        "left reserve 30 #1": "granted, limit 80 (50 + 30 borrowed)"
+        "left reserve 30 #2": "granted, limit 50 (30 remaining)"
+        "right reserve 30 #1": "granted, limit 40 (50 allocation - 10 lent)"
+        "right reserve 30 #2": "denied, limit 10"
+        left-total: 60
+        right-limit: 40
+      scenario-30-30-ceiling-100pct:
+        allocations: [30, 30]
+        ceiling: "100%"
+        "left total reserved": 80
+        "right denied at": 20
+    notes: >-
+      Measured: HTB (hierarchical token bucket) borrowing from the total
+      capacity above the allocation breaks the lender's floor. With 50/50
+      allocations and 80% ceiling, left borrows to 60 (exceeding its 50 share);
+      right is then held to 40 of its 50 allocation (limit 10 on second ask).
+      Right's guarantee is violated. A borrowed unit of budget is spent, not
+      returned like in a rate limiter; it adds to the spent ledger. With 30/30
+      allocations and 100% ceiling, left takes 80 and right is denied at 20 of
+      its 30. This scheme is unsafe: it can violate a sibling's floor.
+
+  htb-borrow-from-remainder:
+    rating: GREEN
+    measurements:
+      scenario-50-50-ceiling-100pct:
+        capacity: 100
+        allocations: [50, 50]
+        ceiling: "100%"
+        note: "rows identical to floor; no borrow needed"
+      scenario-30-30-ceiling-100pct:
+        capacity: 100
+        allocations: [30, 30]
+        unallocated: 40
+        ceiling: "100%"
+        "left grants": 7
+        "left reserve 10": "x7, total 70"
+        "left balance": "-40 (30 allocation - 70 reserved)"
+        "right reserve 30": "granted, gets full 30"
+        "right balance": 0
+        "root balance": 0
+    notes: >-
+      Measured: HTB borrowing only from the unallocated remainder (the capacity
+      not allocated to any item or sibling) keeps every floor. With 50/50
+      allocations and 100% ceiling, rows are identical to floor (no borrow
+      needed). With 30/30 allocations and 100% ceiling, left borrows 40 units
+      from the remainder with 7 grants of 10 (70 total reserved, -40 to its 30
+      allocation); right still gets its full 30 reservation (root 0 after). No
+      item's guarantee is broken. This is safe: unallocated remainder is the
+      only source, and it shrinks monotonically.
+
+  pacing-wrapper:
+    rating: GREEN
+    measurements:
+      scenario-floor-paced-burst-10pct:
+        capacity: 100
+        allocations: [50, 50]
+        burst: "10%"
+        window: "t=0..1000"
+        "t=100 grant limit": 10
+        "t=150 denial limit": 2.5
+        "t=400 grant limit": 15
+        "t=450 denial limit": 7.5
+        "t=900 grant limit": 30
+        "t=950 denial limit": 0
+      scenario-weight-paced-burst-10pct:
+        note: "identical table to floor paced, because limit is from allocation, not scheme state"
+      scenario-after-reset-with-burst-0:
+        "before-reset-limit": 30
+        "at-reset-limit": 0
+        "tenth-of-window-later": 5
+    notes: >-
+      Measured: pacing (per-item limit drawn as allocation times elapsed
+      window fraction plus burst) composes as a wrapper around any scheme.
+      Grants happen only within the paced limit. With burst 10%, limit at t=0
+      is burst (10); at mid-window is half allocation plus burst (25 + 10); at
+      end is full allocation plus burst (50 + 10). At t=150 (1.5% into window),
+      limit is 0.75 + 10 = 2.5; grants denied. Resets restart the line: with
+      burst 0, limit at reset is 0; a tenth of the new window later is 5. Weight
+      paced and floor paced gave identical tables because the pacing line draws
+      from allocation, not scheme-specific state. Pacing is composable and
+      scheme-agnostic.
+
+  move-needs-scheme-check:
+    verdict: "move writes reservation to destination without scheme check; allows momentary negative"
+    measurements:
+      scenario-move-in-flight:
+        "left reservation": 30
+        "right current": "45 of 50"
+        "after move left": "50 (moved 30 out)"
+        "after move right": "-25 (negative balance)"
+        "after settlement left": "32"
+        "after settlement right": "40"
+        "variance": "-2"
+    notes: >-
+      Measured: moving a 30 reservation onto an item holding 45 of 50 leaves it
+      at -25 (negative balance). Posted actuals stay on the old item; later
+      actuals and settlement land on the new item (left balance 32, right 40
+      after settlement, variance -2). The scheme must check the destination
+      before move is written to prevent momentary violations. Inferred: the
+      ledger operations converge on replay, and the final balance is correct,
+      but an in-flight move can violate a guarantee momentarily if the
+      destination item is already constrained. Without a scheme check at move
+      time, the only check is at reserve time at the destination, and that check
+      does not account for the incoming move.
+
+  reset-is-new-window:
+    rating: GREEN
+    measurements:
+      scenario-floor-reset-mid-window:
+        capacity: 100
+        allocations: [50, 50]
+        "t=100 reserve l1": "granted 40"
+        "t=150 actual l1": "30 posted"
+        "t=200 reserve r1": "granted 20"
+        "t=250 actual r1": "20 posted"
+        "t=260 settle r1": "variance 0"
+        "t=300 reserve r2": "denied at limit 30"
+        "t=500 reset": "open credit (new window)"
+        "t=510 after reset reserve r3": "granted 40"
+        "t=600 actual l1": "10 posted (late, old window)"
+        "t=700 settle l1": "variance 0"
+    notes: >-
+      Measured: a reset written as an open credit (new window) restarts both
+      ledgers; a reset written as a top-up would blend windows. Test scenario:
+      in old window, right is denied 40 at limit 30. After reset at t=500,
+      right is granted 40 at the new limit (50 of 100 new capacity). This
+      confirms the window boundary cuts at the open credit. Actuals posted
+      before the reset (l1's 30) fall out of the new window's balance. An
+      actual arriving late after a reset is counted immediately on the new
+      item and window. The specification is correct: reset is a new window, not
+      a top-up.
+
+  settlement-and-variance:
+    rating: GREEN
+    measurements:
+      variance-over:
+        "reserve 20, actual 26": "variance +6"
+        "left balance after": 24
+      variance-under:
+        "reserve 20, actual 12": "variance -8"
+        "left balance after": 12
+      variance-per-actor:
+        "actor variance": "per actor and account"
+        "estimate": "sum of reserve rows (move does not change it)"
+      forced-reintake:
+        "old actor on left":
+          "reserve 30": "t=100"
+          "actual 18": "t=150"
+          "settle": "t=200, variance -12"
+          "balance after": 32
+        "new actor on right":
+          "reserve 30": "t=210"
+          "actual 25": "t=300"
+          "settle": "t=310, variance -5"
+          "balance after": 25
+        "old actor actuals": "18 stays on left item"
+    notes: >-
+      Measured: settle retires the reservation and keeps actuals. Variance
+      (actual less reserve) is reported per actor per account. Reserve 20,
+      actual 26 gives variance +6 and balance 24. Reserve 20, actual 12 gives
+      variance -8 and balance 12. Estimate is the sum of reserve rows; a move
+      does not change estimate (it moves the reservation, not the estimate).
+      Forced re-intake: old actor settles on left with variance -12, its 18
+      actual stays on left; new actor reserves on right and settles there with
+      variance -5 (left 32, right 25). Variance and settlement are per-actor
+      and do not transfer on move. Specification matches behavior.
+
+conclusion: >-
+  A SQLite append-only entry table keyed by actor holds both usage and
+  reservation ledgers with one table, one index, and pure-function schemes that
+  answer "may this item reserve now?" All operations (credit, reserve, post
+  actual, settle, move) converge on replay with idempotency keys and produce
+  correct final balances across resets, mid-flight usage, and forced re-intake.
+  47 tests pass; tsc clean; no native build.
+
+  For allocation schemes: floor preserves every item's guarantee and leaves
+  spare idle; it cannot be violated. Weight alone breaks guarantees (the first
+  spender exceeds its share); it requires a floor constraint or limitation to
+  the unallocated remainder, and it requires the gate to name which items have
+  waiting work. HTB borrowing from total capacity breaks sibling floors and is
+  unsafe. HTB borrowing only from the unallocated remainder preserves every
+  floor and is safe. Pacing (per-item limit as allocation fraction plus burst)
+  composes as a wrapper around any scheme and is scheme-agnostic.
+
+  Available-balance definitions: literal read (allocation less settled actuals)
+  is wrong while actors run and wrong across resets and moves. Drawdown
+  (allocation less all in-window actuals less per-actor unposted part of
+  outstanding reservation) is correct everywhere and agrees with literal once
+  every actor settles.
+
+next-steps:
+  - Implement the ledger store with the one-table schema and all operations (credit, reserve, post actual, settle, move, available-balance read).
+  - Add scheme implementations for floor, HTB with borrow-from-unallocated and ceiling, pacing as a wrapper.

@@ -1,0 +1,150 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no schema declares an edge from an asset to its
+#   # specification; `asset-of` names it.
+#   asset-of: usage-record
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/usage-record
+title: Usage record
+description: >-
+  One line of `manifold-host usage decode` output: a call decoded from a
+  provider session file, or an error with one source.
+oneOf:
+  - $ref: "#/$defs/call"
+  - $ref: "#/$defs/sourceError"
+$defs:
+  provider:
+    type: string
+    enum: [claude, codex, cursor, grok, opencode]
+  count:
+    type: integer
+    minimum: 0
+  call:
+    type: object
+    additionalProperties: false
+    required:
+      - type
+      - key
+      - provider
+      - providerSessionId
+      - unit
+      - timestamp
+      - model
+      - tokens
+      - speed
+      - granularity
+      - estimated
+    properties:
+      type:
+        const: call
+      key:
+        type: string
+        minLength: 1
+      provider:
+        $ref: "#/$defs/provider"
+      providerSessionId:
+        type: string
+        minLength: 1
+      unit:
+        $ref: "#/$defs/unit"
+      timestamp:
+        type: string
+        pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+      model:
+        type: [string, "null"]
+        minLength: 1
+      tokens:
+        description: >-
+          The call's token counts, or null for an unmetered call, whose
+          provider records no token counts.
+        type: [object, "null"]
+        additionalProperties: false
+        required:
+          - input
+          - output
+          - cacheRead
+          - cacheWrite
+          - cacheWriteOneHour
+          - reasoning
+          - webSearchRequests
+        properties:
+          input:
+            $ref: "#/$defs/count"
+          output:
+            $ref: "#/$defs/count"
+          cacheRead:
+            $ref: "#/$defs/count"
+          cacheWrite:
+            $ref: "#/$defs/count"
+          cacheWriteOneHour:
+            $ref: "#/$defs/count"
+          reasoning:
+            $ref: "#/$defs/count"
+          webSearchRequests:
+            $ref: "#/$defs/count"
+      speed:
+        type: string
+        enum: [standard, fast]
+      granularity:
+        type: string
+        enum: [call, session-total]
+      estimated:
+        type: boolean
+    if:
+      properties:
+        tokens:
+          type: "null"
+      required: [tokens]
+    then:
+      properties:
+        granularity:
+          const: call
+  unit:
+    type: object
+    additionalProperties: false
+    required: [id, kind]
+    properties:
+      id:
+        type: string
+        minLength: 1
+      kind:
+        type: string
+        enum: [session, subagent, child-thread]
+      parentId:
+        type: string
+        minLength: 1
+      name:
+        type: string
+      role:
+        type: string
+    if:
+      properties:
+        kind:
+          const: session
+    then:
+      properties:
+        parentId: false
+  sourceError:
+    type: object
+    additionalProperties: false
+    required: [type, provider, source, code, records]
+    properties:
+      type:
+        const: source-error
+      provider:
+        $ref: "#/$defs/provider"
+      source:
+        type: string
+        minLength: 1
+      code:
+        type: string
+        enum: [unreadable, truncated, malformed-record, unknown-record, decoder-failed]
+      records:
+        $ref: "#/$defs/count"
+      firstRecord:
+        $ref: "#/$defs/count"
+      detail:
+        type: string
+        maxLength: 200
+        pattern: "^[^/\\\\]*$"

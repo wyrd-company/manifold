@@ -1,0 +1,305 @@
+$schema: https://refinery.systems/ontology/spike
+title: Task cost history from provider sessions via codeburn
+
+relationships:
+  mitigates:
+    - task-usage-unattributable
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the technical design these findings inform.
+  references:
+    - portfolio
+
+objective:
+  - Can `@codeburn/core` decode provider session files in process, and match the CLI's token accounting?
+  - Which methods attribute a transcript or rollout file to a task on the board?
+  - Is a function from board fields (complexity, size, cognition, type) to a cost estimate better than the mean, on historical data?
+  - What time does a task occupy in session call timelines?
+
+background:
+  current-design: >-
+    Manifold's gates accept estimate requests from a comparator. The estimates are
+    the user's process, built from history. The portfolio design specifies in-flight
+    usage accounting and item-level settlement, but does not prescribe where estimates
+    come from or what provider session data the usage tool can reach.
+  problems:
+    - >-
+      Provider sessions from Claude, Codex, and other platforms live in user home
+      directories and are deleted after retention windows. Usage arrives only after
+      the work is done. The tool must decode these files programmatically without
+      spawning a subprocess.
+    - >-
+      A session file is the smallest decoding unit, but a user's work is at the task
+      level. A session may span multiple tasks (an orchestrator starting child threads)
+      or one task may span many sessions (a task with child agents or parallel work).
+    - >-
+      Board fields such as complexity and size are subjective author ratings. Do they
+      carry enough signal to improve estimates over a constant mean?
+
+ideas:
+  - >-
+    Use `@codeburn/core`, the decode library that ships with codeburn, to read
+    session files and call the built-in decoders in process. The host supplies the
+    session records and pricing.
+  - >-
+    Unit-level attribution. Treat each transcript or rollout file as a unit. Use claim
+    names from the activity log, kanban-md commands, prompts, worktree paths, and
+    board task numbers to identify the task a unit worked on.
+  - >-
+    Cost and time distributions by board fields. Compare estimators (bucket means, a
+    multiplicative formula) with leave-one-out cross-validation against a baseline of
+    the constant mean.
+
+environment:
+  location: throwaway branch spike/cost-history in wyrd-company/manifold
+  tools:
+    - "@codeburn/core npm 0.9.20"
+    - "codeburn CLI 0.9.25 (for comparison)"
+    - "LiteLLM pricing snapshot"
+  resources:
+    - "codeburn repository: 11,263 stars, last push 2026-09-27"
+    - "Claude Code activity log (activity.jsonl)"
+    - "Kanban board at /workspaces/kanban"
+
+findings:
+  codeburn-library-viable:
+    verdict: "confirmed in-process, matches CLI within measurement error"
+    measurements:
+      total-sessions-examined: 3083
+      total-cost-examined: "$24,874.01"
+      claude-sessions-total: 1640
+      claude-cost-total: "$16,308.99"
+      codex-child-threads: 1248
+      codex-cost-total: "$7,993.43"
+      claude-subagents: 195
+      claude-subagent-cost: "$571.59"
+      claude-sessions-token-identical: "477 of 487"
+      claude-cost-vs-cli: "$4,196.61 vs $4,198.16"
+      codex-sessions-token-identical: "1,256 of 1,305"
+      codex-cost-vs-cli: "$20,487.58 vs $20,414.30 (+0.36%)"
+      pi-cost-vs-cli: "$71.38 vs $84.31"
+      core-release-date: "2026-07-27"
+      cli-version: "0.9.25"
+    notes: >-
+      Measured: `@codeburn/core` 0.9.20 exports decoders per provider (36 total), plus
+      observations, schema, fingerprint, contracts, and detectors. The library does no file I/O or
+      pricing; the host reads session files and applies pricing. Comparison: session-level rows
+      decoded through core and priced by the host against the CLI's `-p lifetime --format json --contributions`
+      output. Where tokens are identical, cost is identical. Core has two releases
+      (2026-07-27); the CLI 0.9.25 carries a newer copy of the decoders. The repository has
+      11,263 stars and last push 2026-09-27. Inferred: where tokens diverge (Codex: 1,360 more
+      calls in core), core's calls are real units in the dataset; the CLI 0.9.25 treats
+      thread_spawn as a fork and core 0.9.20 reads both thread_spawn and forked_from_id. Five
+      Claude transcripts deleted by Claude Code retention between runs; cursor-agent ($0.38),
+      grok ($1.75), and opencode ($0.01) not decoded through core.
+
+  unit-attribution-coverage:
+    verdict: "per-unit tiers improved coverage from 27% to 42.9% single-task"
+    measurements:
+      analysis-window-start: "2026-08-28"
+      window-units: 1142
+      window-cost: "$11,213.02"
+      window-single-task-units: 725
+      window-single-task-pct: "57.5%"
+      window-single-task-cost: "$6,444"
+      all-time-units: 3083
+      all-time-cost: "$24,874.01"
+      sessions-single-task-before: "577 of 1,990 (27.0%)"
+      units-single-task-after: "1,211 of 3,083 (42.9%)"
+      multi-task-before-pct: "40.5%"
+      multi-task-after-pct: "24.8%"
+      unattributed-before-pct: "18.1%"
+      unattributed-after-pct: "17.0%"
+      parent-fallback-rate: "224 of 1,443 (15.5%)"
+      parent-fallback-single-task: 53
+      parent-fallback-multi-task: 171
+      cross-tier-agreement-units: 862
+      cross-tier-disagreement-units: 101
+      cross-tier-single-tier: 195
+    notes: >-
+      Measured: each transcript or rollout file (main session, Claude subagent, Codex child thread)
+      is judged on its own signals in priority order: claim names within 30 minutes of the unit,
+      kanban-md move/handoff commands, dispatcher task name, first and early prompts, worktree
+      or branch name, directory or branch name for a task number, PR ids. A candidate is
+      consistent when the task existed at unit time and has board activity during or flight
+      status at unit boundaries. Parent fallback fires when a unit with a parent names no task:
+      1,443 units have a parent; fallback fired 224 times (15.5%), landing 53 on a task and 171
+      on the parent's multi-task outcome. Inferred: in a workspace with orchestrators and child
+      threads, most work is attributed to the task that ran it, not folded into
+      multi-task sessions. The remaining multi-task cost is mostly the orchestrators' own calls
+      (37.3% of window cost vs 68.4% before). This is the work the Manifold engine does ("no
+      agent orchestrates"); it should not fold into per-task actuals.
+
+  cost-distributions-by-field:
+    verdict: "complexity and size order medians, weak signal alone"
+    measurements:
+      estimate-set-tasks: 207
+      estimate-set-tasks-window-only: 142
+      estimate-set-criteria: "done or archived, not epic, attributed, not in multi-task"
+      mean-cost: "$29.96"
+      median-cost: "$15.38"
+      iqr-low: "$5.54"
+      iqr-high: "$32.66"
+      max-cost: "$367.68"
+      cv: 1.72
+      sd-of-ln-cost: 1.29
+      correlation-size-cost: 0.36
+      correlation-complexity-cost: 0.30
+      complexity-median-trivial: "$3.62"
+      complexity-median-well-understood: "$5.26"
+      complexity-median-moderate: "$14.97"
+      complexity-median-risky: "$27.08"
+      complexity-median-ratio-trivial-to-risky: "3.4x"
+      size-median-xs: "$4.82"
+      size-median-s: "$7.62"
+      size-median-m: "$19.77"
+      size-median-l: "$28.39"
+      size-median-ratio-xs-to-m: "8.1x"
+      tasks-in-multi-task-unit: 165
+      multi-task-lower-bound-pct: "165 of 207 (79.7%)"
+    notes: >-
+      Measured: 207 tasks from the window (2026-08-28 on) with done or archived status, not
+      epic-typed, with attributed cost and not in a multi-task unit. Distributions by complexity:
+      well-understood median $5.26, moderate $14.97, risky $27.08. By size: XS $4.82, S $7.62, M
+      $19.77, L $28.39. Cost of ln(cost) shows CV 1.72, SD 1.29. Inferred: the medians roughly
+      double from S to M and from moderate to risky, so the fields carry a real but weak signal
+      in rank order. Spearman correlation: size 0.36 (window-only: 0.31 before), complexity 0.30
+      (0.27 before). A reservation from the size bucket median is exceeded by about half of all
+      tasks; P75 is 1.7 to 2.0x the median per bucket.
+
+  estimator-accuracy:
+    verdict: "board fields beat constant baseline by 5 to 12%"
+    measurements:
+      cross-validation-method: "leave-one-out"
+      tasks-tested: 207
+      baseline-global-mean-rmse: "$51.70"
+      baseline-global-mean-mae: "$26.78"
+      baseline-global-mean-factor: "4.20x"
+      baseline-global-median-rmse: "$53.49"
+      baseline-global-median-mae: "$23.43"
+      baseline-global-median-factor: "2.35x"
+      size-bucket-median-rmse: "$51.63"
+      size-bucket-median-mae: "$22.17"
+      size-bucket-median-factor: "2.05x"
+      size-bucket-median-improvement-vs-mean: "17.2%"
+      ridge-four-fields-rmse: "$48.93"
+      ridge-four-fields-mae: "$23.56"
+      ridge-four-fields-factor: "1.99x"
+      ridge-improvement-rmse: "5.4%"
+      ridge-improvement-mae: "12.0%"
+      no-multi-task-tasks: 42
+      no-multi-task-mae-range: "$14.54 to $15.11"
+    notes: >-
+      Measured: leave-one-out cross-validation on 207 tasks. Estimators tested: global mean
+      (MAE $26.78), global median ($23.43), complexity bucket mean, size bucket mean, size bucket
+      median ($22.17, best MAE), type bucket mean, board estimate field bucket mean, and log
+      ridge on complexity, size, type, cognition (RMSE $48.93, best RMSE). Inferred: the size
+      bucket median is 17.2% better on MAE than the global mean; the four-field ridge is 12.0%
+      better on MAE and 5.4% better on RMSE. The median error factor (p/a ratio) drops from
+      2.35x (constant median) to 1.99x (ridge). On the 42 tasks with no multi-task overlap, all
+      estimators stay within $14.54 to $15.11 MAE of each other. Inferred: board fields carry
+      real signal once units are attributed correctly, but a 2x error factor is typical
+      regardless of method.
+
+  session-decoding-gaps:
+    verdict: "core leaves task identity and pricing rules to the host"
+    measurements:
+      total-codex-child-threads: 1248
+      codex-children-under-parent-id: 1078
+      codex-children-with-own-id: 0
+      total-claude-calls: 28796
+      total-codex-calls: 295033
+      calls-with-timestamp-claude: "28,796 of 28,796"
+      calls-with-timestamp-codex: "295,033 of 295,033"
+      claude-turns-decoded: "yes"
+      codex-turnid-decoded: "yes"
+      claude-subagents-with-parent: "yes (parentSessionId, isSidechain)"
+      codex-branch-decoded: "no"
+      task-reference-decoded: "no"
+      per-call-fields-available: "timestamp, model, input, output, cache-read, cache-write, reasoning, speed, dedup-key, tool-names"
+      core-version: "0.9.20"
+      cli-version: "0.9.25"
+      core-last-release: "2026-07-27"
+    notes: >-
+      Measured: what `@codeburn/core` observations export. Per call: timestamp, model, input,
+      output, cache read, cache write (one-hour cache writes separate for Claude), reasoning, speed,
+      dedup key, tool names. All 28,796 Claude calls and 295,033 Codex calls have a timestamp.
+      Claude turns and Codex turnId. Claude subagents have parentSessionId and isSidechain.
+      Codex child threads: 1,078 of 1,248 decode under the parent's session id with no own-id
+      field and no parent field. Inferred: the host must read the child's id and parent from the
+      session_meta JSON of the rollout file. The Claude parent does not cross into the observation
+      (only isSidechain). The Codex branch is not decoded, although session_meta.git.branch
+      exists. Pricing rules are left to the host; dollars are not the account's native unit. No
+      field identifies the task. Release lag: core lags the CLI (0.9.20 vs 0.9.25, last core push
+      2026-07-27). Retention: Claude transcripts are deleted after 30 days.
+
+  time-as-estimate-signal:
+    verdict: "active time correlates with board fields and task effort"
+    measurements:
+      estimate-set-tasks: 283
+      estimate-set-criteria: "done or archived, size XS-XL, complexity trivial-risky, at least one attributed unit"
+      window-only-tasks: 192
+      claim-held-data-tasks: 184
+      active-time-threshold-minutes: 30
+      median-active-hours-all: 0.96
+      iqr-low-hours: 0.47
+      iqr-high-hours: 1.89
+      active-time-by-size-xs: 0.42
+      active-time-by-size-s: 0.70
+      active-time-by-size-m: 0.99
+      active-time-by-size-l: 1.01
+      active-time-by-size-xl: 2.33
+      active-time-by-complexity-trivial: 0.11
+      active-time-by-complexity-well-understood: 0.55
+      active-time-by-complexity-moderate: 1.00
+      active-time-by-complexity-risky: 1.33
+      loo-cv-all-tasks-mae: 1.22
+      loo-cv-all-tasks-factor: 1.85
+      loo-cv-window-mae: 1.11
+      loo-cv-window-factor: 1.91
+      loo-cv-improvement-vs-constant: "5.3%"
+      loo-cv-window-improvement: "3.0%"
+      correlation-active-time-claim-held: 0.59
+      union-overlap-pct: 92
+      median-units-per-task: 2
+      p75-multiplier-range: "1.5 to 2.3x"
+      tasks-exceeding-median: "approximately 50%"
+    notes: >-
+      Measured: 283 tasks with at least one attributed unit, a size in XS to XL, and a
+      complexity in trivial to risky. Active time is the sum of call gaps shorter than 30 minutes,
+      computed from decoded call timestamps. Active time per task ranges from median 0.96 hours
+      across all tasks; by size the medians are XS 0.42 h, S 0.70 h, M 0.99 h, L 1.01 h, XL 2.33 h.
+      By complexity: well-understood 0.55x the moderate median, risky 1.33x. Correlation of
+      ln(active time) with ln(claim-held hours) is 0.59 (n=184). Inferred: size and complexity
+      carry weak signal in rank order for active time. A multiplicative model fits the matrix
+      with 5.3% MAE improvement over a constant median; on the window-only tasks it improves 3.0%.
+      P75 is 1.5 to 2.3x the median per populated size-complexity cell. About half of all tasks
+      exceed a median-based estimate. The trivial factor rests on one task; treat as "about XS
+      well-understood or less". Inferred: these measurements are the foundation for a user's own
+      time-estimate process if they choose to build one; they are not prescribed by Manifold.
+
+conclusion: >-
+  Cost history from provider sessions is measurable and attributable to tasks. `@codeburn/core`
+  decodes session files in process, matching the CLI's token accounting within measurement
+  error. Unit-level attribution — treating each transcript or rollout as its own unit — reaches
+  42.9% of tasks on the window data, against 27% when folding children into parent sessions.
+  Board fields (complexity, size, type, cognition) carry weak but real signal: a size-bucket
+  median beats the mean by 17% on MAE; a four-field ridge beats it by 12% on MAE and 5.4% on
+  RMSE. Active time correlates with size, complexity, and claim-held hours (0.59 correlation),
+  with size-complexity medians ranging from 0.42 to 2.33 hours. The typical error factor remains
+  2x for cost and 1.9x for time. Manifold's usage tool can depend on `@codeburn/core` pinned to
+  a 0.x version, read files in process, and price using the host's rules. Key gaps remain: Codex
+  child identity and parent field, Claude parent in the observation, branch information, task
+  reference, release lag, and provider retention.
+
+next-steps:
+  - >-
+    Keep `@codeburn/core` current and guard against provider log-shape drift. Watch core's
+    releases for schema changes and decode bugs; vendor it if it stops releasing or if a change
+    is needed faster than upstream ships. Take Codex child id, parent, and task name from
+    session_meta on the host side, since core does not expose those.
+  - >-
+    Plan for provider retention: set up a policy for when history becomes too sparse, and handle
+    subscription accounts differently (their native unit is a capacity percentage, not dollars).
+  - >-
+    Investigate whether orchestration cost (engine work spawning child tasks) belongs to any task
+    at all, or is portfolio-item-level overhead that does not factor into per-task estimates.

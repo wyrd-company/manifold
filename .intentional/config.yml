@@ -1,0 +1,73 @@
+$schema: https://intentional.foo/schemas/config.yml
+contract: contract-1
+settings:
+  internal-dependency-bump: patch
+  pre-1-0-bump-mapping: compatibility
+discovery:
+  managed-paths:
+    - detector: npm-package
+      path: package.json
+      release-unit: manifold
+    - detector: npm-package
+      path: packages/console/package.json
+      release-unit: manifold-console
+    - detector: npm-package
+      path: packages/host-cli/package.json
+      release-unit: manifold-host-cli
+    - detector: npm-package
+      path: packages/service/package.json
+      release-unit: manifold-service
+    - detector: npm-package
+      path: packages/shared/package.json
+      release-unit: manifold-shared
+release-units:
+  manifold:
+    path: .
+    projections:
+      - adapter: npm
+        file: package.json
+        mode: committed
+    tags:
+      primary:
+        role: primary
+        template: "{id}@{version}"
+  manifold-console:
+    path: packages/console
+    projections:
+      - adapter: npm
+        file: package.json
+        mode: committed
+    tags:
+      primary:
+        role: primary
+        template: "{id}@{version}"
+  manifold-host-cli:
+    path: packages/host-cli
+    projections:
+      - adapter: npm
+        file: package.json
+        mode: committed
+    tags:
+      primary:
+        role: primary
+        template: "{id}@{version}"
+  manifold-service:
+    path: packages/service
+    projections:
+      - adapter: npm
+        file: package.json
+        mode: committed
+    tags:
+      primary:
+        role: primary
+        template: "{id}@{version}"
+  manifold-shared:
+    path: packages/shared
+    projections:
+      - adapter: npm
+        file: package.json
+        mode: committed
+    tags:
+      primary:
+        role: primary
+        template: "{id}@{version}"

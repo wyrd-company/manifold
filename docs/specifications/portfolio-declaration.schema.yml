@@ -1,0 +1,103 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: portfolio-declaration
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/portfolio-declaration
+title: Portfolio declaration
+description: >-
+  The document in `portfolio.yml` at the root of the process repository: the
+  tree of portfolio items and each item's allocation per account. An empty
+  document declares no items.
+type: object
+additionalProperties: false
+properties:
+  items:
+    $ref: "#/$defs/items"
+$defs:
+  items:
+    description: >-
+      The items under one parent, keyed by item id, in declaration order.
+      An item id is a declared name. The key `other` sets the allocations
+      of that parent's Other item and is never an item id.
+    type: object
+    propertyNames:
+      $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+    properties:
+      other:
+        $ref: "#/$defs/other"
+    additionalProperties:
+      $ref: "#/$defs/item"
+  item:
+    description: A portfolio item.
+    type: object
+    additionalProperties: false
+    properties:
+      title:
+        description: The name the console shows. Defaults to the item id.
+        type: string
+        minLength: 1
+      archived:
+        description: >-
+          Archives the item and every item under it. An archived item keeps
+          its place in the tree and its history, and its allocations do not
+          apply.
+        type: boolean
+        default: false
+      allocations:
+        $ref: "#/$defs/allocations"
+      items:
+        $ref: "#/$defs/items"
+  other:
+    description: The allocations of an Other item.
+    type: object
+    additionalProperties: false
+    properties:
+      allocations:
+        $ref: "#/$defs/allocations"
+  allocations:
+    description: >-
+      The item's allocation per account, keyed by account name. An account
+      name is a declared name.
+    type: object
+    propertyNames:
+      $ref: https://manifold.wyrd.company/schemas/service-configuration#/$defs/declared-name
+    additionalProperties:
+      $ref: "#/$defs/allocation"
+  allocation:
+    description: The item's allocation for one account.
+    type: object
+    additionalProperties: false
+    properties:
+      guarantee:
+        description: Guaranteed percentage of the parent's amount.
+        $ref: "#/$defs/percent"
+        default: 0
+      ceiling:
+        description: >-
+          Most of the parent's limit the item may use, as a percentage, its
+          guarantee and borrowed unallocated remainder together.
+        $ref: "#/$defs/percent"
+        default: 100
+      weight:
+        description: Share of the free unallocated remainder among siblings with waiting work.
+        type: integer
+        minimum: 1
+        default: 1
+      pacing:
+        description: Spreads the guarantee across the window, plus a burst.
+        type: object
+        additionalProperties: false
+        required:
+          - burst
+        properties:
+          burst:
+            description: Percentage of the parent's amount usable at any time in the window.
+            $ref: "#/$defs/percent"
+  percent:
+    description: A percentage from 0 to 100 with at most two decimal places.
+    type: number
+    minimum: 0
+    maximum: 100

@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Holder
+description: >-
+  A task actor holding a token from a gate.

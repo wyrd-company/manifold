@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship types; `references`
+  # names the artifacts that define and use this term.
+  references:
+    - operator-console
+title: Draft
+description: >-
+  The edited text of one process repository file in the operator
+  console, such as a blueprint or `portfolio.yml`, with the commit it is
+  based on, kept in the browser until it is saved or discarded.

@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: State Machine Actor
+description: >-
+  An actor running a blueprint.

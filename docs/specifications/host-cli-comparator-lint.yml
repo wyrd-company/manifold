@@ -1,0 +1,33 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose command this is.
+  realizes:
+    - comparator-sandbox
+  references:
+    - comparator-contract
+description: >-
+  Defines the host CLI command `manifold-host comparator lint`, which
+  typechecks comparators against the comparator contract without running
+  them. `docs/specifications/host-cli-comparator-lint.cli.yml` is the
+  machine-readable definition.
+
+  The command reads each file argument as a comparator's TypeScript source
+  and lints it against the declaration file of `comparator-contract` and the
+  ES2022 library, both embedded in the binary. It reports every diagnostic
+  on standard output as one line, `<file>:<line>:<column> <code> <message>`,
+  with the file as given on the command line, line and column 1-based, and
+  `code` either a TypeScript code such as `TS2322` or a rule:
+  `comparator/no-clock` for a use of `Date`, and `comparator/no-math-random`
+  for a use of `Math.random`. Files are reported in argument order and
+  diagnostics in source order within a file. A file that cannot be read is
+  reported on standard error and ends the command with exit code 2 before
+  any file is linted. The command prints nothing when every file is clean.
+format: cli
+validation-criteria: >-
+  `docs/specifications/host-cli-comparator-lint.cli.yml` validates against
+  the CLI Command Specification schema. A test compiles the host CLI for the
+  current platform, runs `comparator lint` from a directory with no
+  `node_modules`, and observes exit 0 and no output for a well-formed
+  comparator, and exit 1 with a `TS2322` line for a comparator with a wrong
+  signature.

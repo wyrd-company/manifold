@@ -1,0 +1,49 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - agent-threads
+description: >-
+  An invoked promise that was running at a crash starts again with its
+  actor, so a promise that sent a T3 Code command before the crash sends it
+  again. A crash after the server accepts `thread.turn.start` and before the
+  actor saves the result must not start a second turn, and the same holds
+  for `thread.create` and a second thread. T3 Code 0.0.45 keeps a receipt
+  per command id, written with the command's events, and answers a command
+  id it holds a receipt for with that receipt.
+considered-options:
+  "1": >-
+    Derived ids and server receipts. Each command carries a command id, and
+    a thread id or message id, derived from the actor id, invoke id, and
+    entry id of the invoking state; a turn's command id is derived from the
+    message id the actor prepared and saved before sending. A re-sent
+    command is answered with its first receipt.
+  "2": >-
+    Read before send. Each command carries a derived thread id or message
+    id; before sending, the promise reads the thread and sends only when
+    the thread or the message is absent.
+  "3": >-
+    Record and ask. Manifold records each command in its store before
+    sending it, and a promise that restarts with a recorded command it has
+    no result for escalates to an operator instead of sending.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 decides in one place, the server's own transaction: the
+    receipt and the command's events commit together, so no crash leaves a
+    command applied without its receipt or a receipt without its command.
+    It costs no read and no state in Manifold, and a retry after a lost
+    connection is safe for the same reason as a retry after a crash. It was
+    measured against `t3` 0.0.45, across a server restart. Option 2 reads
+    and then sends, so it needs the server's view to be current at the read
+    and holds a window between read and send; it is the fallback should a
+    server release drop receipts, since its ids are the same. Option 3 puts
+    a person in the path of every crash that falls between a send and a
+    save, the case Manifold exists to handle without one.
+expected-outcomes:
+  positive:
+    - One state entry creates at most one thread and starts at most one turn, across any number of crashes and retries.
+    - A lost connection is retried without a blueprint seeing it.
+    - Manifold stores nothing to send a command once.
+  negative:
+    - Exactly-once rests on server behaviour that T3 Code does not document as a contract; a server release that changes it must be caught by the live test.
+    - A command the server rejected is rejected again for the same state entry, so a blueprint retries by entering the state again.

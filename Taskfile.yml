@@ -1,3 +1,7 @@
+# ---
+# relationships:
+#   implements: operator-console
+# ---
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
 
 version: "3"
@@ -10,7 +14,9 @@ tasks:
 
   install:
     desc: Install dependencies
-    cmds: [pnpm install --frozen-lockfile]
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm --filter @wyrd-company/manifold-service exec playwright install chromium
 
   build:
     desc: Build every package; the host CLI compiles for the current platform
@@ -18,7 +24,9 @@ tasks:
 
   build:targets:
     desc: Compile the host CLI for Linux x64/arm64, macOS arm64, and Windows x64
-    cmds: [pnpm --filter @wyrd-company/manifold-host-cli run build:targets]
+    cmds:
+      - pnpm --filter @wyrd-company/manifold-shared run build
+      - pnpm --filter @wyrd-company/manifold-host-cli run build:targets
 
   format:
     desc: Format every file
@@ -47,3 +55,61 @@ tasks:
       - task: lint
       - task: typecheck
       - task: test
+
+  live:provision:
+    desc: Provision the isolated live GitHub test environment
+    cmds: [node testing/live-github/src/provision.ts]
+    env:
+      CONTENT: '{{.CONTENT | default ""}}'
+
+  live:start:
+    desc: Start the live GitHub service and restricted tunnel in the foreground
+    cmds:
+      - task: build
+      - node testing/live-github/src/start.ts
+    env:
+      ANSWERS: '{{.ANSWERS | default "0"}}'
+      OVERLAY: '{{.OVERLAY | default ""}}'
+      SERVICE_PORT: '{{.SERVICE_PORT | default ""}}'
+
+  live:project-config:
+    desc: Check Project configuration Apply, drift, and duplicate names on real GitHub
+    cmds:
+      - task: build
+      - node testing/live-github/src/project-config.mjs
+
+  live:front-matter:
+    desc: Check issue front matter writes, replay, clear, and edit history on real GitHub
+    cmds:
+      - task: build
+      - node testing/live-github/src/front-matter.mjs
+
+  live:repository-fields:
+    desc: Check repository labels, milestones, values and name uniqueness on real GitHub
+    cmds:
+      - task: build
+      - node testing/live-github/src/repository-fields.mjs
+
+  live:stop:
+    desc: Stop the live environment or recover its recorded children
+    cmds: [node testing/live-github/src/stop.ts]
+
+  live:smoke:
+    desc: Check live GitHub delivery, intake, sweep, and tunnel paths
+    cmds: [node testing/live-github/src/smoke.ts]
+
+  live:teardown:
+    desc: Remove only marked live GitHub test resources
+    cmds: [node testing/live-github/src/teardown.ts]
+  package:service:
+    desc: Build a Linux glibc service archive (ARCH=x64 or arm64)
+    cmds:
+      - node packages/service/scripts/package-service.mjs '{{.ARCH | default ""}}'
+
+  package:smoke:
+    desc: Check the isolated archive and upgrades (MODE=short or full; default full)
+    cmds:
+      - node --test packages/service/scripts/smoke-selection.test.mjs packages/service/scripts/upgrade-modes.test.mjs
+      - node packages/service/scripts/package-smoke.mjs
+    env:
+      SMOKE_MODE: '{{.MODE | default "full"}}'

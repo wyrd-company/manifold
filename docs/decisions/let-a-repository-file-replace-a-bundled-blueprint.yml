@@ -1,0 +1,52 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - blueprint-loader
+    - default-process
+description: >-
+  Manifold bundles default blueprints, and the intake decision model names
+  the blueprint a task runs by its path. A bundled blueprint needs a name
+  intake can give, and a rule for a process repository that holds a file
+  where the bundle holds one. A process customizes a default by editing
+  it, and actors already running a default must stay on the text they
+  started with.
+considered-options:
+  "1": >-
+    One path space. A bundled blueprint has a path under `blueprints/`,
+    and at a commit the repository's file at that path, clean or not,
+    replaces it. A process customizes the default by committing its
+    edited copy at the same path; intake and the gate keep their names.
+  "2": >-
+    A reserved namespace, such as `manifold:task.yml` or
+    `blueprints/manifold/`. A bundled blueprint and a repository file can
+    never share a name. A process customizes the default by copying it to
+    a path of its own and changing its intake decision model to name the
+    copy.
+  "3": >-
+    No bundled blueprint runs by name. The starter process repository
+    holds the default blueprint as a file, and Manifold's bundle is only
+    the source the starter is copied from.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 makes customizing a default one commit at the path the
+    process already runs, and the console's save of an edited bundled
+    blueprint is that commit. The gate's key and population are by path,
+    so tasks on the default and on the customized copy share one gate,
+    and a later migration from the bundled version to the repository's
+    is a migration at the same path. A repository file replaces the
+    bundled one even when it fails the lint, so a broken copy fails
+    intake visibly instead of running the default. Option 2 is explicit
+    about origin, but customizing takes two edits, splits the gate's
+    population across two paths, and leaves running actors with no
+    same-path successor to migrate to. Option 3 needs no loader change,
+    but a Manifold upgrade never improves a user's default, and the
+    default is no longer a blueprint Manifold bundles.
+expected-outcomes:
+  positive:
+    - A starter process repository runs the default with no blueprint file of its own.
+    - Customizing the default is one commit, and intake and the gate keep their names.
+    - Running actors keep the bundled text they started on, by its bundle digest.
+  negative:
+    - A path in an intake decision model may name no file in the repository; the console must show where each blueprint comes from.
+    - A repository file committed at a bundled path for another purpose replaces the default for every new task.

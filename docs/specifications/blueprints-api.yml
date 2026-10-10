@@ -1,0 +1,209 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design or another specification; `references` is the best fit.
+  references:
+    - operator-console
+    - process-repository
+    - service-assembly
+    - blueprint
+    - host-cli-blueprint-lint
+    - lint-console-edits-on-the-service
+description: >-
+  Defines the blueprints endpoints of Manifold's API: the list of every
+  blueprint at the latest applied revision with its lint result, one
+  blueprint's text with its findings and graph, the lint of edited text,
+  and the save of edited text as a commit pushed to the process repository.
+  `docs/specifications/blueprints-api.openapi.yml` is the machine-readable
+  definition. The Blueprints screen of the operator console reads and
+  writes through them, and any automation may.
+
+  The endpoints are mounted with the HTTP host's `mount` at the prefix
+  `/api/blueprints` and are always served without authentication. Access
+  control belongs to the deployment. A path under the prefix that is not
+  one of the four below answers `404`. A method an endpoint does not take
+  answers `405` with `Allow` naming the one it takes.
+
+  **Blueprint paths.** A blueprint's path is a process repository path
+  under `blueprints/` that ends in `.yml` or `.yaml`, with the path rules
+  of `ProcessRepositoryRevision`: `/`-separated segments, none empty, `.`,
+  or `..`, and no `\`. A blueprint Manifold bundles has such a path too,
+  such as `blueprints/task.yml`. At each path, a file in the process
+  repository replaces the bundled blueprint, even when the file fails
+  lint, so a path names one blueprint at a revision: the repository's
+  file when the revision holds one, and otherwise the bundled one. Every
+  response names a blueprint by its path.
+
+  **Findings.** A finding is the blueprint lint's finding, as `blueprint`
+  specifies it, without its `path`, and with `range` when the finding has
+  a place in the text. `range` holds `from` and `to`, offsets into the text
+  in UTF-16 code units with `from` at most `to`, and `line` and `column`,
+  1-based, of `from`. A `yaml` finding's range runs from its line and
+  column to the end of that line. A finding located by a JSON Pointer has
+  the range of the deepest YAML node on the pointer's path that the text
+  holds; when that node is the value of a mapping entry, the range runs
+  from the entry's key to the end of its value. The empty pointer has the
+  range of the text's first line. `findings` and `warnings` are separate
+  lists in the lint's order: `warnings` holds the `token-potential` and
+  `token-unknown` findings, and `findings` holds every other. A text lints
+  with the same function, implementation names, and configuration bound as
+  the service's blueprint loader and `manifold-host blueprint lint`, so
+  the three report the same findings for the same text and path.
+
+  **Graph.** A blueprint's graph holds its state nodes and transitions,
+  present whenever the text parses as YAML, passes the blueprint shape, and
+  its machine resolves. A state is named by its state path, the keys from
+  the machine's root joined with `.`; the root is not a state. Each state
+  has its `key`, the `parent` state path for a nested state, its `type`
+  (`atomic`, `compound`, `parallel`, `final`, or `history`), `initial` when
+  it is its parent's initial state or the machine's, the `invokes`
+  sources in declaration order, `gated` when it declares a gate, its
+  `location`, the JSON Pointer of the state node, and its `range` by the
+  rule for findings. Each transition has its `source` and `target` state
+  paths, resolved as XState resolves them, its `trigger` (`event`,
+  `always`, `after`, `done`, or `error`), its `label`: the event type, the
+  delay, or the invoke id the `done` or `error` belongs to, `guarded` when
+  it has a guard, and its `location`, the JSON Pointer of the transition.
+  A transition with several targets is one transition per target; a
+  targetless transition has no `target`. States are listed in document
+  order, depth first, and transitions in document order.
+
+  **List.** `GET /api/blueprints` answers `200` with `repository`, the
+  configured URL and branch; `commit`, the commit of the latest revision
+  the revision follower applied, absent before the first; and `blueprints`.
+  It lists one item for each path, sorted by code point: each repository
+  blueprint of that revision, and each bundled blueprint whose path the
+  revision holds no file at. Before the first applied revision it lists
+  the bundled blueprints alone. An item holds its `path`; its `source`,
+  `repository` or `bundled`; `commit`, the commit of the applied revision
+  its version belongs to, absent before the first; for a bundled
+  blueprint, `bundle`, the digest of the bundle, so its version key is
+  `<commit>:<path>@<bundle>`; for a repository blueprint at a path
+  Manifold also bundles, `replacesBundled` set to `true`; its `status`,
+  `loaded` or `invalid`; the count of its `findings` and of its
+  `warnings`; its `description` when it loaded and declares one; and
+  `activeActors`, the count of active snapshots whose machine key is a
+  blueprint version key with that path, from the repository or the
+  bundle, at any commit.
+
+  **Source.** `GET /api/blueprints/source?path=<path>` answers `200` with
+  the blueprint's `path`; `source`; `commit`, the commit of the latest
+  applied revision, which is the base for a save of this path; `bundle`
+  for a bundled blueprint; `text`, the repository file's text or the
+  bundled text; `findings`; `warnings`; and `graph` when it has one. A
+  path that names neither a repository file at that revision nor a
+  bundled blueprint answers `404`. Before the first applied revision a
+  bundled path answers with no `commit`, and any other path answers
+  `503`.
+
+  **Lint.** `POST /api/blueprints/lint` takes `{ path, text, base?,
+  models? }` and answers `200` with `findings`, `warnings`, and `graph`
+  when the text has one. `path` names the file the findings belong to and
+  need not exist. Rule 13 of `blueprint` checks each decision model the
+  text invokes in the set `lintDecisionModelSet` reads at `base`, the
+  latest applied revision when absent, through a reader that answers the
+  text of each entry of `models`, `{ path, text }`, in place of the
+  revision's file at that path, so that the findings follow the
+  console's model drafts. An entry's `path` is a decision model path of
+  `declarations-api`: any `.yml` path that is not a blueprint path, a
+  declaration path, `prices.yml`, or `manifold.yml`, so the overlay holds
+  the intake decision model and a model a `decisionNode` names wherever
+  it lies, while an invoke `src` names only a path under
+  `decision-models/`. A `base` the process
+  repository does not hold answers `400`, and so do two `models` entries
+  with one path. It reads and writes nothing else.
+
+  **Save.** `POST /api/blueprints/save` takes `{ path, base, text, message,
+  saveId }`. `path` is a blueprint path. A save of a bundled blueprint's
+  path, whose base revision holds no file there, adds the file to the
+  process repository, and from that commit on the file replaces the
+  bundled blueprint. `base` is the commit
+  the edit started from. `message` is the commit message, 1 to 4096 UTF-16
+  code units with at least one character that is not white space.
+  `saveId` is 32 lower-case hexadecimal characters that the caller chooses
+  once for one text and sends again with every retry of that text. The
+  service lints `text` first: a text with a finding answers `422` with
+  `findings` and `warnings`, and nothing is written. Otherwise the revision
+  follower pulls, commits `text` at `path` on top of the branch's commit,
+  pushes it, pulls it, and applies it, as `process-repository` and
+  `service-assembly` state. The answer is `200` with `outcome`, `commit`,
+  and `blueprint`:
+
+  - `saved`: the commit was pushed; `commit` is the new commit.
+  - `already-saved`: a commit on the branch carries this `saveId`;
+    `commit` is that commit, and nothing new is pushed.
+  - `unchanged`: the file at the branch's commit already equals `text`;
+    `commit` is the branch's commit, and nothing is pushed.
+
+  `blueprint` is the path's item in the list at the latest applied
+  revision, which then holds the answer's commit, as that commit or a
+  later commit of the branch; it is absent when the service does not yet
+  hold the commit because the pull after the push failed. A save that conflicts answers
+  `409` with `reason`, `head`, the branch's commit, and `text`, the file's
+  text there, absent when the file is not there; nothing of the save is on
+  the branch. `reason` is `file-changed` when the file on the branch
+  differs from the file at `base`, and `branch-moved` when the branch moved
+  under the save's push and again under its one retry. A save the remote
+  refuses while the branch stays where the save found it answers `502`
+  with `error` `rejected` and the remote's reason; an authentication the remote
+  refuses answers `502` with `error` `authentication`; any other failure to
+  reach the remote, its pull timeout included, answers `502` with `error`
+  `remote`. Before the first applied revision, and while the service
+  stops, a save answers `503`. The service never force-pushes.
+
+  **Requests.** `lint` and `save` take `Content-Type: application/json`
+  and answer `415` for any other type. A request with
+  `Sec-Fetch-Site: cross-site` answers `403`, and so does one with an
+  `Origin` header whose host and port equal neither its `Host` header nor
+  its `X-Forwarded-Host` header, so that a page on another site cannot
+  drive these endpoints from the operator's browser, and a proxy that
+  rewrites `Host` keeps the console working. A page cannot set
+  `X-Forwarded-Host` on a cross-site request without a preflight the host
+  never grants. A body
+  over 8 MiB answers `413`. A body that is not JSON or not of the stated
+  shape, and a path that breaks the path rules, answers `400` with the
+  first problem. Every answer is JSON with `Cache-Control: no-store`, and
+  every error answer holds `error` and `message`. The query string of the
+  list, lint, and save endpoints is ignored.
+format: openapi
+validation-criteria: >-
+  `docs/specifications/blueprints-api.openapi.yml` is a valid OpenAPI 3.1
+  document. Tests in `packages/service` serve a fixture process repository
+  over smart HTTP with push enabled, start the service on it, and call each
+  endpoint without authentication through the service's HTTP host. They
+  check that each body validates against its response schema; that the list
+  holds a loaded blueprint, an invalid one with its finding count, and the
+  active actor count of a fixture snapshot; that with a fixture bundle of
+  two blueprints, one at a path the repository also holds, the list holds
+  the other as `bundled` with the bundle digest, and the shared path once
+  as `repository` with `replacesBundled`, counting an actor whose key
+  carries the bundle digest; that `source` of the bundled path answers the
+  bundled text and the revision's commit; that a save of the bundled path
+  adds the file, after which the list holds it as `repository` with
+  `replacesBundled`; that `source` and `lint` answer,
+  for each token-lint fixture of `token-lint` and each `host-cli-blueprint-lint`
+  fixture, the findings and warnings whose lines equal those
+  `manifold-host blueprint lint` prints for the same text, each with the
+  range stated; that a graph lists nested, parallel, and final states and
+  `event`, `always`, `after`, `done`, and `error` transitions; that a save
+  answers `saved`, the remote branch holds one new commit whose parent is
+  the previous head, whose author and message are those of
+  `process-repository`, and the list then shows the new commit; that the
+  same save again answers `already-saved` with that commit and pushes
+  nothing; that a save whose base file changed on the remote answers `409`
+  with reason `file-changed` and the remote's text, and one whose base is
+  behind only on other files answers `saved` on top of the remote's
+  commit; that a branch moved before each of the save's two pushes answers
+  `409` with reason `branch-moved`, and a push refused with the branch
+  unmoved answers `502` `rejected`; that a lint of a text invoking
+  `decision-models/a.yml` answers a `decision-model` finding with
+  `reason` `missing` when the revision holds no such file, none when
+  `models` holds a clean text at the path, and one with `reason`
+  `invalid` when `models` holds a text with a `syntax` cell; that a lint
+  whose `models` holds `intake.yml` and `shared/rates.yml`, a model the
+  invoked model's `decisionNode` names, answers `200`, with a
+  `decision-model` finding of `reason` `invalid` when `shared/rates.yml`
+  holds a `syntax` cell and none when it is clean; that `models` naming
+  `bindings.yml` answers `400`; that a text with a finding
+  answers `422`; and the `400`, `403`, `404`, `405`, `413`, `415`, and `503`
+  answers.

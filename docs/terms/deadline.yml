@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Deadline
+description: >-
+  A time at which an actor in a state receives an event.

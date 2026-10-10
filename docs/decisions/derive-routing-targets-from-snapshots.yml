@@ -1,0 +1,48 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - durable-event-delivery
+description: >-
+  The router must write an inbox row for every receiver of an event before
+  any receiver takes it, including an actor that is held and not loaded,
+  and must recreate every subscription after a restart. PubSubJS, the
+  hierarchical publish-subscribe library named for the router, keeps its
+  subscribers in one process-wide object, calls them as it matches them,
+  and offers no query that lists the subscribers a topic reaches:
+  `getSubscriptions` and `countSubscriptions` match subscribed topic names
+  by string prefix of the query, which finds descendants and not the
+  ancestors a publish reaches. Its asynchronous publish runs on
+  `setTimeout`, and it rethrows a subscriber's error on a later timer
+  unless `immediateExceptions` is set, so a failed delivery cannot be tied
+  to its inbox row.
+considered-options:
+  "1": >-
+    PubSubJS as the bus. Each loaded actor subscribes its delivery function
+    under its topics; targets are the subscribers PubSubJS calls, and each
+    writes its own inbox row when called.
+  "2": >-
+    A subscription table in the store's file, written in the transaction
+    that saves each snapshot, and queried by topic prefix to find targets.
+  "3": >-
+    An in-memory subscription index in the router, derived from every active
+    stored snapshot at resume and updated from every snapshot the router
+    saves, with delivery as the store's `drain` scheduled per actor.
+decision-outcome:
+  chosen-option: 3
+  justification: >-
+    Option 3 names every target before any delivery, held actors included,
+    from the one source of truth for an actor's identity, its snapshot, and
+    it adds no subscription table and no dependency. Option 1 writes rows
+    only for loaded subscribers, so an event for a held actor is lost, and its global state
+    allows one router per process. Option 2 stores a second copy of what
+    the snapshot already holds, and its rows must be rewritten in every
+    delivery's save transaction, which the store's delivery order does not
+    expose to another module.
+expected-outcomes:
+  positive:
+    - Every target of an event holds its inbox row before any target takes the event.
+    - A restart recreates every subscription from stored snapshots with no subscription on disk.
+    - Several routers run in one process, so tests run in parallel against their own files.
+  negative:
+    - Resume reads every active snapshot to build the index, so start time grows with the number of active actors.
+    - Topic matching and delivery scheduling are Manifold code, tested by the router's own suite.

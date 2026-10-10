@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Available balance
+description: >-
+  Allocation less usage counted as it arrives, per portfolio item and account.

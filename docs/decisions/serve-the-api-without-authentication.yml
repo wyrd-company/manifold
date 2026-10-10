@@ -1,0 +1,55 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - service-assembly
+    - http-host-configuration
+    - escalations
+    - usage-intake
+    - operator-console
+    - actors-api
+    - blueprints-api
+    - process-repository
+description: >-
+  Manifold's HTTP host serves the operator console, the API the console
+  reads and writes, including the save of a blueprint as a commit pushed
+  to the process repository, the escalation API, the usage push from each host CLI, the
+  escalation answer endpoint, and GitHub webhooks. The operator who runs
+  Manifold is the one person who uses its API, the host listens on
+  loopback by default, and an operator who must expose the host, so that
+  GitHub can reach its webhook path, already puts a proxy of their own in
+  front of it. Every credential Manifold reads is a file named in service
+  configuration.
+considered-options:
+  "1": >-
+    No authentication. The API is always served; access control belongs to
+    the deployment: loopback by default, or a proxy in front that decides
+    who reaches which path.
+  "2": >-
+    Operator token. A bearer token read from a credential file at each
+    request; with no token configured the API is not served. The console
+    keeps the token in the browser and the host CLI sends it with each
+    push.
+  "3": >-
+    Console sign-in. A login endpoint sets an HttpOnly session cookie for
+    the console, and the host CLI and other callers use a token.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 asks nothing of the operator to start: no token to mint, no
+    file to place, no secret in a browser. The proxy an exposed deployment
+    already needs is the place that knows who may reach which path, and it
+    can admit GitHub to the webhook path and phones to the answer path alone. Option 2 makes every
+    operator manage a secret for a single-person tool, stores it in the
+    browser, and still leaves the webhook and answer paths unauthenticated.
+    Option 3 adds a login flow and a session store before Manifold has a
+    second user.
+expected-outcomes:
+  positive:
+    - The console, the escalation API, and the usage push work with no credential setup.
+    - No API secret is stored in a browser, a host CLI configuration, or service configuration.
+    - Access to the API is decided in one place, the deployment.
+  negative:
+    - Anyone who reaches the host can read actors, answer any open escalation without its key, and push usage.
+    - Anyone who reaches the host can save any blueprint, which commits and pushes it to the process repository as the GitHub App, and so changes what every new actor runs.
+    - A deployment that exposes the host for webhooks exposes the whole API unless its proxy admits only the webhook path.
+    - A second operator, or a host reached by more than one person, needs authentication that Manifold does not provide.

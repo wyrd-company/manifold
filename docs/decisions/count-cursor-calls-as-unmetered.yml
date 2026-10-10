@@ -1,0 +1,46 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - usage-decoder
+    - usage-intake
+    - usage-record
+description: >-
+  Cursor keeps a session that T3 Code runs in its ACP session store. The
+  store records each model response with its model and time, and holds no
+  token counts; T3 Code records none for Cursor threads. The store holds a
+  context window gauge and the text of each response. Cursor reports
+  per-request counts through its account service, which the usage
+  decoder does not read. Manifold prices calls from
+  their tokens, and a task's actual, variance, and account capacity are
+  built from those prices. A call with no counts must still be recorded in
+  some form.
+considered-options:
+  "1": >-
+    Count each such call as unmetered: its thread, actor, account, model,
+    and time are recorded with no tokens and no cost, and every usage
+    answer counts unmetered calls apart from priced ones.
+  "2": >-
+    Estimate tokens from the text length of each response, price the
+    estimate, and mark the call estimated.
+  "3": >-
+    Estimate tokens from the change of the context gauge between
+    responses.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 records only what the store holds and shows the gap on every
+    task, unowned entry, and account, so no actual or variance claims a
+    cost Manifold did not observe. A count derived from a response's text
+    understates the context each request sends, which the gauge measures
+    at more than 100 thousand tokens in a long session, so option 2 would
+    price a fraction of each call as though it were the whole. The gauge
+    holds the tokens in the context window at a revision, which is neither
+    a request's billed input, its cache split, nor its output, so option 3
+    gives no amount per call.
+expected-outcomes:
+  positive:
+    - Every Cursor call that T3 Code runs reaches its thread, actor, and account with its model and time.
+    - No usage answer shows a cost Manifold did not observe.
+  negative:
+    - A task run on Cursor has an actual that covers only its metered calls, and its estimate history and variance are low.
+    - A Cursor account's capacity does not fall with Cursor work until a source of exact counts is read, such as Cursor's account usage service.

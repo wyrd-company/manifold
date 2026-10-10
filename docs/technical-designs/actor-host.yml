@@ -1,0 +1,752 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - durable-event-delivery
+    - blueprint-loader
+    - store
+    - expressions
+    - escalations
+    - gates
+    - actor-history
+    - environment-control
+    - blueprint-migration
+objective: >-
+  Run every state machine actor the router delivers to, so that an actor
+  resumes on the blueprint version it was last saved with, moves to a
+  later version only in one migration step while it waits on events, hears the events of its
+  issue and threads, takes each delayed transition once across restarts,
+  saves every change an invoked promise or callback causes, and gives every
+  invoked implementation an identity that is the same across a restart and
+  new on each entry into its state.
+background:
+  current-design: >-
+    The router delivers events to targets that an `ActorHost` restores from
+    stored snapshots and derives subscriptions for. The blueprint loader
+    builds one XState machine per blueprint version and checks a snapshot
+    against it. The store saves snapshots with their deadline rows and the
+    entry id of each deadline's state entry. No module implements
+    `ActorHost`.
+  problems:
+    - >-
+      XState schedules a delayed transition on an in-process timer that a
+      restart loses, and a restored actor does not schedule it again.
+    - >-
+      XState records no identity for a state entry, so nothing tells a
+      replay of an entry from a new entry into the same state.
+    - >-
+      An invoked promise or callback sends its actor an event outside any
+      delivery, and nothing saves the change.
+    - >-
+      Restoring is synchronous inside the router's resume, and loading a
+      blueprint version reads the process repository asynchronously.
+design-challenges:
+  entry-identity: >-
+    An entry into a state needs an id that a replayed delivery reproduces,
+    that a later save of the same entry keeps, and that every new entry,
+    including an exit and re-entry inside one delivery, changes.
+  timers: >-
+    Every delayed transition must fire from a deadline row and from nothing
+    else, in the root machine and in every child blueprint it invokes.
+  invocation: >-
+    An implementation XState starts knows only its own actor reference and
+    input, and it must name its actor, its invoke, and its state entry.
+  versions: >-
+    Every version a stored snapshot names must be built before the router's
+    synchronous resume restores it.
+  migration: >-
+    A migrated actor must keep every entry id, invocation, and deadline
+    that the later version still declares, so no module that reads saves
+    sees an exit or an entry, and the old actor must keep running until
+    the new snapshot commits.
+proposed-design:
+  high-level-overview: >-
+    The actor host is one module, `packages/service/src/actor-host/`.
+    `openActorHost` loads the blueprint version of every active stored
+    snapshot through the loader and returns an `ActorHost` that the service
+    passes to `startRouter`. The host creates each XState actor with a clock
+    that never fires, so delays run only as deadline rows, and with an
+    inspector that tells it when an invoked actor changes the actor outside
+    a delivery. Every machine the loader builds reports each state entry to
+    the host, which numbers it, and XState's inspection reports each delay
+    XState resolves for the entered state, which the host records as a fire
+    time on that entry. Each save lists those deadlines and the active
+    invokes with their entry ids, and runs the save hooks the service
+    registered inside the save's transaction. `invocationOf` reads an
+    invoked implementation's actor id, invoke id, and entry id from the
+    host's records. `start` validates an input, places the identity at
+    `context.manifold`, and attaches a new actor through the router.
+    `migrate` moves a waiting actor to a later version of its blueprint in
+    one save, as `migration` below states.
+  public-interface: |-
+    `packages/service/src/actor-host/index.ts` exports exactly these names.
+
+    ```ts
+    import type { AnyActorRef } from "xstate";
+    import type { JsonValue, PersistedSnapshot, Store } from "../store/index.ts";
+    import type { ActorHost as RouterActorHost } from "../router/index.ts";
+    import type { BlueprintLoader, LoadedBlueprint, StateEntry } from "../blueprint-loader/index.ts";
+    import type { ManifoldIdentity } from "@wyrd-company/manifold-shared";
+
+    export function openActorHost(options: ActorHostOptions): Promise<ActorHost>;
+
+    /** Passed to the blueprint loader as `onStateEntry`. */
+    export function recordStateEntry(entry: StateEntry): void;
+
+    /** `args` is the object XState passes to a `fromPromise` or `fromCallback` creator. */
+    export function invocationOf(args: { readonly self: AnyActorRef }): Invocation;
+
+    export interface ActorHostOptions {
+      readonly store: Store;
+      readonly blueprints: Pick<BlueprintLoader, "version">;
+      /** Run in this order inside each saved snapshot's transaction. */
+      readonly saveHooks: readonly SaveHook[];
+      readonly log: (entry: {
+        readonly level: "info" | "warn" | "error";
+        readonly event: string;
+        readonly message: string;
+        readonly detail?: Readonly<Record<string, JsonValue>>;
+      }) => void;
+      /** Milliseconds since the Unix epoch. Defaults to Date.now. */
+      readonly now?: () => number;
+      /** The gates' `heldTokens`: the unreturned tokens an actor holds. */
+      readonly heldTokens?: (actorId: string) => readonly HeldToken[];
+      /** Called after a migration's save commits, before the old actor stops and the router re-arms. */
+      readonly probe?: (step: "migrated", actorId: string) => void;
+    }
+
+    export interface HeldToken {
+      /** The gate key, `<blueprintPath>#<statePath>`. */
+      readonly gate: string;
+      readonly tokenId: string;
+    }
+
+    export interface ActorHost extends RouterActorHost {
+      /** Creates, validates, and attaches an actor; an actor id the host or the store holds does nothing. */
+      start(request: ActorStart): void;
+      /** What the host holds for a loaded actor. */
+      actorOf(actorId: string): { readonly manifold: ManifoldIdentity; readonly commit: string } | undefined;
+      /** Loads the version of a held actor's stored snapshot, then releases it through the router. */
+      release(actorId: string): Promise<void>;
+      /** Active actors, loaded or held, whose identity holds the environment and lists the thread, in actor id order. */
+      followers(environment: string, threadId: string): readonly string[];
+      /** Every thread the active actors list on the environment, unique. */
+      followedThreads(environment: string): readonly string[];
+      /** Each thread an active actor whose identity holds the issue lists, with its environment. */
+      issueThreads(issue: string): readonly IssueThread[];
+      /** The event schema an active actor's version declares for `type`. */
+      eventSchema(actorId: string, type: string): EventSchemaLookup;
+      /** One attempt to move a waiting actor to `to`, a version at its path; changes nothing unless the save commits. */
+      migrate(actorId: string, to: LoadedBlueprint): Promise<MigrationOutcome>;
+      /** Calls `listener` with the actor id after each committed save, including terminal saves; the result removes it. */
+      onSaved(listener: (actorId: string) => void): () => void;
+    }
+
+    export type MigrationOutcome =
+      | {
+          readonly status: "migrated";
+          readonly from: string;
+          readonly to: string;
+          /** The index under `migrations` of the path that mapped the root context; absent when it migrated unchanged. */
+          readonly path?: number;
+        }
+      /** The stored snapshot is already saved with `to`'s key. */
+      | { readonly status: "current" }
+      /** No active stored snapshot: the actor has ended or never ran. */
+      | { readonly status: "ended" }
+      | { readonly status: "deferred"; readonly reason: MigrationDeferral }
+      | { readonly status: "failed"; readonly failure: MigrationFailure };
+
+    export type MigrationDeferral = "held" | "pending-events" | "unsaved-change" | "promise-running";
+
+    export interface MigrationFailure {
+      readonly kind:
+        | "version-invalid"
+        | "restore-mismatch"
+        | "gate-missing"
+        | "token-return"
+        | "token-trap"
+        | "no-path"
+        | "mapping-failed"
+        | "mapping-timeout"
+        | "context-rejected"
+        | "store";
+      readonly from: string;
+      readonly to: string;
+      readonly message: string;
+      /** The mismatches, findings, expression error, schema errors, or gate, token, and configuration key. */
+      readonly detail: Readonly<Record<string, JsonValue>>;
+    }
+
+    export type EventSchemaLookup =
+      | { readonly status: "declared"; readonly validate: EventValidator }
+      | { readonly status: "undeclared" }
+      /** The host cannot load the actor's version; only a held actor. */
+      | { readonly status: "unavailable" };
+
+    /** Ajv-style: true when the value validates; `errors` holds each failure otherwise. */
+    export interface EventValidator {
+      (value: unknown): boolean;
+      readonly errors?: readonly { readonly instancePath: string; readonly message?: string }[] | null;
+    }
+
+    export interface IssueThread {
+      readonly actorId: string;
+      readonly environment: string;
+      readonly threadId: string;
+    }
+
+    export interface ActorStart {
+      readonly actorId: string;
+      readonly blueprint: LoadedBlueprint;
+      /** The blueprint's input, with the actor's identity under `manifold`. */
+      readonly input: { readonly manifold?: ManifoldIdentity; readonly [key: string]: JsonValue | undefined };
+    }
+
+    export interface Invocation {
+      readonly actorId: string;
+      readonly invokeId: string;
+      readonly entryId: string;
+    }
+
+    export type SaveHook = (save: ActorSave) => void;
+
+    export interface ActorSave {
+      readonly actorId: string;
+      /** The blueprint version key the snapshot is saved with. */
+      readonly machine: string;
+      readonly snapshot: PersistedSnapshot;
+      readonly activeInvokes: readonly ActiveInvoke[];
+      /** Root state paths entered since the actor's last committed save, in first-entry order. */
+      readonly entered: readonly string[];
+      /** Each active root state path, `""` excluded, to the entry id of its current entry. */
+      readonly entries: Readonly<Record<string, string>>;
+      /** The inbox event id whose delivery this save consumes; absent for a save outside a delivery. */
+      readonly eventId?: string;
+      /** The event of the last change to the root's state value before this save; absent until one. */
+      readonly changedBy?: StateChange;
+    }
+
+    export interface StateChange {
+      /** The type of the event the root actor's machine took in the macrostep that changed its state value. */
+      readonly type: string;
+      /** The inbox event id of the row being delivered when the change happened. */
+      readonly eventId?: string;
+    }
+
+    export interface ActiveInvoke {
+      readonly invokeId: string;
+      readonly entryId: string;
+    }
+
+    export class ActorStartError extends Error {
+      readonly actorId: string;
+      /** Each with an RFC 6901 JSON Pointer into the start input. */
+      readonly issues: readonly { readonly path: string; readonly message: string }[];
+    }
+    ```
+
+    `ManifoldIdentity` is `#/$defs/actor-identity` of the `blueprint`
+    schema asset, exported from `packages/shared`:
+
+    ```ts
+    interface ManifoldIdentity {
+      readonly project?: string;
+      readonly issue?: string;
+      readonly environment?: string;
+      readonly threads?: readonly string[];
+      readonly portfolioItem?: string;
+      readonly blueprintPath?: string;
+    }
+    ```
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `host.ts`
+    implements `openActorHost`: preparation, restore, start, delivery,
+    persistence, and the save hooks. `records.ts` holds the module's one
+    registry from XState actor systems to actor records, which
+    `recordStateEntry` and `invocationOf` read. `entries.ts` holds the pure
+    functions over entry records: qualified paths, deadline arms, active
+    invokes, and the deadline event name and its parse. `identity.ts` holds
+    the pure functions that validate an identity and derive topics from
+    it. Tests live beside the module and import only `index.ts`, the
+    router's, the store's, and the loader's `index.ts`.
+  preparation: >-
+    `openActorHost` reads `store.activeSnapshots()`, parses each distinct
+    `machine` with `parseBlueprintVersionKey`, and awaits
+    `blueprints.version` for each, in key order, before it resolves. It
+    keeps every `VersionLoad` by key. A key that does not parse is kept as
+    `missing` with reason `file`. A rejected `version` call rejects
+    `openActorHost`, and the service does not start; the next start reads
+    the repository again. The loader builds every child blueprint a version
+    invokes with the version, so a resolved host holds every machine its
+    restores need. `start` adds the version of the `LoadedBlueprint` it is
+    given. Loading every active actor's version at start is the resume
+    path; restoring through a version that is loaded later stays possible
+    behind `restore`.
+  router-connection: >-
+    `startRouter` calls `connect(router)` once, before it restores any
+    actor. The host keeps that router for `attach` and `persist`. `start`
+    and `release` before `connect` throw a `TypeError`.
+  identity: >-
+    An actor's identity is `context.manifold`, a `ManifoldIdentity`. The
+    engine writes it: `start` sets it from the input's `manifold`, and
+    registered actions, such as `follow-thread`, change it. Blueprint
+    expressions read it and never assign it, as `blueprint-expressions`
+    states. Identity belongs to the actors the host starts and restores,
+    the top-level actors: a child blueprint's context holds no `manifold`,
+    and an expression in it that reads `context.manifold` reads an absent
+    value.
+  subscriptions: >-
+    `subscription(actor)` is a pure function of the stored snapshot and the
+    loaded version. The topics are `github.issue.<issue>` when the identity
+    holds `issue`, as `github-events` defines, and, for each of `threads`
+    when the identity holds `environment`, `threadTopic(environment,
+    thread)`, exported by the T3 Code source, and
+    `agentThreadTopic(environment, thread)`, exported by the agent tools
+    module; and `environment.<environment>` when the identity holds
+    `environment`, as `environment-events` defines, so the actor hears the
+    operator's actions on its environment. `project`, `portfolioItem`, and
+    `blueprintPath` add no topic of their own. Topics
+    are unique and sorted by code point. A value that is not a string, or a
+    `threads` that is not an array of strings, adds no topic. The event
+    types are the keys of the version's `schemas.events`; when the version
+    is not loaded, `events` is absent, so a held actor's inbox keeps every
+    event that reaches its topics. A child blueprint receives events only
+    from its parent and its own invokes, and adds nothing to the
+    subscription.
+  start: >-
+    `start({ actorId, blueprint, input })` does nothing when the host holds
+    the actor loaded or held, or the store holds a snapshot or an errored
+    snapshot for its id. Otherwise it validates the input at this
+    boundary: `input.manifold`, defaulting to `{}`, against
+    `#/$defs/actor-identity`, and the input without `manifold` against the
+    blueprint's `schemas.input`, both with Ajv for draft 2020-12. A failure
+    throws an `ActorStartError` with an issue per failing path, and creates
+    nothing. It then creates the XState actor from a machine built from the
+    version's configuration with `manifold` added to the initial context,
+    through XState's `createMachine` with the version machine's
+    implementations, so the identity is in context before the blueprint's
+    own entry actions run; the XState input is the input without
+    `manifold`. It records the actor in the registry, starts it, and calls
+    `router.attach` with its target, which saves its first snapshot with
+    `machine` set to the version key. A crash after the actor starts and
+    before `attach` commits leaves no snapshot; the caller's next `start`
+    with the same id creates the actor again, and its entries take the same
+    ids, so every invoked implementation derives the same ids it derived
+    before the crash.
+  restore: >-
+    `restore(stored, router)` returns `held` with a reason, and creates
+    nothing, when the version of `stored.machine` is not loaded: `blueprint
+    version <key> is missing (<reason>)` for a missing version and
+    `blueprint version <key> is invalid: <first finding's kind> at <its
+    location>` for an invalid one. Otherwise it removes the host's `entries`
+    record from the snapshot and runs the version's `checkRestore`; any
+    mismatch returns `held` with one line per mismatch, its kind and its
+    path, id, or child, in the check's order. When the check passes it
+    creates the XState actor from the version's machine with the snapshot,
+    records the actor with the stored `entries`, and starts it, which
+    starts again every promise and callback its active states invoke. A
+    throw from XState while creating or starting returns `held` with the
+    error's message. The restored actor's target is returned.
+  entries: >-
+    Every machine the loader builds calls `onStateEntry` on each state
+    node's entry, the root included, before the state's own entry actions,
+    with the machine actor and the state path. `recordStateEntry` finds
+    the actor's record through the actor's system, increments the record's
+    entry count, and records the entry under its qualified path with the
+    decimal count as its entry id. An exit and re-entry in one delivery
+    runs the entry action again and takes a new id. Delays are captured
+    apart from the entry: XState schedules each delayed transition of an
+    entered state with its built-in `xstate.raise` action, after the
+    state's own entry actions, with the delay it resolved, a named delay
+    evaluated over the context those actions left. The host's inspector
+    takes each `@xstate.action` event of type `xstate.raise` whose event
+    type is `xstate.after.<after key>.<state node id>` and whose actor is a
+    machine actor of the tree, finds the state node by its id in that
+    actor's machine, and records a fire time of `now` plus the action's
+    `delay` under the `after` key on that state's current entry. The host
+    never evaluates a delay itself, so a deadline fires after exactly the
+    delay XState resolved. Each entry of a root state path, other than the
+    root's own `""`, is also appended to the record's entry log with its
+    id. The count starts at zero for a new actor, so its
+    first entry, the root's, is `1`. A replayed delivery starts from the
+    snapshot saved before it, with the count saved in it, and gives every
+    entry the id it had the first time. Ids are unique within an actor and
+    never reused by it.
+  qualified-paths: >-
+    A qualified path names a state node in the actor's machine tree. For
+    the root machine it is the state path, `""` for the root node. For a
+    child blueprint it is the invoke ids from the root machine to the
+    child, each encoded as `threadTopic` encodes an id and followed by `#`,
+    then the state path within the child. A state key and an encoded id
+    hold no `#`, so the last `#` separates the state path, and the encoded
+    ids before it never hold `.`.
+  persisted-snapshot: >-
+    The snapshot the host saves is XState's persisted snapshot of the root
+    actor with one more top-level key, `entries`: `{ count, states }`,
+    where `count` is the entry count and `states` maps the qualified path
+    of every active state node in the tree, child blueprints included, to
+    `{ id, deadlines }`, its entry id and, when it has delayed transitions,
+    the fire time of each by its `after` key. An entry whose state node is
+    no longer active is not saved. A snapshot whose status is `error`
+    carries no `entries`. XState drops unknown keys on restore, so the host
+    keeps `entries` in its record and adds them to every snapshot it
+    persists.
+  deadlines: >-
+    The host creates every XState actor with a clock whose `setTimeout`
+    schedules nothing, so no delayed event fires in process. Every save of
+    an active snapshot lists one `DeadlineArm` per delayed transition of
+    each active state node in `entries`: `statePath` is the state's path
+    when it is in the root machine, and the path of the root state that
+    invokes the first child of its chain when it is in a child blueprint;
+    `eventName` is the qualified path, `#`, the `after` key encoded as
+    `threadTopic` encodes an id, `#`, and the entry id; `fireAt` is the
+    recorded fire time; and `entryId` is the state's entry id. A re-entry
+    therefore lists a new event name, and the store deletes the old row,
+    which the save no longer lists. The store keeps the first fire time
+    of an entry, deletes every row the save does not list, and fires each
+    row once, as `store` states. A deadline row the router delivers has a
+    topic beginning `deadline.` and payload `{ "type": <eventName> }`; the
+    host parses the name from its last `#`: the entry id, the encoded
+    `after` key, the state path, and the encoded invoke ids. It sends
+    nothing unless the state's current entry in the host's record has that
+    entry id, so a deadline row fired for an earlier entry, and delivered
+    after an event that exited and re-entered the state, never takes the
+    new entry's delayed transition. Otherwise it finds the machine actor
+    through the invoke ids from the root and sends it XState's delayed
+    event, `xstate.after.<after key>.<state node id>`. When the child is
+    gone, XState takes no transition. A delayed
+    raise or send that an implementation schedules itself never fires; an
+    implementation leaves a delay to the blueprint's `after`.
+  delivery: >-
+    The restored or started actor's `DeliveryTarget` sends each inbox row's
+    payload to the root actor, or a deadline row to the machine actor it
+    names, and `persist` returns the persisted snapshot with `entries`, the
+    deadline arms, and `machine` set to the version key. A snapshot whose
+    status is `error` is returned as XState gives it, with no deadlines.
+  invoked-actor-saves: >-
+    The host inspects every actor it creates. A snapshot of a machine actor
+    in the actor's tree, the root or a child blueprint, that XState reports
+    while the host is not inside the actor's `send` queues one
+    `router.persist(actorId)` on a microtask, so the change an invoked
+    promise or callback sent is saved once its macrostep ends. Several
+    changes before the microtask runs give one save. A queued persist for
+    an actor the router no longer has loaded does nothing. A crash before
+    the save restores the snapshot saved before the change, in which the
+    invoking state is still active, and the restored actor starts the
+    promise or callback again; it derives the same invocation and the same
+    ids, so its effect is applied once.
+  invocation: >-
+    `invocationOf(args)` reads the invoked actor's parent, `args.self._parent`,
+    which XState's `ActorRef` type declares, finds the parent's record
+    through its system, and walks parents to the root to form the
+    qualified prefix. The invoke id is `args.self.id`. The entry id is the
+    recorded id of the active state node of the parent's machine that
+    declares an invoke with that id. Every invoke a state starts therefore
+    reads the entry id of the state entry that started it, during and after
+    a restart. `invocationOf` throws a `TypeError` for an actor the host did
+    not create, and is otherwise pure. Implementations derive their ids
+    from the three values, which are the same for the restarted invoke of
+    one entry and new for a later entry.
+  save-hooks: >-
+    The router calls `saving(actor)` inside the transaction of every
+    snapshot it saves as the actor's snapshot, whose status is `active`,
+    `done`, or `stopped`, and never for an `error` snapshot, which the store
+    keeps beside the last good one while the router holds the actor. The
+    host builds one `ActorSave` and calls each save hook with it, in
+    registration order. `activeInvokes` lists every invoked child in the
+    snapshot's tree with its invoke id and the entry id of the state node
+    that declares it; for `done` and `stopped` it is empty. `eventId` is
+    the inbox event id of the row the save consumes, which the store's
+    delivery gives the router's `saving` call, so a hook acts on the
+    taking of one event in the transaction that consumes it; a save that
+    `persist` makes outside a delivery has none. `changedBy` is the event
+    of the last change to the root's state value before the save was
+    built. The host's inspector takes each `@xstate.snapshot` of the root
+    actor, compares the canonical JSON of its `value`, keys sorted, with
+    the root's previous inspected snapshot, and when they differ records
+    on the actor's record the type of the snapshot's `event`, the event
+    of the macrostep that made it, with the event id of the inbox row the
+    host is delivering at that moment, if any. A snapshot whose value is
+    unchanged, such as one after an event the actor takes with no
+    transition, records nothing, so an ignored event never replaces the
+    event that changed the state. The record keeps the change across saves
+    until a later change replaces it, so a save that rolls back and is
+    made again gives the same change. A record that `start` or `restore`
+    creates holds none until its root's value changes. A save that changes
+    the root's state value therefore names the event that changed it: a
+    delivered event's `type`, a root delay's `xstate.after.<after
+    key>.<state node id>`, or an invoked actor's `xstate.done.actor.<invoke
+    id>`, `xstate.error.actor.<invoke id>`, or an event a callback sent.
+    When several changes happen before one save, it names the last.
+    `entered` is
+    computed against the last committed save, never against the last
+    attempted one: when the host builds a write in `persist`, before the
+    save's transaction opens, it reads the entry count of the actor's
+    stored snapshot with `store.loadSnapshot`, drops from the entry log
+    every entry whose id is at or below that count, and lists the paths of
+    the rest, each once, in first-entry order. A save that rolls back after
+    its hooks ran, by a later hook, the delivery probe, or the consume,
+    leaves the stored count where it was, so the next save lists the same
+    entries again, a state an eventless transition left within the same
+    delivery included, and its hooks redo what the rollback undid. An
+    entry is retired only once a committed snapshot counts it.
+    `entries` maps each active root state path of the snapshot, the root's
+    `""` excluded, to its current entry id; a repeated save gives the same
+    map, and a re-entry gives the state a new id. For `done` and `stopped`
+    it is empty. A save
+    whose snapshot status is `done` or `stopped` ends the actor. A hook
+    that throws rolls back the save and propagates to the caller of the
+    save. The service composes the hooks in one place,
+    `packages/service/src/save-hooks.ts`, which exports
+    `serviceSaveHooks(parts)` returning the list; each module that observes
+    saves adds its hook there.
+  actor-of: >-
+    `actorOf(actorId)` returns the identity and the version's commit of an
+    actor the host holds, from its record. The record is written before the
+    actor starts, so an invoke in the initial state reads it, and it takes
+    the identity of every snapshot the host persists.
+  followers: >-
+    `followers(environment, threadId)` and `followedThreads(environment)`
+    read the identity of every active actor, loaded or held, from its
+    latest saved snapshot, so a thread an actor follows is listed from the
+    save that follows it, and a held actor, which still hears its threads'
+    topics, is listed too. The host indexes the identity of every stored
+    snapshot it restores, refuses, attaches, or persists, from environment
+    and thread to actor ids and from issue to actor ids, and drops an actor
+    whose save ends it, so no read scans actors. `issueThreads(issue)`
+    lists, for each active actor whose identity holds the issue and an
+    environment, each thread its identity lists, ordered by environment,
+    thread, and actor id. `eventSchema(actorId, type)` reads the
+    actor's version key from its record or, for a held actor, from its
+    stored snapshot, and answers from the version the host keeps for that
+    key: `declared` with the validator of `schemas.events[type]`, compiled
+    once per version and type; `undeclared` when the version does not
+    declare the type; and `unavailable` when the version is `missing`.
+  waiting: >-
+    An actor waits on events when all of these hold: the host holds it
+    loaded and the router does not hold it; its stored snapshot is
+    `active`; the host is not inside its `send`; it has no pending inbox
+    row; no save of it is queued, so its stored snapshot is its whole
+    state; and no machine actor in its tree has an invoked promise
+    running. An invoked callback and an invoked child blueprint may be
+    running: a migration stops the callback, whose cleanup runs, and starts
+    it again on the new version with the same invocation, as a restart
+    does, and migrates the child with its parent. A promise cannot be
+    stopped, so an actor that runs one waits for it to settle and for the
+    save that follows. `migrate` called from inside a delivery or a save
+    hook throws a `TypeError`, since the router is then mid-step.
+  migration: >-
+    `migrate(actorId, to)` first checks `to.version.path` against the
+    path of the actor's stored version, and throws a `TypeError` when they
+    differ. It answers `ended` when the store holds no `active` snapshot
+    for the actor, and `current` when the stored snapshot is saved with
+    `to.key`. Otherwise it loads, through `blueprints.version`, the version
+    at `to`'s commit and source of every child blueprint the stored
+    snapshot runs, at any depth; a child that does not load fails with
+    `version-invalid` and its findings or reason. From here it runs
+    synchronously, so no delivery or save interleaves. It answers
+    `deferred` with the first reason, in the order of `waiting`, that the
+    actor does not wait on events. It then builds the migrated snapshot
+    from the stored snapshot, never from memory, in this order, and the
+    first step that fails answers `failed` with its kind. (1) It removes
+    `entries` and runs `to.checkRestore` over the snapshot; any mismatch
+    fails with `restore-mismatch` and every mismatch. State names are
+    identity, so the value, history value, and children carry over
+    unchanged. (2) For each token `heldTokens(actorId)` lists, it finds
+    the gate whose `statePath` is the gate key's state path in
+    `to.tokens.gates`; none fails with `gate-missing`. It reads the gate's
+    return point in `to.document`: a return point the migrated
+    configuration already reaches, `{ state }` whose path the configuration
+    holds, or `exit` when the configuration no longer holds the gated
+    state, fails with `token-return`, since the migration's save would
+    return the token. Then a verdict of `unknown` passes; otherwise a
+    `to.tokens.configurationKey` of the snapshot in the gate's `traps`
+    fails with `token-trap`. A migration therefore never returns or
+    strands a token. (3) It maps
+    the root context with `to.migrateContext`, and each child blueprint's
+    context with its own version's `migrateContext`, as `blueprint-loader`
+    states; the first failure fails with its kind and the expression
+    error. The root's mapped context gets the stored `manifold` back.
+    (4) It derives the new `entries`: the stored count, and every stored
+    state entry with its id; under each, every deadline whose `after` key
+    the state node declares in the new version keeps its fire time, a
+    deadline whose key the state node no longer declares is dropped, and
+    a key the state node declares that the entry holds no fire time for
+    is armed at the migration's time plus the key's milliseconds when it
+    is decimal digits, and at the state's next entry when it names a
+    delay. It then creates the XState actor from `to.machine` with the
+    migrated snapshot, without starting it, records it under the actor id
+    with the new `entries` and an empty entry log, and calls
+    `router.attach` with its target. The new record holds no last change,
+    `changedBy`, since no event changed the state on the new version, so
+    the actor's history ends the visit before the migration with no exit
+    event and starts a visit on the new version. The attach saves the snapshot with
+    `machine` set to `to.key` and the deadline arms of the new `entries`,
+    and runs every save hook in the save's transaction: the hooks see the
+    same `entries` ids, an empty `entered`, and the same active invokes,
+    so a gate sees no exit and no entry, and keeps the actor's entry row
+    and token, whose return point step (2) showed the save does not
+    reach. When the attach throws, the host puts the old record back,
+    discards the new actor, and answers `failed` with kind `store` and the
+    error's message; the old actor never stopped. When it returns, the
+    host has called `probe("migrated", actorId)` from the router's `saved`
+    call, after the commit and before the router updates the
+    subscription and re-arms its timer; it then stops the old actor,
+    starts the new one, which starts again every invoked callback with the
+    same invocation and runs no entry or exit action, keeps `to` among its
+    loaded versions, and answers `migrated`. The new version's event types
+    form the subscription from that save on. Identity, and so the actor's
+    threads and topics, are the stored `manifold`; inbox rows are the
+    store's and never change; a token and its reservation are the gates'
+    and the ledger's rows, keyed by the token and the entry id, which the
+    migration keeps.
+  on-saved: >-
+    The router calls the host's `saved` after each save it writes commits,
+    including terminal saves; it omits error snapshots. The host calls
+    each listener registered with `onSaved` there, after its own index
+    update, in registration order. A listener runs inside the router's
+    call and must not call into the router or the host. The migrations
+    module's listener first withdraws empty `migration-failed` questions,
+    then, for an active actor whose saved version is behind its target and
+    whose pair has no failure record, adds a job to its queue for the next
+    macrotask.
+  release: >-
+    `release(actorId)` loads the version of the actor's stored snapshot
+    through the loader, replacing a `missing` load the host kept, and then
+    calls the router's `release`, which restores the actor through the host.
+    A `retry` answer to a `held-actor` escalation calls it.
+  implementation-registry: >-
+    `packages/service/src/implementations.ts` exports
+    `serviceImplementations(parts)`, which composes the
+    `ImplementationRegistry` part of each module into the registry the
+    service starts the blueprint loader with. `parts` is a
+    `ServiceImplementationParts` object with one member per providing
+    module, typed `ImplementationRegistry`; a module that provides
+    implementations adds its member, and the service builds the parts from
+    the modules it has opened. Composition throws a `TypeError` naming a
+    name that two parts provide. `manifoldImplementationNames` in
+    `packages/shared` lists the composed names by kind, and a service test
+    composes the parts from each module's part, built with test doubles,
+    and asserts the same names.
+  service-wiring: >-
+    The service opens the host with `openActorHost` from its parts, the
+    store, the blueprint loader, the log, `serviceSaveHooks(parts)`, the
+    gates' `heldTokens`, and the service's `migrated` probe, after every
+    module whose save hook or implementations it needs, and passes it to
+    `startRouter` as `host`. The blueprint loader is created with
+    `onStateEntry: recordStateEntry`. Modules started after the router
+    reach `start`, `actorOf`, `release`, `migrate`, and `onSaved` through
+    the host.
+  convergence: >-
+    `start` twice with one actor id creates one actor; a crash between
+    creating it and its first save leaves nothing, and the next `start`
+    creates it with the same entry ids. A delivery
+    replayed after a crash runs from the snapshot saved before it, with its
+    entry count, so every entry, deadline arm, and invocation takes the
+    ids it had. A save twice lists the same deadline arms and the same
+    active invokes, and the store keeps the first fire time. A queued
+    persist twice saves the same snapshot. `migrate` twice with one
+    version migrates once: the second answers `current`. A crash before a
+    migration's save commits leaves the stored snapshot on its version;
+    one after leaves it on the new version, which resume restores, with
+    its deadline rows. `release` twice restores once,
+    since the router's `release` of an actor that is not held does
+    nothing. The save hooks run once per save the router makes and join its
+    transaction, so a crash rolls back their writes with the snapshot.
+  errors: >-
+    A start input that fails validation throws an `ActorStartError`. A
+    version or snapshot the host cannot restore is a `held` outcome with its
+    reason, never a throw, and a migration that cannot be made is a
+    `deferred` or `failed` outcome. Misuse by service code throws a
+    `TypeError`: `start`, `release`, or `migrate` before `connect`,
+    `migrate` to a version at another path or from inside a delivery or a
+    save hook, and `invocationOf` for an actor the host did not create. Store errors, loader rejections, and save hook
+    errors propagate unchanged. Inputs are trusted otherwise.
+  dependencies: >-
+    No new third-party library. The host uses `xstate`, which the service
+    already depends on, and Ajv, which `packages/shared` already uses.
+  tests: >-
+    Tests run against a real store file in a temporary directory, the real
+    router, and the real blueprint loader over an in-memory process
+    repository revision, with fixture blueprints of a generic domain. The
+    main fixture has a parallel state with two regions, a delayed
+    transition, an invoked promise, and an invoke of a child blueprint that
+    has its own delayed transition; the store is populated with other
+    actors before each test. Behaviours proved, each written red before
+    green: `start` with an input that fails the blueprint's input schema,
+    and with a `manifold` that fails the identity schema, throws with each
+    path and saves nothing; `start` twice saves one actor; the started
+    actor's context holds `manifold` when its initial entry action runs;
+    the subscription holds the issue topic and, per thread with an
+    environment, its thread topic and its agent topic, the environment's
+    topic when the identity holds an environment, and no Project topic; a thread added through a registered action makes
+    the next event under either topic reach the actor, and lists the actor
+    in `followers` and the thread in `followedThreads`; an actor that ends
+    leaves both; an actor held at resume is listed in both; `issueThreads`
+    lists each thread of each actor that holds the issue, and drops an
+    actor that ends; a save that consumes an inbox row gives its hooks
+    that row's event id, and a save outside a delivery gives none; `eventSchema`
+    accepts and rejects by the version's declared event schema, is
+    `undeclared` for a type the version does not declare, and is
+    `unavailable` for a held actor whose version is missing; `restore` of a snapshot whose version is missing, is
+    invalid, or fails `checkRestore` holds the actor with each reason; a
+    delay arms one deadline row at its entry, keeps its fire time across
+    later saves and a restart, fires once, and takes the transition; a
+    re-entry into the delayed state through a self-transition with
+    `reenter` in one delivery gives a new entry id and a new fire time; a
+    deadline fired for an entry and delivered after a queued event that
+    exits and re-enters the state takes no transition, and the new entry's
+    deadline fires at its own time; a named delay that reads context an
+    entry assignment of the state changes fires after the delay over the
+    assigned value; a
+    child blueprint's delay fires into the child; the child's output
+    reaches the parent's `onDone` and its error the parent's `onError`;
+    a child blueprint that fails lint at the parent's commit fails the
+    invoke into `onError`; `invocationOf` gives the same three values to
+    the promise started before and after a restart and new values after a
+    re-entry; each save hook runs in registration order inside the save's
+    transaction, sees `activeInvokes` and `entered` including a state an
+    eventless transition left in the same delivery, and `entries` with the
+    same ids on a repeated save and a new id after a re-entry; a save whose
+    hooks return and whose transaction then rolls back, by a throwing
+    `saved` probe, is followed by a save whose `entered` still holds the
+    transient state, and whose hook effect commits once; a hook
+    that throws
+    leaves the previous snapshot stored; an `error` save runs no hook; a
+    `done` save lists no active invokes; `changedBy` is a delivered
+    event's type with its event id, a root delay's `xstate.after` type, and
+    an invoked promise's `xstate.done.actor` type for the save of its
+    result; an invoked callback that sends an event that changes the state
+    and then an event the state ignores, both before the queued save,
+    gives the first; it is the same on a save made again after a
+    rollback, and absent on a started actor's first save. Migration tests: a waiting actor
+    migrates to a version that splits a context field through a migration
+    path, from the same state, with its entry ids, its deadline's first
+    fire time, its identity, and its invoked callback's invocation
+    unchanged, and no entry or exit action run; a deadline whose `after`
+    key the new version drops leaves no row, and a decimal key the new
+    version adds is armed from the migration's time; a child blueprint's
+    context migrates by the child's own path; an actor with a pending
+    inbox row, a queued save, or a running promise is `deferred` with that
+    reason and stays loaded on its version; a holder fails with
+    `gate-missing`, with `token-return` when the new version's return
+    point is a state the actor is already in, and with `token-trap`; a mapping that throws, one that
+    times out, one whose result the new context schema rejects, a context
+    no path accepts, and a state the new version does not declare each
+    answer `failed` with their kind and leave the stored snapshot
+    byte-identical, the deadline and token rows unchanged, and the actor
+    taking its next event on its version; a save hook that throws on the
+    migration's save answers `failed` with kind `store`, and the old actor
+    takes its next event with its callback never stopped; `migrate` twice
+    answers `current` the second time; `onSaved` hears every committed
+    save, including terminal saves, and none of an `error` snapshot. Fault tests, in a child Node
+    process that sends itself `SIGKILL` and whose kill signal the parent
+    asserts before it reopens the file: a kill at the host's `migrated`
+    probe, after which the actor restores on the new version once, its
+    deadline fires once at its first fire time, and an event published
+    after the restart is taken once; a kill at the store's `sent` probe
+    during a delivery, and a kill after the invoked promise resolves and
+    before its queued persist commits; after `openActorHost` and
+    `startRouter` on the same file, each event is taken once, the delay
+    fires once, and the actor reaches the state a run without the kill
+    reaches.

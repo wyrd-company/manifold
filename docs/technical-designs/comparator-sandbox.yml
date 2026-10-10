@@ -1,0 +1,389 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - expressions
+    - gates
+  mitigates:
+    - comparator-sandbox-unenforceable
+objective: >-
+  Run a user's comparator in the service with no access to the world, under a
+  memory limit and a per-evaluation timeout that hold against hostile code,
+  and let the host CLI typecheck the same comparator without running it, so
+  that a gate can call any comparator a process repository holds and a user
+  learns of a broken comparator before the service loads it.
+background:
+  current-design: >-
+    `expressions` fixes the engine and the shape: a comparator is a
+    TypeScript module whose default export is one function, transpiled in
+    process with the TypeScript compiler API and run in a fresh QuickJS wasm
+    instance per load; the host CLI typechecks it with the TypeScript 6
+    compiler API against a declaration file Manifold ships. `gates` fixes
+    the comparator's input and output. The `sandbox` spike measured QuickJS
+    per load with a capped `WebAssembly.Memory` stopping every probe it ran.
+  problems:
+    - >-
+      The QuickJS runtime memory limit alone is not the bound on host
+      memory: a hoard of small arrays can exceed that quota and grow linear
+      memory to the package default of 2 GiB.
+    - >-
+      A long native builtin, such as `join` over two million elements, runs
+      to completion past the deadline because the builtin does not poll the
+      interrupt handler.
+    - >-
+      QuickJS evaluates on the calling thread, so the service's event loop
+      does not turn while a comparator runs.
+design-challenges:
+  host-bound: >-
+    Every byte a comparator can allocate must come from a linear memory the
+    host sized, and every evaluation must end in a typed result, whatever the
+    comparator does.
+  no-state-between-calls: >-
+    The comparator contract says the function holds no state between calls.
+    A module-level variable in a reused context would hold state, so the
+    sandbox must make that state impossible rather than forbidden.
+  one-library-two-runtimes: >-
+    The sandbox runs under Node in the service; the lint runs inside a Bun
+    single-file binary with no `node_modules`. The lint's library files and
+    the declaration file must travel inside the binary.
+proposed-design:
+  high-level-overview: >-
+    Two deep modules behind one seam each. `comparator-sandbox` in
+    `packages/service/src/comparator-sandbox/` loads a comparator from its
+    source text and evaluates it over an input and a seed, returning a
+    selection or a typed failure; it never throws for anything the comparator
+    does. `comparator-lint` in `packages/host-cli/src/comparator-lint/`
+    typechecks a comparator source against the declaration file and returns
+    diagnostics; the host CLI command `manifold-host comparator lint` is its
+    thin shell. The declaration file `packages/shared/src/comparator.d.ts`
+    types the contract in `comparator-contract` and is the one TypeScript
+    source of the comparator's types for the user, the lint, and the service.
+  sandbox-interface: |-
+    The sandbox's public surface, exported from
+    `packages/service/src/comparator-sandbox/index.ts`:
+
+    ```ts
+    export interface ComparatorSandboxLimits {
+      readonly timeoutMs: number;
+      readonly memoryLimitMiB: number;
+    }
+
+    export const comparatorSandboxDefaults: ComparatorSandboxLimits;
+
+    export function createComparatorSandbox(
+      limits?: Partial<ComparatorSandboxLimits>,
+    ): Promise<ComparatorSandbox>;
+
+    export interface ComparatorSandbox {
+      load(source: ComparatorSource): Promise<ComparatorLoad>;
+    }
+
+    export interface ComparatorSource {
+      readonly name: string; // file path in the process repository, used in messages
+      readonly text: string; // TypeScript source
+    }
+
+    export type ComparatorLoad =
+      | { readonly ok: true; readonly comparator: LoadedComparator }
+      | { readonly ok: false; readonly failure: ComparatorFailure };
+
+    export interface LoadedComparator {
+      evaluate(input: ComparatorInputData, seed: number): ComparatorEvaluation;
+      dispose(): void;
+    }
+
+    export type ComparatorInputData = Omit<ComparatorInput, "random">;
+
+    export type ComparatorEvaluation =
+      | { readonly ok: true; readonly selection: ComparatorSelection | null; readonly durationMs: number }
+      | { readonly ok: false; readonly failure: ComparatorFailure; readonly durationMs: number };
+
+    export interface ComparatorFailure {
+      readonly kind:
+        | "transpile" | "module" | "timeout" | "memory"
+        | "thrown" | "invalid-output" | "engine";
+      readonly message: string;
+    }
+    ```
+
+    `ComparatorInput` and `ComparatorSelection` are the types of
+    `packages/shared/src/comparator.d.ts`. `load` is asynchronous because
+    instantiating a wasm module is; `evaluate` is synchronous and returns
+    when the comparator returns, fails, or is stopped. `dispose` releases the
+    wasm instance and is a no-op when called again; `evaluate` after
+    `dispose` throws an `Error`, because that is a defect in the caller.
+    The sandbox holds no durable state: a crash loses only loaded
+    comparators, and the caller loads them again from the process
+    repository.
+  limits: >-
+    `timeoutMs` is the per-evaluation timeout, default 100.
+    `memoryLimitMiB` is the maximum linear memory per loaded comparator,
+    default 32. The service reads both from the `comparatorSandbox` section of its
+    configuration, per `comparator-sandbox-configuration`, and passes them to
+    `createComparatorSandbox`. Each loaded comparator owns one
+    `WebAssembly.Memory` whose maximum is `memoryLimitMiB`. This bound includes
+    the engine's allocations, so the comparator's heap cannot grow beyond the
+    configured bound. The QuickJS runtime memory limit is also set to this
+    value. This QuickJS build's runtime quota rejects some allocations but
+    does not reject a hoard of small arrays; the linear-memory maximum is the
+    enforcing bound. Linear memory never shrinks, so a loaded comparator
+    holds the most it has used until it is disposed. The wasm binary imports
+    its memory with a minimum of 256 pages (16 MiB) and a maximum of 32768
+    pages (2 GiB), and a memory links only between those bounds, so
+    `memoryLimitMiB` is an integer from 16 to 2048. `timeoutMs` is
+    an integer of at least 1. `createComparatorSandbox` throws a
+    `RangeError` naming the limit for a value outside its range, because the
+    service has already validated its configuration against
+    `comparator-sandbox-configuration`.
+  load: >-
+    `createComparatorSandbox` compiles the QuickJS wasm binary of
+    `@jitl/quickjs-wasmfile-release-sync` to one `WebAssembly.Module` and
+    keeps it. `load` does, in order: transpile, instantiate, probe.
+    Transpile calls `ts.transpileModule` with `target` ES2022, `module`
+    ESNext, and `reportDiagnostics`; any diagnostic fails the load with kind
+    `transpile`, naming the line and column. Transpile then walks the source
+    file's syntax tree and fails the load with kind `module`, naming the line
+    and column, at the first module reference that survives transpiling: an
+    import declaration that is not type-only, an import-equals declaration,
+    an export declaration with a module specifier, an `import()` call, or
+    `import.meta`. A type-only import, and an import whose every binding is
+    type-only, passes, because transpiling removes it. Instantiate builds a QuickJS
+    module from that compiled module and a new `WebAssembly.Memory` with the
+    variant's minimum as `initial` and the limit above as `maximum`, through
+    the `wasmModule` and `wasmMemory` variant options of
+    `quickjs-emscripten-core`. Probe runs one evaluation scope, described
+    below, that evaluates the module and checks that its default export is a
+    function, without calling it; a module that throws, awaits at the top
+    level, or has no default function fails the load with kind
+    `module`, and a probe stopped by a limit fails with that limit's kind. A
+    failed load disposes its instance.
+  evaluation-scope: >-
+    Every evaluation, and the probe, runs in a scope created for it and
+    disposed after it, on the loaded comparator's wasm instance: a new
+    QuickJS runtime with `setMemoryLimit(memoryLimitMiB)`, a maximum stack
+    size of 1 MiB, an interrupt handler that returns true once the host's
+    `performance.now()` passes the evaluation's deadline, and no module
+    loader; and in it a new context created with the default intrinsics
+    except `Date`. The scope installs the prelude, evaluates the transpiled
+    module, calls the prelude's run function with the default export, the
+    input as a JSON string, and the seed, and reads the result back as a
+    JSON string. Every handle is disposed before its context and the
+    context before its runtime, on success and on failure. Because the
+    module is evaluated afresh in a fresh runtime each time, a module-level
+    variable starts from its initializer on every evaluation, and an
+    evaluation starts with none of the memory a previous one used.
+  prelude: |-
+    The prelude is a fixed script evaluated in each context before the
+    module. It replaces `Math.random` with a function that throws
+    `TypeError: Math.random is unavailable; use input.random`. Its run
+    function takes the comparator, the input JSON, and the seed; parses the
+    input; sets `input.random` to a mulberry32 generator over the seed as an
+    unsigned 32-bit integer; calls the comparator with the input; fails with
+    `invalid-output` if the result is a thenable or `undefined`; and returns
+    `JSON.stringify(result)`. The host takes the run function's handle
+    before the module is evaluated, so a module that rebinds globals alters
+    only its own evaluation. The scope never runs pending jobs, so a promise
+    callback a comparator schedules never runs. The generator is:
+
+    ```js
+    function mulberry32(seed) {
+      let a = seed >>> 0;
+      return function random() {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    ```
+  world-access: >-
+    The context has the ECMAScript intrinsics QuickJS provides and nothing
+    else: no `require`, `process`, `fetch`, timers, `console`, or
+    `performance`, which QuickJS does not define, and no `Date`, which the
+    context omits. `Math.random` throws. An import written in the source
+    fails the load, per the load step. An `import()` that the comparator
+    builds at run time through `eval` reaches nothing: the runtime has no
+    module loader, and the scope never runs pending jobs, so the promise it
+    returns never settles inside the evaluation. The input is copied in as
+    JSON, so the comparator holds no reference to a host object. The seed
+    and the values age is derived from reach the comparator only as input:
+    age is a number in the input that the gate computes.
+  failures: >-
+    Each outcome maps to one failure kind. The interrupt raises an
+    uncatchable `InternalError: interrupted`, kind `timeout`. The runtime
+    memory quota or the linear-memory maximum raises `InternalError: out of
+    memory`; when it reaches the host it is kind `memory`. An exception the
+    comparator throws or lets escape, including a QuickJS
+    `InternalError: stack overflow`, is kind `thrown`, with the error's name
+    and message. Tight recursion can instead exhaust the host call stack and
+    abort runtime disposal. That failure is kind `engine` and marks the
+    instance spent; the next evaluation returns kind `engine` at once, and
+    the caller must load a new comparator. A result that is not valid JSON of
+    the `selection` definition in `comparator-contract`, or whose `task` is not the `id` of a
+    task in the input's population, is kind `invalid-output`. A wasm trap or
+    any other exception from the engine itself is kind `engine`; it marks
+    the loaded comparator spent, and every later `evaluate` returns kind
+    `engine` at once, so the caller loads it again. After the scope is
+    disposed, an evaluation whose measured duration exceeds `timeoutMs` is
+    kind `timeout` whatever it returned, so a native builtin that overruns
+    the deadline cannot produce a selection. Its overrun is bounded by the
+    memory limit, which bounds the size of any array or string the builtin
+    walks. `durationMs` is measured with `performance.now()` around the
+    scope.
+  thread: >-
+    Evaluation runs synchronously on the calling thread, the service's main
+    thread. A gate's grant round is then one synchronous run: no event is handled
+    between a comparator call and the grant it decides, and the grant round sees one
+    consistent input with no locking. The cost is that the event loop does
+    not turn during an evaluation; a well-behaved comparator over 2,000 tasks
+    takes about 5 ms, and a hostile one holds the thread for at most
+    `timeoutMs` plus a bounded builtin overrun.
+  output-validation: >-
+    The host parses the returned JSON and checks it against the `selection`
+    definition by hand: `null`, or an object whose `task` is a string naming
+    a population task and whose optional `reservations` is an array of
+    objects each with a non-empty string `account` and an `amount` that is
+    a safe integer of at least 1. A property the definition does not name fails the
+    check. The validated value is returned as `ComparatorSelection | null`.
+  declaration-file: >-
+    `packages/shared/src/comparator.d.ts` is a module declaration file that
+    exports the types in `comparator-contract`. `packages/shared` re-exports
+    those types from its index for the service, copies the file into `dist`
+    in its build, and exports it as `./comparator.d.ts` in `package.json` so
+    the host CLI can embed its text. A comparator imports the types with
+    `import type { Comparator } from "manifold:comparator"`; the lint maps
+    that specifier to the declaration file, and the sandbox never sees it
+    because a type-only import does not survive transpiling.
+  lint-interface: |-
+    The lint's public surface, exported from
+    `packages/host-cli/src/comparator-lint/index.ts`:
+
+    ```ts
+    export interface ComparatorLintLibrary {
+      readonly contract: string; // text of comparator.d.ts
+      readonly libFiles: ReadonlyMap<string, string>; // "lib.es2022.d.ts" -> text, and every file it references
+    }
+
+    export function createComparatorLinter(library: ComparatorLintLibrary): ComparatorLinter;
+
+    export interface ComparatorLinter {
+      lint(source: { readonly name: string; readonly text: string }): readonly ComparatorLintDiagnostic[];
+    }
+
+    export interface ComparatorLintDiagnostic {
+      readonly file: string;
+      readonly line: number; // 1-based
+      readonly column: number; // 1-based
+      readonly code: string; // "TS2322", or a "comparator/..." rule
+      readonly message: string;
+    }
+    ```
+
+    `lint` is pure: it reads nothing from disk and runs nothing. The linter
+    parses the library files once at creation and reuses their source files
+    across calls.
+  lint-program: >-
+    `lint` builds a TypeScript program over an in-memory compiler host with
+    three root files: the comparator's text at `/manifold/comparator.ts`,
+    the declaration file at `/manifold/contract/comparator.d.ts`, and a check file
+    `/manifold/check.ts` whose text is
+    `import type { Comparator } from "manifold:comparator"; import comparator from "./comparator.ts"; export const checked: Comparator = comparator;`.
+    Library files are served from `/manifold/lib/`, and the compiler host
+    reads no other path.
+    Compiler options: `strict`, `noEmit`, `target` ES2022, `module`
+    ESNext, `moduleResolution` bundler, `lib` `["lib.es2022.d.ts"]`,
+    `types` `[]`, `verbatimModuleSyntax`, `allowImportingTsExtensions`, and
+    `paths` mapping `manifold:comparator` to the declaration file. The
+    result is every syntactic and semantic diagnostic of the comparator and
+    the check file, plus the rule diagnostics below. Through those options:
+    a wrong signature or an async comparator fails assignment to `Comparator`
+    (TS2322), a missing default export fails the check file's import, a use
+    of `setTimeout`, `fetch`, `process`, `require`, or `console` is an
+    undeclared name, an import of any other module does not resolve, and a
+    value import of the declaration file is rejected by
+    `verbatimModuleSyntax`. Every diagnostic carries the comparator's
+    `name` as its file; one in the check file is reported at line 1, column
+    1.
+  lint-rules: >-
+    Two rules cover names ES2022 declares that the sandbox does not provide.
+    `comparator/no-clock` reports every identifier that resolves, through the
+    type checker, to the library's `Date`. `comparator/no-math-random`
+    reports every property access that resolves to the library's
+    `Math.random`. Each names its replacement: age in the input, and
+    `input.random`.
+  lint-library-embedding: >-
+    `packages/host-cli/src/comparator-lint/library.generated.ts` imports the
+    declaration file and every library file in the reference closure of
+    `lib.es2022.d.ts` as text with Bun's `with { type: "text" }` and exports
+    them as a `ComparatorLintLibrary`. A generator script in
+    `packages/host-cli/scripts/` writes it from the installed `typescript`
+    package and the file is committed. The command module imports it, so
+    `bun build --compile` embeds every file and the binary runs with no
+    `node_modules`. Tests under Vitest build the same library by reading the
+    files from disk.
+  lint-command: >-
+    `manifold-host comparator lint <file>...`, per
+    `host-cli-comparator-lint`, reads each file, lints it, prints each
+    diagnostic as `<file>:<line>:<column> <code> <message>`, and exits 0 when
+    there are none, 1 when there is one or more, and 2 when an argument is
+    missing or a file cannot be read. It never evaluates the comparator.
+  dependencies: >-
+    `packages/service` depends on `typescript` (the workspace catalog
+    version), `quickjs-emscripten-core`, and
+    `@jitl/quickjs-wasmfile-release-sync`, the last two at one exact
+    version. `packages/host-cli` depends on `typescript` (the catalog
+    version) and on `@wyrd-company/manifold-shared` from the workspace. Both
+    use the TypeScript 6 JavaScript API, which checks in process.
+  tests: >-
+    Sandbox tests in `packages/service/src/comparator-sandbox/` drive only
+    `createComparatorSandbox`, `load`, `evaluate`, and `dispose`, with
+    comparators written inline over generic data (tasks `a`, `b`, `c`;
+    fields such as `weight`; items `left` and `right`). They use a small
+    `timeoutMs`, such as 50, and set `memoryLimitMiB` large enough for each
+    probe's data. Limits: an infinite loop returns `timeout`; a loop that
+    allocates and discards `new Array(1024).fill(1)` returns `timeout`; a
+    loop that pushes those arrays into one array returns `memory`; a `join`
+    and a default `sort` over two million numbers each return `timeout`.
+    For each, the evaluation returns within one second, the host's
+    `process.memoryUsage().rss` grows by less than the memory limit
+    plus 64 MiB, and the next evaluation of a well-behaved comparator on the
+    same sandbox succeeds. A finite hoard of 45,000 arrays of 100 numbers
+    under `memoryLimitMiB` 32 and `timeoutMs` 500 returns `memory` instead of
+    a selection, and the next well-behaved evaluation of that loaded
+    comparator succeeds. Tight recursion returns `engine`, the next
+    evaluation on that instance returns `engine` with duration zero, and
+    loading a well-behaved comparator on the same sandbox succeeds.
+    Configuration: `memoryLimitMiB` 16 and 2048 each load and evaluate a well-behaved comparator, and 15, 2049, and a
+    `timeoutMs` of 0 each make `createComparatorSandbox` throw a
+    `RangeError`. World access: a static import, a re-export from a module,
+    a top-level `import("external")`, and an `import("external")` inside the
+    comparator's body each fail the load with `module`, and a type-only
+    import of `manifold:comparator` loads; a call to `require`, `fetch`,
+    `process.env`, `setTimeout`, `Date.now`, `new Date()`, and `Math.random`
+    each returns `thrown`. Determinism: two evaluations with one seed return
+    the same selection and draws, and another seed returns other draws. State:
+    a module-level counter returns the same value on every evaluation.
+    Failures: a throw returns `thrown`; returning `undefined`, a promise, an
+    unknown task id, or a reservation with a negative or fractional amount
+    returns `invalid-output`; a syntax error fails the load with
+    `transpile`; each is followed by a successful evaluation. Caller: a test caller stands in for
+    the gate. It evaluates a sequence of inputs through one loaded comparator
+    whose behavior each input selects (throw, infinite loop, hoarding
+    allocation, then a selection), appends each `ComparatorEvaluation` to a
+    record list, and moves to the next input without catching anything. The
+    test asserts that the caller completes, that the list holds `thrown`,
+    `timeout`, `memory`, and then the selection in order, each with its
+    `durationMs`, and that the selection is the one the last input
+    determines. The gate's own record of an evaluation, with its input,
+    output, and seed, is defined by `gates` and `expressions`. Lint tests in
+    `packages/host-cli/src/comparator-lint/` drive only
+    `createComparatorLinter` and `lint`: a well-formed comparator returns no
+    diagnostic; a wrong signature and an async comparator return TS2322; a
+    use of `setTimeout`, `fetch`, and `process` returns an undeclared-name
+    diagnostic; `Date` and `Math.random` return their rules; a value import
+    and a missing default export each return a diagnostic. A binary test
+    builds `src/cli.ts` with `bun build --compile` for the current platform
+    into a temporary directory, copies a well-formed and a wrong comparator
+    beside it, and runs it there: exit 0 with no output, and exit 1 with a
+    TS2322 line. A test asserts the embedded library names exactly the
+    reference closure of `lib.es2022.d.ts` in the installed `typescript`.

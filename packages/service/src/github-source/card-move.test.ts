@@ -1,0 +1,472 @@
+// ---
+// relationships:
+//   verifies: [github-event-source, task-metadata]
+// ---
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, expect, test } from "vite-plus/test";
+import { childProcessLimit } from "../../../../test-support/limits.ts";
+import { openStore } from "../store/index.ts";
+import { startRouter } from "../router/index.ts";
+import { SecretValue } from "../service-configuration/index.ts";
+import { pruneRedeliveries, pruneDeliveries, pruneCardMoves, cardMoveActors } from "./index.ts";
+import { startGitHubSource } from "./index.ts";
+import { signedDelivery, githubFake, FakeClock } from "./test-fixtures/api.ts";
+const cleanups: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
+});
+const move = {
+  actorId: "parcel",
+  invokeId: "stage",
+  entryId: "entry",
+  projectNodeId: "P_one",
+  issueNodeId: "I_A",
+  field: "Stage",
+  option: "Packed",
+};
+async function setup(withScan = false, requestTimeoutMs = 100) {
+  const clock = new FakeClock();
+  const fake = await githubFake();
+  cleanups.push(fake.close);
+  fake.addItem("IT_A", "I_A");
+  fake.items.get("IT_A")!.fieldValues.nodes = [
+    {
+      field: { id: "F_stage", name: "Stage", dataType: "SINGLE_SELECT" },
+      optionId: "O_sorting",
+      name: "Sorting",
+    },
+  ];
+  const directory = mkdtempSync(join(tmpdir(), "card-move-"));
+  const store = openStore({ path: join(directory, "store.sqlite") });
+  store.saveSnapshot({
+    actorId: "parcel",
+    machine: "record",
+    snapshot: { status: "active", value: "waiting" },
+  });
+  const router = startRouter({
+    store,
+    host: {
+      subscription: () => ({ topics: ["github"] }),
+      restore: () => ({ status: "held", reason: "test" }),
+    },
+  });
+  const secretFile = join(directory, "hook.secret");
+  writeFileSync(secretFile, "synthetic-secret");
+  const options = {
+    store,
+    router,
+    ...(withScan ? { clock } : {}),
+    configuration: {
+      apiUrl: fake.url,
+      owners: {
+        sample: {
+          credential: "example",
+          hooks: withScan ? [{ id: 1, repository: undefined, secretFile }] : [],
+        },
+      },
+      sweepIntervalMs: 900000,
+      redeliveryIntervalMs: 60000,
+      requestTimeoutMs,
+    },
+    credentials: {
+      names: ["example"],
+      resolve: () => ({
+        kind: "github-app" as const,
+        name: "example",
+        installationToken: async () => new SecretValue("example", "synthetic-token"),
+      }),
+    },
+    boundProjects: () => [{ owner: "sample", number: 1 }],
+    processRepository: {
+      url: "https://example.test/sample/process.git",
+      branch: "main",
+      pull: async () => ({ kind: "unchanged" as const, commit: "a".repeat(40) }),
+    },
+  };
+  let source = startGitHubSource(options);
+  cleanups.push(async () => {
+    await source.stop();
+    router.stop();
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  await expect
+    .poll(() => source.trackedIssue("I_A")?.items.length, {
+      timeout: childProcessLimit,
+      ...(withScan ? { interval: 1 } : {}),
+    })
+    .toBe(1);
+  const events = () =>
+    store.connection.database
+      .prepare(
+        "SELECT payload FROM store_inbox WHERE payload LIKE '%github.project-item.field-changed%' ORDER BY sequence",
+      )
+      .all()
+      .map((row) => JSON.parse(row["payload"] as string));
+  return {
+    fake,
+    get source() {
+      return source;
+    },
+    store,
+    events,
+    clock,
+    async restart() {
+      await source.stop();
+      source = startGitHubSource(options);
+    },
+  };
+}
+test("sets one value on replay, publishes its confirmed move, and distinguishes a person's move", async () => {
+  // Under two default-worker gates the initial request hits the 100 ms fixture
+  // deadline before publishing the item. This replay check needs a healthy sweep.
+  const { fake, source, events } = await setup(false, 2000);
+  await source.moveCard(move);
+  await source.moveCard(move);
+  await expect.poll(() => events().length).toBe(1);
+  expect(events()[0]).toMatchObject({
+    type: "github.project-item.field-changed",
+    to: { name: "Packed" },
+    movedBy: { actorId: "parcel", confirmed: true },
+  });
+  expect(
+    fake.log
+      .filter((row) => row.operation === "GitHubCardMove")
+      .map((row) => row.variables["option"]),
+  ).toEqual(["O_packed", "O_packed"]);
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["optionId"] = "O_shipped";
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["name"] = "Shipped";
+  source.requestSweep();
+  await expect.poll(() => events().length).toBe(2);
+  expect(events()[1]).toMatchObject({ movedBy: null, to: { name: "Shipped" } });
+});
+test.each([
+  ["field-missing", "field"],
+  ["option-missing", "option"],
+  ["item-missing", "item"],
+  ["forbidden", "FORBIDDEN"],
+  ["transport", "502"],
+  ["rejected", "UNPROCESSABLE"],
+])("typed failure: %s", async (kind, fault) => {
+  const { fake, source, store } = await setup();
+  if (fault === "field") fake.fields.length = 0;
+  else if (fault === "option") fake.fields[0]!.options.length = 0;
+  else if (fault === "item") fake.items.clear();
+  else fake.failWrite(fault, fault === "502" ? 502 : undefined);
+  await expect(source.moveCard(move)).rejects.toMatchObject({ kind });
+  expect(
+    store.connection.database.prepare("SELECT count(*) AS n FROM github_card_move").get()?.["n"],
+  ).toBe(kind === "transport" ? 1 : 0);
+});
+test("timeout leaves an uncertain attempt and a later same-option selection is unconfirmed", async () => {
+  const { fake, source, events } = await setup();
+  const held = fake.hold("GitHubCardMove");
+  const result = source.moveCard(move);
+  const refused = expect(result).rejects.toMatchObject({ kind: "transport" });
+  await held.reached;
+  await refused;
+  // The server still takes the write after the client's deadline: it could equally be a person selecting this value.
+  held.release();
+  source.requestSweep();
+  await expect.poll(() => events().length).toBe(1);
+  expect(events()[0]).toMatchObject({ movedBy: { actorId: "parcel", confirmed: false } });
+});
+test("a paginated observation commits before a queued move, preserving attribution", async () => {
+  const { fake, source, events } = await setup();
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["name"] = "Shipped";
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["optionId"] = "O_shipped";
+  fake.items.get("IT_A")!.fieldValues.nodes.push({
+    field: { id: "F_note", name: "Label", dataType: "TEXT" },
+    text: "Parcel",
+  });
+  fake.paginateItem("IT_A");
+  const held = fake.hold("GitHubConnection");
+  source.requestSweep();
+  await held.reached;
+  const moved = source.moveCard(move);
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fake.log.some((row) => row.operation === "GitHubCardMove")).toBe(false);
+  held.release();
+  await moved;
+  await expect.poll(() => events().some((event) => event.to?.name === "Packed")).toBe(true);
+  expect(events().find((event) => event.to?.name === "Shipped")).toMatchObject({ movedBy: null });
+  expect(events().find((event) => event.to?.name === "Packed")).toMatchObject({
+    movedBy: { actorId: "parcel", confirmed: true },
+  });
+});
+
+test("a failed observation does not strand a queued card move", async () => {
+  const { fake, source } = await setup();
+  const held = fake.hold("GitHubProject");
+  source.requestSweep();
+  await held.reached;
+  let settled = false;
+  const moved = source.moveCard(move).then(() => {
+    settled = true;
+  });
+  fake.fail(502);
+  held.release();
+  await expect.poll(() => settled).toBe(true);
+  await moved;
+});
+
+test("a missing Project in the field query is field-missing, not item-missing", async () => {
+  const { fake, source } = await setup();
+  fake.failQuery("GitHubProjectField", "NOT_FOUND");
+  await expect(source.moveCard(move)).rejects.toMatchObject({ kind: "field-missing" });
+});
+test("queued moves precede due scans and sweeps, and drain between scan requests", async () => {
+  const { fake, source, clock } = await setup(true);
+  for (let id = 1; id <= 101; id++)
+    fake.deliveries.push({
+      id,
+      guid: `delivery-${id}`,
+      delivered_at: new Date(clock.time).toISOString(),
+      status_code: 200,
+      event: "issues",
+      payload: {},
+    });
+  fake.deliveries[0]!.status_code = 500;
+  fake.deliveries[1]!.status_code = 500;
+  // A tracked item is visible before the initial sweep's issue refresh ends.
+  // Wait for the scan and sweep timers, with no request deadline still armed,
+  // before advancing the clock and asserting the next wake's request order.
+  await expect
+    .poll(() => [...clock.timers].map((timer) => timer.at - clock.now()).sort((a, b) => a - b))
+    .toEqual([60000, 900000]);
+  fake.log.length = 0;
+  clock.advance(900000);
+  const first = source.moveCard(move);
+  await first;
+  await expect.poll(() => fake.redeliveries.length).toBe(2);
+  expect(fake.log[0]!.operation).toBe("GitHubProjectField");
+  expect(fake.log[1]!.operation).toBe("GitHubCardMove");
+  fake.deliveries[2]!.status_code = 500;
+  const scan = fake.hold("GitHubDeliveries");
+  clock.advance(60000);
+  await scan.reached;
+  const offset = fake.log.length;
+  const second = source.moveCard({ ...move, entryId: "second", option: "Shipped" });
+  scan.release();
+  await second;
+  await expect.poll(() => fake.redeliveries.length).toBe(3);
+  expect(fake.log[offset]!.operation).toBe("GitHubProjectField");
+  expect(fake.log[offset + 1]!.operation).toBe("GitHubCardMove");
+  fake.deliveries[3]!.status_code = 500;
+  fake.deliveries[4]!.status_code = 500;
+  const redelivery = fake.hold("GitHubRedeliver");
+  clock.advance(60000);
+  await redelivery.reached;
+  const afterRequest = fake.log.length;
+  const third = source.moveCard({ ...move, entryId: "third" });
+  redelivery.release();
+  await third;
+  await expect.poll(() => fake.redeliveries.length).toBe(5);
+  expect(fake.log[afterRequest]!.operation).toBe("GitHubProjectField");
+  expect(fake.log[afterRequest + 1]!.operation).toBe("GitHubCardMove");
+});
+test("a refused replay after restart preserves the confirmed attempt and its sequence", async () => {
+  const f = await setup();
+  f.fake.lagItem("IT_A");
+  await f.source.moveCard(move);
+  const row = () => f.store.connection.database.prepare("SELECT * FROM github_card_move").get();
+  const confirmed = row();
+  expect(confirmed).toMatchObject({ state: "confirmed" });
+  await f.restart();
+  const observation = f.fake.hold("GitHubProject");
+  f.source.requestSweep();
+  await observation.reached;
+  f.fake.failWrite("FORBIDDEN");
+  const replay = expect(f.source.moveCard(move)).rejects.toMatchObject({ kind: "forbidden" });
+  observation.release();
+  await replay;
+  expect(row()).toEqual(confirmed);
+  f.fake.resumeItem("IT_A");
+  f.source.requestSweep();
+  await expect.poll(() => f.events().length).toBe(1);
+  expect(f.events()[0]).toMatchObject({
+    movedBy: { actorId: "parcel", confirmed: true },
+    to: { name: "Packed" },
+  });
+});
+test("a person's intervening value makes the second lagged move unconfirmed", async () => {
+  const { fake, source, events } = await setup();
+  fake.lagItem("IT_A");
+  await source.moveCard(move);
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["name"] = "Sorting again";
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["optionId"] = "O_person";
+  fake.lagItem("IT_A");
+  await source.moveCard({ ...move, entryId: "second", option: "Shipped" });
+  await expect.poll(() => events().length).toBe(1);
+  expect(events()[0]).toMatchObject({ movedBy: null });
+  fake.resumeItem("IT_A");
+  source.requestSweep();
+  await expect.poll(() => events().length).toBe(2);
+  expect(events()[1]).toMatchObject({ movedBy: { actorId: "parcel", confirmed: false } });
+});
+test("a replay after attribution followed by away-and-back is unconfirmed", async () => {
+  const { fake, source, events } = await setup();
+  await source.moveCard(move);
+  await expect.poll(() => events().length).toBe(1);
+  await source.moveCard(move);
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["name"] = "Shipped";
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["optionId"] = "O_shipped";
+  source.requestSweep();
+  await expect.poll(() => events().length).toBe(2);
+  expect(events()[1]).toMatchObject({ movedBy: null });
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["name"] = "Packed";
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["optionId"] = "O_packed";
+  source.requestSweep();
+  await expect.poll(() => events().length).toBe(3);
+  expect(events()[2]).toMatchObject({ movedBy: { actorId: "parcel", confirmed: false } });
+});
+test("moving onto the held option resolves without a field-change event", async () => {
+  const { fake, source, events } = await setup();
+  await source.moveCard({ ...move, option: "Sorting" });
+  const observation = fake.hold("GitHubProject");
+  source.requestSweep();
+  await observation.reached;
+  const afterCommit = fake.hold("GitHubIssues");
+  observation.release();
+  await afterCommit.reached;
+  expect(events()).toEqual([]);
+  afterCommit.release();
+});
+
+test("pruned moves lose later attribution while live invocation replay and fresh moves retain it", async () => {
+  const { fake, source, store, events } = await setup(false, 2000);
+  fake.lagItem("IT_A");
+  await source.moveCard(move);
+  await source.moveCard(move);
+  expect(cardMoveActors(store.connection, { limit: 100 })).toEqual(["parcel"]);
+  expect(pruneCardMoves(store.connection, ["parcel"])).toBe(1);
+  fake.resumeItem("IT_A");
+  source.requestSweep();
+  await expect.poll(() => events().length).toBe(1);
+  expect(events()[0]).toMatchObject({ movedBy: null });
+  fake.lagItem("IT_A");
+  const active = { ...move, actorId: "running", option: "Shipped" };
+  await source.moveCard(active);
+  await source.moveCard(active);
+  expect(
+    store.connection.database.prepare("SELECT actor_id,state FROM github_card_move").all(),
+  ).toEqual([{ actor_id: "running", state: "confirmed" }]);
+  expect(pruneCardMoves(store.connection, ["parcel"])).toBe(0);
+  fake.resumeItem("IT_A");
+  source.requestSweep();
+  await expect.poll(() => events().length).toBe(2);
+  expect(events()[1]).toMatchObject({ movedBy: { actorId: "running", confirmed: true } });
+  await source.moveCard({ ...move, actorId: "fresh" });
+  await expect.poll(() => events().length).toBe(3);
+  expect(events()[2]).toMatchObject({ movedBy: { actorId: "fresh", confirmed: true } });
+});
+
+test("redelivery dedup survives the window and a new attempt after pruning is asked once", async () => {
+  const { fake, clock, store } = await setup(true, 2000);
+  await expect
+    .poll(() => [...clock.timers].map((timer) => timer.at - clock.now()).sort((a, b) => a - b))
+    .toEqual([60000, 900000]);
+  fake.deliveries.push({
+    id: 1,
+    guid: "failed",
+    delivered_at: new Date(clock.time).toISOString(),
+    status_code: 500,
+    event: "issues",
+    payload: {},
+  });
+  clock.advance(60000);
+  await expect.poll(() => fake.redeliveries).toEqual([1]);
+  clock.advance(60000);
+  await expect
+    .poll(() => [...clock.timers].some((timer) => timer.at - clock.now() === 60000))
+    .toBe(true);
+  expect(fake.redeliveries).toEqual([1]);
+  expect(
+    pruneRedeliveries(store.connection, {
+      requestedBefore: clock.now() - 30 * 86400000,
+      limit: 1000,
+    }),
+  ).toBe(0);
+  clock.time += 31 * 86400000;
+  fake.deliveries.push({
+    id: 3,
+    guid: "successful",
+    delivered_at: new Date(clock.time).toISOString(),
+    status_code: 200,
+    event: "issues",
+    payload: {},
+  });
+  clock.advance(0);
+  await expect
+    .poll(() =>
+      Number(
+        store.connection.database
+          .prepare("SELECT scanned_through FROM github_hook_scan WHERE hook_id=1")
+          .get()?.["scanned_through"],
+      ),
+    )
+    .toBe(clock.now());
+  expect(
+    pruneRedeliveries(store.connection, {
+      requestedBefore: clock.now() - 30 * 86400000,
+      limit: 1000,
+    }),
+  ).toBe(1);
+  fake.deliveries.push({
+    id: 2,
+    guid: "failed",
+    delivered_at: new Date(clock.time).toISOString(),
+    status_code: 500,
+    event: "issues",
+    payload: {},
+  });
+  clock.advance(60000);
+  await expect.poll(() => fake.redeliveries).toEqual([1, 2]);
+  clock.advance(60000);
+  await expect
+    .poll(() => [...clock.timers].some((timer) => timer.at - clock.now() === 60000))
+    .toBe(true);
+  expect(fake.redeliveries).toEqual([1, 2]);
+});
+
+test("a pruned delivery reconciles from the retained mirror without publishing duplicate changes", async () => {
+  const { fake, source, store, events } = await setup(true, 2000);
+  const delivery = signedDelivery("issues", { issue: { node_id: "I_A" } }, "repeat");
+  expect(source.receive(delivery)).toMatchObject({ duplicate: false });
+  await expect
+    .poll(
+      () => store.connection.database.prepare("SELECT count(*) n FROM github_pending").get()?.["n"],
+    )
+    .toBe(0);
+  const before = store.connection.database.prepare("SELECT * FROM github_issue").all();
+  expect(source.receive(delivery)).toMatchObject({ duplicate: true });
+  store.connection.database
+    .prepare("UPDATE github_delivery SET received_at=1 WHERE delivery_id='repeat'")
+    .run();
+  store.connection.database
+    .prepare("UPDATE github_hook_scan SET scanned_through=2 WHERE hook_id=1")
+    .run();
+  expect(pruneDeliveries(store.connection, { receivedBefore: 2, limit: 1000 })).toBe(1);
+  expect(source.receive(delivery)).toMatchObject({ duplicate: false });
+  await expect
+    .poll(
+      () => store.connection.database.prepare("SELECT count(*) n FROM github_pending").get()?.["n"],
+    )
+    .toBe(0);
+  expect(store.connection.database.prepare("SELECT * FROM github_issue").all()).toEqual(before);
+  expect(events()).toEqual([]);
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["optionId"] = "O_shipped";
+  fake.items.get("IT_A")!.fieldValues.nodes[0]!["name"] = "Shipped";
+  expect(
+    source.receive(
+      signedDelivery(
+        "projects_v2_item",
+        { projects_v2_item: { node_id: "IT_A", project_node_id: "P_one" } },
+        "fresh",
+      ),
+    ),
+  ).toMatchObject({ duplicate: false });
+  await expect.poll(() => events().length).toBe(1);
+});

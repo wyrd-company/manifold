@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - projects-api
+    - task-metadata
+title: Drift
+description: >-
+  A change to owned configuration, of a bound Project or of a shared
+  scope, made on GitHub since Manifold last applied it, which the
+  declaration in force does not hold.

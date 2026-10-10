@@ -1,0 +1,367 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: tasks-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold tasks API
+  version: 0.1.0
+  description: The tasks read endpoints of Manifold's API.
+security: []
+paths:
+  /api/tasks:
+    get:
+      operationId: listTasks
+      summary: List the tasks of every bound Project with their lifecycle status.
+      responses:
+        "200":
+          description: Every bound Project in declaration order, each with its tasks.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TasksResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /api/tasks/{actorId}:
+    get:
+      operationId: getTask
+      summary: Read one task with its actor, threads, usage, and escalations.
+      parameters:
+        - name: actorId
+          in: path
+          required: true
+          description: The task actor's id, `task:<issueNodeId>`, percent-encoded or not.
+          schema:
+            type: string
+            pattern: "^task:.+$"
+      responses:
+        "200":
+          description: The task.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "404":
+          description: No task has this id.
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+components:
+  responses:
+    MethodNotAllowed:
+      description: A method other than GET.
+      headers:
+        Allow:
+          schema:
+            const: GET
+  schemas:
+    TasksResponse:
+      type: object
+      additionalProperties: false
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/BoundProject"
+    BoundProject:
+      type: object
+      additionalProperties: false
+      required: [binding, owner, number, item, tasks]
+      properties:
+        binding:
+          type: string
+          minLength: 1
+        owner:
+          type: string
+          minLength: 1
+        number:
+          type: integer
+          minimum: 1
+        item:
+          type: string
+          minLength: 1
+        lifecycle:
+          $ref: "#/components/schemas/Lifecycle"
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskSummary"
+    Lifecycle:
+      type: object
+      additionalProperties: false
+      required: [field, options]
+      properties:
+        field:
+          type: string
+          minLength: 1
+        options:
+          type: array
+          items:
+            type: string
+            minLength: 1
+    Issue:
+      type: object
+      additionalProperties: false
+      required: [nodeId, repository, number, state]
+      properties:
+        nodeId:
+          type: string
+          minLength: 1
+        repository:
+          type: string
+          pattern: "^[^/]+/[^/]+$"
+        number:
+          type: integer
+          minimum: 1
+        state:
+          enum: [open, closed]
+        title:
+          type: string
+        url:
+          type: string
+          format: uri
+    Status:
+      description: The lifecycle option the item holds, or null.
+      type: [string, "null"]
+    ActorStatus:
+      enum: [active, done, stopped, held]
+    States:
+      type: array
+      items:
+        type: string
+        minLength: 1
+      description: Leaf state paths, keys from the root joined with `.`.
+    TaskSummary:
+      type: object
+      additionalProperties: false
+      required: [actorId, issue, status, openEscalations]
+      properties:
+        actorId:
+          type: string
+          pattern: "^task:.+$"
+        issue:
+          $ref: "#/components/schemas/Issue"
+        status:
+          $ref: "#/components/schemas/Status"
+        portfolioItem:
+          type: string
+        actor:
+          type: object
+          additionalProperties: false
+          required: [status, states]
+          properties:
+            status:
+              $ref: "#/components/schemas/ActorStatus"
+            states:
+              $ref: "#/components/schemas/States"
+        openEscalations:
+          type: integer
+          minimum: 0
+    TaskResponse:
+      type: object
+      additionalProperties: false
+      required: [task]
+      properties:
+        task:
+          $ref: "#/components/schemas/Task"
+    Task:
+      type: object
+      additionalProperties: false
+      required: [actorId, issue, projects, threads, usage, escalations]
+      properties:
+        actorId:
+          type: string
+          pattern: "^task:.+$"
+        issue:
+          $ref: "#/components/schemas/Issue"
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskProject"
+        portfolioItem:
+          type: string
+        actor:
+          $ref: "#/components/schemas/TaskActor"
+        threads:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskThread"
+        usage:
+          $ref: "#/components/schemas/TaskUsage"
+        escalations:
+          type: object
+          additionalProperties: false
+          required: [open, recent]
+          properties:
+            open:
+              type: array
+              items:
+                $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/escalation"
+            recent:
+              type: array
+              maxItems: 20
+              items:
+                $ref: "https://manifold.wyrd.company/schemas/escalation-contract#/$defs/escalation"
+    TaskProject:
+      type: object
+      additionalProperties: false
+      required: [binding, owner, number, status]
+      properties:
+        binding:
+          type: string
+          minLength: 1
+        owner:
+          type: string
+          minLength: 1
+        number:
+          type: integer
+          minimum: 1
+        field:
+          type: string
+          minLength: 1
+        status:
+          $ref: "#/components/schemas/Status"
+        fields:
+          description: >-
+            Each task field the declaration in force declares for the
+            binding, in declared order; absent when it declares none.
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskFieldEntry"
+    TaskFieldEntry:
+      type: object
+      additionalProperties: false
+      required: [name, type, storage, value]
+      properties:
+        name:
+          description: The task field's name.
+          type: string
+          minLength: 1
+        type:
+          enum: [text, number, date, single-select]
+        storage:
+          enum: [project-field, issue-field, issue-type, label, milestone, front-matter]
+        where:
+          description: >-
+            Where GitHub holds the value, one line: the Project field, the
+            organization's issue field or issue types, the repository's
+            labels or milestones, or the front matter key.
+          type: string
+        value:
+          $ref: "#/components/schemas/TaskFieldValue"
+    TaskFieldValue:
+      description: The shape of `#/$defs/task-field-value` of `github-events`.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [state, value]
+          properties:
+            state:
+              const: set
+            value:
+              oneOf:
+                - type: string
+                - type: number
+        - type: object
+          additionalProperties: false
+          required: [state]
+          properties:
+            state:
+              const: empty
+        - type: object
+          additionalProperties: false
+          required: [state, detail]
+          properties:
+            state:
+              enum: [invalid, unavailable]
+            detail:
+              type: string
+    TaskActor:
+      type: object
+      additionalProperties: false
+      required: [status, states, machine, savedAt]
+      properties:
+        status:
+          $ref: "#/components/schemas/ActorStatus"
+        states:
+          $ref: "#/components/schemas/States"
+        machine:
+          type: string
+          minLength: 1
+          description: The key the snapshot was saved with.
+        blueprint:
+          type: object
+          additionalProperties: false
+          required: [path, commit]
+          properties:
+            path:
+              type: string
+              pattern: "^blueprints/.+\\.ya?ml$"
+            commit:
+              type: string
+              pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+        environment:
+          type: string
+        savedAt:
+          type: string
+          format: date-time
+    TaskThread:
+      type: object
+      additionalProperties: false
+      required: [threadId]
+      properties:
+        threadId:
+          type: string
+          minLength: 1
+        environment:
+          type: string
+        title:
+          type: string
+        url:
+          type: string
+          format: uri
+        turn:
+          enum: [running, completed, interrupted, error]
+        archived:
+          type: boolean
+    TaskUsage:
+      type: object
+      additionalProperties: false
+      required: [settled, accounts]
+      properties:
+        settled:
+          type: boolean
+        accounts:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [account, estimate, actual, variance, reserved]
+            properties:
+              account:
+                type: string
+                minLength: 1
+              estimate:
+                type: integer
+                minimum: 0
+              actual:
+                type: integer
+                minimum: 0
+              variance:
+                type: integer
+              reserved:
+                type: integer
+                minimum: 0
+              unit:
+                enum: [usd]
+                description: The account's unit in the accounts declaration in force; absent for an account it does not declare.

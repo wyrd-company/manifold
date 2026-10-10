@@ -1,0 +1,97 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: host-cli-blueprint-lint
+# ---
+$schema: https://commonclischema.org/draft/2026-04/schema
+tool:
+  name: manifold-host
+  mode: non-interactive
+  summary: The Manifold host CLI, installed on each environment.
+commands:
+  - name: blueprint
+    summary: Work with blueprints in a process repository.
+    mode: non-interactive
+    subcommands:
+      - name: lint
+        summary: Lint blueprint files with the rules the service runs when it loads them.
+        mode: non-interactive
+        options:
+          - name: configuration-bound
+            flags: [--configuration-bound]
+            kind: option
+            description: >-
+              The token lint's configuration bound: the configurations a
+              blueprint's graph may hold before each gate's verdict is
+              `unknown`. An integer of at least 1.
+            required: false
+            default: 20000
+            value:
+              type: integer
+            examples:
+              - "50000"
+          - name: repository
+            flags: [--repository]
+            kind: option
+            description: >-
+              The process repository checkout whose `task-metadata.yml` and
+              `bindings.yml` give the declared lifecycle options a literal
+              `status` of a `github-card-move` invoke is checked against.
+              With no file argument, every blueprint the repository runs is
+              linted, bundled blueprints included. Without it, `status` is
+              not checked.
+            required: false
+            value:
+              type: path
+            examples:
+              - ./process
+        positional-arguments:
+          - name: files
+            description: >-
+              Paths to blueprint files. Optional with `--repository`, which
+              then lints every blueprint the repository runs, bundled
+              blueprints included.
+            position: 0
+            greedy: true
+            required: false
+            value:
+              type: path-list
+              arity:
+                min: 0
+                max: unbounded
+        output:
+          modes:
+            - name: text
+              description: >-
+                One line per finding on standard output,
+                `<file>:<location> <kind> <message>`, followed by
+                ` (line <line>, column <column>)` for a `yaml` finding,
+                ` (<implementationKind> <name>)` for an
+                `implementation-unknown` finding, or
+                ` (sample <sample>[, event <type>])` when the finding names
+                a sample, or ` (gate <statePath>)` for a token finding;
+                then the file's warnings in the same form; nothing when
+                every file is clean and has no warning.
+              machine-readable: true
+          exit-codes:
+            - code: 0
+              meaning: No file has a finding; files may have warnings.
+            - code: 1
+              meaning: At least one file has a finding.
+            - code: 2
+              meaning: >-
+                No file was given without `--repository`, a file could not
+                be read,
+                `--configuration-bound` is not an integer of at least 1, or
+                the task metadata declaration of `--repository` has a
+                finding.
+        examples:
+          - manifold-host blueprint lint blueprints/delivery.yml
+          - manifold-host blueprint lint blueprints/delivery.yml blueprints/returns.yml
+          - manifold-host blueprint lint --configuration-bound 50000 blueprints/delivery.yml
+          - manifold-host blueprint lint --repository . blueprints/delivery.yml
+          - manifold-host blueprint lint --repository .
+        notes:
+          - Implementation names are checked against the names the service registers.
+          - "`token-potential` and `token-unknown` are warnings: they are printed and do not change the exit code."

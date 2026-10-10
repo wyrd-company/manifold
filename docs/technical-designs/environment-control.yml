@@ -1,0 +1,367 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - t3code-environment-source
+    - agent-threads
+    - agent-tools
+    - actor-host
+    - operator-console
+    - store
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  references:
+    - environments-api
+    - environment-events
+    - environment-control-database-schema
+    - router-events
+    - t3code-environments-configuration
+    - let-escalation-answers-through-a-pause
+objective: >-
+  Let an operator stop new agent work reaching one T3 Code environment, and
+  stop Manifold talking to it, from the console and Manifold's API, without
+  editing service configuration or restarting the service, so that the
+  hold survives a restart, a running turn is never cut short, and every
+  blueprint can hear the operator's action as an event.
+background:
+  current-design: >-
+    Service configuration declares the environments, and the T3 Code
+    environment source connects to every one of them from start to stop.
+    Thread and turn commands wait only for the source's readiness and retry
+    a lost connection on the environment's reconnect backoff. The only way
+    to keep work off an environment is to remove it from service
+    configuration and restart, which fails every task actor's next command
+    on it.
+  problems:
+    - >-
+      An operator who must take a T3 Code server down, upgrade it, or keep
+      its machine free for a while cannot hold new threads back from it
+      and let the work already running finish.
+    - >-
+      An environment whose server is down is retried with no limit, and
+      nothing tells the operator from Manifold which environments are
+      connected.
+    - >-
+      Service configuration is host-local and holds credentials, so an
+      operator action taken from the console must not be written there.
+design-challenges:
+  durability: >-
+    A pause or a disconnect taken just before a crash must hold after the
+    restart, and an action whose effect was not stored must leave no event
+    behind.
+  admission: >-
+    No `thread-create` or `turn-start` command a blueprint invokes may be
+    sent after a pause commits, a command already on the wire when the
+    pause commits must not be lost or sent twice, and a command that waits
+    on a pause must not miss the resume that releases it. An escalation
+    answer is the operator's own action and is not held by a pause.
+  isolation: >-
+    A held environment must hold back no other environment's work,
+    escalation answers included.
+  hearing: >-
+    A blueprint must be able to take the operator's action as an event on
+    the actors whose work runs on the environment, without naming a topic
+    of its own.
+proposed-design:
+  high-level-overview: >-
+    The environment control module, `packages/service/src/environments/`,
+    owns the operator holds on each configured environment: paused and
+    disconnected. It stores them in Manifold's store under the migration
+    owner `environment`, as `environment-control-database-schema`
+    specifies, and publishes each change as an operator event through the
+    router in the transaction that stores it, as `environment-events`
+    specifies. The T3 Code environment source and the agent threads module
+    read the holds through the `EnvironmentHolds` port that the source
+    declares: the source follows nothing on a disconnected environment,
+    and the agent threads module sends no `thread-create` or `turn-start`
+    command to a paused or disconnected one. The module mounts the
+    environments endpoints of `environments-api` under `/api/environments`
+    with `mount`, which list each environment with its connection and
+    holds and apply the operator's actions. The console's Environments
+    screen reads and calls them, as `operator-console` states. Adding or
+    removing an environment stays an edit of service configuration on the
+    host followed by a restart; the console writes no service
+    configuration and no credential file.
+  holds: >-
+    An environment has two holds, each on or off: paused and
+    disconnected. They are independent: an environment may be paused and
+    disconnected at once, and lifting one leaves the other. A hold belongs
+    to the environment's declared name, so it applies to whichever server
+    the name points at, and an environment whose name has no row holds
+    nothing. `pause` turns paused on, `resume` turns it off, `disconnect`
+    turns disconnected on, and `reconnect` turns it off. An action that
+    finds its hold already in the state it asks for changes nothing and
+    publishes nothing.
+  pause: >-
+    A paused environment starts no new thread and no new turn that an
+    actor starts: the pause holds the `thread-create` and `turn-start`
+    commands a blueprint invokes, and nothing else. An escalation answer is
+    the operator's own action, so it passes a pause and may start a turn;
+    a disconnect holds it. A `t3code-project-create` invoke starts no
+    thread or turn, so a pause does not hold it, and a disconnect holds it
+    through the source's readiness. A `thread-create` or `turn-start` invoke that reaches the send
+    while the environment is paused waits until the pause is lifted or the
+    invoke stops, with no time limit, since the wait is on an operator
+    action. Resume releases every waiting command, each sent with the ids
+    it derived before the wait, so a command that waited through a restart
+    is sent once. A turn that is running when the pause commits runs to
+    its end, and the source keeps following the environment, so the
+    actor takes the turn's changes, its requests, and the agent's
+    hand-off and escalation calls as before. An escalation answer is sent
+    to a paused environment, as
+    `let-escalation-answers-through-a-pause` records, since the answer
+    continues the work the agent already started. A paused environment
+    keeps its connection, and its status is `paused`.
+  disconnect: >-
+    A disconnected environment has no connection from Manifold. The
+    source closes the environment's client, stops following its threads,
+    and holds its cursors; the agent threads module closes the
+    environment's client and opens none while the hold is on. Every
+    thread command, turn command, escalation answer, and thread read for
+    the environment waits until the hold is lifted or its caller stops,
+    with no time limit, since the wait is on an operator action. A
+    command in flight when the disconnect commits fails with a lost
+    connection and is sent again after reconnect with the same ids, so the
+    server's receipt makes it count once. An agent's hand-off or
+    escalation call from a thread on the environment waits on its thread
+    read in the same way. Reconnect connects again at once, without a
+    backoff delay, and the source resumes from its stored cursors as it
+    does after a restart: it compares the server's `environmentId`, catches
+    every followed thread up from its cursor, and publishes each change it
+    missed, so a turn that settled while the environment was disconnected
+    reaches its actor. A change that opened and closed inside a gap past
+    the server's replay bound is not published, as for a restart.
+  stopped-environments: >-
+    An environment the source stopped for a defect, as
+    `t3code-environment-source` describes under failures, shows as
+    `disconnected` with its error. Reconnect on it lifts the disconnected
+    hold when one is on and starts the environment's loop again, as a
+    service restart would, so the operator can retry after fixing the
+    cause without restarting the service.
+  scheduled-threads: >-
+    An environment's scheduled threads are the thread and turn commands
+    that wait to be sent to it: each `thread-create`, `turn-start`, and
+    escalation answer that has entered the agent threads module's send for
+    the environment and has no answer from the server yet, whatever it
+    waits on, a pause, a disconnect, readiness, or a lost connection. The
+    count lives in memory and is rebuilt after a restart, since the
+    actor host restores each actor whose invoke was waiting and the invoke
+    enters the send again, and the answer sender takes each pending answer
+    row again.
+  active-threads: >-
+    An environment's active threads are the threads the source follows on
+    it whose latest turn is running or whose session is `starting` or
+    `running`, read from the source's stored compact threads. The count is
+    known only while the environment is connected; otherwise it is
+    `null`.
+  connection: >-
+    An environment's connection is `connected` while the source follows
+    it, `connecting` while it connects or waits to retry a lost or refused
+    connection, and `disconnected` while the disconnected hold is on or
+    the source has stopped it. The source learns of a socket the client is
+    reconnecting under a live subscription only when the subscription
+    resumes, so a dropped socket shows as `connected` until the client's
+    heartbeat drops it and the subscription reports the reconnect. The
+    status that the seam names is one value: `disconnected` when the
+    connection is disconnected, otherwise `paused` when the paused hold is
+    on, otherwise the connection.
+  events: >-
+    Each change of a hold is one source event with source `environment`,
+    the topic `environment.<environment>`, and the type
+    `environment.paused`, `environment.resumed`,
+    `environment.disconnected`, or `environment.reconnected`, as
+    `environment-events` specifies. The event id is the environment's name
+    and the hold row's change sequence, so it is fixed when the change is
+    stored and unique for as long as the row lives. The actor host adds
+    `environment.<environment>` to the subscription of every actor whose
+    identity holds `environment`, as `actor-host` states, so every task
+    actor on the environment hears the event, and a blueprint takes it by
+    declaring its type under `schemas.events`. A blueprint that declares
+    none of the four types is unchanged. The events describe the
+    operator's action at the moment it is stored, not the connection that
+    follows: `environment.reconnected` is published before the source has
+    connected.
+  ports: >-
+    The T3 Code environment source declares the `EnvironmentHolds` port in
+    its public interface, with `held(environment)`, the two holds and the
+    change sequence they were read at, and `changed(environment, after,
+    signal)`, which resolves at once when the environment's change
+    sequence is no longer `after`, and otherwise at the next change. The
+    agent threads module reads the same port, and this module implements
+    it, so neither reader imports this module. `held` reads the module's
+    in-memory copy of the rows, which the module loads when it opens and
+    changes only after the transaction that stores a change commits, so a
+    reader never sees a hold the store does not hold.
+  waiting-on-a-hold: >-
+    Every wait on a hold is level-triggered by the change sequence, so a
+    change that commits between the read of a hold and the start of the
+    wait is never missed. A waiter reads `held(environment)`, decides
+    from that one read, and when it must wait, passes the read's
+    `sequence` as `after` to `changed`. A change that committed in
+    between has already moved the sequence, so `changed` resolves at
+    once, and the waiter reads the hold again and decides again. A
+    waiter never waits on `changed` without a sequence it read. The wait
+    adds no delay of its own: a lost connection is still retried on the
+    environment's reconnect backoff, and only a hold is waited on through
+    `changed`.
+  public-interface: |-
+    `packages/service/src/environments/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { HttpListener } from "../http-host/index.ts";
+    import type { Router } from "../router/index.ts";
+    import type { Store } from "../store/index.ts";
+    import type {
+      EnvironmentHold,
+      EnvironmentHolds,
+      EnvironmentStatus,
+      EnvironmentsConfiguration,
+    } from "../t3code-source/index.ts";
+
+    export function openEnvironments(options: EnvironmentsOptions): Environments;
+
+    export interface EnvironmentsOptions {
+      readonly store: Store;
+      readonly router: Router;
+      /** The loaded `environments` section, in configuration order. */
+      readonly environments: EnvironmentsConfiguration;
+      /** The path of the service configuration file, shown in the add and remove instructions. */
+      readonly configurationFile: string;
+      /** The source's status; read at each request. */
+      readonly status: () => readonly EnvironmentStatus[];
+      /** The source's restart of a stopped environment. */
+      readonly restart: (environment: string) => void;
+      /** The agent threads module's count of waiting commands. */
+      readonly scheduled: (environment: string) => number;
+      readonly clock?: () => number;
+    }
+
+    export type EnvironmentAction = "pause" | "resume" | "disconnect" | "reconnect";
+
+    export interface Environments extends EnvironmentHolds {
+      /** Applies an action to a configured environment; converges when run twice. */
+      act(environment: string, action: EnvironmentAction): EnvironmentHold;
+      /** The endpoints of `environments-api`, for `mount("/api/environments", …)`. */
+      readonly requestListener: HttpListener;
+    }
+    ```
+  act: >-
+    `act` reads the environment's row, and when the action changes a
+    hold it writes the row with the new holds, the change sequence plus
+    one, and the time, and publishes the action's event, in one
+    `store.connection.transaction`. After the commit it updates the
+    in-memory copy and resolves every `changed` waiter for the
+    environment. A `rejected` publish outcome is a defect: the transaction
+    rolls back, nothing changes, and `act` throws, which the endpoint
+    answers with `500`. `reconnect` also calls `restart` for an environment
+    whose source status is `stopped`, whether or not a hold changed.
+  source-changes: >-
+    `startT3CodeSource` takes `holds` in its options. Each environment loop
+    reads `held(environment)` before each connection. While disconnected
+    is on, the loop sets its state to `disconnected`, resets its readiness
+    so that `ready` waits, opens no client, and waits on `changed` after
+    the sequence it read. While it runs, it also waits on `changed` after
+    the sequence it read before connecting, and a change that turns
+    disconnected on aborts the connection's lifetime, closes the client,
+    and lets every open subscription end, which keeps every cursor as it
+    was. When disconnected turns off, the loop connects at once with its
+    attempt count at zero. Its readiness resolves again after the
+    connection compares the server's `environmentId`, as after a restart,
+    and an `environmentId` that changed resets the environment as
+    `t3code-environment-source` describes. `restart(environment)` starts
+    the loop of an environment whose state is `stopped`, clearing its
+    error; it does nothing for one that runs. `EnvironmentStatus` adds the
+    state `disconnected` and the member `activeThreads`.
+  agent-threads-changes: >-
+    `openAgentThreads` takes `holds` in its options. `thread-create` and
+    `turn-start` read `held(environment)` inside the source's write
+    admission, synchronously and immediately before the command is
+    dispatched, and when paused is on they leave the admission, wait on
+    `changed` after the sequence of that read, and enter the send again,
+    reading the hold again at the next admission. Since the read and the
+    dispatch run without yielding, no `thread-create` or `turn-start` is
+    dispatched after a pause commits, and one dispatched before it is the
+    server's to answer. `startTurn`, the escalation answer path, does not
+    read paused, so an answer is dispatched during a pause. The
+    client pool refuses to open a client for an environment whose
+    disconnected hold is on, failing the call as a lost connection, so the
+    caller's retry waits on the source's readiness. A change that turns
+    disconnected on closes the environment's client. `scheduled(environment)`
+    counts the sends in progress for the environment.
+  agent-tools-changes: >-
+    The answer sender sends each environment's pending answers in the
+    order they were written, and a wait on one environment holds back no
+    answer on another, as `agent-tools` states.
+  wiring: >-
+    `environments` is the service wiring part `{ name: "environments",
+    start(members, context) }` in
+    `packages/service/src/environments/wiring.ts`. `start.ts` imports it
+    and chains it once, immediately before the T3 Code source's part, so
+    the holds are loaded before any environment loop starts. Its `start`
+    opens the module with the store, the router, the configuration's
+    `environments` and `file`, the source's `status` and `restart` read
+    through `context.later`, and the agent threads module's `scheduled`,
+    and mounts the request listener at `/api/environments`. The T3 Code
+    source's part passes the member as `holds`. The agent threads part
+    starts before it and reads it through `context.later`, waiting for it
+    as it waits for the source. The part registers no `onStop`: every
+    `changed` waiter is given the signal of the command or loop that
+    waits, which the stop of that module aborts.
+  module-layout: >-
+    `index.ts` re-exports the public names. `holds.ts` holds the pure
+    functions: the holds an action gives from the current holds, whether it
+    changes them, the event it publishes, and the status and connection of
+    an environment from its holds and source status. `store.ts` reads and
+    writes `environment_hold`. `migrations.ts` holds the migration step
+    under the owner `environment`. `listener.ts` serves the endpoints.
+    `environments.ts` implements `openEnvironments`. `wiring.ts` is the
+    service wiring part. Tests import only `index.ts`.
+  convergence: >-
+    An action run twice changes the holds once and publishes once, since
+    the second finds its hold already in the state it asks for. A crash
+    before the transaction commits leaves no row change and no event, and
+    the restarted service holds what it held before; the operator sees the
+    old state and acts again. A crash after the commit leaves the hold
+    stored, and the restarted service reads it before any environment loop
+    or command starts, so a paused environment's waiting commands wait
+    again and a disconnected environment is not connected. The event id
+    is fixed by the stored sequence, so the router's replay rule would
+    take a second publish of the same change once. A command that waited
+    through the crash enters the send again with the ids derived before
+    it, so resume sends it once. Reconnect of an environment that is
+    connecting or connected changes no connection.
+  tests: >-
+    Each behavior is red before green, through the module's public
+    interface, the service's HTTP host, and a real store, router, actor
+    host, environment source, and agent threads module, against the fake
+    T3 Code server of the source's test suite with generic names. The pure
+    functions are tested by tables: each action from each pair of holds,
+    and the status and connection for each source state and pair of
+    holds. `pause` twice publishes one `environment.paused` and writes one
+    change; each action publishes its type under `environment.<name>`
+    with the event id `<name>/<sequence>`; a publish the router rejects
+    leaves the row unchanged. A blueprint that declares
+    `environment.paused` and is on the environment takes the event, and
+    one on another environment does not. A `changed` given a sequence
+    that is no longer current resolves at once. A resume that commits
+    after a waiting `thread-create` has read the pause and before it
+    starts its wait, forced through a `holds` wrapper that commits the
+    resume when the command's read returns paused, lets the command send
+    exactly once with no further hold change. With the environment
+    paused, a task actor's `thread-create` waits and the environment lists it as one
+    scheduled thread; the service stops and starts again on the same
+    store; the environment is still paused and the command waits again;
+    resume through the API sends it, and the fake server holds exactly one
+    thread, which the actor follows. A turn running when the pause commits
+    settles and the actor takes its `t3.turn.settled`. With the
+    environment paused, `turn-start` waits and an escalation answer is
+    dispatched and starts its turn. With one environment disconnected, the fake server holds no
+    socket from the service, an escalation answer to it waits, and an
+    answer to the other environment is sent; a turn the fake server
+    settles while disconnected is published after reconnect, once. A
+    disconnect taken while a command is in flight sends it once after
+    reconnect. Reconnect of a stopped environment starts it again. The
+    endpoints are tested as `environments-api` states.
+  dependencies: >-
+    No new dependency. The module uses the store's connection and
+    migrations, the router's `publish`, and the HTTP host's `mount`.

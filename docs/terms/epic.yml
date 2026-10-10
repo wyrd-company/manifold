@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - epics-api
+title: Epic
+description: >-
+  The issues under one tracked issue, its root task: the sub-issue tree
+  GitHub holds for it, with the issues outside the tree that a dependency
+  of the tree names, and the dependencies among them.

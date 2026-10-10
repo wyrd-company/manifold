@@ -1,0 +1,181 @@
+# ---
+# relationships:
+#   realizes: blueprint-expressions
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/blueprint-expressions
+title: Blueprint Expressions
+description: >-
+  The shapes of JSONata expressions in a blueprint: the expression reference,
+  the expression schemas a blueprint supplies, the `expression.error` event,
+  and the expression finding the lint reports.
+$defs:
+  expression-reference:
+    description: >-
+      A JSONata expression carried as the parameter of a generic
+      implementation. Guards and matches stand where XState accepts a guard,
+      assignments where it accepts an action, and mappings as the value of
+      `input` on an invoke, `output` on a top-level final state, or
+      `context` on a blueprint's migration path.
+    type: object
+    required:
+      - type
+      - params
+    additionalProperties: false
+    properties:
+      type:
+        enum:
+          - expression.guard
+          - expression.match
+          - expression.assign
+          - expression.map
+      params:
+        type: object
+        required:
+          - expression
+        additionalProperties: false
+        properties:
+          expression:
+            description: The JSONata source.
+            type: string
+            minLength: 1
+  expression-schemas:
+    description: >-
+      The JSON Schemas that bound a blueprint's expressions. Each value is a
+      JSON Schema of draft 2020-12.
+    type: object
+    required:
+      - input
+      - output
+      - context
+      - events
+    additionalProperties: false
+    properties:
+      input:
+        $ref: "#/$defs/json-schema"
+      output:
+        $ref: "#/$defs/json-schema"
+      context:
+        $ref: "#/$defs/json-schema"
+      events:
+        description: >-
+          One schema per accepted event type, keyed by type, describing the
+          whole event object including `type`.
+        type: object
+        additionalProperties:
+          $ref: "#/$defs/json-schema"
+      actors:
+        description: The input and output schema of each invoked `src`, keyed by `src`.
+        type: object
+        additionalProperties:
+          type: object
+          required:
+            - input
+            - output
+          additionalProperties: false
+          properties:
+            input:
+              $ref: "#/$defs/json-schema"
+            output:
+              $ref: "#/$defs/json-schema"
+  json-schema:
+    description: A JSON Schema of draft 2020-12.
+    type:
+      - object
+      - boolean
+  error-detail:
+    description: What failed, where, and why.
+    type: object
+    required:
+      - kind
+      - location
+      - expression
+      - message
+    additionalProperties: false
+    properties:
+      kind:
+        enum:
+          - syntax
+          - evaluation
+          - result
+          - schema
+      location:
+        description: >-
+          Where the expression is. For a blueprint, the RFC 6901 JSON Pointer
+          of the expression reference in the machine configuration.
+        type: string
+      expression:
+        description: The JSONata source.
+        type: string
+      message:
+        type: string
+      code:
+        description: The JSONata error code, such as `S0211` or `T0410`.
+        type: string
+      position:
+        description: The character position in the expression that JSONata reports.
+        type: integer
+        minimum: 0
+      schemaErrors:
+        description: The validation errors of a result that failed its schema.
+        type: array
+        items:
+          type: object
+          required:
+            - instancePath
+            - message
+          properties:
+            instancePath:
+              type: string
+            message:
+              type: string
+  expression-error-event:
+    description: Raised to the actor when an `expression.assign` fails.
+    type: object
+    required:
+      - type
+      - error
+    additionalProperties: false
+    properties:
+      type:
+        const: expression.error
+      error:
+        $ref: "#/$defs/error-detail"
+  expression-finding:
+    description: One failure the expression lint reports for one site and sample.
+    type: object
+    required:
+      - kind
+      - location
+      - expression
+      - message
+    additionalProperties: false
+    properties:
+      kind:
+        enum:
+          - syntax
+          - evaluation
+          - result
+          - schema
+          - schema-missing
+          - site-unsupported
+      location:
+        type: string
+      expression:
+        type: string
+      message:
+        type: string
+      code:
+        type: string
+      position:
+        type: integer
+        minimum: 0
+      schemaErrors:
+        $ref: "#/$defs/error-detail/properties/schemaErrors"
+      sample:
+        description: The sample that failed, as `examples[n]`, `full`, or `required`.
+        type: string
+        pattern: ^(examples\[[0-9]+\]|full|required)$
+      eventType:
+        description: The event type of the sample, for a site whose input holds an event.
+        type: string

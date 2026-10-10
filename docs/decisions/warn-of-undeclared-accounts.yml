@@ -1,0 +1,47 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - portfolio
+    - portfolio-declaration
+    - accounts-declaration
+description: >-
+  `portfolio.yml` allocates by account name, and `accounts.yml` declares
+  the accounts. The service credits nothing to an account `accounts.yml`
+  does not declare, so a misspelled name gives a portfolio item a balance
+  of 0 for it and a gate that never grants. The lint of each file sees only
+  that file. A check across the two files must report such an allocation,
+  and something must decide whether it refuses the portfolio declaration
+  or warns.
+considered-options:
+  "1": >-
+    Warn. `lintAllocatedAccounts` reports `account-undeclared` as a
+    warning. The service applies the declaration and logs the warning; the
+    host CLI prints it and exits 0 when it is the only result.
+  "2": >-
+    Refuse. `account-undeclared` is a finding of the portfolio lint, and
+    the service keeps the previous declaration in force. A stored
+    declaration that allocates an undeclared account needs a portfolio
+    migration step that retires it.
+  "3": >-
+    Refuse the accounts declaration instead: an `accounts.yml` that drops
+    an account `portfolio.yml` allocates is refused.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    The service applies `portfolio.yml` and `accounts.yml` independently,
+    so no refusal keeps the pair in force consistent: under option 2 an
+    `accounts.yml` that drops an allocated account still applies, and under
+    option 3 a `portfolio.yml` that adds one still applies. A refusal only
+    blocks the next edit of one file for a fault the other file can hold,
+    and it refuses an allocation written before its account is declared,
+    which the service accepts. Option 1 gives the operator the same
+    feedback at the same place, the service log, both host CLI commands,
+    and the console, with no migration and no change to what the service
+    accepts. The account's balances reading 0 stays the behaviour.
+expected-outcomes:
+  positive:
+    - A misspelled account name is reported at its allocation by the service, both host CLI commands, and the console.
+    - No declaration the service accepts is refused, and no stored declaration needs a migration.
+  negative:
+    - A host CLI run that only warns exits 0, so a script that checks the exit code does not stop on a misspelled account name.
+    - The service applies a declaration whose allocation for a misspelled account has no effect until `accounts.yml` declares that name.

@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Window
+description: >-
+  The period from one reset of an account's capacity to the next.

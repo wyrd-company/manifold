@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the design that defines it.
+relationships:
+  references:
+    - usage-intake
+    - usage-api
+    - portfolio-ledger
+title: Usage move
+description: >-
+  An operator's re-attribution of a posted call from unowned usage to a portfolio item or an actor, which the ledger carries to the new item in the window the call spent, keeping its account and amount.

@@ -1,0 +1,121 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables these are.
+  realizes:
+    - usage-intake
+  references:
+    - store-database-schema
+    - history-database-schema
+    - portfolio-ledger-tables
+    - usage-record
+terms:
+  - call
+  - late-attribution
+  - state-visit
+  - usage-move
+description: >-
+  Defines the tables the usage intake module holds in Manifold's store
+  database. `docs/specifications/usage-tables.sql` is the machine-readable
+  definition: the schema that the module's migration steps produce. The
+  module's owner name is `usage`, and every table, index, and trigger it
+  creates is named `usage_<name>`. Its steps are applied by the store's
+  `migrate("usage", steps)`; the module never runs DDL itself. At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
+
+  Declarations. `usage_declarations` holds one row per accepted
+  declaration of `accounts.yml` and `prices.yml` whose content differs
+  from the one in force. `commit_id` is the full commit id of the process
+  repository revision it was read from, and `declaration` the canonical
+  JSON, keys sorted, of the normalized declaration `lintUsageDeclaration`
+  returns. The row with the greatest `seq` is in force. A trigger aborts
+  every `UPDATE` and `DELETE`.
+
+  Sessions. `usage_sessions` holds the T3 Code thread of each provider
+  session on an environment, and the provider instance that runs it when
+  T3 Code records one, as first pushed. A row is never changed.
+
+  Actors and threads. `usage_actors` holds the environment and portfolio
+  item of each actor as of its latest save, and the time of its first
+  save with status `done` or `stopped`. `usage_threads` holds the actor
+  that owns each thread of an environment, the first whose save listed
+  it. A row of `usage_threads` is never changed.
+
+  Calls. `usage_calls` holds one call record per call key of an
+  environment: the first record of granularity `call`, and the greatest
+  copy of granularity `session-total`. `charged` is the usage-record
+  `tokens` object the key has charged: the record's tokens for a `call`,
+  and each class at the greatest count any copy carried for a
+  `session-total`; it never decreases. `revision` is the number of
+  postings made for the key.
+
+  Postings. `usage_postings` holds what each call record adds to the
+  ledger: one posting for a record of granularity `call`, and one for
+  each growth of a `session-total`, with `revision` counting from 1.
+  `base_tokens` is the key's charged tokens before the posting, all 0 for
+  revision 1, and `tokens` the usage-record `tokens` object of what the
+  posting adds; the posting's amount is priced from both, as
+  `price-table` states for growth.
+  `used_at` is the record's timestamp in epoch milliseconds. `actor`,
+  `item`, and `visit` are its attribution, fixed when the posting is made;
+  `visit` is the number of the actor's state visit the call was spent
+  in, as `history-database-schema` numbers them in `history_visit`, and
+  null for the ledger actors of unowned usage. The module keeps no
+  visits of its own. A posting is
+  `pending` with a `reason`, `unaccounted` with no `account`, `unpriced`,
+  `no-window`, or `unmetered` for an unmetered call, whose `base_tokens`,
+  `tokens`, and its call's `charged` are JSON null and which never posts;
+  or `posted` with its `account`, its `amount` in the account's unit, its
+  `ledger_key`, and `posted_at`. A pending posting
+  changes only to `posted`, to pending with another reason and account,
+  or, while its `actor` is a ledger actor of unowned usage, to the
+  attribution its session's mapping or its thread's ownership gives; a
+  posted one never changes. A posting's `visit` stays after retention
+  removes its actor's consumed events and commands, as `retention` states; no posting is
+  deleted. The `usage_postings_by_account` index holds each posting that
+  names an account, by account and `used_at`, and serves each account's
+  latest call.
+
+  Reattributions. `usage_reattributions` holds every reattribution of
+  a posted posting, in `seq` order: its `posting`, its `cause`, and the
+  `actor`, `item`, and `visit` it gives, with the time it was recorded.
+  A `mapping` row is the late attribution its session's mapping gives,
+  an `ownership` row the late attribution its thread's ownership gives,
+  and a `move` row an operator's usage move, whose `ledger_key` names
+  the ledger's reattribution operation. Only a `move` row has one, and a
+  `move` row of a posting whose amount is 0 has none, since the ledger
+  holds nothing for that posting. A
+  row is written only while the posting's attribution names a ledger
+  actor of unowned usage, `thread:…` or `session:…`. A trigger aborts
+  every `UPDATE` and `DELETE`.
+
+  Attributed postings. The view `usage_attributed_postings` gives every
+  posting with `attributed_actor`, `attributed_item`, and
+  `attributed_visit`, those of its latest reattribution or its own;
+  `held_actor` and `held_item`, those of its latest `move` row or its
+  own, under which the ledger holds its actual; and `moves`, the number
+  of its `move` rows. The ledger keeps a posting's actual under its held
+  actor and item; the module's actor usage read counts its amount for
+  its attributed actor.
+
+  Source errors. `usage_source_errors` holds the latest source error
+  record of each code for each source of an environment.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/usage-tables.sql` runs without error on an empty
+  SQLite database. A test applies the module's exported migration steps in
+  order to an empty database and compares the `type`, `name`, `tbl_name`,
+  and `sql` of every `sqlite_schema` row whose name starts with `usage_`
+  with the rows this file produces on a second empty database, with each
+  run of whitespace in `sql` read as one space; they are equal. An
+  `UPDATE` or `DELETE` on `usage_declarations` fails with its append-only
+  message, and so does one on `usage_reattributions`. A
+  `mapping` or `ownership` reattribution with a ledger key fails a CHECK
+  constraint, and a `move` one without a ledger key is accepted. The view answers, for a posting with
+  a `move` row followed by a `mapping` row, the `mapping` row's
+  attribution and the `move` row's actor and item as held. A posted
+  posting without a ledger key, a pending posting without a reason, and an unaccounted posting with an account each fail
+  a CHECK constraint. `EXPLAIN QUERY PLAN` of the latest-call read that
+  `usage-intake` states names only `SEARCH` steps on
+  `usage_postings_by_account`, and no `SCAN` of `usage_postings`.

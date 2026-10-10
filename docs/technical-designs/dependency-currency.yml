@@ -1,0 +1,243 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  contextualized-by:
+    - hold-dependency-updates-at-runtime-contracts
+  related-to:
+    - agent-threads
+    - usage-decoder
+    - usage-intake
+    - comparator-sandbox
+    - operator-console
+    - service-distribution
+objective: >-
+  Keep every dependency of the Manifold workspace current through one
+  mechanism, the Renovate GitHub App on `wyrd-company/manifold`, so that
+  an update arrives as a pull request that `task check` gates, a fragile
+  integration is raised on its own, and a dependency that has stopped
+  releasing is named with its fallback before it fails Manifold.
+background:
+  current-design: >-
+    The workspace is the root package, `packages/service`,
+    `packages/host-cli`, `packages/shared`, `packages/console`, and
+    `testing/live-github`. Shared tools have one exact version each in the
+    pnpm catalog in `pnpm-workspace.yaml`. Libraries whose integration
+    tests gate every raise are exact: `@codeburn/core`,
+    `@gorules/zen-engine`, `@wyrd-company/t3code-client`, `t3`,
+    `quickjs-emscripten-core`, and `@jitl/quickjs-wasmfile-release-sync`.
+    Every other dependency has a caret range, and `pnpm-lock.yaml`
+    resolves it. Node is `.node-version` for development and CI, and
+    `engines.node` in the root `package.json` is the floor the service
+    supports. The check workflow pins each action to a commit digest with
+    its version in a comment, names its runner images in `runs-on` and in
+    the package job's matrix, and names the Task version as an input to
+    `go-task/setup-task`. pnpm refuses a release younger than its
+    `minimum-release-age`, one day, except the releases that
+    `minimumReleaseAgeExclude` names.
+  problems:
+    - >-
+      A dependency that nothing raises falls behind until a security fix
+      or a Node release forces a raise across several majors at once.
+    - >-
+      A raise grouped with unrelated raises fails or passes as one; a
+      fixture failure in one library holds every other update.
+    - >-
+      Renovate's pin range strategy turns a support floor such as
+      `engines.node` `>=24.11` into an exact pin on the newest Node.
+    - >-
+      Renovate's GitHub Actions manager reads `runs-on` but not a runner
+      named in a job matrix, nor a tool version passed as an action
+      input, so those would stay behind while the rest of the workflow
+      moves.
+    - >-
+      A runtime dependency can stop releasing while it still installs and
+      passes every test, so nothing fails until the day a fix is needed.
+design-challenges:
+  one-mechanism: >-
+    Renovate already runs on the repository. A second update mechanism
+    would race it for the same lines, so every currency rule here is
+    Renovate configuration or a document Renovate's dashboard checks.
+  exact-pins-stay-exact: >-
+    The repository's choice of exact or ranged is deliberate per
+    dependency, and the update mechanism keeps it rather than imposing
+    one strategy on every line.
+  release-age: >-
+    A Renovate branch whose release pnpm refuses fails to install, so
+    Renovate waits at least as long as pnpm does.
+  slow-cadence-signal: >-
+    The threshold that names a slow dependency has one home, so that the
+    document and the dashboard never disagree about which dependencies
+    are old.
+proposed-design:
+  high-level-overview: >-
+    `renovate.json5` at the repository root is the one Renovate
+    configuration. It extends `config:recommended` and
+    `helpers:pinGitHubActionDigests`, keeps each dependency's current
+    range style, groups minor, patch, pin, and digest updates into one
+    pull request, gives each fragile exact-pinned library its own pull
+    request, moves Node's major with its type declarations, holds
+    TypeScript below 7, never touches `engines`, reads the runner images
+    and Task version that the GitHub Actions manager misses, waits one day
+    for a timestamped release, exempts runner releases with no timestamp,
+    and flags as abandoned any package with no release in one year. The
+    slow-cadence list below names every runtime dependency that threshold
+    flags, plus libraries that trail the project they are
+    cut from, each with its fallback. Renovate's configuration validator
+    accepts the file, and a Renovate `--platform=local` dry run of the
+    workspace detects every manifest the coverage section names.
+  configuration-file: >-
+    The file is `renovate.json5`, so that it carries the commented
+    relationships header every configuration file carries
+    (`implements: dependency-currency`); Renovate's validator rejects an
+    unknown top-level key in JSON. No `renovate.json` exists beside it, so
+    Renovate reads this file and no other. Its `$schema` is
+    `https://docs.renovatebot.com/renovate-schema.json`. The repository
+    formatter formats it as it formats every file.
+  coverage: >-
+    Renovate's managers detect every manifest with no `includePaths`:
+    npm reads the root `package.json`, each `package.json` under
+    `packages/*` and `testing/*`, and the catalog in `pnpm-workspace.yaml`
+    (a `catalog:` reference in a package is the catalog's line and is not
+    updated twice); `packageManager` carries pnpm; nodenv reads
+    `.node-version`; github-actions reads each `uses:` and each `runs-on`
+    in `.github/workflows/`. Two regex custom managers, each limited to
+    `/^\.github/workflows/[^/]+\.ya?ml$/`, cover what github-actions does
+    not read. The Task version matches
+    `uses: go-task/setup-task@\S+.*\n\s+with:\n\s+version: (?<currentValue>\d+\.\d+\.\d+)`
+    with dependency `go-task/task`, datasource `github-releases`, and
+    `extractVersionTemplate` `^v(?<version>.*)$`. The matrix runner images
+    match `ubuntu-(?<currentValue>\d+\.\d+)(?:-arm)?[,\]]` with
+    `matchStringsStrategy` `any`, dependency `ubuntu`, and datasource
+    `github-runners`, so `ubuntu-24.04` and `ubuntu-24.04-arm` in a matrix
+    list move in the same branch as `runs-on: ubuntu-24.04`. A workspace
+    package added under `packages/*` or `testing/*` is covered with no
+    configuration change.
+  range-strategy: >-
+    `rangeStrategy` is `auto`. An exact version stays exact and is
+    replaced by the newer exact version. A caret range whose new version
+    satisfies it is raised in `pnpm-lock.yaml` only; one whose new version
+    is outside it is replaced by a caret range on the new version. No
+    update changes a dependency from exact to ranged or from ranged to
+    exact. A dependency is made exact by editing its manifest line, and
+    Renovate keeps it exact from then on.
+  grouping: >-
+    Package rules apply in this order, a later rule overriding an earlier
+    one. (1) Every `minor`, `patch`, `pin`, and `digest` update is in the
+    group `minor and patch updates`, so that the routine raises of the
+    whole workspace and the workflow arrive as one pull request on the
+    branch `renovate/minor-and-patch-updates`. (2) `@codeburn/core`,
+    `@gorules/zen-engine`, `@wyrd-company/t3code-client`, `t3`,
+    `quickjs-emscripten-core`, and `@jitl/quickjs-wasmfile-release-sync`
+    have `groupName` `null`, so each of their updates, of any type, is
+    its own pull request; each is an exact pin whose raise its own
+    fixtures or integration tests gate, and a failure there holds no
+    other update. (3) `quickjs-emscripten-core` and
+    `@jitl/quickjs-wasmfile-release-sync` are the group `quickjs`, because
+    the core and its WebAssembly variant are released together and run
+    only as a pair. (4) `node` and `@types/node` majors are the group
+    `Node.js major`. Renovate's Node versioning treats only a Long Term
+    Support line as stable, and `config:recommended` gives `@types/node`
+    the same versioning, so `.node-version` and the catalog's
+    `@types/node` reach a new major together and only when it is Long Term
+    Support. (5) Every other major update is its own pull request, one per
+    package or per monorepo as `config:recommended` groups monorepos.
+    Renovate has no schedule and no automerge: a pull request opens when
+    its release meets the release-age rule, and an operator merges it
+    once `task check` passes.
+  holds: >-
+    `typescript` has `allowedVersions` `<7`. The service's comparator
+    sandbox and the host CLI's comparator lint call the TypeScript
+    compiler's JavaScript API at run time, which TypeScript 7 does not
+    provide; the hold is lifted when Manifold no longer calls that API or
+    TypeScript 7 provides it. Dependency type `engines` has `enabled`
+    `false`: `engines.node` is the floor the service supports, raised by
+    hand when Manifold starts using a newer Node API, never by an update.
+    No other hold is configured. A major that Manifold does not take yet
+    stays an open pull request, so that it remains visible on the
+    dependency dashboard and is rebased as the branch moves.
+  release-age: >-
+    `minimumReleaseAge` is `1 day`, pnpm's `minimum-release-age`. A
+    timestamped release younger than that is a pending update on the
+    dashboard and no branch. A package rule matching the `github-runners`
+    datasource sets `minimumReleaseAgeBehaviour` to `timestamp-optional`,
+    so that runner images with no release timestamp can be offered. This
+    exempts only releases with no timestamp; a timestamped runner release
+    still waits one day. Other dependencies keep `timestamp-required`.
+    A regex-managed dependency whose lookup reports a pending release
+    solely for a missing timestamp receives the same scoped exemption.
+    A release that a manifest needs sooner is added to
+    `minimumReleaseAgeExclude` in `pnpm-workspace.yaml` by the change that
+    needs it, and Renovate's value moves with pnpm's.
+  abandonment-threshold: >-
+    `abandonmentThreshold` is `1 year`. Renovate marks each package with
+    no release in that period as abandoned on the dependency dashboard.
+    That threshold is the slow-cadence threshold of this document, and it
+    is stated once, in the configuration.
+  slow-cadence-dependencies: >-
+    A runtime dependency is a `dependencies` entry of `packages/service`,
+    `packages/host-cli`, `packages/shared`, or `packages/console`, whose
+    built files the service serves. It is on this list when Renovate
+    flags it as abandoned, or when its releases trail the project it is
+    cut from, so that a fix upstream does not reach Manifold. Its type
+    declarations follow it. Each entry states what Manifold uses it for,
+    what triggers the fallback, and the fallback. A fallback follows the
+    build-versus-buy order: vendor a small library, fork one other
+    projects also need, and replace only when neither keeps Manifold's
+    contract.
+  nunjucks: >-
+    `nunjucks` 3.2.4, with `@types/nunjucks`, renders the process
+    repository's prompt templates in the service, as `agent-threads`
+    specifies. Users author those templates, so the template language is
+    part of Manifold's contract and replacing the engine changes every
+    user's templates. Trigger: an advisory against the version in use, or
+    a Node or TypeScript release it fails under, with no upstream release
+    that fixes it. Fallback: fork. A Wyrd Company fork of
+    `mozilla/nunjucks` carries the fix and publishes under the
+    `@wyrd-company` scope, and the service depends on it through a package
+    alias, `"nunjucks": "npm:@wyrd-company/nunjucks@<version>"`, so that no
+    import changes. The fork ships its own type declarations, and
+    `@types/nunjucks` is removed. The fork is dropped when upstream
+    releases the fix.
+  class-variance-authority: >-
+    `class-variance-authority` 0.7.1 composes the console's component
+    class names (`cva` and `cx` in `packages/console/src/ui/`). Trigger:
+    a React, TypeScript, or Tailwind release it fails under, or an
+    advisory, with no upstream release. Fallback: vendor. Its MIT source
+    is copied into `packages/console/src/ui/` with its licence and the
+    upstream version and commit in the file header, the dependency is
+    removed, and the vendored copy is replaced by the package again when
+    upstream releases.
+  sirv: >-
+    `sirv` 3.0.2 serves the console's built files from the service
+    (`packages/service/src/console/static-files.ts`). Trigger: an
+    advisory, or a Node release it fails under, with no upstream release.
+    Fallback: vendor. Its MIT source is copied into the service's console
+    module with its licence and the upstream version and commit in the
+    file header, and the dependency is removed; it is replaced by the
+    package again when upstream releases.
+  codeburn-core: >-
+    `@codeburn/core` decodes provider session files in the host CLI's
+    usage decoder, at the exact version `usage-decoder` names. It is on
+    this list because the library releases less often than the `codeburn`
+    CLI cut from the same repository, so a provider log-shape fix can
+    reach the CLI and not the library. Trigger: a provider's session file
+    shape changes and the library has no release that decodes it.
+    Fallback: vendor. The affected provider's decoder is copied from the
+    library's MIT source into the host CLI's usage module with the
+    upstream version and commit recorded, the decoder fixtures gate it,
+    and the vendored decoder is removed when the library releases the
+    fix.
+  keeping-the-list: >-
+    The list changes in the change that adopts a runtime dependency
+    Renovate would flag, and when the dependency dashboard flags one the
+    list does not name. An entry leaves the list when its dependency
+    releases within the threshold again or is removed. A fallback is
+    taken only on its trigger; until then the dependency stays as it is.
+  proof: >-
+    `npx --package renovate renovate-config-validator` run in the
+    repository root accepts `renovate.json5`. A Renovate dry run,
+    `renovate --platform=local --dry-run=lookup` in a clone, lists every
+    manifest the coverage section names, the Task version and the three
+    runner images as dependencies, the branches the grouping section
+    names, `engines.node` as disabled, and an abandonment for each package
+    this list names by threshold. Neither runs in `task check`; both are
+    recorded when the configuration changes.

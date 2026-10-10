@@ -9,15 +9,24 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "bun build src/cli.ts --compile --outfile dist/manifold-host",
-    "build:targets": "for target in linux-x64 linux-arm64 darwin-arm64 windows-x64; do bun build src/cli.ts --compile --target=bun-$target --outfile dist/$target/manifold-host || exit 1; done",
-    "typecheck": "tsc --noEmit",
-    "test": "vp test run"
+    "build": "pnpm run typecheck && bun build src/cli.ts src/hook/worker.ts --compile --bytecode --outfile dist/manifold-host",
+    "build:targets": "pnpm run typecheck && for target in linux-x64 linux-arm64 darwin-arm64 windows-x64; do bun build src/cli.ts src/hook/worker.ts --compile --bytecode --target=bun-$target --outfile dist/$target/manifold-host || exit 1; done",
+    "typecheck": "pnpm --filter @wyrd-company/manifold-shared build && tsc --noEmit",
+    "test": "pnpm --filter @wyrd-company/manifold-shared build && vp test run",
+    "generate:comparator-library": "node scripts/generate-comparator-library.mjs && vp fmt src/comparator-lint/library.generated.ts",
+    "generate:command-tree": "node scripts/generate-command-tree.mjs && vp fmt src/catalog/command-tree.generated.ts"
+  },
+  "dependencies": {
+    "@codeburn/core": "0.9.20",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@wyrd-company/manifold-shared": "workspace:*",
+    "typescript": "catalog:",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "ajv": "^8.20.0",
     "bun": "catalog:",
-    "typescript": "catalog:",
     "vite-plus": "catalog:"
   }
 }

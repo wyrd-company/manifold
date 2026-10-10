@@ -1,0 +1,38 @@
+# GAP-SCHEMA: the risk schema is marked WIP; this file does not author an id
+# or slug field (filename is the id per standing convention).
+$schema: https://refinery.systems/ontology/risk
+title: Comparator sandbox cannot enforce resource limits
+
+# GAP-EDGE: the risk schema declares no relationship-types; the spike schema's
+# `mitigates` edge (inverse: mitigated-by) is the intended link.
+relationships:
+  mitigated-by:
+    - sandbox
+
+description: >-
+  A gate runs a comparator (user-written TypeScript function) to pick one task
+  from its population. The comparator must timeout on infinite loops, drop
+  execution if memory grows unbounded, and block world access (require, fetch,
+  process, timers). An isolation engine that does not enforce these limits
+  at enforcement boundaries — such as loops of small allocations or long native
+  builtins — would force the gate implementation either to spawn a subprocess
+  (requiring approval) or to abandon in-process sandboxing. Either path forces
+  the gate design itself to change, blocking the core architecture that uses
+  gates to release work without agent orchestration.
+
+categories:
+  - technical
+  - project
+
+likelihood: 3
+impact: 4
+
+response-strategy: mitigate
+
+status: mitigated
+
+# Mitigation: the sandbox spike tests both isolated-vm and quickjs-emscripten
+# at enforcement boundaries (infinite loops, array allocation patterns,
+# native builtin overruns) with measured evidence of what each engine stops
+# and what it does not, proving a viable isolation+limit path exists
+# (QuickJS per-load with capped wasm memory).

@@ -1,0 +1,535 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - service-configuration
+    - service-assembly
+    - store
+    - blueprint-migration
+  mitigates:
+    - process-repository-pull-unbounded
+objective: >-
+  Keep a clone of the user's process repository in the service, pulled in
+  process on request, and give every loader the repository's declared files
+  at one commit through one read-only seam, so that loaders never see a
+  half-pulled tree, a file read at a commit reads the same text after any
+  later pull, and a crash during a pull leaves the last complete commit
+  current; and save one or more changed files as one commit pushed to
+  the followed branch, so that a process changes from the console with no
+  redeploy, a retried save never pushes its change twice, and a branch that
+  moved under an edit is answered as a conflict, never overwritten.
+background:
+  current-design: >-
+    The concept's `process-repository` is a user-supplied git repository
+    that holds everything the user declares; Manifold clones it and pulls on
+    push. `service-configuration` holds its URL, branch, credential name, and
+    clone directory. The blueprint loader and the portfolio loader read
+    files through the seam this design defines, `ProcessRepositoryRevision`.
+  problems:
+    - >-
+      Git operations run in process, through an adopted library, with no
+      `git` subprocess.
+    - >-
+      isomorphic-git's fetch writes the tracking ref before it writes the
+      pack file and its index, and writes each file in place, over any file
+      already at that path. A crash between those writes leaves a ref naming
+      objects the clone lacks, and a crash during a write leaves a truncated
+      file, which may be a pack an earlier revision reads.
+    - >-
+      isomorphic-git's Node HTTP client sets no limit on a request, so a
+      remote that stops sending holds a pull, and every pull after it,
+      forever.
+    - >-
+      An actor started at one commit keeps reading that commit's files while
+      later pulls advance the repository.
+    - >-
+      The operator console edits a blueprint's text, and the edit reaches
+      the loaders only as a commit on the followed branch. The service
+      process can die after it writes the commit and before it pushes, or
+      after it pushes and before it answers, and the console then retries a
+      save whose outcome it never received.
+design-challenges:
+  convergence: >-
+    A pull that runs twice, or after a crashed pull, must end with the same
+    current commit and a readable clone.
+  crash-window: >-
+    The current commit must change in one atomic step, after every object
+    of the new commit is on disk and readable.
+  seam: >-
+    Loaders in the service, and tools that read a working tree, must read
+    files through the same small interface, testable with an in-memory
+    fixture.
+  save-convergence: >-
+    A save that runs twice, or after a crash at any point, must leave the
+    branch with the change in exactly one commit, and must never replace a
+    change another writer pushed to the same file.
+proposed-design:
+  high-level-overview: >-
+    The process repository module is
+    `packages/service/src/process-repository/`, whose only public file is
+    `index.ts`. `openProcessRepository` opens or creates a bare git
+    directory in the configured `directory`, recovers from a crashed pull,
+    and reads the current commit from a pointer file. `pull()` fetches the
+    configured branch with isomorphic-git, verifies every object of the
+    fetched commit's tree, and replaces the pointer file atomically.
+    `current()` and `revisionAt(commit)` return a `ProcessRepositoryRevision`
+    that reads blobs and trees at that commit straight from the object
+    database, with no working tree. `save(request)` writes its files as one
+    commit on top of the current commit and pushes it to the branch
+    without force; the revision follower then pulls it, so a saved commit
+    reaches the loaders by the same path as any pushed commit. The
+    `ProcessRepositoryRevision` interface lives in `packages/shared` so
+    that any reader of declared files implements it.
+  revision-seam: |-
+    `packages/shared/src/process-repository-revision.ts` defines the seam
+    and an in-memory implementation, both exported from the shared
+    package's `index.ts`.
+
+    ```ts
+    /** The process repository's declared files at one commit. Read-only. */
+    export interface ProcessRepositoryRevision {
+      /** The full 40-character hexadecimal commit id. */
+      readonly commit: string;
+      /** The file's text decoded as UTF-8, or undefined when no file is at the path. */
+      read(path: string): Promise<string | undefined>;
+      /** The paths of every file under the prefix, sorted by UTF-16 code unit. */
+      list(prefix: string): Promise<readonly string[]>;
+    }
+
+    /** A revision over the given files, for tests and tools. */
+    export function memoryRevision(
+      commit: string,
+      files: Readonly<Record<string, string>>,
+    ): ProcessRepositoryRevision;
+    ```
+
+    A path is repository-relative and `/`-separated: one or more segments,
+    none empty, `.`, or `..`, with no leading or trailing `/` and no `\`.
+    `read` and `list` throw a `TypeError` naming the argument for any other
+    path, since a malformed path is a defect in the caller. `list` also
+    accepts `""`, meaning the whole repository. A file is a blob entry with
+    mode `100644` or `100755`; a symbolic link or submodule entry is not a
+    file, so `read` resolves to `undefined` for it and `list` omits it.
+    `read` resolves to `undefined` for a path that is absent or names a
+    directory. `list(prefix)` resolves to every file path that starts with
+    `prefix` followed by `/`, or every file path for `""`, and to `[]` when
+    the prefix names a file or nothing. Two calls with the same argument on
+    the same revision resolve to equal results, because a commit's tree
+    never changes. `memoryRevision` applies the same path rules to the keys
+    of `files` and throws a `TypeError` for a malformed key or a commit
+    that is not 40 lower-case hexadecimal characters.
+  public-interface: |-
+    `packages/service/src/process-repository/index.ts` exports exactly
+    these names.
+
+    ```ts
+    import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
+    import type { Credentials, ProcessRepositoryConfiguration } from "../service-configuration/index.ts";
+
+    export function openProcessRepository(options: ProcessRepositoryOptions): Promise<ProcessRepository>;
+
+    export interface ProcessRepositoryOptions {
+      readonly configuration: ProcessRepositoryConfiguration;
+      readonly credentials: Credentials;
+      /** Called at each step of a pull, after the step completes. */
+      readonly probe?: PullProbe;
+      /** Called at each step of a save, after the step completes. */
+      readonly saveProbe?: SaveProbe;
+    }
+
+    export interface ProcessRepository {
+      /** The revision at the current commit, or undefined before the first pull completes. */
+      current(): ProcessRepositoryRevision | undefined;
+      /** The revision at any commit the repository holds, or undefined for any other commit. */
+      revisionAt(commit: string): Promise<ProcessRepositoryRevision | undefined>;
+      /** Moves the current commit to the remote branch's commit. */
+      pull(request?: PullRequest): Promise<PullOutcome>;
+      /** Commits the request's files on top of the current commit as one commit and pushes it to the branch. */
+      save(request: SaveRequest): Promise<SaveOutcome>;
+      /** The commit, from the current commit down its first parents to `base`, that carries the save's trailer. Reads only. */
+      findSave(request: Pick<SaveRequest, "base" | "saveId">): Promise<string | undefined>;
+      /** True when `ancestor` is reachable from `commit` through its parents and is not `commit`. Reads only. */
+      isAncestor(ancestor: string, commit: string): Promise<boolean>;
+    }
+
+    export interface SaveRequest {
+      /** One or more files, no two with the same path. */
+      readonly files: readonly SaveFile[];
+      /** The commit the edit started from. */
+      readonly base: string;
+      /** The commit message the caller gives; the save appends its trailer. */
+      readonly message: string;
+      /** 32 lower-case hexadecimal characters, the same for every retry of one text. */
+      readonly saveId: string;
+    }
+
+    export type SaveOutcome =
+      | { readonly kind: "pushed"; readonly commit: string; readonly parent: string }
+      | { readonly kind: "already-saved"; readonly commit: string }
+      | { readonly kind: "unchanged"; readonly commit: string }
+      | { readonly kind: "conflict"; readonly head: string; readonly files: readonly SaveFileAt[] };
+
+    export interface SaveFile {
+      /** A process repository path: `/`-separated segments, none empty, `.`, or `..`, and no `\`. */
+      readonly path: string;
+      readonly text: string;
+    }
+
+    /** A requested path's text at the current commit, undefined when it holds none. */
+    export interface SaveFileAt {
+      readonly path: string;
+      readonly text: string | undefined;
+    }
+
+    export type SaveStep = "committed" | "pushed";
+    export type SaveProbe = (step: SaveStep, commit: string) => void;
+
+    export class ProcessRepositorySaveError extends Error {
+      readonly kind: "authentication" | "rejected" | "remote";
+      /** The current commit the save built on. */
+      readonly head: string;
+    }
+
+    export interface PullRequest {
+      /** The branch commit the caller expects, such as a push event's head. */
+      readonly commit?: string;
+    }
+
+    export type PullOutcome =
+      | { readonly kind: "unchanged"; readonly commit: string }
+      | { readonly kind: "advanced"; readonly commit: string; readonly previous: string | undefined };
+
+    export type PullStep = "fetched" | "verified" | "published";
+    export type PullProbe = (step: PullStep, commit: string) => void;
+
+    export class ProcessRepositoryPullError extends Error {
+      readonly kind: "authentication" | "remote" | "branch-missing" | "incomplete";
+    }
+
+    export class ProcessRepositoryOpenError extends Error {
+      readonly commit: string;
+      readonly directory: string;
+    }
+    ```
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `layout.ts`
+    holds the paths inside `directory` and the atomic pointer write.
+    `git-fs.ts` holds the file system client and `git-http.ts` the HTTP
+    client the module gives isomorphic-git. `recover.ts` holds the open-time
+    recovery. `pull.ts` holds the fetch, verification, and publication.
+    `revision.ts` implements `ProcessRepositoryRevision` over the object
+    database. `save.ts` holds the save, and `save-message.ts` the pure
+    functions that build a save's commit message and read its trailer.
+    Tests import only `index.ts`. The module adds `isomorphic-git`
+    as a service dependency, and passes it the `git-fs.ts` client, the
+    `git-http.ts` client, and one object cache per open repository.
+  library: >-
+    Git runs in process through isomorphic-git, per
+    `use-isomorphic-git-for-the-process-repository`. The module calls
+    `init`, `fetch`, `readCommit`, `readTree`, `readBlob`, `resolveRef`,
+    `writeRef`, and, for a save, `writeBlob`, `writeTree`, `writeCommit`,
+    and `push`, with an explicit `gitdir`, so the clone is bare and has no
+    working tree. isomorphic-git speaks git's smart HTTP protocol, so
+    `processRepository.url` is an `http://` or `https://` URL.
+  directory-layout: >-
+    `directory` holds `git/`, the bare git directory, and `current`, the
+    pointer file. `current` holds one line: the 40-character commit id of
+    the current commit. The pointer is written by writing
+    `current.<random>.tmp`, calling `fsync` on it, renaming it over
+    `current`, and calling `fsync` on `directory`, so a reader finds the old
+    pointer or the new one and never a partial one. Manifold writes nothing
+    else inside `directory`; isomorphic-git writes inside `git/`, through
+    the client described under object writes.
+  object-writes: >-
+    isomorphic-git writes every file through the file system client it is
+    given, and the module gives it a client over `node:fs/promises` whose
+    `writeFile` never leaves a partial file at its target path. The client
+    writes the content to `<target>.<random>.manifold-tmp` in the target's
+    directory and calls `fsync` on it. For a target under `git/objects/`, it
+    then calls `link` from the temporary file to the target and removes the
+    temporary file; when `link` fails with `EEXIST`, the target is kept
+    unchanged and the write counts as done. Every file under `objects/` is
+    named by a checksum of its content, so a file already at that path
+    holds the content being written, and a published pack or index is never
+    opened for writing. For any other target, such as a ref or `config`, it
+    renames the temporary file over the target. It then calls `fsync` on the
+    target's directory. Every other method passes through to
+    `node:fs/promises`. A crash during a write leaves the target absent or
+    complete, and at most one `.manifold-tmp` file. The object cache needs
+    no invalidation: isomorphic-git lists `objects/pack/` on each packed
+    read and caches each index by file name, and a file at a name never
+    changes.
+  opening: >-
+    `openProcessRepository` creates `directory` when absent and runs, in
+    order: `init` with `bare: true` on `git/`, which leaves an existing
+    repository unchanged; removal of every `current.*.tmp` file in
+    `directory` and every `.manifold-tmp` file under `git/`; removal of
+    every `objects/pack/pack-<sha>.pack` that has no `pack-<sha>.idx`, since
+    isomorphic-git reads a pack only through its index and a pull that wrote
+    the pack and stopped before the index never published; and the read of
+    `current`. When `current` names a commit, open walks its tree as a
+    pull's verification step does, and fails with
+    `ProcessRepositoryOpenError` naming the commit and `directory` when an
+    object is missing or unreadable. A write never truncates a file, so only
+    a change made outside the service fails this check, and the operator
+    restores or removes `directory`. When `current` is absent, `current()`
+    returns `undefined` until a pull completes. Opening twice in a row
+    removes nothing the second time.
+  pull: >-
+    `pull(request)` runs in five steps. Pulls are serialized: a pull
+    requested while one runs waits for it, and every request made while one
+    runs shares the single pull that runs next. (1) When `request.commit`
+    equals the current commit, it returns `unchanged` with no network
+    request. (2) It deletes every ref under `git/refs/` and
+    `git/packed-refs`, then writes `refs/heads/<branch>` as the current
+    commit when there is one. With `singleBranch: true`, isomorphic-git
+    sends one `have` line: the commit its `ref` argument resolves to
+    locally, and `refs/heads/<branch>` is the first path that resolution
+    tries for `ref` `refs/heads/<branch>`. The only commit the fetch claims
+    to hold is therefore the current commit, which this module verified.
+    (3) It calls `fetch` with the configured `url`, `ref` set to
+    `refs/heads/<branch>`, `singleBranch: true`, `tags: false`, and `onAuth`
+    and `onAuthFailure` as described under authentication, and calls the
+    probe with `fetched` and `fetchHead`. A remote with no such branch fails
+    with kind `branch-missing`; an authentication the remote refuses fails
+    with kind `authentication`; any other transport or protocol failure
+    fails with kind `remote`. (4) It reads the `fetchHead` commit and walks
+    its tree, reading every tree and blob object, and calls the probe with
+    `verified`. A missing or unreadable object fails with kind `incomplete`.
+    Steps 2 to 4 run under the pull timeout described below.
+    (5) When `fetchHead` equals the current commit it returns `unchanged`.
+    Otherwise it writes the pointer, calls the probe with `published`, and
+    returns `advanced` with the previous commit. A pull that fails leaves
+    the current commit and every revision unchanged. The commit follows
+    the branch: after a force push, the next pull makes the remote's commit
+    current whether or not it descends from the previous one.
+  pull-timeout: >-
+    `pullTimeoutMs` in the `processRepository` section bounds the network
+    work of each pull, default 60000. At step 2 the pull creates
+    `AbortSignal.timeout(pullTimeoutMs)`. `git-http.ts` is
+    isomorphic-git's `http/web` client, which calls Node's global `fetch`,
+    with that signal on every request, so the signal aborts a request that
+    is waiting for a response and a response body that is still arriving.
+    The same signal goes to `installationToken` as `signal` when `onAuth`
+    mints a token, so a token request that stalls is aborted with it. A pull
+    classifies a failure by the signal first: when the signal has aborted,
+    the pull fails with kind `remote` and a message naming the timeout, the
+    URL, and the branch, whether the failure came from a git request, from
+    `onAuth`, or from isomorphic-git wrapping either, and never with kind
+    `authentication`. The
+    failed pull leaves the current commit and every revision unchanged, as
+    any failed pull does, and the next pull runs. The signal bounds only
+    requests: a pull whose requests completed in time finishes its local
+    verification and publication, so no write of a timed-out pull runs
+    beside the next pull.
+  convergence: >-
+    A second pull of the same commit sends the current commit as its
+    `have`, receives an empty pack, which isomorphic-git does not write,
+    finds `fetchHead` equal to the current commit, and returns `unchanged`.
+    A pull after a crash at any point before the pointer rename finds the
+    previous pointer, resets the refs to it in step 2, and fetches every
+    object the crashed pull did not publish; a pack it already holds is
+    kept as it is. A crash after the rename leaves the new commit current. A
+    crash during `init` leaves a directory that `init` completes on the next
+    open.
+  authentication: >-
+    When `configuration.credential` is absent, `fetch` gets no `onAuth`, and
+    a remote that asks for authentication fails the pull with kind
+    `authentication`. Otherwise the module resolves the name through
+    `credentials.resolve` at open, so an undefined name fails
+    `openProcessRepository` with `UnknownCredentialError`. `onAuth` runs
+    only when the remote asks, so a public repository never mints a token.
+    For a `github-app` credential, `onAuth` calls `installationToken` with
+    `repositories` set to the repository name taken from the URL's last path
+    segment without `.git`, and `permissions` set to `{ contents: "read" }`,
+    and returns `{ username: "x-access-token", password: token.reveal() }`.
+    `onAuthFailure` returns `{ cancel: true }`. A save's `push` mints its
+    own token the same way with `permissions` set to
+    `{ contents: "write" }`, so only a push holds a token that can write,
+    and a pull's token stays read-only. The token reaches
+    isomorphic-git and nothing else: the module writes no token to a file,
+    the store, an error message, or a log line, and errors name the URL
+    without user info, the branch, and the credential name.
+  revisions: >-
+    A revision holds its commit id, the git directory, and the repository's
+    object cache. `read(path)` calls `readBlob` with the commit as `oid` and
+    the path as `filepath`, after checking the entry's mode with `readTree`
+    on the parent directory, and decodes the blob with a `TextDecoder` for
+    UTF-8. `list(prefix)` walks the tree at the commit from the prefix's
+    tree down. `current()` returns the revision for the pointer's commit,
+    the same object until a pull publishes. `revisionAt(commit)` resolves to
+    a revision when `readCommit` finds the commit in the clone, and to
+    `undefined` for any other string, including one that is not a commit
+    id. The blueprint loader reports `undefined` as a missing version.
+    The clone keeps every object it fetches, since isomorphic-git never
+    deletes objects, so a revision at an older commit reads the same text
+    after any later pull and after a restart. `revisionAt` is how a loader
+    rebuilds what it read at an older commit: the blueprint loader rebuilds
+    an older blueprint version for an actor started at that commit.
+    `isAncestor(ancestor, commit)` calls isomorphic-git's `isDescendent`
+    with `oid` the commit, `ancestor`, and no depth limit, over every
+    parent, and answers `false` when the two are equal or either is not a
+    commit the clone holds. It is how migration orders two versions, as
+    `blueprint-migration` states: a commit a force push left off the
+    branch is no ancestor of the commits after it.
+  trigger: >-
+    `pull` is the one function that moves the current commit. The service
+    calls it once at start, and the GitHub event source calls it with the
+    pushed head as `request.commit` when a push to the configured branch
+    arrives and with no request at each sweep. Both calls go through the
+    service's revision follower, which after each pull loads the current
+    revision into the blueprint loader and applies it to the portfolio, as
+    `service-assembly` states. `save` is called only by the follower too,
+    right after a pull in the same job.
+  save: >-
+    `save(request)` runs in five steps. Saves and pulls are serialized
+    together: a save waits for a running pull or save, and a pull for a
+    running save. Let H be the current commit; a save with no current
+    commit throws a `TypeError`, since the follower pulls first. (1) It
+    calls `findSave`, and when it finds a commit, returns `already-saved`
+    with that commit. `findSave` walks the current commit's first parents
+    from the current commit until it reaches `base` or a root commit, and
+    resolves to the first commit it walks whose message carries the
+    trailer `Manifold-Save: <saveId>`, or to `undefined`; it writes
+    nothing and makes no request, and waits for a running pull or save as
+    a save does.
+    (2) It reads each file's `path` at H and at `base`. When
+    `revisionAt(base)` is `undefined`, or any path's two texts differ, it
+    returns `conflict` with H and the text at H of every requested path, in
+    the request's order. Two absent files are equal, so a save of a new
+    path conflicts only when another commit created it, and a branch that
+    moved only in other files takes the save on top of its new commit. (3)
+    When every file's `text` equals the file at H, it returns `unchanged`
+    with H. (4) It writes each file's blob, a tree for each directory from
+    each file's up to the root with every other entry as H holds it, and
+    one commit whose only
+    parent is H, with the identity and message of save-identity. It writes
+    `refs/manifold/save` naming the commit, and calls the save probe with
+    `committed`. (5) It calls `push` with the configured `url`, `ref`
+    `refs/manifold/save`, `remoteRef` `refs/heads/<branch>`, and `force:
+    false`, calls the save probe with `pushed`, and returns `pushed` with
+    the commit and H as `parent`. The save never moves the pointer: the
+    follower pulls the pushed commit, so it is verified, published, and
+    applied as any pushed commit is. isomorphic-git refuses a push that is
+    not a fast-forward, and git's receive-pack refuses a ref update whose
+    old value is no longer the branch's, so a branch that moves between
+    the pull and the push fails the push and is never overwritten. A push
+    the remote refuses fails with `ProcessRepositorySaveError` kind
+    `rejected` and the remote's reason, an authentication the remote
+    refuses with kind `authentication`, and any other failure with kind
+    `remote`; each carries H as `head`. The follower decides what a
+    refused push means, as `service-assembly` states. `path` and `saveId`
+    are checked against the shapes of `SaveRequest`, and `save` throws a
+    `TypeError` for any other value, as is a request with no file or with
+    two files at one path, since each caller checks them first. A save of
+    several files is one commit pushed as one ref update, so the branch
+    holds every file of it or none.
+    Which paths may be saved is each caller's policy, and `save` takes any
+    process repository path a caller passes: the blueprints API saves only
+    blueprint paths under `blueprints/`, as `blueprints-api` states, and
+    the task metadata module saves only `task-metadata.yml`, as
+    `task-metadata` states, and the declarations API saves only its
+    declaration paths, `portfolio.yml` and `bindings.yml` together in an
+    archive, as `declarations-api` states. Every save keeps the same commit author, typed
+    conflict, and convergence by `saveId`, whatever its path.
+  save-identity: >-
+    The commit's author and committer are both `commitAuthor` from the
+    `processRepository` section: `name` default `Manifold`, and `email`
+    default `manifold@manifold.invalid`, a reserved domain that names no
+    GitHub account, so a saved commit is attributed to no person. The time
+    is the time of step 4, with offset `+0000`. The message is `message`
+    with trailing white space removed, a blank line, and the trailer line
+    `Manifold-Save: <saveId>`, ending in a newline. The commit is not
+    signed.
+  save-timeout: >-
+    `pullTimeoutMs` also bounds a save's network work. Step 5 creates
+    `AbortSignal.timeout(pullTimeoutMs)` and passes it to every request of
+    the push and to `installationToken`. A save whose signal has aborted
+    fails with kind `remote` and a message naming the timeout, the URL, and
+    the branch. Steps 1 to 4 read and write only the clone and run to their
+    end.
+  save-convergence: >-
+    Every object a save writes goes through the file system client of
+    object-writes, so a crash leaves each object absent or complete, and an
+    object written twice is kept as it is. A crash before `committed` leaves
+    at most unreferenced objects and a `refs/manifold/save` ref that the
+    next pull's step 2 deletes with every other ref. A crash after
+    `committed` and before the push leaves the remote branch unchanged; the
+    commit is reachable from no branch, and a retried save with the same
+    `saveId` finds no trailer on the branch, writes a new commit, and pushes
+    it, so the branch holds the change once. A crash after the push leaves
+    the commit on the branch; the next start's pull publishes and applies
+    it, and a retried save with the same `saveId` finds its trailer at step
+    1 and returns `already-saved` with no new commit. A save run twice in a
+    row likewise returns `already-saved` the second time, once the
+    follower's pull has taken the first commit.
+  tests: >-
+    Tests serve fixture repositories over smart HTTP from an in-test
+    `node:http` server that runs `git http-backend` as a CGI program on a
+    bare repository in a temporary directory; the fixture commits are
+    written with isomorphic-git. `git` runs only in the test fixture, never
+    in the module. Tests cover: a first pull advances from `undefined`; a
+    second pull with no new commit sends the current commit as its only
+    `have` line, which the test server records from the upload-pack
+    request, and returns `unchanged` with no new file under `objects/`; a
+    pull with `request.commit` equal to the current commit makes no request;
+    a file read at an older commit returns the same text after a newer pull
+    and after reopening; `read` of a directory, a symbolic link, and an
+    absent path resolves to `undefined`; `list` with `""`, a directory, and
+    a file prefix; malformed paths throw; an unknown branch, a refused
+    credential, and a server that closes the connection during the pack
+    each fail with their kind and leave the current commit readable. A
+    server that sends headers and then stops, a server that stops partway
+    through the pack, and a private repository whose in-test GitHub API
+    accepts the token request and never responds, each fail a pull with
+    `pullTimeoutMs` 200 with kind `remote` once the timeout passes, with
+    the current commit and its revision still reading their original text,
+    and the next pull against a healthy server and API advances. Crash tests: a probe that throws at `fetched` and at
+    `verified`, then a new open and pull, ends at the remote commit with the
+    old commit readable throughout; a `.pack` with no `.idx`, leftover
+    `.manifold-tmp` and `current.*.tmp` files, and a branch ref naming a
+    missing commit, each placed in the git directory before open, recover
+    and pull to the remote commit; a child process killed during a pull of a
+    large fixture leaves a directory that opens at the previous commit and
+    pulls to the remote commit. Two held-pack tests each start from a
+    fixture that has pulled commit A and then commit B, so the clone holds
+    A's pack and B is current, and have the test server replay its recorded
+    response for the pull of A, so the next pull receives a pack whose name
+    the clone holds and `fetchHead` A. In the first, the pull runs in a
+    child process killed after the server has sent the response and before
+    `published`; after reopening, B is `current()`. In the second, the pull
+    runs to completion and returns `advanced` with A; after reopening, A is
+    `current()`. In both, the held pack's inode, size, and content hash are
+    unchanged, and `revisionAt` reads A and B with their original text. A corrupted object placed
+    in the current commit's tree fails open with
+    `ProcessRepositoryOpenError`. A credential test serves a repository that
+    requires basic authentication, mints from the in-test GitHub API, and
+    asserts the token appears in no error, no file under `directory`, and
+    no row of a store opened beside it. Save tests serve the fixture with
+    `git http-backend` and `http.receivepack` enabled, and drive `save`
+    after a `pull`. A save pushes one commit whose parent is the previous
+    branch commit, whose tree differs from it only at the path, and whose
+    author, committer, and message are those of save-identity; a new path
+    is created with its directories. A save whose text equals the branch's
+    file returns `unchanged` and pushes nothing. After a pull of the pushed
+    commit, the same request returns `already-saved` with it. A remote
+    commit that changes the same file returns `conflict` with its text; a
+    remote commit that changes another file takes the save on top of it.
+    A save of two files pushes one commit whose tree differs from its
+    parent at both paths; when a remote commit changed either file, it
+    returns `conflict` with the text of both at the head and pushes
+    nothing; and the same request after a pull returns `already-saved`.
+    `findSave` finds a pushed commit's trailer from a later descendant,
+    and resolves to `undefined` for a `saveId` no commit down to `base`
+    carries. A remote that moves between the save's pull and its push fails the
+    push with kind `rejected`, and the branch keeps the other commit. A
+    remote that refuses the token fails with kind `authentication`, and a
+    server that stops during the push fails with kind `remote` after a
+    `pullTimeoutMs` of 200. The token request for a push asks for
+    `contents: write` and the one for a pull for `contents: read`. Crash
+    tests run a save in a child process killed at the save probe's
+    `committed` and at `pushed`; after reopening, a pull and the same
+    request leave exactly one new commit on the remote branch with the
+    change. `isAncestor` answers `true` for a commit's grandparent and for
+    the second parent of a merge, and `false` for the commit itself, for
+    its child, for a commit a force push replaced, and for a string that
+    is not a commit the clone holds.

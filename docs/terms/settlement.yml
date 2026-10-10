@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Settlement
+description: >-
+  Retiring a reservation and posting the actual when a task actor ends.

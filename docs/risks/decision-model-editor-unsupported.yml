@@ -1,0 +1,48 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: The JDM editor may stop working with the console's dependencies or policy
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the design whose browser test exposes a break before it merges.
+relationships:
+  mitigated-by:
+    - operator-console
+  related-to:
+    - decision-models
+    - expressions
+
+description: >-
+  The decision model editor is `@gorules/jdm-editor`. It has fewer than a
+  thousand stars on GitHub and one maintainer organization, its release
+  cadence is irregular, and it pins Ant Design 5,
+  `reactflow` 11, and a WebAssembly build of Zen's expression language.
+  The console runs React 19, which Ant Design 5 supports only in part, and
+  a Content Security Policy that blocks the WebAssembly build. The dialog
+  relies on behaviour the editor does not document: the table component
+  editing a custom node's configuration, the cell renderer replacing every
+  cell, the custom switch's handles, and the editor working while its
+  WebAssembly build fails to load. An update, or a part of the editor that
+  needs the WebAssembly build, can break the dialog, and an abandoned
+  editor leaves Manifold to fork it.
+
+categories:
+  - technical
+  - project
+
+likelihood: 3
+impact: 3
+
+response-strategy: mitigate
+# Mitigation: the editor and `reactflow` are pinned to exact versions, the
+# dialog loads only when opened, its JSONata cells do not use the editor's
+# WebAssembly build, and the built-browser test drives every behaviour the
+# dialog relies on in both themes under the console's policy, so an update
+# that breaks one fails before it merges. A model stays a YAML
+# file that the dialog's YAML view, any text editor, and the service's lint
+# handle without the editor.
+# Residual limit: an editor that is abandoned, or one that needs its
+# WebAssembly build to work, needs a fork or a change of the console's
+# policy, which is the user's decision.
+
+status: mitigated

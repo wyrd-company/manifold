@@ -1,5 +1,10 @@
+# ---
+# relationships:
+#   implements: operator-console
+# ---
 packages:
   - packages/*
+  - testing/*
 
 # One exact version per shared tool, referenced as `catalog:` by every package.
 catalog:
@@ -10,3 +15,7 @@ catalog:
 
 allowBuilds:
   bun: true
+
+minimumReleaseAgeExclude:
+  - "@wyrd-company/t3code-client@0.5.0"
+  - lucide-react@1.52.0

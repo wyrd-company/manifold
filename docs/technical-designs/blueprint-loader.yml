@@ -1,0 +1,476 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - expressions
+    - durable-event-delivery
+    - gates
+    - store
+    - token-lint
+    - task-metadata
+    - default-process
+    - blueprint-migration
+objective: >-
+  Turn the blueprints in a process repository into XState v5 state machines
+  the engine runs, one per blueprint version, so that a pushed change to a
+  blueprint is taken with no redeploy, a broken blueprint fails alone with
+  findings that name its file and location, a restored actor runs the
+  version it was last saved with, an actor that migrates reads its context
+  through the migration paths its author wrote, and the host CLI reports
+  exactly what loading would report.
+background:
+  problems:
+    - >-
+      A blueprint is the only source of a state machine, and XState v5
+      binds every guard, action, actor, and delay by name. A name that no
+      code provides is ignored or fails late, at the transition that first
+      uses it.
+    - >-
+      A snapshot carries a state value, context, history, and children, and
+      nothing about the machine it came from. Restored into a different
+      machine, a renamed state fails with an error and a renamed invoke or
+      implementation stalls with no error.
+    - >-
+      A blueprint author edits on a host and finds out whether the file
+      loads only after a push, unless the host checks it with the same
+      rules.
+design-challenges:
+  versions: >-
+    A push changes blueprints under running actors. Every actor must keep
+    the machine it was last saved with until a migration moves it, and
+    every new actor must take the latest.
+  isolation: >-
+    One broken blueprint in a repository must not stop the others from
+    loading, and its failure must name what to fix.
+  one-lint: >-
+    The service on load and the host CLI must run one function and reach
+    the same verdict, though only the service holds the code behind each
+    implementation name.
+  restore: >-
+    A mismatch between a snapshot and its machine must be found before
+    XState sees it, and handed to the caller as data.
+  bundled: >-
+    Manifold ships its default blueprints in its own build, and a
+    restored actor must run the bundled text it was last saved with after
+    a Manifold upgrade changes that text.
+  later-names: >-
+    Modules such as gates and task actors register their own
+    implementations. The loader must accept a name a module adds without a
+    change to the loader.
+proposed-design:
+  high-level-overview: >-
+    The blueprint file format is specified in `blueprint`. A pure lint in
+    `packages/shared`, `lintBlueprint`, parses one file, validates its
+    shape, checks every implementation name against a set of names,
+    resolves the machine with XState, and runs the expression lint. The
+    blueprint loader in `packages/service` reads every blueprint of a
+    process repository revision through `ProcessRepositoryRevision`, runs
+    `lintBlueprint` with the names of an implementation registry that code
+    supplies, and builds each clean blueprint with
+    `createBlueprintExpressions` and XState's `setup`. It keeps every
+    loaded version by its version key, the commit and path, so a snapshot
+    saved with that key is restored into the same machine, after
+    `checkRestore` compares the snapshot with the machine. The host CLI
+    command `manifold-host blueprint lint` runs `lintBlueprint` on files
+    with the names Manifold ships. A revision's blueprints are its own
+    files under `blueprints/` and, at each path the repository does not
+    hold, the blueprint of the current bundle, which the loader loads as a
+    bundled version of the same commit, as `blueprint` specifies.
+  public-interface: |-
+    `packages/service/src/blueprint-loader/index.ts` exports exactly these
+    names. `ProcessRepositoryRevision` is the process repository module's
+    read-only view of one commit; the loader uses its `commit`, `read`,
+    and `list` and nothing else. The service passes the process repository
+    module's `revisionAt(commit)` as the option of the same name, which
+    gives the revision at any commit the repository holds.
+
+    ```ts
+    import type { AnyActorLogic, AnyActorRef, AnyStateMachine, Snapshot } from "xstate";
+    import type { ExpressionError, BlueprintDocument, BlueprintFinding, BlueprintVersion, TokenLintResult } from "@wyrd-company/manifold-shared";
+    import type { ContextMigration } from "../blueprint-expressions.ts";
+    import type { JsonValue } from "../store/index.ts";
+
+    export function createBlueprintLoader(options: BlueprintLoaderOptions): BlueprintLoader;
+
+    export interface BlueprintLoaderOptions {
+      /** The code behind every implementation name a blueprint may reference. */
+      readonly implementations: ImplementationRegistry;
+      /** The process repository module's revisionAt: the revision at a commit, or undefined when the repository does not hold it. */
+      revisionAt(commit: string): Promise<ProcessRepositoryRevision | undefined>;
+      /** Every expression failure at run time, with the version it ran in. */
+      onExpressionError(error: ExpressionError, version: BlueprintVersion): void;
+      /** The token lint's configuration bound, from `blueprintLint.configurationBound`. Default 20000. */
+      readonly configurationBound?: number;
+      /** Every state node entry of every machine the loader builds. */
+      onStateEntry?(entry: StateEntry): void;
+      /** The bundled blueprints: the current bundle, and every bundle the store keeps. */
+      readonly bundles: BundleSource;
+    }
+
+    export interface BundleSource {
+      /** The bundle of this Manifold build. */
+      readonly current: Bundle;
+      /** The bundle of a digest, or undefined when the store keeps none. */
+      at(digest: string): Bundle | undefined;
+      /** When the store first recorded the bundle of a digest, in milliseconds since the Unix epoch; undefined when it keeps none. */
+      recordedAt(digest: string): number | undefined;
+    }
+
+    export interface Bundle {
+      /** `bundleDigest(files)`. */
+      readonly digest: string;
+      /** Each bundled blueprint's text, by path. */
+      readonly files: ReadonlyMap<string, string>;
+    }
+
+    export interface StateEntry {
+      /** The machine actor whose state node was entered. */
+      readonly actor: AnyActorRef;
+      /** The state path in that machine; `""` for its root. */
+      readonly statePath: string;
+    }
+
+    export interface ImplementationRegistry {
+      readonly actors: Readonly<Record<string, AnyActorLogic>>;
+      readonly actions: Readonly<Record<string, unknown>>; // XState v5 action implementations
+      readonly guards: Readonly<Record<string, unknown>>;  // XState v5 guard implementations
+      readonly delays: Readonly<Record<string, unknown>>;  // XState v5 delay implementations
+      /** Event types each named action may raise; an action not listed raises none. */
+      readonly raises?: Readonly<Record<string, readonly string[]>>;
+    }
+
+    export interface BlueprintLoader {
+      loadRevision(revision: ProcessRepositoryRevision): Promise<RevisionLoad>;
+      version(version: BlueprintVersion): Promise<VersionLoad>;
+    }
+
+    export interface RevisionLoad {
+      readonly commit: string;
+      readonly blueprints: ReadonlyMap<string, LoadedBlueprint>; // by path
+      readonly failures: ReadonlyMap<string, readonly BlueprintFinding[]>; // by path
+      /** The version the loader tried at every path, loaded or failed: the repository file, or the current bundle's text with its `bundle`. */
+      readonly versions: ReadonlyMap<string, BlueprintVersion>; // by path
+    }
+
+    export type VersionLoad =
+      | { readonly status: "loaded"; readonly blueprint: LoadedBlueprint }
+      | { readonly status: "invalid"; readonly findings: readonly BlueprintFinding[] }
+      | { readonly status: "missing"; readonly reason: "commit" | "file" | "bundle" };
+
+    export interface LoadedBlueprint {
+      readonly version: BlueprintVersion;
+      readonly key: string; // blueprintVersionKey(version)
+      readonly document: BlueprintDocument;
+      readonly machine: AnyStateMachine;
+      /** The blueprint lint's warnings: `token-potential` and `token-unknown`. */
+      readonly warnings: readonly BlueprintFinding[];
+      /** The token lint's result: each gate's verdict and trap set, and the configuration key. */
+      readonly tokens: TokenLintResult;
+      checkRestore(snapshot: Snapshot<unknown>): RestoreCheck;
+      /** Maps an earlier version's context to this version's by its `migrations`. */
+      migrateContext(context: Readonly<Record<string, JsonValue>>): ContextMigration;
+    }
+
+    export type RestoreCheck =
+      | { readonly ok: true }
+      | { readonly ok: false; readonly mismatches: readonly RestoreMismatch[] };
+
+    export type RestoreMismatch =
+      | { readonly kind: "state-missing"; readonly statePath: string }
+      | { readonly kind: "state-incomplete"; readonly statePath: string }
+      | { readonly kind: "history-missing"; readonly stateId: string }
+      | { readonly kind: "child-missing"; readonly childId: string }
+      | { readonly kind: "implementation-missing"; readonly childId: string; readonly src: string };
+    ```
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else.
+    `loader.ts` implements `createBlueprintLoader`: discovery, the version
+    cache, and building. `restore-check.ts` holds `checkRestore` as a pure
+    function of a machine and a persisted snapshot. Tests live beside the
+    module and import only `index.ts`. In `packages/shared`,
+    `blueprint-lint.ts` holds `lintBlueprint` and its rules,
+    `blueprint-version.ts` holds the version key functions, and
+    `implementation-names.ts` holds `manifoldImplementationNames`; `index.ts`
+    exports them with the `BlueprintDocument`, `BlueprintFinding`,
+    `BlueprintVersion`, and `ImplementationNames` types. The host CLI
+    command lives in `packages/host-cli/src/blueprint-lint/command.ts`.
+  discovery: >-
+    `loadRevision` lists `blueprints/` through `revision.list`, keeps the
+    paths ending in `.yml` or `.yaml`, sorts them by code point, and loads
+    each path at `revision.commit` as `version` does. A path whose text
+    `read` returns as `undefined` between the list and the read is left
+    out. It then loads, as `version` does, each path of `bundles.current`
+    that the list does not hold, as the version `{ commit, path, bundle:
+    bundles.current.digest }`. A repository path is never also loaded
+    from the bundle, so a repository file that fails the lint is in
+    `failures` and its bundled blueprint is not loaded. The result holds
+    each path once, in `blueprints` when it loaded and in `failures` when
+    it did not, and in `versions` with the version it tried, so a failed
+    bundled path keeps its bundle digest.
+  loading: >-
+    Loading one version runs four steps. It reads the file through the
+    revision, and reads `task-metadata.yml` and `bindings.yml` at the same
+    commit and lints them with `lintTaskMetadataDeclaration`, once per
+    commit. It calls `lintBlueprint(path, text, names, {
+    configurationBound, lifecycleOptions, decisionModels })`, where `names` holds the
+    registry's keys of each kind and its `raises` declarations,
+    `lifecycleOptions` is `declaredLifecycleOptions` of a clean declaration,
+    absent when the declaration has findings, which the revision follower
+    reports, and `decisionModels` holds the sets of the decision models the
+    version invokes, as decision-models states; any finding fails the version with
+    those findings and warnings, and a version that loads keeps its
+    warnings and token lint result on its `LoadedBlueprint`. It calls `createBlueprintExpressions` with the
+    document's `machine`, `schemas`, and `migrations`, and an `onError`
+    that calls `onExpressionError` with the error and the version, and
+    keeps the `migrateContext` it returns as the version's. It calls XState's
+    `setup` with the registry's actors and the child blueprints the version
+    invokes, the registry's delays, the registry's guards with the
+    expression guards, and the registry's actions with the expression
+    action, and the evaluation logic of each decision model it invokes,
+    and `createMachine` with the returned machine configuration.
+    The shared `in` guard binding of `token-lint` turns each `in` guard
+    into XState's `stateIn`. Code supplies only implementations, the child blueprints, and one
+    action the loader places first in every state node's `entry`, the root
+    included: it calls `onStateEntry` with the machine actor and the state
+    path, and evaluates nothing. The rest of the configuration is the
+    blueprint's own. The lint has already compiled every
+    expression and every schema and resolved the machine, so a clean
+    blueprint builds. A throw from either build step still fails only
+    that version: an `ExpressionError` becomes a finding of its kind at
+    its location under `/machine`, and any other error a `machine`
+    finding at `/machine` with its message. A `loadRevision` therefore
+    never stops for a fault in one blueprint.
+  implementation-registry: >-
+    The registry is a plain object of four records, keyed by
+    implementation name. `serviceImplementations`, exported from
+    `packages/service/src/implementations.ts`, is the registry the service
+    starts the loader with, assembled from the modules that provide
+    implementations. A module that adds an implementation adds an entry;
+    the loader is unchanged. The names `expression.guard`, `expression.match`,
+    `expression.assign`, and `expression.map`, and every other name
+    beginning with `expression.`, belong to `blueprint-expressions`;
+    `createBlueprintLoader` throws a `TypeError` naming a registry entry
+    that uses the prefix, and likewise for an actor name beginning with
+    `blueprints/`, which names a child blueprint, or a guard entry named `in`. `serviceImplementations`
+    composes the parts that modules provide, as `actor-host` states.
+    `actorKinds` declares actor implementations as `promise` or `callback`,
+    with an undeclared kind treated as `promise`, as `blueprint-migration`
+    states. Registry composition carries the declarations, and the loader
+    copies them onto each loaded version.
+    `raises` declares the event types each named action may raise, as
+    `token-lint` requires; modules declare them beside their actions.
+    `manifoldImplementationNames` in `packages/shared` lists the composed
+    names, by kind, and a service test asserts that the two hold exactly
+    the same names and `raises` declarations, so the host CLI checks names against the set the
+    service loads with.
+  lint: >-
+    `lintBlueprint(path, text, names)` is the one blueprint lint, run by
+    the loader on every load and by the host CLI. It parses the text with
+    the `yaml` package as YAML 1.2 under the core schema with unique keys
+    and no custom tags, validates the document with Ajv against
+    `#/$defs/blueprint` of the `blueprint` schema asset, which gives every
+    expression implementation the expression reference shape, compiles
+    every schema under `schemas` with Ajv for draft 2020-12, collects every
+    implementation reference and checks it against `names` and the four
+    expression implementations, builds the machine with XState's
+    `createMachine` over a stub for every referenced name and walks every
+    state node to resolve its `initial`, transitions, `always`, and
+    `after`, turning a throw into a `machine` finding at that state node,
+    checks for a top-level final state, checks each gate declaration with
+    the `gate` rule, and runs
+    `lintBlueprintExpressions` with each location prefixed by `/machine`,
+    and last runs `lintTokens`, the token lint of `token-lint`, whose
+    `token-violation` findings fail the blueprint and whose
+    `token-potential` and `token-unknown` findings are warnings. The rules
+    and their order are those of `blueprint`. A later rule is one more step
+    in this function, so the service and the host CLI gain it together.
+  versions: >-
+    A version is the commit and the path; its key is
+    `blueprintVersionKey(version)`, `<commit>:<path>`. The loader holds a
+    cache from key to the promise of its `VersionLoad`, for the life of the
+    process. `version(v)` returns the cached load, or opens the revision
+    with `revisionAt(v.commit)`, loads `v.path` from it, and caches the
+    result: `missing` with reason `commit` when `revisionAt` returns
+    `undefined`, `missing` with reason `file` when `read` returns
+    `undefined`, `invalid` with the findings, or `loaded`. A bundled
+    version, one with `bundle`, opens the revision the same way, since its
+    gate, templates, and schemas read that commit, and reads its text from
+    `bundles.at(v.bundle)`: `missing` with reason `bundle` when the source
+    holds no bundle of that digest, and `missing` with reason `file` when
+    the bundle holds no file at the path. `loadRevision`
+    goes through the same cache, so a version loaded by a revision and the
+    same version asked for by key are one machine. A `missing` result is
+    not cached, so a commit the repository fetches later loads on the next
+    call. The cache holds only what the repository and the registry
+    determine, so a restarted service rebuilds any version on demand and
+    no version needs to be stored.
+  child-blueprints: >-
+    An invoke whose `src` is a blueprint path invokes that blueprint as a
+    child, as `blueprint` specifies. Building a version builds every child
+    blueprint it references at the same commit, from the same source,
+    through the same cache and the same revision: a repository version's
+    child is the repository version at the path, and a bundled version's
+    child is the bundled version at the path in the same bundle, and binds each child's machine as actor logic named
+    by its path, so the child's snapshot is restored inside its parent's
+    and `checkRestore` checks it against the child's machine. A reference
+    that cannot run is bound to a promise logic that rejects at once with
+    `{ "type": "child-blueprint", "path": <path>, "reason": <reason> }`,
+    and with `findings` for reason `invalid`, so the parent takes it
+    through `onError`: `missing` when the file is not at the commit, or
+    not in the bundle for a bundled parent,
+    `invalid` when the child fails the lint, `cycle` when the child's own
+    references at the commit reach the parent again, and `schemas` when an
+    `input` or `output` schema the parent declares under `schemas.actors`
+    for the path is not deep-equal, as parsed JSON, to the child's own
+    `schemas.input` or `schemas.output`. Whether a reference is on a cycle
+    is read from the references of the files at the commit, so every
+    version on a cycle builds the same way whichever is loaded first. A
+    child that fails leaves its parent loaded. The child runs inside its
+    parent's XState system and reports its state entries through the same
+    `onStateEntry`.
+  decision-models: >-
+    An invoke whose `src` is a decision model path evaluates that model,
+    as `blueprint` specifies. Before it lints a version, the loader reads
+    the version's invoke sources from the parsed document and, for each
+    that is a decision model path, calls `lintDecisionModelSet` of
+    `decision-models` with the revision's `read`, once per commit and path
+    through the same cache as versions, and passes each path with its
+    error findings as `decisionModels`; a path whose root has no file is
+    left out, so rule 13 reports it `missing`. A version that loads binds
+    each such path as a promise logic named by the path, over that set's
+    parsed models, which evaluates as `decision-models` states under
+    Invoked models. A bundled version reads its models from the
+    repository revision at its commit, as it reads its gate's comparator.
+    The cache holds parsed models, never a `DecisionModels` instance, so
+    no engine outlives its evaluation. `createBlueprintLoader` throws a
+    `TypeError` for a registry actor named with the `decision-models/`
+    prefix, as it does for `blueprints/`.
+  latest: >-
+    The loader keeps no notion of the latest revision. The caller that
+    pulls the process repository calls `loadRevision` with each new
+    revision and keeps the latest `RevisionLoad`; a new actor takes the
+    `LoadedBlueprint` of its path from it and saves its snapshots with
+    `machine` set to the blueprint's `key`, and a running actor migrates to
+    it as `blueprint-migration` states. A path in `failures` has no
+    version at that revision; actors already running on an earlier version
+    keep theirs.
+  migrate-context: >-
+    `migrateContext(context)` is the version's `migrateContext` from
+    `createBlueprintExpressions`, as `blueprint-expressions` specifies:
+    it applies the version's `migrations` to an earlier version's context
+    and answers the new context or a typed failure. It reads nothing but
+    the context and the version, and writes nothing. The actor host calls
+    it for the root and for each child blueprint a migrating actor runs,
+    each on that blueprint's own target version.
+  restore-checks: >-
+    `checkRestore(snapshot)` compares a persisted snapshot with the
+    machine before the caller restores it with `createActor(machine, {
+    snapshot })`, and returns every mismatch, ordered as listed here. For
+    each state path in the snapshot's value, the keys from the root joined
+    with `.` as the store joins them: no state node at that path is
+    `state-missing`; a compound state node with no active child, or a
+    parallel state node whose value does not hold every region, is
+    `state-incomplete`. Each state node id in `historyValue`, as a key or
+    an entry, that names no state node is `history-missing`. Each child in
+    `children` must be an invoke, with that id and `src`, of a state node
+    active in the value; otherwise it is `child-missing`. A child whose
+    `src` is a decision model path is checked against the version's own
+    bindings, not the registry: it passes when the version bound the path
+    to its evaluation logic, and is `implementation-missing` when the
+    version bound no logic to the path. A version that loads binds every
+    model it invokes, since rule 13 refuses a missing or invalid one, so
+    a persisted invoke of a loaded version's model always passes. Any
+    other child whose `src` is not in the registry's actors, or that
+    names a child blueprint the version bound to a rejecting logic, is
+    `implementation-missing`. A
+    child whose snapshot holds a state value and whose registered logic is
+    a state machine is checked against that machine the same way, with its
+    paths prefixed by the child id. The check reads only the snapshot and
+    the machine, and changes neither. The caller decides what a mismatch
+    does to the actor; the loader never restores an actor.
+  convergence: >-
+    The loader writes nothing outside its cache. `loadRevision` twice with
+    the same revision returns loads of the same versions, the second time
+    from the cache. Two concurrent calls for one version share one
+    promise, so a version is built once. A crash at any point leaves no
+    trace, and the next process loads from the repository again.
+    `lintBlueprint` and `checkRestore` are pure.
+  errors: >-
+    A blueprint's own faults are findings, never throws. Misuse by service
+    code throws: a `TypeError` for a registry name with the `expression.`
+    prefix or an actor name with the `blueprints/` prefix. A `read`, `list`, or `revisionAt` that rejects propagates from
+    the call that made it and leaves nothing cached for that version, so
+    the next call retries.
+  host-cli: >-
+    `manifold-host blueprint lint <file>...`, specified in
+    `host-cli-blueprint-lint`, reads each file, calls `lintBlueprint` with
+    the file as given, `manifoldImplementationNames`, and the bound from
+    `--configuration-bound`, and prints each finding and warning. `manifold-host expressions lint` accepts blueprint files as
+    they are, since a blueprint is a document with `machine` and `schemas`,
+    and keeps every input and exit code of `host-cli-expressions-lint`.
+  dependencies: >-
+    No new third-party library. `packages/shared` takes `xstate` and
+    `yaml` as dependencies at the ranges the service and host CLI already
+    use, since the lint resolves machines with XState and parses YAML, and
+    already depends on Ajv. XState v5 is the state machine runtime of
+    Manifold; `yaml` is the YAML 1.2 parser the host CLI already uses, and
+    it reports line and column for a parse error.
+  tests: >-
+    Service tests import only `index.ts` and load a populated fixture: an
+    in-memory `ProcessRepositoryRevision` at two commits, each holding four
+    blueprints of a generic domain, with stub implementations in the
+    registry. At the first commit, one blueprint references an action the
+    registry does not hold; `loadRevision` returns it in `failures` with an
+    `implementation-unknown` finding naming its path and location, and
+    loads the other three. A non-blueprint file under `blueprints/` is
+    ignored. At the second commit, one loaded blueprint renames a state.
+    An actor started on the first commit's version is persisted, the
+    second commit is loaded, and `version` with the first key returns the
+    first machine; `checkRestore` passes, the actor is restored, and an
+    event takes the transition of the first version. The same snapshot
+    checked against the second commit's machine returns `state-missing`
+    for the renamed state. Further tests show `child-missing` for a
+    snapshot whose invoke id the machine does not declare,
+    `implementation-missing` for a child whose `src` the registry does not
+    hold, `history-missing`, and `state-incomplete` for a parallel state
+    missing a region; that `loadRevision` twice builds each machine once; that a loaded
+    version's `migrateContext` maps a fixture context through its path,
+    and that `migrations` changes nothing the machine runs;
+    that `version` with a commit `revisionAt` does not hold returns
+    `missing` and loads after the commit is added; that a registry entry
+    named `expression.custom` throws; that a revision holding one
+    blueprint with a context schema of `{ type: 17 }` used only by an
+    unreachable assignment returns it in `failures` with a
+    `schema-invalid` finding and loads the others; that a version invoking
+    a clean child blueprint binds the child's machine at the same commit,
+    and one invoking a child that is missing, fails lint, is on a cycle, or
+    whose declared schemas differ binds a logic that rejects with that
+    reason, while the parent loads; that a snapshot holding a running child
+    of a child blueprint bound to a rejecting logic returns
+    `implementation-missing`; that `onStateEntry` is called for every state
+    node entered, the root first, before the state's own entry actions;
+    that an actor name `blueprints/a.yml` in the
+    registry throws, and so does `decision-models/a.yml`; that a version
+    invoking a decision model the commit holds clean binds its logic, and
+    one whose model is missing or has an error is in `failures` with the
+    `decision-model` finding, while a version at a later commit that
+    fixes the model loads; that two versions at one commit invoking one
+    model read it once; that `checkRestore` passes a persisted snapshot
+    whose active state holds an in-flight invoke of a decision model the
+    version binds, the actor restored from it takes `onDone` once with the
+    model's result, and a snapshot whose decision model child names a path
+    the version does not bind returns `implementation-missing`; and that `serviceImplementations` has
+    exactly the names and `raises` declarations of `manifoldImplementationNames`. A registry guard named `in` throws; a `potential` gate loads
+    with its warning and token lint result, a `violation` is in `failures`,
+    and a graph exceeding a bound of 10 loads with a `token-unknown` warning.
+    Bundle tests use a fixture bundle of two generic blueprints, one
+    invoking the other: a revision that holds neither loads both as bundled
+    versions whose keys end in the bundle's digest; a revision that holds
+    a clean file at one path loads the repository version there and the
+    bundled version at the other; a revision whose file at a bundled path
+    fails the lint returns it in `failures` and loads no bundled blueprint
+    at that path; the bundled parent binds the bundled child even when the
+    revision holds a file at the child's path; `version` of a bundled key
+    whose bundle `at` no longer answers returns `missing` with reason
+    `bundle`, and loads from a bundle source whose `at` answers it while
+    `current` is another bundle. Each test is written red before
+    green.

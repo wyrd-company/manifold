@@ -1,0 +1,68 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  mitigates:
+    - task-usage-unattributable
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `references` is the best fit.
+  references:
+    - usage-decoder
+    - portfolio
+description: >-
+  Defines the usage record: what the usage decoder emits for one call in a
+  provider session file, and for one problem with one source.
+  `docs/specifications/usage-record.schema.yml` is the machine-readable
+  definition. The `manifold-host usage decode` command writes one record on
+  each line of standard output, and `decodeUsage` yields the same records as
+  objects.
+
+  Call record. `type` is `call`. `key` identifies the call across every
+  decode on the environment. `provider` is the provider whose harness wrote
+  the source. `providerSessionId` is the session id the harness assigns the
+  call, the id T3 Code holds for the thread. `unit` is the usage unit whose
+  file holds the call: its `id`, its `kind` (`session`, `subagent`, or
+  `child-thread`), and, when the source names them, its `parentId`, `name`,
+  and `role`. A `session` unit has no `parentId`. `timestamp` is an ISO 8601
+  UTC time with milliseconds. `model` is the model the provider reports, or
+  null when it reports none. `tokens` holds every token class as a
+  non-negative integer: `input`, `output`, `cacheRead`, `cacheWrite`,
+  `cacheWriteOneHour`, `reasoning`, and the count `webSearchRequests`.
+  `tokens` is null for an unmetered call, a call whose provider records
+  no token counts for it; a count is never 0 in place of a count the
+  provider did not record, and never derived from the call's text.
+  `cacheWriteOneHour` is the part of `cacheWrite` written with a one-hour
+  lifetime and is never greater than `cacheWrite`. `speed` is `standard` or
+  `fast`. `estimated` is true when the decoder derived the timestamp
+  rather than reading the call's own time from the provider, or when the
+  provider marks the counts it reports as estimated.
+
+  Granularity. A call record with `granularity` `call` is one model
+  request; its key and counts never change. A call record with
+  `granularity` `session-total` is the running total of a session whose
+  provider reports no per-request counts; a later decode yields the same key
+  with counts equal to or greater than before, and the latest record for a
+  key replaces the earlier ones. An unmetered call has granularity
+  `call`.
+
+  Source error record. `type` is `source-error`. `provider` and `source`,
+  the absolute path of the file, directory, or database, name the source.
+  `code` is one of `unreadable`, `truncated`, `malformed-record`,
+  `unknown-record`, and `decoder-failed`. `records` is the count of records
+  with that code, and `firstRecord`, when the code concerns records, is the
+  zero-based index of the first. `detail` is a message of at most 200
+  characters with no path separator. A source has at most one source error
+  record for each code. `unreadable` and `decoder-failed` mean the source
+  yielded no call records; the other codes leave the call records the source
+  yielded valid.
+
+  Keys. A call record's key is unique among the call records of one decode.
+  The service treats the key as the idempotency key of the call, so posting
+  the records of two decodes that overlap counts every call once.
+format: json-schema
+validation-criteria: >-
+  Every record that `decodeUsage` yields and every line that `manifold-host
+  usage decode` writes validates against
+  `docs/specifications/usage-record.schema.yml`. Within one decode, call
+  record keys are unique, `tokens.cacheWriteOneHour` is at most
+  `tokens.cacheWrite`, and every `cursor` call has `tokens` null. The
+  golden fixture suite in `packages/host-cli/src/usage/fixtures/` checks
+  all three.

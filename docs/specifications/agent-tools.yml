@@ -1,0 +1,486 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design this contract serves.
+  realizes:
+    - agent-tools
+  references:
+    - host-cli-mcp
+    - host-cli-hook
+    - router-events
+    - t3code-thread-events
+    - escalation-contract
+    - agent-threads
+    - blueprint
+terms:
+  - harness-plugin
+  - escalation
+  - topic
+  - message
+description: |-
+  Defines the agent tools: the `handoff`, `escalate`, and `get-messages`
+  tools the harness plugin serves, the request the plugin sends the service
+  for each call and the service's response, how the service identifies the
+  calling thread and turn, the events the service publishes to the actors
+  that follow the thread, their ids, the message that carries an
+  escalation's answer back to the thread, the messages a process sends to
+  a thread with `send-message`, and the mail notice the harness plugin's
+  hook gives an agent during its turn.
+  `docs/specifications/agent-tools.schema.yml` is the machine-readable
+  definition of the tool inputs, the request, the response, the events,
+  the `send-message` contract, and the notice request and response.
+
+  Tools. The plugin is MCP server `manifold` with three tools.
+
+  - `handoff`: hands the agent's work back to its task. Input
+    `#/$defs/handoff-input`: `handoff`, required, any JSON value, checked
+    against the handoff schema of the task's process; `thread`, optional,
+    the T3 Code thread id, given when the prompt names it.
+  - `escalate`: asks a person a question. Input
+    `#/$defs/escalate-input`: `question`, required, Markdown of 1 to 8,000
+    characters; `title`, optional, 1 to 120 characters, a short name for
+    the question that the service sets beside the task's name; `choices`, up to three `{ id, label }` with unique ids, each id a
+    lower-case slug of at most 32 characters and each label 1 to 40
+    characters; `freeText`, default `false`; `thread`, as for `handoff`.
+    The input has at least one choice or `freeText: true`.
+  - `get-messages`: reads the messages delivered to the agent's thread.
+    Input `#/$defs/get-messages-input`: `thread`, as for `handoff`.
+
+  The descriptions of `handoff` and `escalate` tell the agent to call each
+  once at the end of its work and then end its turn. The description of
+  `get-messages` tells the agent that other tasks send it messages, that a
+  notice tells it when one arrives, and that it reads them with this tool
+  when its current step is done, without ending its turn. `packages/shared`
+  exports the names, descriptions, and input schemas as
+  `agentToolDefinitions`.
+
+  Call request. For each `tools/call`, the plugin sends
+  `POST {service}/api/agent-tools/calls` with `Content-Type:
+  application/json` and the body `#/$defs/call-request`:
+
+  ```json
+  {
+    "environment": "workstation",
+    "tool": "handoff",
+    "arguments": { "handoff": { "outcome": "done", "summary": "Sorted the parcels." } },
+    "meta": { "callId": "call-7f2c" }
+  }
+  ```
+
+  `environment` is the declared environment name from the plugin's
+  registration; `tool` is `handoff`, `escalate`, or `get-messages`; `arguments` is the
+  tool call's arguments as the provider sent them; `meta` is the request's
+  `_meta` object as the provider sent it, or `{}`. The body is at most
+  1 MiB.
+
+  Call response. The service answers with a JSON body
+  `#/$defs/call-response`. An accepted call is `200`:
+
+  - `handoff`: `{ status: "accepted", replay, eventId, threadId, turnId,
+    message }`. `replay` is `true` when the turn had already handed off;
+    the turn's first handoff stands.
+  - `escalate`: `{ status: "raised", replay, escalationId, threadId,
+    turnId, message }`. `replay` is `true` when the turn had already
+    escalated; the response names the turn's escalation.
+  - `get-messages`: `{ status: "read", threadId, turnId, messages,
+    message }`. `messages` lists every message read in the calling turn,
+    in read position order, as Reading below states, each
+    `#/$defs/thread-message`:
+    `messageId`, `from`, the sender as Messages below gives it, `text`,
+    `sentAt`, and `deliveredAt`, each time an RFC 3339 UTC timestamp with
+    milliseconds.
+
+  A refused call is `{ status: "refused", code, message, issues? }`, where
+  `issues` lists `{ path, message }` with RFC 6901 JSON Pointers into the
+  tool's arguments:
+
+  | Code | Status | Meaning |
+  | --- | --- | --- |
+  | `invalid-request` | 400 | The body fails `#/$defs/call-request`. |
+  | `unknown-environment` | 404 | The service declares no environment of that name. |
+  | `caller-unidentified` | 409 | Neither the call id nor the `thread` argument identifies a running turn of a followed thread. |
+  | `not-followed` | 409 | No task actor follows the thread. |
+  | `not-accepted` | 409 | The process of every task following the thread takes no handoff. |
+  | `task-held` | 409 | A following task is held by the service and its process cannot be loaded to check the handoff; nothing is published, and the call may be made again. |
+  | `invalid-handoff` | 422 | The handoff fails the handoff schema of a following task's process; `issues` names each failing path. |
+  | `invalid-escalation` | 422 | The escalate input breaks a rule; `issues` names each. |
+  | `environment-unavailable` | 503 | The environment's T3 Code server is not reachable within the identification bound. |
+
+  The service answers two paths under `/api/agent-tools`: `/calls`, with
+  a body of at most 1 MiB, and `/notices`, with a body of at most 64 KiB,
+  as Mail notice below states. A body over its path's limit answers
+  `413`, any other path under `/api/agent-tools` answers `404`, and a
+  method other than `POST` on either path answers `405`, each with a
+  refusal of code `invalid-request`. `message`
+  is the text the plugin returns to the agent: for an accepted handoff,
+  that the handoff was taken and the agent ends its turn now; for a raised
+  escalation, that the question was sent, that the agent ends its turn
+  now, and that the answer arrives as a new message in the thread; for
+  `get-messages`, the messages as Messages below gives them; for a
+  refusal, what to correct. The plugin returns `message` as the tool
+  result's text and the response as its `structuredContent`, with
+  `isError: true` for a refusal. When the service does not answer within
+  the plugin's request bound, the connection fails, or the body is not a
+  call response, the plugin returns `isError: true` with
+  `structuredContent` `{ status: "refused", code: "service-unreachable",
+  message }`, whose message says the call may have been taken and that
+  calling the tool again in the same turn is safe.
+
+  Identification. The service reads the call id from `meta` by these keys,
+  in order, taking the first whose value is a non-empty string:
+  `claudecode/toolUseId`, `callId`. With a call id, the call's thread is
+  the one thread followed on the call's environment that holds a tool
+  activity whose `payload.toolCallId` equals it, and the call's turn is
+  that activity's `turnId`; the service looks for it for at most
+  `agentTools.identifyTimeoutMs`, reading every 100 ms. Without a call id,
+  or with one no followed thread holds within that time, the `thread`
+  argument identifies the call when the thread is followed on the call's
+  environment and its session is `running` with an active turn, which is
+  the call's turn. A call neither rule identifies is `not-followed` when a
+  thread no actor follows, running on the environment, holds the call id
+  or is the `thread` argument, and `caller-unidentified` otherwise.
+
+  Providers. The plugin is registered as `host-cli-mcp` gives. The
+  evidence for each provider the usage decoder covers, against the `t3`
+  release the environment source targets, 0.0.45:
+
+  | Provider | Registration loads in T3 Code threads | Call id in `_meta` | Identified by | Evidence |
+  | --- | --- | --- | --- | --- |
+  | `claude` | yes: temporary user configuration | `claudecode/toolUseId`, equal to `toolCallId`; also `progressToken` | call id | measured on 0.0.45 with the compiled plugin |
+  | `codex` | yes: temporary home's `config.toml` | `callId`, equal to `toolCallId`; also `itemId`, `progressToken`, `sessionId`, `threadId`, `windowId`, `x-codex-turn-metadata` | call id | measured on 0.0.45 with the compiled plugin |
+  | `cursor` | yes: temporary home's `.cursor/mcp.json` | none | `thread` argument | measured on 0.0.45 with the compiled plugin |
+  | `grok` | not measured | not measured | `thread` argument | Grok is disabled in the T3 Code the live test runs against |
+  | `opencode` | yes: temporary home's `.config/opencode/opencode.json` | `progressToken` only; no call id | `thread` argument | measured on 0.0.45 with the compiled plugin |
+
+  The live test of `agent-tools` measures with the plugin itself each
+  provider installed and enabled in the T3 Code it runs against, `claude`,
+  `codex`, `cursor`, and `opencode`, and replaces their rows with what it
+  measured.
+
+  Event source and topic. The service publishes under the source `agent`.
+  A thread's agent topic is
+  `agent.environment.<environment>.thread.<thread>`, with `<thread>` the
+  thread id encoded as `t3code-thread-events` encodes it.
+  `agentThreadTopic(environment, threadId)` is the one implementation. An
+  actor hears the agent topic of every thread in
+  `context.manifold.threads` when its identity holds `environment`.
+
+  ```ts
+  agentThreadTopic("workstation", "a1.b2");
+  // "agent.environment.workstation.thread.a1%2Eb2"
+  ```
+
+  Event ids. A call's key is the environment, the server's
+  `environmentId`, the thread id, the turn id, and the tool. Each id inside
+  an event id is encoded as `t3code-thread-events` encodes it, and the
+  parts are joined by `/`:
+
+  | Event type | Event id |
+  | --- | --- |
+  | `agent.handoff` | `<environment>/<environmentId>/<thread>/turn/<turnId>/handoff` |
+  | `agent.escalated` | `<environment>/<environmentId>/<thread>/turn/<turnId>/escalate` |
+  | `agent.escalation.answered` | `<environment>/<environmentId>/<thread>/escalation/<escalationId>/answered` |
+  | `agent.message` | `message/<messageId>` |
+
+  A message id is a UUID, unique across environments and threads, so its
+  event id needs no other part.
+
+  Events. Every event carries `type`, `environment`, and `threadId`. Ids
+  are the server's, unencoded.
+
+  - `agent.handoff`: the agent handed off. `turnId`, the turn that made
+    the call; `handoff`, the tool's `handoff` argument.
+  - `agent.escalated`: the agent asked a person. `turnId`;
+    `escalationId`; `title`, the escalation's title, as the question title
+    rule below gives it; `question`; `choices`; `freeText`.
+  - `agent.escalation.answered`: a person answered the agent, and the
+    answer is in the thread. `escalationId`; `answer`, `{ choice }` or
+    `{ text }`; `channel`, `link` or `api`; `messageId`, the id of the
+    user message that carries the answer to the thread; `turnId`, the
+    turn that holds the answer: the turn the answer started, or the turn
+    that was running when the answer reached the thread and took it in,
+    or `null` when the service cannot tell which turn holds it or T3 Code
+    rejected the message. An actor takes the event before that turn's
+    `t3.turn.settled`.
+  - `agent.message`: a task sent the thread a message. `messageId`;
+    `from`, `{ actorId, issue, task }`, as Messages below gives it; `text`. The thread's agent can read it
+    once a following actor takes the event, as Messages below states.
+
+  A blueprint that takes an agent event declares it under
+  `schemas.events` with a schema the event satisfies. The schema it
+  declares for `agent.handoff` is the process's handoff schema: the
+  service validates each handoff against the schema of every following
+  task's process before publishing, and refuses one that fails any of
+  them.
+
+  ```yaml
+  schemas:
+    events:
+      agent.handoff:
+        type: object
+        required: [type, threadId, handoff]
+        properties:
+          type: { const: agent.handoff }
+          threadId: { type: string }
+          handoff:
+            type: object
+            required: [outcome]
+            properties:
+              outcome: { enum: [done, blocked] }
+              summary: { type: string }
+  ```
+
+  Escalation. An `escalate` call raises a service escalation of kind
+  `agent-question`, as `escalation-contract` defines, with subject
+  `{ actorId, environment, threadId, turnId }`, where `actorId` is the
+  first actor in actor id order that follows the thread, sent to the
+  `default` destination.
+
+  Task name. A question and a message each name the task they come from,
+  so a person or an agent that hears from several tasks can tell them
+  apart. The task is the issue whose node id is `issue` in the identity of
+  the asking or sending actor, while the GitHub mirror tracks it. Its name
+  is `<repository>#<number>`, with the repository as `owner/name`, and its
+  title is the issue's title once the mirror has read it. The service
+  reads the task from the mirror, so naming it makes no GitHub request.
+
+  Question title. The escalation's title names the task the question
+  comes from, in the notification, on the answer page, and in Manifold's
+  API. The title is the row of this table that applies:
+
+  | Task tracked | Issue title read | Agent's `title` | Escalation title |
+  | --- | --- | --- | --- |
+  | yes | yes | given | `<repository>#<number>: <title> — <issue title>` |
+  | yes | yes | absent | `<repository>#<number>: <issue title>` |
+  | yes | no | given | `<repository>#<number>: <title>` |
+  | yes | no | absent | `<repository>#<number>` |
+  | no | — | given | `<title>` |
+  | no | — | absent | `Question` |
+
+  A title longer than 120 Unicode code points is cut to 119 code points
+  and ends with `…`, so the agent's title, which comes before the issue
+  title, is kept before the issue title is. The title is fixed when the
+  escalation is raised: a later change to the issue's title does not
+  change it, and a repeated call in the turn returns the escalation with
+  its first title.
+
+  ```text
+  example-org/widgets#7: Paint colour — Repaint the garden shed
+  example-org/widgets#7: Repaint the garden shed
+  ```
+
+  Answer message. The answer reaches the thread as the user message of a
+  `thread.turn.start`. Its message id is the id of kind
+  `agent-tools/answer-message` derived from the escalation id, as
+  `agent-threads` derives ids, and its command id the id of kind
+  `turn-start/command` derived from that message id. Its text names no
+  title: the thread is the asking agent's own, and a turn asks one
+  question. For a choice:
+
+  ```text
+  Your question was answered: <label> (choice `<id>`).
+
+  Continue your work with this answer.
+  ```
+
+  and for text:
+
+  ```text
+  Your question was answered:
+
+  <text>
+
+  Continue your work with this answer.
+  ```
+
+  Messages. A message is text that a task sends to one thread. A blueprint
+  sends messages by invoking `send-message`, an actor that Manifold
+  registers. Its input is `#/$defs/send-message-input`: `to`, the address,
+  and `text`, Markdown of 1 to 8,000 characters. The address is one of:
+
+  - `{ issue }`: a task, by its issue node id. The service sends one
+    message to each thread that an active actor whose identity holds the
+    issue follows on its environment.
+  - `{ environment, threadId }`: one thread on a declared environment.
+
+  The service resolves the address when the invoke runs. In one
+  transaction, for each resolved thread, it writes the message and
+  publishes `agent.message` under the thread's agent topic. A thread whose
+  publish reaches no actor gets no message, since no follower's blueprint
+  declares `agent.message`. The invoke resolves with
+  `#/$defs/send-message-output`, `{ messages }`, each `{ messageId,
+  environment, threadId }`, for the threads that got a message. It fails
+  with a send error, `#/$defs/send-message-error`, a plain object with
+  `type` `send-message`, a `kind`, and a `message`:
+
+  - `input`: the input fails `#/$defs/send-message-input`, or names an
+    environment the service does not declare.
+  - `no-recipient`: the address resolves to no thread that an active actor
+    follows.
+  - `not-accepted`: no resolved thread has a follower that takes
+    `agent.message`. Nothing is written.
+
+  The message id is the id of kind `agent-tools/message` derived from the
+  invocation's actor id, invoke id, and entry id, the environment, and the
+  thread id, as `agent-threads` derives ids. An invoke that one state entry
+  runs again, as after a restart, sends no second message to a thread, and
+  a later entry of the state sends new ones.
+
+  Sender. `from` is `#/$defs/message-sender`, the sending task as the
+  service holds it when the invoke runs; a child blueprint sends as its
+  root actor:
+
+  - `actorId`: the invoking actor's id.
+  - `issue`: the issue node id of its identity, or `null` when it holds
+    none.
+  - `task`: the task's name, `{ repository, number, title? }`, as Task
+    name above gives it, with `title` absent until the mirror has read it;
+    `null` when the identity holds no issue or the mirror does not track
+    the issue.
+
+  The sender is read once per invoke, and the message keeps it: the
+  event, the stored message, and every `get-messages` answer carry the
+  sender the message was sent with, across a restart and whatever later
+  happens to the issue. A thread that an invoke run again sends to for the
+  first time gets the sender as it is read on that run.
+
+  A blueprint that takes `agent.message` with its own schema, rather than
+  a `$ref` to `#/$defs/agent-message-event`, allows `from.task`: a `from`
+  schema that admits only `actorId` and `issue` does not describe the
+  event the service publishes.
+
+  ```json
+  { "actorId": "task:I_kwDOA1", "issue": "I_kwDOA1",
+    "task": { "repository": "example-org/widgets", "number": 7, "title": "Repaint the garden shed" } }
+  ```
+
+  ```yaml
+  states:
+    announcing:
+      invoke:
+        id: announce
+        src: send-message
+        input:
+          type: expression.map
+          params:
+            expression: '{ "to": { "issue": context.dependent }, "text": "The depot schedule changed." }'
+        onDone: sorting
+        onError: sorting
+  ```
+
+  Delivery. A message is delivered when the first actor that follows its
+  thread and whose version declares `agent.message` takes the event: in the
+  save that consumes the event's inbox row. An actor whose current state
+  has no transition for the event takes it all the same. Only a delivered
+  message reaches the agent. A message stays undelivered while every
+  follower that holds its event is held, and for good when no follower
+  that takes it remains.
+
+  Reading. `get-messages` marks read, in the calling turn, every delivered
+  message of the calling thread that is not yet read, giving each the
+  thread's next read position, in the order the messages were sent, and
+  answers every message read in that turn, in read position order. A
+  repeated call in the same turn answers the same messages in the same
+  order, followed by any delivered since the earlier call, even a message
+  sent before them that was delivered late. A message is read once, in
+  one turn. The response's `message` is:
+
+  ```text
+  You have 2 messages.
+
+  Message 1 of 2, from task <sender>, sent <sentAt>:
+
+  <text>
+
+  Message 2 of 2, from task <sender>, sent <sentAt>:
+
+  <text>
+  ```
+
+  with `You have 1 message.` for one, and `You have no messages.` alone
+  for none. `<sender>` names the task by the message's `from`:
+
+  | `from.task` | `<sender>` |
+  | --- | --- |
+  | with `title` | `<repository>#<number> (<title>)` |
+  | without `title` | `<repository>#<number>` |
+  | `null` | `` `<actorId>` `` |
+
+  ```text
+  Message 1 of 2, from task example-org/widgets#7 (Repaint the garden shed), sent 2026-03-04T05:06:07.089Z:
+  Message 2 of 2, from task `task:I_kwDOB2`, sent 2026-03-04T05:06:08.120Z:
+  ```
+
+  Mail notice. The harness plugin's hook tells an agent during its turn
+  that its thread has new messages. After each tool call, the provider
+  runs the hook, which sends `POST {service}/api/agent-tools/notices` with
+  `Content-Type: application/json` and the body `#/$defs/notice-request`:
+  `environment`; `threadId`, when the hook maps the provider session to
+  its T3 Code thread; and `callId`, the provider's id of the tool call. The
+  body holds `threadId`, `callId`, or both, and is at most 64 KiB. The
+  service takes the thread from `threadId` when an active actor follows it
+  on the environment. Otherwise it reads, once and without waiting, the
+  tool activities of each thread on the environment that holds a delivered
+  message that is neither read nor noticed, and takes the one thread whose
+  activity's `toolCallId` equals `callId`. It marks that thread's
+  delivered messages that are neither read nor noticed as noticed, and
+  answers `200` with `#/$defs/notice-response`, `{ notice }`: the notice
+  text, or `null` when it marked none or identified no thread. A message
+  is noticed once. A body that fails the schema answers `400` with code
+  `invalid-request`, and an undeclared environment `404` with code
+  `unknown-environment`, each a refusal of `#/$defs/call-response`. The
+  notice text is:
+
+  ```text
+  Manifold: 2 new messages for this thread. Read them with the manifold get-messages tool when your current step is done. Do not stop or end your turn for them.
+  ```
+
+  with `1 new message` for one. The hook adds the notice to the tool's
+  result as context, as `host-cli-hook` gives for each provider. The
+  notice adds no message to the thread, starts no turn, and does not stop
+  or steer the running turn: the agent reads the notice with the tool
+  result it was already waiting for.
+
+  The evidence for each provider, against the `t3` release the environment
+  source targets, 0.0.45, with a hook that answered the notice after each
+  of two shell commands in one turn:
+
+  | Provider | Hook | Notice reached the agent in its turn | Turn interrupted | Hook session id maps to the thread | Hook call id equals `toolCallId` | Evidence |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | `claude` | `PostToolUse` in `settings.json`, `additionalContext` | yes | no: one turn, one user message, both commands ran | yes: `session_id` equals the resume cursor's `resume` | yes: `tool_use_id` | measured on 0.0.45 with Claude Code 2.1.287 |
+  | `codex` | `PostToolUse` in `config.toml`, trusted, `additionalContext` | yes | no | yes: `session_id` equals the resume cursor's `threadId` | yes: `tool_use_id` | measured on 0.0.45 with codex-cli 0.159.2 |
+  | `cursor` | `postToolUse` in `~/.cursor/hooks.json`, `additional_context` | yes | no | yes: `session_id` equals the resume cursor's `sessionId` | no | measured on 0.0.45 with cursor-agent 2026.10.01 |
+  | `grok` | not measured | not measured | not measured | not measured | not measured | Grok is disabled in the T3 Code the live test runs against |
+  | `opencode` | plugin `tool.execute.after`, appended to the tool's output | yes | no | yes: `sessionID` equals the resume cursor's `sessionId` | yes: `callID` | measured on 0.0.45 with OpenCode 1.18.34 |
+
+  Asked to quote every notice in its final reply, Cursor's default model
+  repeated the notice until cursor-agent stopped the reply as a loop; the
+  turn completed. The live test of `agent-tools` measures the notice for
+  each provider installed and enabled in the T3 Code it runs against, and
+  replaces their rows with what it measured.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/agent-tools.schema.yml` compiles with Ajv in JSON
+  Schema 2020-12 mode. `agentToolDefinitions` holds exactly `handoff`,
+  `escalate`, and `get-messages`, with the input schemas
+  `#/$defs/handoff-input`, `#/$defs/escalate-input`, and
+  `#/$defs/get-messages-input`. Every request body the plugin sends
+  validates against `#/$defs/call-request`, every body the hook sends
+  validates against `#/$defs/notice-request`, and every response the
+  service writes, across the service's endpoint tests, validates against
+  `#/$defs/call-response` or `#/$defs/notice-response`. Every event the
+  service publishes validates against `#/$defs/agent-handoff-event`,
+  `#/$defs/agent-escalated-event`,
+  `#/$defs/agent-escalation-answered-event`, or
+  `#/$defs/agent-message-event` by its type. Every `send-message` output
+  and error validates against `#/$defs/send-message-output` and
+  `#/$defs/send-message-error`. A test derives each event id, the answer
+  message id, and a message id for fixed inputs and compares them with the
+  expected strings, including a thread id that holds `.`, and shows that
+  two calls in one turn give one id and calls in two turns give two. A
+  test renders the `get-messages` message and the notice for none, one,
+  and two messages, and the message's sender for each row of the sender
+  table, and compares them with the texts above.
+  A test derives the escalation title for each row of the question title
+  table, and for a title cut at 120 code points, and compares it with the
+  expected string.

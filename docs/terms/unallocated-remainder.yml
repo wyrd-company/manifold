@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Unallocated remainder
+description: >-
+  The part of a parent's limit that no child's allocation guarantees, which its children borrow up to their ceiling.

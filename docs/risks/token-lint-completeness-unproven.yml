@@ -1,0 +1,60 @@
+# GAP-SCHEMA: the WIP risk schema requires slug despite filename identity,
+# and requires response while declaring response-strategy. Follow the same
+# documented conventions as gate-durability-unproven.
+$schema: https://refinery.systems/ontology/risk
+title: Blueprint token lint may accept a path that never returns a token
+# GAP-EDGE: the risk schema declares no relationships; these edges connect
+# the evidence and governing technical design.
+relationships:
+  mitigated-by:
+    - gate-xstate
+    - gates
+    - token-lint
+    - gate-runtime
+  related-to:
+    - blueprint-loader
+
+description: >-
+  The gate design requires blueprint lint to show that every token a gate
+  grants can be returned: from every configuration reachable after the
+  grant, the declared return point stays reachable.
+  The gate-xstate spike showed that a configuration graph catches the
+  parallel, ancestor, eventless, multi-target, dead-end, cycle, and history
+  traps it tested, once a node holds remembered histories as well as
+  active states and the return is observed per microstep. The spike's
+  probe left invocations, delays, named actions, and wildcard events
+  undecided; the gates design gives each a meaning. Expression and
+  named guards cannot be evaluated by the lint, so a trap behind one is a
+  potential path, not a proved one, and a graph past the configuration
+  bound is unexplored. If the lint built from the design accepts a
+  blueprint whose run strands a token, a gate stays held and no task
+  behind it is released.
+  The shared lint is exercised through XState's exported microstep functions,
+  including persisted history keys, transient returns, invocations, delays,
+  wildcard events, opaque choices, and repeated grants. The gate runtime
+  checks each holder's saved configuration against its gate's trap set, and
+  a holder in a trap raises a `stranded-token` escalation whose `return`
+  answer gives back that token alone. A trap whose only exit ends the actor
+  loads with a warning and stays in the trap set. A gate whose graph passes
+  the configuration bound gets the verdict `unknown` and no trap set, so
+  the run-time check does not watch its holders: a token stranded there
+  raises nothing, and its gate stays held until an operator sees it.
+
+categories:
+  - technical
+likelihood: 3
+impact: 4
+response-strategy: mitigate
+# Mitigation: the gates design rejects a trap with no completion route
+# reachable on fixed choices, warns on a potential or unknown verdict, and checks each holder's
+# saved configuration against the trap configurations of its gate at run
+# time, raising an escalation for a stranded token. The trap set is sound
+# because the graph over-approximates the actor. The token lint passes the
+# spike's fixtures, including the history counterexample, and a service
+# started on restored holders raises the escalation for a holder in a trap
+# and grants the next member after a `return` answer. A trap behind an
+# expression or named guard is a `potential` warning that the run-time check
+# covers. A gate past the configuration bound is an `unknown` warning that
+# nothing covers at run time; that residual is the approved bound's cost,
+# and the status stays mitigated because the operator is warned at load.
+status: mitigated

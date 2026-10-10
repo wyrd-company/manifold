@@ -1,0 +1,84 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design
+# or to the root it composes into; `realizes` names the design this
+# contract serves and `references` the root and the bindings that name an
+# environment.
+relationships:
+  realizes:
+    - t3code-environment-source
+    - agent-threads
+  references:
+    - service-configuration
+    - bindings-declaration
+description: |-
+  Defines the `environments` section of the service configuration and the
+  `t3code-token` credential kind.
+  `docs/specifications/t3code-environments-configuration.schema.yml` is the
+  machine-readable definition of both. The root of the service
+  configuration names the section under `properties` as `environments`,
+  optional with default `{}`, by `$ref` to
+  `https://manifold.wyrd.company/schemas/t3code-environments-configuration`,
+  and lists `t3code-token` among its credential kinds by `$ref` to
+  `https://manifold.wyrd.company/schemas/t3code-environments-configuration#/$defs/t3code-token-credential`.
+
+  Environments. The section maps an environment name to an environment. An
+  environment name is a declared name as `service-configuration` defines it,
+  and it is the name bindings and thread topics use. The T3 Code
+  environment source connects to every environment in the section.
+
+  - `url` is the T3 Code server's base URL, `http` or `https`; the socket
+    URL is derived from it.
+  - `credential` names a credential of kind `t3code-token` in `credentials`.
+  - `reconnect` is the backoff between connection attempts after a lost or
+    failed connection and after a rejected credential: `initialMs` before
+    the first retry, multiplied by `factor` for each retry after it, at
+    most `maxMs`, with a random spread of `jitter` times the delay. Attempts
+    continue until the service stops. Default 1000 ms, factor 2, at most
+    30000 ms, jitter 0.2.
+  - `heartbeat` is the socket keepalive: a ping every `intervalMs`, and the
+    socket is dropped and reconnected after `missedPongLimit` pings in a
+    row go unanswered. Default 5000 ms and 3.
+  - `openTimeoutMs` is how long a connection attempt may take to open
+    before it is abandoned and retried with backoff. Default 10000 ms.
+
+  Credential kind `t3code-token`. A bearer access token for a T3 Code
+  server, issued by `t3 auth session issue` or by exchanging a pairing
+  token, with the `orchestration:read` scope, which the environment source
+  uses, and the `orchestration:operate` scope, which the thread and turn
+  commands of `agent-threads` use. `tokenFile` is the path of a
+  file holding the token as its only content, surrounding whitespace
+  ignored; a relative path resolves against the directory of the
+  configuration file. The source reads the file at each connection
+  attempt, so a replaced token applies without a restart.
+
+  ```yaml
+  credentials:
+    workstation-token:
+      kind: t3code-token
+      tokenFile: workstation.token
+  environments:
+    workstation:
+      url: http://127.0.0.1:3773
+      credential: workstation-token
+    build-host:
+      url: https://build-host.example.com:3773
+      credential: build-host-token
+      reconnect:
+        maxMs: 60000
+  ```
+
+  Beyond the schema, the section is valid only when every `credential`
+  names a key of `credentials` whose kind is `t3code-token`, and every
+  `tokenFile` names a readable file. A failure of either is an issue at the
+  path of the property that holds the name or the file path.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/t3code-environments-configuration.schema.yml` is a
+  valid JSON Schema 2020-12 document and resolves its `$ref` to the root's
+  `declared-name`. Loading a configuration with no `environments` gives `{}`;
+  loading an environment with only `url` and `credential` gives every
+  `reconnect` and `heartbeat` property and `openTimeoutMs` at its default.
+  An environment name that is not a declared name, a `url` that is not
+  `http` or `https`, `factor` below 1, `jitter` outside 0 to 1, `maxMs`
+  below `initialMs`, and a `credential` naming a credential of another kind
+  each fail with an issue at its JSON Pointer.

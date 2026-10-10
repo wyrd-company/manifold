@@ -1,0 +1,391 @@
+// ---
+// relationships:
+//   implements: store
+// ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "./stored-text.ts";
+import { openConnection } from "./connection.ts";
+import { storeSteps } from "./migrations.ts";
+import { statePaths } from "./state-paths.ts";
+import type {
+  DeadlineRow,
+  InboxRow,
+  PersistedSnapshot,
+  Store,
+  StoreOptions,
+  StoredSnapshot,
+  StoredMigrationFailure,
+} from "./types.ts";
+
+type Row = Record<string, SQLOutputValue>;
+function readSnapshot(row: Row): StoredSnapshot {
+  return {
+    actorId: storedText(row["actor_id"]!),
+    machine: storedText(row["machine"]!),
+    snapshot: JSON.parse(row["snapshot"] as string) as PersistedSnapshot,
+    savedAt: row["saved_at"] as number,
+    ...(row["history_pruned_at"] != null
+      ? { historyPrunedAt: Number(row["history_pruned_at"]) }
+      : {}),
+  };
+}
+function readInbox(row: Row): InboxRow {
+  return {
+    sequence: row["sequence"] as number,
+    eventId: storedText(row["event_id"]!),
+    actorId: storedText(row["actor_id"]!),
+    topic: storedText(row["topic"]!),
+    payload: JSON.parse(row["payload"] as string) as InboxRow["payload"],
+    receivedAt: row["received_at"] as number,
+    consumedAt: row["consumed_at"] === null ? undefined : (row["consumed_at"] as number),
+  };
+}
+function readDeadline(row: Row): DeadlineRow {
+  return {
+    deadlineId: row["deadline_id"] as number,
+    actorId: storedText(row["actor_id"]!),
+    statePath: storedText(row["state_path"]!),
+    eventName: storedText(row["event_name"]!),
+    fireAt: row["fire_at"] as number,
+    entryId: storedText(row["entry_id"]!),
+    firedAt: row["fired_at"] === null ? undefined : (row["fired_at"] as number),
+  };
+}
+
+function readMigrationFailure(row: Row): StoredMigrationFailure {
+  return {
+    actorId: storedText(row["actor_id"]!),
+    from: storedText(row["from_machine"]!),
+    to: storedText(row["to_machine"]!),
+    kind: row["kind"] as StoredMigrationFailure["kind"],
+    message: storedText(row["message"]!),
+    detail: JSON.parse(String(row["detail"])),
+    failedAt: Number(row["failed_at"]),
+  };
+}
+export function openStore({ path, now = Date.now, probe }: StoreOptions): Store {
+  const connection = openConnection(path);
+  const { database } = connection;
+  try {
+    connection.migrate("store", storeSteps);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+  const store: Store = {
+    now,
+    connection,
+    saveSnapshot(write) {
+      return connection.transaction(() => {
+        const { actorId, machine, snapshot } = write;
+        if (snapshot.status === "error") {
+          database
+            .prepare(
+              "INSERT INTO store_errored_snapshot (actor_id, machine, snapshot, event_id, saved_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (actor_id) DO UPDATE SET machine=excluded.machine, snapshot=excluded.snapshot, event_id=excluded.event_id, saved_at=excluded.saved_at",
+            )
+            .run(actorId, machine, JSON.stringify(snapshot), write.eventId ?? null, now());
+          return "errored";
+        }
+        const paths = statePaths(snapshot.value);
+        for (const deadline of write.deadlines ?? [])
+          if (deadline.statePath !== "" && !paths.includes(deadline.statePath))
+            throw new RangeError(`Deadline state ${deadline.statePath} is not active`);
+        database
+          .prepare(
+            "INSERT INTO store_snapshot (actor_id, machine, status, snapshot, saved_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (actor_id) DO UPDATE SET machine=excluded.machine, status=excluded.status, snapshot=excluded.snapshot, saved_at=excluded.saved_at",
+          )
+          .run(actorId, machine, snapshot.status, JSON.stringify(snapshot), now());
+        database.prepare("DELETE FROM store_snapshot_state WHERE actor_id = ?").run(actorId);
+        const insertState = database.prepare("INSERT INTO store_snapshot_state VALUES (?, ?, ?)");
+        for (const path of paths) insertState.run(actorId, machine, path);
+        const arms = new Set(
+          (write.deadlines ?? []).map((arm) =>
+            JSON.stringify([arm.statePath, arm.eventName, arm.entryId]),
+          ),
+        );
+        for (const row of database
+          .prepare(
+            "SELECT deadline_id, CAST(actor_id AS BLOB) AS actor_id, CAST(state_path AS BLOB) AS state_path, CAST(event_name AS BLOB) AS event_name, fire_at, CAST(entry_id AS BLOB) AS entry_id, fired_at FROM store_deadline WHERE actor_id = ?",
+          )
+          .all(actorId)) {
+          const deadline = readDeadline(row);
+          if (!arms.has(JSON.stringify([deadline.statePath, deadline.eventName, deadline.entryId])))
+            database
+              .prepare("DELETE FROM store_deadline WHERE deadline_id = ?")
+              .run(deadline.deadlineId);
+        }
+        for (const deadline of write.deadlines ?? []) {
+          database
+            .prepare(
+              "DELETE FROM store_deadline WHERE actor_id = ? AND state_path = ? AND event_name = ? AND entry_id != ?",
+            )
+            .run(actorId, deadline.statePath, deadline.eventName, deadline.entryId);
+          database
+            .prepare(
+              "INSERT INTO store_deadline (actor_id, state_path, event_name, fire_at, entry_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT (actor_id, state_path, event_name) DO NOTHING",
+            )
+            .run(
+              actorId,
+              deadline.statePath,
+              deadline.eventName,
+              deadline.fireAt,
+              deadline.entryId,
+            );
+        }
+        database
+          .prepare(
+            "DELETE FROM store_migration_failure WHERE actor_id=? AND (? != 'active' OR from_machine != ?)",
+          )
+          .run(actorId, snapshot.status, machine);
+        return "saved";
+      });
+    },
+    recordMigrationFailure(write) {
+      return connection.transaction(() =>
+        database
+          .prepare(
+            "INSERT INTO store_migration_failure VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (actor_id) DO UPDATE SET from_machine=excluded.from_machine, to_machine=excluded.to_machine, kind=excluded.kind, message=excluded.message, detail=excluded.detail, failed_at=excluded.failed_at WHERE from_machine != excluded.from_machine OR to_machine != excluded.to_machine",
+          )
+          .run(
+            write.actorId,
+            write.from,
+            write.to,
+            write.kind,
+            write.message,
+            JSON.stringify(write.detail),
+            now(),
+          ).changes
+          ? "recorded"
+          : "unchanged",
+      );
+    },
+    migrationFailure(actorId) {
+      const row = database
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(from_machine AS BLOB) AS from_machine, CAST(to_machine AS BLOB) AS to_machine, kind, CAST(message AS BLOB) AS message, detail, failed_at FROM store_migration_failure WHERE actor_id=?",
+        )
+        .get(actorId);
+      return row ? readMigrationFailure(row) : undefined;
+    },
+    migrationFailures(to) {
+      return database
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(from_machine AS BLOB) AS from_machine, CAST(to_machine AS BLOB) AS to_machine, kind, CAST(message AS BLOB) AS message, detail, failed_at FROM store_migration_failure WHERE to_machine=? ORDER BY actor_id",
+        )
+        .all(to)
+        .map(readMigrationFailure);
+    },
+    clearMigrationFailures(to) {
+      return connection.transaction(() =>
+        Number(
+          database.prepare("DELETE FROM store_migration_failure WHERE to_machine=?").run(to)
+            .changes,
+        ),
+      );
+    },
+    activeSnapshots() {
+      return database
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(machine AS BLOB) AS machine, status, snapshot, saved_at, history_pruned_at FROM store_snapshot WHERE status = 'active' ORDER BY actor_id",
+        )
+        .all()
+        .map(readSnapshot);
+    },
+    endedSnapshots() {
+      return database
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(machine AS BLOB) AS machine, status, snapshot, saved_at, history_pruned_at FROM store_snapshot WHERE status IN ('done', 'stopped') ORDER BY actor_id",
+        )
+        .all()
+        .map(readSnapshot);
+    },
+    prunableEnded({ endedBefore, after, limit }) {
+      return database
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, saved_at FROM store_snapshot WHERE status <> 'active' AND history_pruned_at IS NULL AND saved_at < ? AND (saved_at > ? OR (saved_at = ? AND actor_id > ?)) ORDER BY saved_at, actor_id LIMIT ?",
+        )
+        .all(
+          endedBefore,
+          after?.savedAt ?? -Infinity,
+          after?.savedAt ?? -Infinity,
+          after?.actorId ?? "",
+          limit,
+        )
+        .map((row) => ({
+          actorId: storedText(row["actor_id"]!),
+          savedAt: Number(row["saved_at"]),
+        }));
+    },
+    pruneEnded(actorId) {
+      return connection.transaction(() => {
+        const changed = database
+          .prepare(
+            "UPDATE store_snapshot SET history_pruned_at=? WHERE actor_id=? AND status IN ('done','stopped') AND history_pruned_at IS NULL",
+          )
+          .run(now(), actorId).changes;
+        if (!changed) return { status: "unchanged" };
+        const inboxRows = Number(
+          database
+            .prepare("DELETE FROM store_inbox WHERE actor_id=? AND consumed_at IS NOT NULL")
+            .run(actorId).changes,
+        );
+        return { status: "pruned", inboxRows };
+      });
+    },
+    loadSnapshot(actorId) {
+      const row = database
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(machine AS BLOB) AS machine, status, snapshot, saved_at, history_pruned_at FROM store_snapshot WHERE actor_id = ?",
+        )
+        .get(actorId);
+      return row ? readSnapshot(row) : undefined;
+    },
+    loadErroredSnapshot(actorId) {
+      const row = database
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, CAST(machine AS BLOB) AS machine, snapshot, CAST(event_id AS BLOB) AS event_id, saved_at FROM store_errored_snapshot WHERE actor_id = ?",
+        )
+        .get(actorId);
+      return row
+        ? {
+            ...readSnapshot(row),
+            eventId: row["event_id"] === null ? undefined : storedText(row["event_id"]!),
+          }
+        : undefined;
+    },
+    findActorsInState({ machine, statePath }) {
+      const query =
+        machine === undefined
+          ? database
+              .prepare(
+                "SELECT CAST(snapshot.actor_id AS BLOB) AS actor_id, CAST(snapshot.machine AS BLOB) AS machine, snapshot.status, snapshot.snapshot, snapshot.saved_at, snapshot.history_pruned_at FROM store_snapshot_state state JOIN store_snapshot snapshot ON snapshot.actor_id = state.actor_id WHERE state.state_path = ? ORDER BY state.actor_id",
+              )
+              .all(statePath)
+          : database
+              .prepare(
+                "SELECT CAST(snapshot.actor_id AS BLOB) AS actor_id, CAST(snapshot.machine AS BLOB) AS machine, snapshot.status, snapshot.snapshot, snapshot.saved_at, snapshot.history_pruned_at FROM store_snapshot_state state JOIN store_snapshot snapshot ON snapshot.actor_id = state.actor_id WHERE state.machine = ? AND state.state_path = ? ORDER BY state.actor_id",
+              )
+              .all(machine, statePath);
+      return query.map(readSnapshot);
+    },
+    writeInbox(event, actorIds) {
+      return connection.transaction(() => {
+        const rows: InboxRow[] = [];
+        const receivedAt = now();
+        const insert = database.prepare(
+          "INSERT INTO store_inbox (event_id, actor_id, topic, payload, received_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (actor_id, event_id) DO NOTHING RETURNING sequence, CAST(event_id AS BLOB) AS event_id, CAST(actor_id AS BLOB) AS actor_id, CAST(topic AS BLOB) AS topic, payload, received_at, consumed_at",
+        );
+        for (const actorId of actorIds) {
+          const row = insert.get(
+            event.eventId,
+            actorId,
+            event.topic,
+            JSON.stringify(event.payload),
+            receivedAt,
+          );
+          if (row) rows.push(readInbox(row));
+        }
+        return rows;
+      });
+    },
+    actorInbox(actorId) {
+      return database
+        .prepare(
+          "SELECT sequence, CAST(event_id AS BLOB) AS event_id, CAST(actor_id AS BLOB) AS actor_id, CAST(topic AS BLOB) AS topic, payload, received_at, consumed_at FROM store_inbox WHERE actor_id = ? ORDER BY sequence",
+        )
+        .all(actorId)
+        .map(readInbox);
+    },
+    pendingInbox(actorId) {
+      return database
+        .prepare(
+          "SELECT sequence, CAST(event_id AS BLOB) AS event_id, CAST(actor_id AS BLOB) AS actor_id, CAST(topic AS BLOB) AS topic, payload, received_at, consumed_at FROM store_inbox WHERE actor_id = ? AND consumed_at IS NULL ORDER BY sequence",
+        )
+        .all(actorId)
+        .map(readInbox);
+    },
+    markConsumed(actorId, eventId) {
+      connection.transaction(() =>
+        database
+          .prepare(
+            "UPDATE store_inbox SET consumed_at = ? WHERE actor_id = ? AND event_id = ? AND consumed_at IS NULL",
+          )
+          .run(now(), actorId, eventId),
+      );
+    },
+    deliver(target, row) {
+      if (row.actorId !== target.actorId) throw new TypeError("Inbox row belongs to another actor");
+      const current = database
+        .prepare("SELECT consumed_at FROM store_inbox WHERE sequence = ?")
+        .get(row.sequence);
+      if (current?.["consumed_at"] !== null) return "already-consumed";
+      target.send(row);
+      probe?.("sent", row);
+      const persisted = target.persist();
+      const write = { ...persisted, actorId: target.actorId, eventId: row.eventId };
+      if (persisted.snapshot.status === "error") {
+        store.saveSnapshot(write);
+        return "errored";
+      }
+      connection.transaction(() => {
+        store.saveSnapshot(write);
+        target.saved?.(write);
+        probe?.("saved", row);
+        store.markConsumed(row.actorId, row.eventId);
+      });
+      return "delivered";
+    },
+    drain(target) {
+      let delivered = 0;
+      while (true) {
+        const row = database
+          .prepare(
+            "SELECT sequence, CAST(event_id AS BLOB) AS event_id, CAST(actor_id AS BLOB) AS actor_id, CAST(topic AS BLOB) AS topic, payload, received_at, consumed_at FROM store_inbox WHERE actor_id = ? AND consumed_at IS NULL ORDER BY sequence LIMIT 1",
+          )
+          .get(target.actorId);
+        if (!row) return { delivered, erroredAt: undefined };
+        const inbox = readInbox(row);
+        const outcome = store.deliver(target, inbox);
+        if (outcome === "errored") return { delivered, erroredAt: inbox };
+        if (outcome === "delivered") delivered++;
+      }
+    },
+    nextDeadlineAt() {
+      return database
+        .prepare(
+          "SELECT fire_at FROM store_deadline WHERE fired_at IS NULL ORDER BY fire_at LIMIT 1",
+        )
+        .get()?.["fire_at"] as number | undefined;
+    },
+    dueDeadlines(at) {
+      return database
+        .prepare(
+          "SELECT deadline_id, CAST(actor_id AS BLOB) AS actor_id, CAST(state_path AS BLOB) AS state_path, CAST(event_name AS BLOB) AS event_name, fire_at, CAST(entry_id AS BLOB) AS entry_id, fired_at FROM store_deadline WHERE fired_at IS NULL AND fire_at <= ? ORDER BY fire_at, actor_id",
+        )
+        .all(at)
+        .map(readDeadline);
+    },
+    fireDeadline(deadline, topic) {
+      return connection.transaction(() => {
+        const row = database
+          .prepare(
+            "UPDATE store_deadline SET fired_at = ? WHERE deadline_id = ? AND fired_at IS NULL RETURNING deadline_id, CAST(actor_id AS BLOB) AS actor_id, CAST(state_path AS BLOB) AS state_path, CAST(event_name AS BLOB) AS event_name, fire_at, CAST(entry_id AS BLOB) AS entry_id, fired_at",
+          )
+          .get(now(), deadline.deadlineId);
+        if (!row) return undefined;
+        return store.writeInbox(
+          {
+            eventId: `deadline:${deadline.deadlineId}`,
+            topic,
+            payload: { type: storedText(row["event_name"]!) },
+          },
+          [storedText(row["actor_id"]!)],
+        )[0];
+      });
+    },
+    close() {
+      database.close();
+    },
+  };
+  return store;
+}

@@ -1,0 +1,22 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: store-configuration
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/store-configuration
+title: Store configuration
+description: The value of the `store` section of the service configuration.
+type: object
+additionalProperties: false
+required:
+  - file
+properties:
+  file:
+    description: >-
+      Path of the store's SQLite database file. A relative path resolves
+      against the directory of the configuration file. Created, with its
+      directory, when absent.
+    type: string
+    minLength: 1

@@ -1,0 +1,658 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - portfolio
+    - gates
+    - usage-intake
+  # GAP-EDGE: the technical-design schema declares no edge to a decision
+  # record; `references` is the best fit.
+  references:
+    - provider-capacity
+    - move-operator-usage-through-the-ledger
+terms:
+  - actual
+  - allocation
+  - available-balance
+  - capacity
+  - ceiling
+  - credit
+  - estimate
+  - pacing
+  - portfolio-item
+  - reservation
+  - settlement
+  - unallocated-remainder
+  - usage-move
+  - variance
+  - weight
+  - window
+objective: >-
+  Build the portfolio ledger as one module behind one interface in
+  `packages/service`, so that a gate can read what a portfolio item could
+  reserve now, usage and reservations post as they happen, settlement,
+  move, and reattribution keep every balance right, and every write
+  converges when it runs twice or after a crash.
+background:
+  current-design: >-
+    The portfolio design states the ledger, the sharing rule, available
+    balance, and settlement. The ledger spike proved one append-only SQLite
+    table of signed entries, the drawdown reading of available balance, the
+    guarantee floor, borrowing from the unallocated remainder only, weight
+    over items with waiting work, and pacing as a wrapper.
+  problems:
+    - >-
+      Provider quotas can have simultaneous windows and early resets. The
+      provider-capacity spike distinguishes them from this ledger's declared
+      account windows and integer budget amounts.
+    - >-
+      The store and ledger share one SQLite database file through
+      `StoreConnection`, so ledger operations can join the caller's
+      transaction without reading store-owned tables.
+    - >-
+      A gate writes a token and its reservation in one transaction, so a
+      ledger write must join a transaction the caller already holds.
+    - >-
+      Percentages over integer amounts round, and a guarantee sum checked in
+      floating point can exceed 100% by a rounding error.
+design-challenges:
+  windows-and-reservations: >-
+    A reservation written in one window can still be outstanding after a
+    reset, and its usage can arrive in either window.
+  nested-borrowing: >-
+    An item that borrows from its parent's remainder must be able to pass
+    that room to its own sub-items, while no sub-item takes a sibling's
+    guarantee.
+proposed-design:
+  high-level-overview: >-
+    The ledger is `packages/service/src/ledger/`. Its only public surface is
+    `createLedger`, `parseLedgerPortfolio`, `ledgerMigrationSteps`,
+    `LedgerError`, and their types, exported from
+    `packages/service/src/ledger/index.ts`. The service applies
+    `ledgerMigrationSteps` with the store's `migrate("ledger", steps)`, then
+    calls `createLedger` with the store's connection, a parsed portfolio, and
+    a clock. Its tables are specified in `portfolio-ledger-tables`. Writes
+    append entries to `ledger_entries` inside the connection's
+    transaction. Reads load the sums they need with SQL and compute balances and
+    the sharing rule's answer with pure functions. The ledger holds no state
+    between calls except the portfolio it was given; everything else is read
+    from the database on each call, so a second `Ledger` on the same file
+    reads the same balances.
+  connection: |-
+    The store owns the database file and the connection, opens it, sets its
+    pragmas, applies every owner's migrations, and closes it. The ledger
+    receives the connection at construction as `LedgerConnection`, the
+    smallest interface it uses. The store's `StoreConnection` satisfies it
+    structurally, and so does a bare `DatabaseSync` from `node:sqlite` paired
+    with a savepoint-based `transaction`. The ledger never runs DDL, never
+    sets a pragma, never closes the database, and touches only tables named
+    `ledger_<name>`. It uses positional `?` parameters only.
+
+    ```ts
+    export type LedgerSqlValue = null | number | bigint | string | Uint8Array;
+
+    export interface LedgerStatement {
+      run(...params: LedgerSqlValue[]): unknown;
+      get(...params: LedgerSqlValue[]): unknown;
+      all(...params: LedgerSqlValue[]): unknown[];
+    }
+
+    export interface LedgerDatabase {
+      prepare(sql: string): LedgerStatement;
+    }
+
+    export interface LedgerConnection {
+      readonly database: LedgerDatabase;
+      transaction<T>(work: () => T): T; // nests by savepoint inside an open transaction
+    }
+
+    /** Migration steps for owner `ledger`, applied in order by the store's migrate. */
+    export const ledgerMigrationSteps: readonly string[];
+    ```
+
+  interface: |-
+    Every operation is synchronous. Times are epoch milliseconds. Amounts are
+    non-negative safe integers in the account's native unit; the ledger never
+    converts units. Percentages are numbers from 0 to 100 with at most two
+    decimal places.
+
+    ```ts
+    export function parseLedgerPortfolio(input: LedgerPortfolioInput): LedgerPortfolio;
+
+    export function createLedger(options: {
+      connection: LedgerConnection;
+      portfolio: LedgerPortfolio;
+      now?: () => number; // defaults to Date.now
+    }): Ledger;
+
+    export interface Ledger {
+      setPortfolio(portfolio: LedgerPortfolio): void;
+      credit(request: {
+        key: string;
+        account: string;
+        window: string;
+        opensAt: number;
+        closesAt: number;
+        amount: number;
+      }): LedgerWriteResult;
+      reserve(request: {
+        key: string;
+        actor: string;
+        item: string;
+        account: string;
+        amount: number;
+      }): LedgerWriteResult;
+      postActual(request: {
+        key: string;
+        actor: string;
+        item: string;
+        account: string;
+        amount: number;
+        usedAt: number;
+      }): LedgerWriteResult;
+      move(request: {
+        key: string;
+        actor: string;
+        account: string;
+        from: string;
+        to: string;
+        waiting: readonly string[];
+      }): LedgerMoveResult;
+      reattribute(request: {
+        key: string;
+        account: string;
+        amount: number;
+        usedAt: number;
+        from: { actor: string; item: string };
+        to: { actor: string; item: string };
+      }): LedgerWriteResult;
+      settle(request: { actor: string }): LedgerSettleResult;
+      balance(query: { item: string; account: string; waiting: readonly string[] }): LedgerBalance;
+      actorUsage(actor: string): LedgerActorUsage;
+      windowAt(query: { account: string; at: number }): LedgerWindows;
+      totals(query: { account: string }): LedgerTotals;
+    }
+
+    export type LedgerWindow = {
+      window: string;
+      opensAt: number;
+      closesAt: number;
+      capacity: number; // the sum of the window's credits
+    };
+
+    export type LedgerWindows = {
+      current: LedgerWindow | null; // the window with the greatest opensAt not after `at`
+      next: LedgerWindow | null; // the window with the least opensAt after `at`
+    };
+
+    export type LedgerWriteResult = { replayed: boolean };
+
+    export type LedgerMoveResult =
+      | { moved: true; amount: number; replayed: boolean }
+      | { moved: false; amount: number; reservable: number };
+
+    export type LedgerSettleResult = {
+      retired: { item: string; account: string; amount: number }[];
+    };
+
+    export type LedgerBalance = {
+      window: string | null; // the account's current window; null before its first credit
+      allocation: number; // the item's guarantee amount in the window
+      actual: number; // actuals and reattributions in the window, item and its sub-items
+      outstanding: number; // outstanding reservations, item and its sub-items
+      available: number; // allocation - actual - outstanding; may be negative
+      reservable: number; // the sharing rule's answer: what the item could reserve now
+    };
+
+    export type LedgerTotals = {
+      window: LedgerWindow | null; // the account's current window at now(); null before its first credit
+      used: number; // actuals in that window plus outstanding reservations, on every item
+      items: { item: string; lifetime: number }[]; // actuals and reattributions in every window, per item, item alone
+    };
+
+    export type LedgerActorUsage = {
+      settled: boolean;
+      accounts: {
+        account: string;
+        estimate: number;
+        actual: number;
+        variance: number; // actual - estimate
+        outstanding: number;
+      }[];
+    };
+    ```
+  portfolio-input: |-
+    The ledger takes the portfolio tree and its allocation rows as input; it
+    does not read the process repository. `parseLedgerPortfolio` is pure. It
+    validates the input and returns an opaque `LedgerPortfolio`, or throws a
+    `LedgerError`. The console calls it to refuse a portfolio before it is
+    saved; the service calls it on every portfolio it loads and passes the
+    result to `createLedger` or `setPortfolio`. `setPortfolio` replaces the
+    portfolio for every later call and writes nothing. Entries are never
+    rewritten for a portfolio, so usage stays charged to the account
+    whatever portfolio is current: an item the portfolio holds charges its
+    ancestors, and an item it does not hold charges the top level.
+
+    ```ts
+    export type LedgerPortfolioInput = {
+      items: { id: string; parent: string | null; archived?: boolean }[];
+      allocations: {
+        item: string;
+        account: string;
+        guarantee: number; // percent of the parent's amount
+        ceiling?: number; // percent of the parent's limit; default 100
+        weight?: number; // positive integer; default 1
+        pacing?: { burst: number }; // percent of the parent's amount
+      }[];
+    };
+    ```
+
+    An item with a null parent is top-level; the parent of every top-level
+    item is the account's capacity. An item with no allocation row for an
+    account has a guarantee of 0 and the default ceiling for that account.
+    An archived item keeps its place in the tree, so that its history stays
+    charged to its parent: its guarantee is 0, it is never waiting, and it
+    takes no new reservation and no move. Validation rejects, with code `invalid-portfolio`: an empty or duplicate
+    item id, a parent that is not an item, a cycle, two rows for one item and
+    account, a row for an unknown or archived item, an item that is not
+    archived under an archived parent, a percentage outside 0 to 100 or with
+    more than two decimal places, a ceiling below the guarantee, and a weight
+    that is not a positive integer. Percentages convert to integer basis
+    points (`Math.round(percent * 100)`) at this boundary, and every later
+    computation is integer arithmetic.
+  guarantee-limit: >-
+    For each account and each parent, top level included, the guarantees of
+    the parent's children total at most 10000 basis points. A sum above it
+    throws `LedgerError` with code `guarantee-limit` and details
+    `{ account, parent, sum }`, where `parent` is the parent item id or null
+    for the top level and `sum` is the percentage. The message names both,
+    for example `Guarantees under "alpha" for account "acct" total 110%,
+    above 100%.` The first offending parent in item order is reported.
+  amounts: >-
+    Every derived amount is computed exactly with `BigInt` and floored to an
+    integer: `part(amount, basisPoints) = floor(amount * basisPoints /
+    10000)`. Flooring keeps the guarantees of a parent's children within the
+    parent's amount.
+  windows: >-
+    `credit` writes the window row on the first credit of a window, and a
+    credit entry with the window's key. A later credit of the same window
+    adds capacity and must carry the same `opensAt` and `closesAt`, or it
+    throws `window-conflict`; a new window opening at the same time as an
+    existing window of the account also throws `window-conflict`. The
+    current window of an account at time `t` is its window with the greatest
+    `opensAt` not after `t`. What a window holds and when it opens are
+    decided elsewhere; the ledger records what the caller credits.
+  entries: >-
+    A credit counts in its window. An actual counts in the window that holds
+    its `usedAt`, so usage counts against the capacity it spent even when it
+    is posted after a reset; an actual whose `usedAt` precedes the account's
+    first window throws `no-window`. A reservation counts against the
+    account's current window for as long as it is outstanding, whichever
+    window it was written in. For one actor, item, and account, the
+    outstanding reservation is a fold over its entries in `seq` order,
+    across every window, starting at 0: a `reserve`, `move`, or `settle`
+    entry sets it to `max(0, outstanding + amount)`, and an `actual` entry
+    sets it to `max(0, outstanding - amount)`. An actual consumes only the
+    hold that exists when it is posted, so usage posted before a hold
+    arrives never consumes it. The net reservation, the sum of `reserve`,
+    `move`, and `settle` entries, is never less than the outstanding
+    reservation. A `reattribute` entry counts in the window that holds
+    its `usedAt`, as an actual does, and leaves the outstanding
+    reservation as it is. The usage of an actor or an item in a window,
+    which every read and the sharing rule count as its actual, is the
+    sum of its `actual` and `reattribute` entries in that window; its
+    lifetime is that sum over every window. This makes available balance
+    allocation less usage counted as it arrives: a reservation holds its full
+    amount until posted usage consumes it, usage beyond it reduces the
+    balance further, and once every actor has settled the balance is
+    allocation less settled actuals.
+  idempotency: >-
+    `credit`, `reserve`, `postActual`, `move`, and `reattribute` carry a
+    caller key. The
+    first call inserts a `ledger_operations` row with the key, the kind, and
+    the canonical JSON of the request (keys sorted, `waiting` sorted), then
+    its entries. A later call with the same key and an equal request writes
+    nothing and returns `replayed: true`; for a move it returns the first
+    call's amount. A later call with the same key and a different request or
+    kind throws `idempotency-conflict`. A gate derives its reserve key from
+    the token id, so a replayed grant holds once. Settlement is keyed by
+    actor.
+  transactions: >-
+    Each write runs its checks, its operation row, and its entries inside one
+    `connection.transaction(work)` call, and the error of a failed write
+    propagates after the transaction rolls back. Outside a transaction the
+    call is its own transaction, so a write is atomic. Inside the caller's
+    transaction it nests as a savepoint, so a gate's token and its
+    reservation commit or roll back together. Reads run plain statements.
+    Calls are synchronous, so two calls in one process never interleave.
+  reserve: >-
+    Writes one `reserve` entry for the actor, item, and account. It throws
+    `invalid-input` for an item the portfolio does not hold, an archived
+    item, or an amount
+    below 1, and `actor-settled` for a settled actor, after the replay check
+    so a replayed grant still returns `replayed: true`. Reserve records what
+    it is asked and does not consult the sharing rule: the gate never refuses
+    a reservation its comparator asked for, and the comparator reads
+    `reservable` before it asks.
+  post-actual: >-
+    Writes one `actual` entry in the window that holds `usedAt`. The item
+    need not be in the current portfolio, so usage on an archived item is
+    recorded. An actual for a settled actor is recorded and counts
+    immediately; it consumes no reservation, since settlement retired it.
+  move: >-
+    Carries the actor's outstanding reservation on `from` for the account to
+    `to`. With `U` the outstanding amount on `from`: when `U` is 0 it records
+    the operation and returns `moved: true, amount: 0`. Otherwise it asks the
+    sharing rule what `to` could reserve, on the ledger as it would stand
+    with `U` removed from `from`, with the caller's `waiting` items. When that
+    answer is at least `U`, it writes a `move` entry of `-U` on `from` and
+    `+U` on `to` under one operation and returns `moved: true`. Since an
+    actual consumes only the hold that exists when it is posted, the actor's
+    earlier actuals on `to` leave the `+U` whole, and the outstanding amount
+    on `to` rises by exactly `U`. When it is
+    less, it writes nothing, records no operation, and returns `moved:
+    false` with `U` and the answer, so a retry with the same key asks again.
+    Posted actuals stay on `from`. Later actuals are posted to `to` by the
+    caller. `from` equal to `to`, or `to` not in the portfolio or archived,
+    throws `invalid-input`.
+  reattribute: >-
+    Carries a posted actual's amount from one actor and item to another
+    in the window that holds `usedAt`: one `reattribute` entry of
+    `-amount` for `from` and one of `+amount` for `to`, under one
+    operation. The account's usage in the window, the sum over every
+    item, does not change, so neither does its capacity, its `used`, or
+    any other window. The `from` item loses the amount from its actual
+    and lifetime and the `to` item gains it, so balances and the sharing
+    rule read the amount on `to` and its ancestors. The `from` actor's
+    actual loses the amount and the `to` actor's gains it; the estimate
+    and the outstanding reservation of each stay, since a reattribution
+    consumes no hold. The `to` actor may be settled: like an actual, a
+    reattribution onto a settled actor counts at once. The ledger does
+    not check that `from` holds the amount; the caller reattributes only
+    an actual it posted, from where the ledger holds it. It throws
+    `invalid-input` for an amount below 1, a `to` item the portfolio does
+    not hold or has archived, and `from` equal to `to`, and `no-window`
+    for a `usedAt` before the account's first window.
+  settle: >-
+    Inserts the actor into `ledger_settlements` unless it is there, then,
+    for each item and account where the actor's net reservation is above 0,
+    writes a `settle` entry of its negation. It returns the retired amounts.
+    Actuals stay. A second call finds every net reservation at 0, writes
+    nothing, and returns an empty list. After a forced re-intake the old
+    actor settles on its item and the new actor reserves under its own id.
+  balance-read: >-
+    `balance` reads the account's current window at `now()`, its capacity,
+    and, for the item and every descendant, actuals in that window and
+    outstanding reservations, by the fold in `entries`. `allocation` is
+    the item's guarantee amount, `available` is allocation less actual
+    less outstanding, and `reservable` is the sharing rule's answer for
+    that item, never above the account's unspent capacity. Before the account's first
+    credit, `window` is null and every amount is 0. An item the portfolio
+    does not hold throws `invalid-input`.
+  window-read: >-
+    `windowAt` returns the account's current window at `at` and the
+    account's next window after `at`, each with its capacity, or null where
+    there is none. It writes nothing. A window is current at `at` whether
+    or not its `closesAt` is after `at`; the caller compares `closesAt`
+    with `at` to learn whether the window covers it.
+  actor-usage-read: >-
+    `actorUsage` returns, per account the actor has entries in, the
+    estimate (sum of its `reserve` entries), the actual (sum of its `actual`
+    and `reattribute` entries in every window and item), the variance (actual less estimate),
+    and the outstanding reservation summed over items; and whether the actor
+    is settled.
+  totals-read: >-
+    `totals` returns, for one account, its current window at `now()` with
+    its capacity, `used`, every actual in that window plus every
+    outstanding reservation on any item, live, archived, or not held by
+    the portfolio, which is the capacity less the account's unspent
+    capacity of `sharing-rule`, and, for each item the ledger holds an
+    `actual` or `reattribute` entry for, `lifetime`, the sum of that
+    item's own `actual` and `reattribute` entries in every window,
+    ordered by item id. Before the account's first credit,
+    `window` is null and `used` counts outstanding reservations only. It
+    writes nothing.
+  sharing-rule: |-
+    The sharing rule is a pure function in
+    `packages/service/src/ledger/sharing-rule.ts`. It receives the portfolio
+    for one account, the window's capacity, `opensAt`, `closesAt`, `now`,
+    the usage of every item (actual in the window plus outstanding,
+    descendants included, archived items included), the usage on items the
+    portfolio does not hold, and the set of waiting items, and returns what
+    an item could reserve now. Usage on an item the portfolio does not hold
+    counts as the usage of one extra top-level child with a guarantee of 0
+    that is never waiting.
+
+    The account's unspent capacity is `capacity` less every actual in the
+    window and every outstanding reservation, on any item: live, archived,
+    or not held by the portfolio. It is a ceiling on every answer.
+    Guarantees and sharing decide each item's share of it.
+
+    The share is computed top down along the path from the top level to the
+    item. For each node `c` with parent `P`:
+
+    - `G(top) = capacity` and `L(top) = capacity` stand for the account's
+      capacity as the parent of top-level items.
+
+    - `G(c) = part(G(P), guarantee(c))` is the guarantee amount.
+
+    - `R(P) = L(P) - sum of G(s) over the children s of P` is the unallocated
+      remainder at `P`, measured from `P`'s limit so that room `P` borrows
+      passes to its sub-items.
+
+    - `B(s) = max(0, U(s) - G(s))` is what child `s` already borrows, where
+      `U` is usage.
+
+    - `F(P) = max(0, R(P) - sum of B(s) over the children of P)` is the free
+      remainder.
+
+    - `share(c) = floor(F(P) * weight(c) / sum of weight(s))`, over the
+      children of `P` that are waiting or have a waiting descendant, with `c`
+      always counted as waiting.
+
+    - `ceil(c) = part(L(P), ceiling(c))`.
+
+    - `room(c) = max(0, G(c) - U(c)) + min(share(c), max(0, ceil(c) -
+      max(G(c), U(c))))`.
+
+    - With pacing, `elapsed = clamp(now - opensAt, 0, closesAt - opensAt)`,
+      `paced(c) = floor(G(c) * elapsed / (closesAt - opensAt)) + part(G(P),
+      burst(c))`, and `room(c)` becomes `min(room(c), max(0, paced(c) -
+      U(c)))`.
+
+    - `L(c) = U(c) + room(c)` is the most the node's subtree may use now.
+
+    The answer for the item is the least of the account's unspent capacity
+    and every `room` along the path. An item never borrows a sibling's
+    guarantee, since borrowing draws only on `F(P)`, which excludes every
+    child's guarantee and what siblings already borrow. An archived item
+    has a guarantee of 0 and its usage counts in its ancestors' `U`, so it
+    is borrowed room at its parent. A guarantee reads the current
+    portfolio, so a portfolio change can give an item a guarantee larger
+    than what is left; the unspent capacity bounds it, so the window's total
+    usage never exceeds its capacity through the rule, and a new window,
+    whose actuals start at 0, frees it. Weight divides only the free
+    remainder, and only among items with waiting work, which the caller
+    supplies. Pacing restarts at a reset because `elapsed` and usage are
+    read from the current window. With guarantees totalling 100% and no
+    ceiling, `R` is 0 up to rounding and the rule is a fixed split.
+  convergence: >-
+    Every write runs in one transaction, so a crash leaves it wholly written
+    or not at all. Running a write twice: credit, reserve, actual,
+    reattribute, and an accepted move replay by key and write nothing; a refused move writes
+    nothing and asks again; settle finds nothing left to retire. Construction
+    and `setPortfolio` write nothing. Migration convergence belongs to the
+    store's `migrate`.
+  errors: >-
+    Every rejection is a `LedgerError` with a `code` of `invalid-portfolio`,
+    `guarantee-limit`, `invalid-input`, `idempotency-conflict`,
+    `actor-settled`, `no-window`, or `window-conflict`, a message that names
+    the offending value, and `details` with the values named. Input checks
+    run at the interface before any statement; nothing inside the module
+    validates again. The shared `LedgerErrorCode` also holds
+    `account-archived`, which only the capacity module's ledger throws, for
+    a reservation on an archived account, as `portfolio` states.
+  module-layout: >-
+    `index.ts` exports the public surface. `ledger.ts` holds `createLedger`
+    and its SQL statements. `migrations.ts` holds `ledgerMigrationSteps`, an
+    array with one SQL string that creates the complete schema of
+    `docs/specifications/portfolio-ledger-tables.sql`. `sharing-rule.ts` and
+    `balance.ts` hold the pure computations. `parseLedgerPortfolio`,
+    `LedgerError`, `LedgerErrorCode`, `LedgerPortfolio`, and
+    `LedgerPortfolioInput` live in `packages/shared/src/ledger-portfolio.ts`,
+    with the read accessors over a parsed portfolio that the computations
+    use, so that the host CLI lints a declared portfolio with the same
+    rules; `index.ts` re-exports them. The module does not import the
+    store.
+  tests: |-
+    Tests live in `packages/service/src/ledger/ledger.test.ts` and drive
+    only the public interface, against a database file each test opens in a
+    temporary directory with `node:sqlite`, with an injected clock. A test
+    helper applies `ledgerMigrationSteps` in order with `exec` and builds a
+    `LedgerConnection` from the `DatabaseSync` and a `transaction` that uses
+    `BEGIN IMMEDIATE` at the outermost call and `SAVEPOINT` when nested.
+    Values are generic: account
+    `acct`, items `alpha`, `beta`, `gamma`, actors `actor-1` and `actor-2`,
+    one window `w1` from 0 to 1000 credited 100 unless a scenario says
+    otherwise. The scenarios, each written red before green:
+
+    - Idempotency: two reserves of 30 under key `k1` leave `alpha` at
+      available 20 and estimate 30, the second returns `replayed: true`; the
+      same key with amount 31 throws `idempotency-conflict`.
+
+    - Available balance with `alpha` and `beta` at 50% each: reserve 20 gives
+      available 30; actual 12 leaves it 30; a further actual 15 gives 23;
+      settle leaves 23, equal to allocation less settled actuals.
+
+    - Fixed split: `alpha` and `beta` at 50%, no ceiling: `alpha` reservable
+      is 50, then 0 after it reserves 50, while `beta` stays 50.
+
+    - Remainder: `alpha` and `beta` at 30%: `alpha` reservable is 70; after
+      `alpha` reserves 70, `beta` reservable is 30 and `alpha` is 0.
+
+    - Ceiling: `alpha` at 30% with ceiling 50% and `beta` at 30%: `alpha`
+      reservable is 50.
+
+    - Weight: `alpha` weight 1 and `beta` weight 3, both at 30%, both
+      waiting: `alpha` reservable 40 and `beta` 60; with only `alpha`
+      waiting, `alpha` is 70.
+
+    - Pacing: `alpha` at 50% with burst 10%, `beta` at 30%: reservable is
+      10 at time 0, 35 at 500, 55 at 900; after a credit of 100 for window
+      `w2` from 1000 to 2000, it is 10 at 1000.
+
+    - Nested: `alpha` at 60% with ceiling 80%, alone at the top level, with
+      sub-items `beta` and `gamma` at 50% of it: with only `gamma` waiting,
+      `gamma` reservable is 50, its guarantee of 30 plus the 20 `alpha`
+      borrows from the top-level remainder; with both waiting, each is 40.
+
+    - Guarantee limit: `alpha` 70% and `beta` 40% throws `guarantee-limit`
+      naming the top level and 110%; under `alpha`, sub-items 60% and 50%
+      throw naming `alpha` and 110%; 33.33% three times parses.
+
+    - Settlement: reserve 20, actual 12, settle: retired 20, variance -8,
+      actuals stay; a second settle retires nothing; a reserve after settle
+      throws `actor-settled`; an actual after settle counts in full.
+
+    - Move: `alpha` and `beta` at 50%; `actor-1` reserves 30 on `alpha` and
+      posts 18; `actor-2` holds 45 on `beta`; a move of `actor-1` to `beta`
+      is refused with amount 12 and reservable 5, and nothing is written;
+      with `actor-2` holding 30 instead, it moves 12, leaving `alpha` usage
+      18 and `beta` usage 42, and the estimate stays 30.
+
+    - Move onto prior usage: `alpha` and `beta` at 50%; `actor-1` posts an
+      actual of 20 on `beta` with no reservation, reserves 30 on `alpha`,
+      and posts 18 there; a move of `actor-1` to `beta` moves 12, leaving
+      `actor-1` outstanding 0 on `alpha` and 12 on `beta`, `beta` usage 32,
+      and `actorUsage` outstanding 12. Settle retires 18 on `alpha` and 12
+      on `beta`, and leaves `beta` usage 20.
+
+    - Archive: `alpha` and `beta` at 50%; `actor-1` posts 20 on `alpha`
+      and `actor-2` reserves 10 on `alpha`; after `setPortfolio` archives
+      `alpha` and keeps `beta` at 50%, `beta` reservable is 70, and a
+      reserve on `alpha` or a move to it throws `invalid-input`; settling
+      `actor-2` makes it 80; after `setPortfolio` drops `alpha` from the
+      portfolio, it is still 80; a late actual of 5 on `alpha` with
+      `usedAt` in `w1` makes it 75; a second `Ledger` on the same file with
+      the same portfolio reads 75.
+
+    - Reallocation: `alpha` and `beta` at 50%; `actor-1` posts 20 on
+      `alpha`; after `setPortfolio` archives `alpha` and sets `beta` to
+      100%, `beta` allocation is 100, available 100, and reservable 80;
+      after `beta` reserves 80, available is 20 and reservable is 0; the
+      same holds when `alpha` is dropped from the
+      portfolio instead of archived; after a credit of 100 opens `w2` at
+      1000 and `beta`'s actor settles, `beta` reservable is 100.
+
+    - Nested reallocation: `alpha` at 100% with sub-items `beta` and
+      `gamma` at 50% of it; `actor-1` posts 20 on `gamma`; after
+      `setPortfolio` archives `gamma` and sets `beta` to 100% of `alpha`,
+      `beta` reservable is 80 and `alpha` reservable is 80; a late actual
+      of 10 on `gamma` with `usedAt` in `w1` makes both 70; a second
+      `Ledger` on the same file with the same portfolio reads 70.
+
+    - Live reallocation: `alpha` and `beta` at 50%; `actor-1` posts 20 on
+      `alpha`; after `setPortfolio` keeps `alpha` live at 0% and sets
+      `beta` to 100%, `beta` balance has allocation 100, available 100, and
+      reservable 80, and `alpha` reservable is 0; after `beta` reserves 80,
+      `beta` reservable is 0 and the window's usage is 100.
+
+    - Move under live reallocation: `alpha` and `beta` at 50%; `actor-1`
+      posts 20 on `alpha` and `actor-2` reserves 30 on `alpha`; after
+      `setPortfolio` keeps `alpha` live at 0% and sets `beta` to 100%, a
+      move of `actor-2` to `beta` moves 30; `beta` reservable is then 50;
+      after `actor-3` reserves 50 on `beta`, a move of `actor-1`'s zero
+      outstanding returns `amount: 0`, and `beta` reservable is 0 with the
+      window's usage at 100.
+
+    - Windows: reserve 40 and actual 30 in `w1`; after a credit of 100 opens
+      `w2` at 1000, `w1` keeps the 30 and `w2` holds the outstanding 10; an actual of 10 with `usedAt`
+      in `w2` consumes it.
+
+    - Append-only: an `UPDATE` or `DELETE` on any ledger table, through the
+      test's own connection, fails.
+
+    - Window read: with `w1` from 0 to 1000 credited 100 twice and `w2`
+      from 2000 to 3000, `windowAt` at 1500 returns `w1` with capacity 200
+      and `w2`; at -1 it returns no current window and `w1` as next.
+
+    - Totals: `alpha` and `beta` at 50%; `actor-1` posts 10 on `alpha`
+      in `w1`, a credit of 100 opens `w2` at 1000, and at 1500 `actor-1`
+      posts 5 on `alpha` and `actor-2` reserves 20 on `beta` and posts 4;
+      `totals` at 1500 answers `w2` with capacity 100, `used` 25, and
+      lifetimes 15 for `alpha` and 4 for `beta`; after `setPortfolio`
+      drops `beta`, `used` is still 25.
+
+    - Reattribute: `alpha` and `beta` at 50%; `actor-1` posts 20 on
+      `alpha` in `w1` and `actor-2` reserves 10 on `beta`; a
+      reattribution of 20 from `actor-1` on `alpha` to `actor-2` on `beta`
+      leaves `alpha` actual 0 and `beta` actual 20 and outstanding 10, the
+      totals' `used` at 30 as before, lifetimes 0 for `alpha` and 20 for
+      `beta`, `actor-1` actual 0, and `actor-2` estimate 10, actual 20,
+      variance 10, and outstanding 10; `beta` reservable is what it would
+      be had the 20 posted there. The same key replays and writes nothing;
+      the same key with another amount throws `idempotency-conflict`.
+
+    - Reattribute across windows: an actual of 20 on `alpha` with
+      `usedAt` in `w1`, reattributed to `beta` after a credit opens `w2`,
+      moves 20 in `w1` and leaves `w2`'s balances unchanged.
+
+    - Reattribute refused: to an archived item, to an item the portfolio
+      does not hold, with `from` equal to `to`, or with amount 0 throws
+      `invalid-input` and writes nothing; onto a settled actor it counts
+      in that actor's actual.
+
+    - Migration: a database at step 1 holding entries of every kind is
+      migrated by step 2; every row of every ledger table keeps its `seq`
+      or key and its values, every index and append-only trigger of
+      `portfolio-ledger-tables.sql` exists after it, an `UPDATE` and a
+      `DELETE` on each table still fail, and the balances, totals, and
+      actor usage read the same as before it.
+
+    - Durability: a second `Ledger` on the same file returns the same
+      balances and actor usage.
+
+    - Transaction: a reserve inside the caller's `transaction` whose work
+      then throws leaves no entry and no operation.
+
+    - Schema: the steps applied to an empty database produce the schema of
+      `docs/specifications/portfolio-ledger-tables.sql`.

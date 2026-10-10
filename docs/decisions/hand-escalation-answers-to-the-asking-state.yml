@@ -1,0 +1,48 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - escalations
+    - durable-event-delivery
+description: >-
+  An escalation is answered on a page, through Manifold's API, or in a
+  thread, at any time after it is raised, including after the state that
+  asked has exited and while the service is down. The answer must reach
+  the actor once, and only the state that asked may take it. Every other
+  outside event reaches an actor through the router, by a topic in the
+  actor's subscription.
+considered-options:
+  "1": >-
+    Callback. The asking state invokes the `escalate` callback, which reads
+    the escalation's row in the store and sends the answer back to its
+    actor. The row is the durable record; a restart starts the callback
+    again and it reads the row.
+  "2": >-
+    Routed event. The answer is published through the router under a topic
+    in the actor's subscription, such as one per actor, and written to its
+    inbox like any outside event.
+  "3": >-
+    Child state machine. Each escalation runs as a child blueprint the
+    asking state invokes, which subscribes to the escalation's topic and
+    finishes with the answer as its output.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 ties the answer to the state entry that asked: the save that
+    records the state's exit withdraws the escalation in the same
+    transaction, and a later answer is refused, so no later state can take
+    it. The store row already
+    holds the answer durably, and the actor host already persists an actor
+    after an event from an invoked actor. Option 2 puts the answer in the
+    inbox behind any pending row; a pending row that exits the asking state
+    lets a later state that accepts the same event type take a stale
+    answer, unless every blueprint matches escalation ids by hand. Option 3
+    adds a blueprint and a subscription for every question, and still needs
+    option 2's routing under it.
+expected-outcomes:
+  positive:
+    - Only the state entry that asked can take an answer, without the blueprint author matching ids.
+    - An answer given while the service is down reaches the actor once after the restart.
+    - Escalations need no source, topic, or subscription in the router.
+  negative:
+    - An escalation answer is the one outside event that does not pass through the router's inbox; its durable record is the escalation row instead.
+    - An answer committed in the moment before the asking state exits is recorded as the answer but not taken by the actor.

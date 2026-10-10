@@ -1,0 +1,11 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `related-to`
+  # is the best fit.
+  related-to:
+    - usage-record
+    - usage-decoder
+title: Usage unit
+description: >-
+  A session, subagent, or child thread whose calls one provider session
+  file records.

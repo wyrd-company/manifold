@@ -1,0 +1,9 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the specification that defines it.
+relationships:
+  references:
+    - decision-models
+title: Cell
+description: >-
+  The JSONata expression at one rule and one column of a decision table.

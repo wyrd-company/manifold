@@ -1,0 +1,646 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - blueprint-migration
+    - durable-event-delivery
+    - gates
+    - portfolio
+    - actor-history
+    - retention
+  mitigates:
+    - gate-durability-unproven
+objective: >-
+  Give every actor one durable place for its snapshot, its inbox, and its
+  deadlines, behind one module interface, so that a crash at any point of a
+  delivery replays the event and never loses it, a restarted service finds
+  every pending event and armed deadline, and other modules keep their own
+  tables in the same database file inside the same transactions.
+background:
+  problems:
+    - >-
+      Delivering an event touches the actor in memory and two rows on disk. A
+      crash between any two of those steps must leave a state that the next
+      run completes without losing the event or applying it twice.
+    - >-
+      A gate grants a token and the ledger records its reservation; both must
+      commit together or not at all, though each module owns its own tables.
+    - >-
+      A gate rebuilds its population after a restart without loading actors,
+      so the store must answer which actors are in a state from rows alone.
+design-challenges:
+  convergence: >-
+    Every operation that changes a row must end in the same state when it
+    runs twice and when the run before it stopped halfway.
+  shared-file: >-
+    The store and the ledger keep tables in one SQLite file. Each owns its
+    tables and their migrations, and a write of one must be able to join a
+    transaction the other opened.
+  state-query: >-
+    A snapshot's state value is a nested object for parallel states. Finding
+    the actors in a state must be an indexed lookup, not a parse of every
+    snapshot.
+  fault-proof: >-
+    The delivery order must be proved against crashes at each step,
+    including a real process kill, through the module's public interface.
+  text-values: >-
+    A string kept in a TEXT column must come back as the same string on
+    every Node release the service supports, whatever characters it holds.
+    On the supported releases before 24.16, `node:sqlite` ends a TEXT
+    result at its first NUL (U+0000) when it makes the JavaScript string,
+    though SQLite keeps every byte. On every release, SQLite's `length`,
+    `GLOB`, and `LIKE` read a string only up to its first NUL.
+proposed-design:
+  high-level-overview: >-
+    The store is one module, `packages/service/src/store/`, whose only public
+    file is `index.ts`. `openStore` opens the SQLite file through
+    `node:sqlite`, applies the store's migrations, and returns a `Store`.
+    The `Store` saves and loads snapshots, writes and lists inbox rows,
+    delivers an inbox row to a delivery target in the crash-safe order,
+    drains an actor's pending rows, lists due deadlines, and fires them. It
+    lists active snapshots and the next deadline for the router. Its
+    `connection` is the seam to other modules that keep tables in the same
+    file: it exposes the database, a nesting transaction, and per-owner
+    migrations. `storedText` turns a TEXT value read as bytes back into its
+    string, for the store and for every module that keeps tables in the
+    file. Every method is synchronous, since `node:sqlite` is. The
+    tables are specified in `store-database-schema`.
+  public-interface: |-
+    `packages/service/src/store/index.ts` exports exactly these names.
+
+    ```ts
+    import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+
+    export function openStore(options: StoreOptions): Store;
+
+    /**
+     * The string whose UTF-8 bytes a TEXT column holds, from a value selected
+     * as `CAST(<column> AS BLOB)`. Throws a TypeError for any other value.
+     */
+    export function storedText(value: SQLOutputValue): string;
+
+    export interface StoreOptions {
+      /** Path of the SQLite file. Created when absent; its directory exists. */
+      readonly path: string;
+      /** Milliseconds since the Unix epoch. Defaults to Date.now. */
+      readonly now?: () => number;
+      /** Called at each step of a delivery. */
+      readonly probe?: DeliveryProbe;
+    }
+
+    export interface Store {
+      readonly connection: StoreConnection;
+
+      saveSnapshot(write: SnapshotWrite): SaveOutcome;
+      loadSnapshot(actorId: string): StoredSnapshot | undefined;
+      loadErroredSnapshot(actorId: string): StoredErroredSnapshot | undefined;
+      findActorsInState(query: StateQuery): StoredSnapshot[];
+      activeSnapshots(): StoredSnapshot[];
+      endedSnapshots(): StoredSnapshot[];
+      prunableEnded(query: PrunableQuery): PrunableActor[];
+      pruneEnded(actorId: string): PruneOutcome;
+
+      writeInbox(event: InboxEvent, actorIds: readonly string[]): InboxRow[];
+      pendingInbox(actorId: string): InboxRow[];
+      actorInbox(actorId: string): InboxRow[];
+      markConsumed(actorId: string, eventId: string): void;
+      deliver(target: DeliveryTarget, row: InboxRow): DeliveryOutcome;
+      drain(target: DeliveryTarget): DrainResult;
+
+      dueDeadlines(at: number): DeadlineRow[];
+      fireDeadline(deadline: DeadlineRow, topic: string): InboxRow | undefined;
+      nextDeadlineAt(): number | undefined;
+
+      recordMigrationFailure(failure: MigrationFailureWrite): "recorded" | "unchanged";
+      migrationFailure(actorId: string): StoredMigrationFailure | undefined;
+      /** Every record whose `to` is the version key, ordered by actor id. */
+      migrationFailures(to: string): StoredMigrationFailure[];
+      /** Deletes every record whose `to` is the version key; returns how many. */
+      clearMigrationFailures(to: string): number;
+
+      close(): void;
+    }
+
+    export interface StoreConnection {
+      readonly database: DatabaseSync;
+      transaction<T>(work: () => T): T;
+      migrate(owner: string, steps: readonly string[]): void;
+    }
+
+    export type JsonValue =
+      | null
+      | boolean
+      | number
+      | string
+      | readonly JsonValue[]
+      | { readonly [key: string]: JsonValue };
+
+    export type StateValue = string | { readonly [key: string]: StateValue };
+
+    export type PersistedSnapshot =
+      | {
+          readonly status: "active" | "done" | "stopped";
+          readonly value: StateValue;
+          readonly [key: string]: unknown;
+        }
+      | { readonly status: "error"; readonly [key: string]: unknown };
+
+    export interface SnapshotWrite {
+      readonly actorId: string;
+      readonly machine: string;
+      readonly snapshot: PersistedSnapshot;
+      readonly deadlines?: readonly DeadlineArm[];
+      readonly eventId?: string;
+    }
+
+    export type SaveOutcome = "saved" | "errored";
+
+    export interface StoredSnapshot {
+      readonly actorId: string;
+      readonly machine: string;
+      readonly snapshot: PersistedSnapshot;
+      readonly savedAt: number;
+      /** Present on an ended snapshot whose events and commands retention has pruned. */
+      readonly historyPrunedAt?: number;
+    }
+
+    export interface PrunableQuery {
+      /** Ended actors whose snapshot was saved before this time. */
+      readonly endedBefore: number;
+      /** The last actor of the previous page; absent for the first page. */
+      readonly after?: PrunableActor;
+      readonly limit: number;
+    }
+
+    export interface PrunableActor {
+      readonly actorId: string;
+      readonly savedAt: number;
+    }
+
+    export type PruneOutcome =
+      | { readonly status: "pruned"; readonly inboxRows: number }
+      | { readonly status: "unchanged" };
+
+    export interface StoredErroredSnapshot extends StoredSnapshot {
+      readonly eventId: string | undefined;
+    }
+
+    export interface StateQuery {
+      /** Absent: actors on every machine. */
+      readonly machine?: string;
+      readonly statePath: string;
+    }
+
+    export interface InboxEvent {
+      readonly eventId: string;
+      readonly topic: string;
+      readonly payload: JsonValue;
+    }
+
+    export interface InboxRow extends InboxEvent {
+      readonly sequence: number;
+      readonly actorId: string;
+      readonly receivedAt: number;
+      readonly consumedAt: number | undefined;
+    }
+
+    export interface DeliveryTarget {
+      readonly actorId: string;
+      send(row: InboxRow): void;
+      persist(): Omit<SnapshotWrite, "actorId" | "eventId">;
+      /** Called inside the transaction of a saved write, before the consume. */
+      saved?(write: SnapshotWrite): void;
+    }
+
+    export type DeliveryOutcome = "delivered" | "already-consumed" | "errored";
+
+    export interface DrainResult {
+      readonly delivered: number;
+      readonly erroredAt: InboxRow | undefined;
+    }
+
+    export type DeliveryStep = "sent" | "saved";
+    export type DeliveryProbe = (step: DeliveryStep, row: InboxRow) => void;
+
+    export interface DeadlineArm {
+      readonly statePath: string;
+      readonly eventName: string;
+      readonly fireAt: number;
+      readonly entryId: string;
+    }
+
+    export interface DeadlineRow extends DeadlineArm {
+      readonly deadlineId: number;
+      readonly actorId: string;
+      readonly firedAt: number | undefined;
+    }
+
+    export interface MigrationFailureWrite {
+      readonly actorId: string;
+      /** The version key the actor stayed on. */
+      readonly from: string;
+      /** The version key it could not take. */
+      readonly to: string;
+      readonly kind:
+        | "version-invalid"
+        | "restore-mismatch"
+        | "gate-missing"
+        | "token-return"
+        | "token-trap"
+        | "no-path"
+        | "mapping-failed"
+        | "mapping-timeout"
+        | "context-rejected"
+        | "store";
+      readonly message: string;
+      readonly detail: { readonly [key: string]: JsonValue };
+    }
+
+    export interface StoredMigrationFailure extends MigrationFailureWrite {
+      readonly failedAt: number;
+    }
+    ```
+  module-layout: >-
+    `index.ts` re-exports the public names and nothing else. `connection.ts`
+    opens the file, sets the pragmas, and implements `transaction` and
+    `migrate`. `migrations.ts` holds the store's migration steps as an array
+    of SQL strings. `stored-text.ts` holds `storedText`. `state-paths.ts` holds the pure function from a state
+    value to its state paths. `store.ts` implements `Store` over the
+    connection. Tests live beside the module and import only `index.ts`.
+    The store adds no dependency: `node:sqlite` is built into Node.
+  connection-seam: >-
+    `store.connection` is how another module keeps tables in the store's
+    file. The ledger takes a `StoreConnection` at construction and never
+    opens the file itself. `database` is the open `DatabaseSync`; a module
+    prepares its own statements on it. `transaction(work)` runs `work`
+    inside `BEGIN IMMEDIATE` and `COMMIT` at the outermost call, and inside
+    `SAVEPOINT` and `RELEASE` when called inside another transaction, so a
+    module's write joins whatever transaction is open. When `work` throws,
+    the transaction or savepoint rolls back and the error is rethrown. When
+    `work` returns a thenable, the transaction rolls back and
+    `transaction` throws a `TypeError`, since an awaited write would run
+    outside it. Every store method that writes uses `transaction` itself, so
+    a gate can call `writeInbox` for a token and the ledger's reserve inside
+    one `transaction` and both commit together. A module never closes the
+    database, never sets a pragma, and never reads or writes a table whose
+    name does not start with its owner prefix. A module reads and constrains
+    its TEXT columns as `text-values` states. `store.close()` closes the
+    database for every module.
+  migrations: >-
+    `migrate(owner, steps)` brings an owner's tables to the latest step. In
+    one transaction it reads the owner's version from `schema_migration`,
+    zero when the row is absent, runs each step from that index to the end
+    with `exec`, and writes the number of steps as the version. At 0.1.0,
+    each owner has one step that creates its complete schema. A schema
+    change edits that step in place and requires a new store. After
+    0.1.0, steps are append-only: an applied step is never edited, and a
+    change is a new step. Running `migrate` twice runs nothing the second
+    time; a crash during it rolls back every step of that call. A recorded
+    version greater than the number of steps throws an `Error` naming the
+    owner and both numbers, tells the operator to create a new store, and
+    changes nothing. The folded schema rejects stores whose recorded
+    versions exceed this build's steps. `openStore` calls `migrate("store", storeSteps)`
+    before it returns. An owner is a lower-case word; `migrate` throws a
+    `TypeError` for any other owner string.
+  opening: >-
+    `openStore` opens the file with `new DatabaseSync(path)`, checks the
+    recorded store version before changing the file. A version-1 store
+    must contain `store_migration_failure`, which distinguishes the
+    complete schema from the pre-fold version 1; otherwise opening
+    throws an error naming `store` and telling the operator to create a
+    new store. It then runs `PRAGMA
+    journal_mode = WAL`, `PRAGMA synchronous = FULL`, and `PRAGMA
+    foreign_keys = ON`, then migrates. The service opens one store per
+    database file and keeps it for the life of the process. Opening a store
+    on a file a crashed process left behind is the restart path: SQLite
+    discards any transaction the crash left uncommitted.
+  text-values: >-
+    A TEXT column that can hold a string from outside the store, such as an
+    actor id, a machine, a state path, an event id, a topic, an event name,
+    an entry id, or a message, keeps the string's UTF-8 bytes, and a NUL is
+    a character like any other. Every read of such a column selects it as
+    `CAST(<column> AS BLOB) AS <column>`, and the row reader makes the string
+    with `storedText`, which decodes the bytes as UTF-8. The same holds for
+    every other TEXT result built from such a string: a `RETURNING` column,
+    a string taken out of JSON with `json_extract` or `->>`, and an
+    aggregate or expression over the column. Comparisons need no cast:
+    `=`, unique keys, and `ORDER BY` compare every byte of a bound
+    parameter and a column. A column of JSON written with `JSON.stringify`
+    and read whole with `JSON.parse` is read as TEXT, since JSON writes
+    U+0000 as an escape. A column whose values the service takes from a
+    closed set, such as a status or a kind, is read as TEXT. `storedText`
+    throws a `TypeError` for a value that is not a `Uint8Array`, so a read
+    that misses the cast fails on every Node release, not only on the ones
+    that end a string at a NUL; a nullable column is checked for `null`
+    before the call. No constraint or query applies `length`, `GLOB`,
+    `LIKE`, or `printf` with `%s` to a column whose strings may hold a NUL,
+    since each reads only up to the first one: a column that must not be
+    empty is checked with `<column> <> ''`, and a length limit that a
+    boundary schema states, such as the 8000-character limit on a message,
+    stays at that boundary. A column whose format admits no NUL, such as a
+    hex digest or a generated id of fixed length, may keep such a check. The reads are the same on
+    every release, and nothing checks the Node version. The store's own
+    reads name their columns, with no `SELECT *`, and cast `actor_id`,
+    `machine`, `event_id`, `topic`, `state_path`, `event_name`, `entry_id`,
+    `from_machine`, `to_machine`, and `message`; `status`, `kind`, and the
+    JSON columns `snapshot`, `payload`, and `detail` are read as TEXT. Each
+    module that keeps such a column proves, through its own public
+    interface, that a string with a NUL inside and a string that starts
+    with a NUL come back whole from every read whose result is compared,
+    bound again, used as a key, or written back.
+  state-paths: >-
+    A state path names one state node of a snapshot's state value: the keys
+    from the root to the node joined with `.`. `statePaths(value)` returns
+    every active node's path, ancestors included, in depth-first order with
+    keys in the order the value lists them. A key may hold any character,
+    a NUL included. `"idle"` gives `["idle"]`.
+    `{ open: { lifecycle: "ready", budget: "reserved" } }` gives `["open",
+    "open.lifecycle", "open.lifecycle.ready", "open.budget",
+    "open.budget.reserved"]`. An empty object below a key contributes only
+    that key. The function is pure, and tests prove it through
+    `findActorsInState`.
+  snapshots: >-
+    `saveSnapshot` with a status of `active`, `done`, or `stopped` writes,
+    in one transaction: the `store_snapshot` row, replacing the actor's
+    previous row; the actor's `store_snapshot_state` rows, deleted and
+    rewritten from `statePaths(snapshot.value)`; the deadline rows described
+    under deadlines; and returns `saved`. With a status of `error` it writes
+    only the actor's `store_errored_snapshot` row, replacing any earlier one,
+    with `eventId` when given, leaves `store_snapshot`, the state rows, and
+    the deadlines unchanged, and returns `errored`. An errored snapshot
+    therefore never overwrites a snapshot, and an actor whose first snapshot
+    errors has an errored snapshot and no snapshot. `loadSnapshot` and
+    `loadErroredSnapshot` return the row parsed, or `undefined`. Saving the
+    same write twice leaves the same rows, with `saved_at` from the second
+    call.
+  state-query: >-
+    `findActorsInState({ machine, statePath })` returns the stored snapshot
+    of every actor whose `store_snapshot_state` holds that machine and path,
+    ordered by actor id, through the `store_snapshot_state_by_path` index and
+    a join to `store_snapshot`. With no `machine` it returns the actors in
+    that path on every machine, through the `store_snapshot_state_by_state`
+    index. It loads no actor and returns every status. A gate calls it with
+    its gated state and no machine, and keeps the active actors whose
+    machine is a version of its blueprint, to rebuild its population across
+    versions.
+    `activeSnapshots()` returns the stored snapshot of every actor whose
+    status is `active`, ordered by actor id. The router calls it once at
+    resume to derive every subscription and restore every actor.
+    `endedSnapshots()` returns the stored snapshot of every actor whose
+    status is `done` or `stopped`, ordered by actor id. The actors API
+    lists completed actors from it.
+  inbox: >-
+    `writeInbox(event, actorIds)` inserts one row per actor id in one
+    transaction, with `received_at` from `now`, and `INSERT ... ON CONFLICT
+    (actor_id, event_id) DO NOTHING`. It returns the rows it inserted, in
+    insertion order; a row that already existed, consumed or not, is not
+    returned, so a router publishes only what is new and a duplicate source
+    delivery is accepted once. `pendingInbox(actorId)` returns the actor's
+    rows with `consumed_at` null, ordered by `sequence`. `actorInbox(actorId)`
+    returns every row of the actor, consumed or pending, ordered by
+    `sequence`, through the `(actor_id, event_id)` unique index; a consumed
+    row stays in the inbox until retention prunes its actor, as `pruning`
+    states, so the history module reads an actor's events from it. `markConsumed` sets
+    `consumed_at` where it is null; marking a consumed or absent row changes
+    nothing. A payload is stored with `JSON.stringify` and returned with
+    `JSON.parse`.
+  delivery: >-
+    `deliver(target, row)` throws a `TypeError` when `row.actorId` is not
+    `target.actorId`. It reads the row by `sequence`; when it is consumed it
+    returns `already-consumed` and calls nothing. Otherwise it calls
+    `target.send(row)`, then `probe("sent", row)`, then `target.persist()`.
+    When the persisted snapshot's status is `error`, it saves it with the
+    row's event id as an errored snapshot, leaves the row pending, and
+    returns `errored`. Otherwise, in one transaction, it saves the snapshot
+    with its deadlines, calls the target's `saved` with the write when the
+    target has one, calls `probe("saved", row)`, and sets the row's
+    `consumed_at`; then it returns `delivered`. A `saved` that throws rolls
+    back the save and the consume, and the error propagates. The save and the consume
+    commit together, so the only crash window that replays an event is
+    between `send` and that commit, and the target's idempotency makes the
+    replay a no-op. A probe that throws inside the transaction rolls back
+    the save and the consume alike.
+  drain: >-
+    `drain(target)` delivers the target actor's pending rows in `sequence`
+    order. It reads the lowest pending row before each delivery, so a row
+    written during a delivery is delivered in its turn. It stops at the
+    first row whose delivery returns `errored` and returns that row as
+    `erroredAt`, so a later row never overtakes an event the actor could not
+    take; otherwise `erroredAt` is `undefined`. `delivered` counts the rows
+    delivered by this call. A drain after a crash completes the delivery
+    the crash interrupted; a second drain delivers nothing.
+  deadlines: >-
+    A deadline is armed by the snapshot save that enters its state.
+    `SnapshotWrite.deadlines` lists every deadline the snapshot holds
+    armed. A listed deadline's `entryId` names the entry into its state that
+    armed it: the target gives each entry an id when the entry happens,
+    lists the same `entryId` on every later save while the entry stays
+    active, and gives the same id when a replayed delivery reproduces the
+    entry; an exit and re-entry of the state, in one delivery or across
+    several, gives a new one. The actor host numbers entries this way, as
+    `actor-host` states. A deadline's state path is a path of the
+    snapshot's state paths, or `""`, which names the root state node every
+    snapshot is in. In the transaction of a `saved` write, the store first
+    deletes every deadline row of the actor that the write does not list,
+    by state path and event name, each read as `text-values` states. Then for each listed deadline,
+    keyed by actor, state path, and event name: when no row exists it
+    inserts one; when a row exists with the same `entryId` it leaves the
+    row unchanged, fired or not, so a retained deadline and a replayed save
+    keep the first fire time and a fired deadline stays fired for the rest
+    of its entry; when a row exists with a different `entryId` it deletes that
+    row and inserts the listed one, so a re-entry restarts the delay. A
+    listed deadline whose state path is neither `""` nor in the snapshot's
+    state paths makes `saveSnapshot` throw a `RangeError` and write nothing. Every
+    inserted row takes a new `deadline_id` from an `AUTOINCREMENT` key,
+    which SQLite never reuses, so each arm has its own id that stays the
+    same across saves that retain it. `dueDeadlines(at)` returns every row
+    with `fired_at` null and `fire_at` at or before `at`, ordered by
+    `fire_at` and actor id. `fireDeadline(deadline, topic)`, in one
+    transaction, sets `fired_at` from `now` on the row whose `deadline_id`
+    is `deadline.deadlineId` where `fired_at` is null; when that changed a
+    row, it writes an inbox row to the actor with event id
+    `deadline:<deadlineId>`, the given topic, and payload `{ "type":
+    <eventName> }`, and returns it. The event id is the decimal deadline id,
+    so it names exactly one arm whatever characters the state path and event
+    name hold, stays the same when a crashed fire is retried, and differs
+    for every later arm of the same state and event. When no row changed,
+    because the arm was already fired, was replaced by a re-entry, or the
+    actor left the state, it returns `undefined` and writes nothing. A fired
+    row stays until a save leaves its state or replaces it with a new
+    entry, so the knowledge that an entry has fired is durable across saves,
+    replays, and restarts, and a new entry arms the deadline again. The
+    deadline loop that calls these and delivers the rows belongs to the
+    router. `nextDeadlineAt()` returns the smallest `fire_at` of a row whose
+    `fired_at` is null, read through the `store_deadline_due` index, or
+    `undefined` when no row is armed; the deadline loop arms its one timer
+    from it.
+  pruning: >-
+    Retention removes an ended actor's events and commands through two methods, as
+    `retention` states. `prunableEnded({ endedBefore, after, limit })`
+    returns at most `limit` actors whose snapshot status is `done` or
+    `stopped`, whose `history_pruned_at` is null, and whose `saved_at` is
+    before `endedBefore`, ordered by `saved_at` and then actor id, starting
+    after `after` when it is given, through the `store_snapshot_prunable`
+    index. `pruneEnded(actorId)`, in one transaction that joins the
+    caller's, reads the actor's snapshot row; when its status is `done` or
+    `stopped` and its `history_pruned_at` is null, it deletes the actor's
+    inbox rows whose `consumed_at` is set, sets `history_pruned_at` from
+    `now`, and returns `pruned` with the number of rows deleted; otherwise
+    it changes nothing and returns `unchanged`. It never deletes a pending
+    row, an active actor's row, the snapshot, or its deadlines.
+    `loadSnapshot`, `endedSnapshots`, and `findActorsInState` return
+    `historyPrunedAt` for a pruned snapshot. A deleted consumed row frees
+    its actor and event id: a later `writeInbox` of the same event id for
+    that actor would insert a row, and none comes, since an ended actor
+    has no subscription and no module writes to it.
+  migration-failures: >-
+    `store_migration_failure` holds at most one row per actor: the last
+    migration of that actor that failed, as `blueprint-migration` states.
+    `recordMigrationFailure`, in one transaction, returns `unchanged` and
+    writes nothing when the actor's row names the same `from` and `to`, so
+    a failure repeated for one pair is recorded once; otherwise it writes
+    the row, replacing the actor's earlier one, with `failed_at` from
+    `now`, and returns `recorded`. `saveSnapshot` of a write whose status
+    is not `active`, or whose `machine` differs from the row's `from`,
+    deletes the actor's row in the save's transaction, so a record names
+    only an actor still on the version it failed from, and the migration's
+    own save clears it. `migrationFailure` and `migrationFailures` read the
+    rows, `detail` parsed from JSON. `clearMigrationFailures(to)` deletes
+    the rows of one target in one statement, which joins the caller's
+    transaction. The store's one schema step creates the table and its
+    index.
+  probe: >-
+    `probe` observes a delivery between its steps: `sent` after the target
+    took the event, `saved` after the snapshot statement and before the
+    consume statement, inside their transaction. It is how tests place a
+    crash at each step, and how the service traces deliveries.
+  convergence: >-
+    Every write converges. `migrate` twice runs nothing more. `saveSnapshot`
+    twice holds the same rows, and the same deadline id and first fire time
+    of every deadline, since the second call lists the same entry ids and
+    the store reads each row's text in full.
+    `writeInbox` twice holds one row per actor and event and returns nothing
+    the second time. `markConsumed` twice keeps the first consumed time.
+    `deliver` on a consumed row is a no-op. `fireDeadline` twice writes one
+    inbox row and keeps the first fired time. `pruneEnded` twice deletes once and answers `unchanged` the second
+    time. `recordMigrationFailure`
+    twice for one pair writes once and answers `unchanged` the second
+    time; `clearMigrationFailures` twice deletes nothing more. A crash inside any of these rolls back its transaction, and
+    a crash between a delivery's `send` and its commit leaves the row
+    pending for the next drain.
+  errors: >-
+    Misuse by a caller throws: a `TypeError` for a row delivered to another
+    actor, a thenable returned to `transaction`, or an invalid owner; a
+    `RangeError` for a deadline outside the snapshot's states; an `Error`
+    for a database migrated by a later build; a `TypeError` from
+    `storedText` for a TEXT read that misses its cast. SQLite errors
+    propagate unchanged. Inputs are trusted otherwise: the store is called by service
+    code, and validation of what arrives from outside happens at the source
+    that receives it.
+  tests: >-
+    Tests import only `index.ts`, run against a real file in a temporary
+    directory, and start from a populated fixture: twenty actors of a
+    generic counting machine with snapshots in different states, pending and
+    consumed inbox rows, and armed deadlines. The test target is an
+    idempotent counter: its context holds a total and the event ids it has
+    applied, `send` adds the payload's amount unless the event id was
+    applied, and the test counts its `send` calls. Behaviours proved, each
+    written red before green: the schema matches `store-database-schema`;
+    `migrate` is idempotent, leaves another owner's version unchanged, and
+    refuses a later version; nested `transaction` commits together and rolls back
+    together, and rejects a thenable; a ledger-like second owner's table
+    write inside a `transaction` with `writeInbox` commits and rolls back
+    with it; an errored snapshot does not overwrite the active one and is
+    kept beside it; `findActorsInState` returns exactly the actors in a
+    path, including ancestor paths and parallel regions, filtered by
+    machine, and with no machine returns the actors in that path on every
+    machine; `activeSnapshots` returns exactly the `active` actors in actor
+    id order; `endedSnapshots` returns exactly the `done` and `stopped`
+    actors in actor id order; `actorInbox` returns one actor's consumed and
+    pending rows in `sequence` order and no other actor's; `nextDeadlineAt` returns the earliest unfired fire time,
+    skips fired rows, and is `undefined` with no armed row; `writeInbox` holds one row for a repeated event id and returns
+    only new rows; `pendingInbox` returns insertion order; a deadline
+    survives closing and reopening the store; a save that leaves a state
+    deletes only that state's deadlines and keeps the fire time of the rest;
+    a save that stays in a state and no longer lists one of its deadlines
+    deletes that row; a deadline at state path `""` is armed and kept while
+    the actor is active; a target's `saved` runs inside the delivery's
+    transaction, and one that throws leaves the row pending and the
+    previous snapshot stored;
+    a save that lists a retained deadline with its `entryId` and a later
+    fire time keeps the first fire time and deadline id; a save that
+    re-enters the same state with a new `entryId` replaces the fire time and
+    the deadline id, saving that write again changes nothing, and the
+    replaced fire time survives closing and reopening the store; a
+    `fireDeadline` for the replaced arm returns `undefined`; after a fire, a
+    save of the same entry that lists the deadline again keeps the row
+    fired, `dueDeadlines` omits it, and a second `fireDeadline` returns
+    `undefined`; delivering the deadline's event to a target whose save
+    stays in the state, with the same `entryId`, leaves the deadline fired
+    and not due; closing and reopening the store after a fire and before
+    delivery, then draining, delivers the event once and leaves the
+    deadline fired and not due; a save with a new `entryId` after a fire
+    arms a new deadline id that is due at its fire time and fires once; `fireDeadline`
+    writes one inbox row once; one actor's two deadlines whose
+    state paths and event names contain `:` and `.`, such as state path
+    `phase.one` with event `tick` and state path `phase` with event
+    `one:tick`, due at the same time, each fire with their own inbox row;
+    and a state re-entered and its deadline fired again at the same fire
+    time writes a second inbox row beside the consumed first. A text
+    round-trip test uses two values for each text field: one with a NUL
+    inside, such as `tick\0entry`, and one that starts with a NUL, such as
+    `\0tick`. It saves actors whose actor id, machine, state key, deadline
+    state path, event name, and entry id hold them, writes inbox events
+    whose event id and topic hold them, saves an errored snapshot with such
+    an event id, and records a migration failure whose versions and message
+    hold them. It asserts each value back unchanged through `loadSnapshot`,
+    `loadErroredSnapshot`, `activeSnapshots`, `endedSnapshots`,
+    `findActorsInState` with the value as its state path, `writeInbox`,
+    `pendingInbox`, `actorInbox`, `dueDeadlines`, the payload type of the
+    row `fireDeadline` writes, `migrationFailure`, `migrationFailures`, and
+    `prunableEnded`; that a repeated identical save keeps the deadline id;
+    and that `drain` delivers the full event name. On the supported floor,
+    Node 24.11, the test fails while the reads take TEXT; on every release
+    it fails while a constraint uses `length`. `storedText` of a string, a
+    number, and `null` throws a `TypeError`. Each module that keeps tables
+    in the file proves the same two values through its own public
+    interface, with a reopen of the store between the write and the read
+    where the module reads after a restart: agent-tools question
+    environment, thread and turn ids, answer thread id and text, and
+    message thread id; escalations actor id, invoke id, entry id, title,
+    question, and notification destination; gates gate, version, actor id,
+    and state entry id through entry, grant, token, and evaluation;
+    github-source node ids, owner, field names, pending node ids, and the
+    card move actor id; history visit machine and command thread id;
+    intake issue node id, actor id, environment, binding, portfolio item,
+    and blueprint version; ledger account, item, actor, and a window key
+    given to `credit`, through the current and next window, capacity,
+    balances, and the window of an actual posted by `postActual` and of a
+    reattribution; t3code-source environment id, thread id, project id, and
+    created-project fields; usage environment, provider, provider instance,
+    provider session id, thread id, call key, model, actor, item, and
+    account, through postings, attribution, moves, and unowned usage; and
+    the environment of a hold. CI runs the service tests on Node 24.11
+    beside the declared release, so a read that takes TEXT where it must
+    cast fails in CI. Fault tests, for each crash
+    after the inbox write, after `sent`, and after `saved`: the crashed
+    store is closed, a fresh store opens on the same file, `drain` with a
+    target restored from `loadSnapshot` leaves the total applied once, no
+    pending row, and a second drain delivers nothing. At least one fault
+    test runs the delivery in a child Node process that sends itself
+    `SIGKILL` from the probe, and the parent asserts the kill signal before
+    it reopens the file. Migration failure tests: a record answers
+    `recorded` and then `unchanged` for the same pair, and `recorded` for
+    a new `to`, which replaces it; a save on the same machine keeps the
+    record, and a save on another machine and a `done` save delete it;
+    `migrationFailures` lists one target's records by actor id, and
+    `clearMigrationFailures` deletes only them. A populated store written
+    by the pre-fold steps is refused with the owner name and an instruction
+    to create a new store, with its file unchanged. SQLite schema tables
+    prove that each owner's one step creates the same tables, columns,
+    indexes, views, and triggers as the pre-fold steps. Pruning tests: `prunableEnded` lists exactly the ended,
+    unpruned actors saved before the time, in `saved_at` and actor id
+    order, page by page; `pruneEnded` of an ended actor deletes its
+    consumed rows, keeps its pending rows and its snapshot, sets
+    `historyPrunedAt`, and answers `unchanged` the second time; of an
+    active actor it changes nothing; and a `pruneEnded` inside a
+    `transaction` whose work then throws leaves every row.

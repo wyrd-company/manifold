@@ -1,0 +1,503 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: blueprints-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold blueprints API
+  version: 0.1.0
+  description: >-
+    The blueprints endpoints of Manifold's API: list, source, lint, and save
+    as a commit pushed to the process repository.
+security: []
+paths:
+  /api/blueprints:
+    get:
+      operationId: listBlueprints
+      summary: List every blueprint at the latest applied revision, bundled blueprints that no repository file replaces included.
+      responses:
+        "200":
+          description: Every blueprint, sorted by path across repository and bundled sources.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintsResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /api/blueprints/source:
+    get:
+      operationId: readBlueprintSource
+      summary: Read one blueprint's text with its findings and graph.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/BlueprintPath"
+      responses:
+        "200":
+          description: The blueprint's text at the latest applied revision, or its bundled text.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintSource"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/blueprints/lint:
+    post:
+      operationId: lintBlueprintText
+      summary: Lint a blueprint text as the service's loader would.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LintRequest"
+      responses:
+        "200":
+          description: The text's findings, warnings, and graph.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LintResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+  /api/blueprints/save:
+    post:
+      operationId: saveBlueprint
+      summary: Commit a blueprint text to the configured branch and push it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveRequest"
+      responses:
+        "200":
+          description: The text is on the branch.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: The file on the branch changed since the base, or the branch moved under the save.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveConflict"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          description: The text has lint findings; nothing was written.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveInvalid"
+        "502":
+          description: The remote refused the push or could not be reached.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveRemoteError"
+        "503":
+          $ref: "#/components/responses/Error"
+components:
+  headers:
+    NoStore:
+      schema:
+        const: no-store
+  responses:
+    Error:
+      description: An error with its kind and message.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowed:
+      description: A method the endpoint does not take.
+      headers:
+        Allow:
+          schema:
+            enum: [GET, POST]
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Commit:
+      type: string
+      pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    BundleDigest:
+      type: string
+      minLength: 1
+      description: The digest of the bundle a bundled blueprint belongs to, as its version key carries it.
+    BlueprintPath:
+      type: string
+      minLength: 1
+      description: >-
+        A blueprint path under `blueprints/` ending in `.yml` or `.yaml`;
+        a bundled blueprint has such a path, and a repository file at it
+        replaces the bundled blueprint.
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum:
+            - bad-request
+            - cross-site
+            - not-found
+            - method-not-allowed
+            - too-large
+            - unsupported-media-type
+            - unavailable
+        message:
+          type: string
+    BlueprintsResponse:
+      type: object
+      additionalProperties: false
+      required: [repository, blueprints]
+      properties:
+        repository:
+          type: object
+          additionalProperties: false
+          required: [url, branch]
+          properties:
+            url:
+              type: string
+            branch:
+              type: string
+        commit:
+          $ref: "#/components/schemas/Commit"
+        blueprints:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlueprintItem"
+    BlueprintItem:
+      type: object
+      additionalProperties: false
+      required: [path, source, status, findings, warnings, activeActors]
+      properties:
+        path:
+          $ref: "#/components/schemas/BlueprintPath"
+        source:
+          enum: [repository, bundled]
+        commit:
+          $ref: "#/components/schemas/Commit"
+        bundle:
+          $ref: "#/components/schemas/BundleDigest"
+        replacesBundled:
+          const: true
+          description: A repository file at a path Manifold also bundles.
+        status:
+          enum: [loaded, invalid]
+        findings:
+          type: integer
+          minimum: 0
+        warnings:
+          type: integer
+          minimum: 0
+        description:
+          type: string
+        activeActors:
+          type: integer
+          minimum: 0
+    BlueprintSource:
+      type: object
+      additionalProperties: false
+      required: [path, source, text, findings, warnings]
+      properties:
+        path:
+          $ref: "#/components/schemas/BlueprintPath"
+        source:
+          enum: [repository, bundled]
+        commit:
+          $ref: "#/components/schemas/Commit"
+        bundle:
+          $ref: "#/components/schemas/BundleDigest"
+        text:
+          type: string
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        graph:
+          $ref: "#/components/schemas/Graph"
+    LintRequest:
+      type: object
+      additionalProperties: false
+      required: [path, text]
+      properties:
+        path:
+          $ref: "#/components/schemas/BlueprintPath"
+        text:
+          type: string
+        base:
+          description: The commit whose decision models rule 13 reads; the latest applied revision when absent.
+          type: string
+          pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+        models:
+          description: Decision model texts that replace the files at their paths for rule 13.
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, text]
+            properties:
+              path:
+                description: >-
+                  A decision model path: a repository path ending in `.yml`
+                  that is not a blueprint path, a declaration path,
+                  `prices.yml`, or `manifold.yml`.
+                type: string
+                pattern: "^(?!.*(^|/)\\.{1,2}(/|$))(?!blueprints/)(?!(bindings|task-metadata|portfolio|accounts|prices|manifold)\\.yml$)[^/\\\\]+(/[^/\\\\]+)*\\.yml$"
+              text:
+                type: string
+    LintResponse:
+      type: object
+      additionalProperties: false
+      required: [findings, warnings]
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        graph:
+          $ref: "#/components/schemas/Graph"
+    Finding:
+      type: object
+      description: >-
+        The blueprint lint's finding without its `path`, with `range` when
+        it has a place in the text. Members beyond those listed are the
+        lint's finding details, such as `implementationKind`, `name`,
+        `gate`, `sample`, and `steps`.
+      required: [kind, location, message]
+      properties:
+        kind:
+          type: string
+        location:
+          type: string
+          description: The RFC 6901 JSON Pointer of the failing value in the document.
+        message:
+          type: string
+        line:
+          type: integer
+          minimum: 1
+        column:
+          type: integer
+          minimum: 1
+        range:
+          $ref: "#/components/schemas/Range"
+    Range:
+      type: object
+      additionalProperties: false
+      required: [from, to, line, column]
+      properties:
+        from:
+          type: integer
+          minimum: 0
+          description: Offset into the text in UTF-16 code units.
+        to:
+          type: integer
+          minimum: 0
+        line:
+          type: integer
+          minimum: 1
+        column:
+          type: integer
+          minimum: 1
+    Graph:
+      type: object
+      additionalProperties: false
+      required: [states, transitions]
+      properties:
+        states:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphState"
+        transitions:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphTransition"
+    GraphState:
+      type: object
+      additionalProperties: false
+      required: [path, key, type, initial, invokes, gated, location]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          description: The state path, keys from the machine's root joined with `.`.
+        key:
+          type: string
+          minLength: 1
+        parent:
+          type: string
+          minLength: 1
+        type:
+          enum: [atomic, compound, parallel, final, history]
+        initial:
+          type: boolean
+        invokes:
+          type: array
+          items:
+            type: string
+        gated:
+          type: boolean
+        location:
+          type: string
+        range:
+          $ref: "#/components/schemas/Range"
+    GraphTransition:
+      type: object
+      additionalProperties: false
+      required: [source, trigger, label, guarded, location]
+      properties:
+        source:
+          type: string
+          minLength: 1
+        target:
+          type: string
+          minLength: 1
+        trigger:
+          enum: [event, always, after, done, error]
+        label:
+          type: string
+        guarded:
+          type: boolean
+        location:
+          type: string
+    SaveRequest:
+      type: object
+      additionalProperties: false
+      required: [path, base, text, message, saveId]
+      properties:
+        path:
+          type: string
+          pattern: "^blueprints/.+\\.ya?ml$"
+        base:
+          $ref: "#/components/schemas/Commit"
+        text:
+          type: string
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: "\\S"
+        saveId:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+    SaveResponse:
+      type: object
+      additionalProperties: false
+      required: [outcome, commit]
+      properties:
+        outcome:
+          enum: [saved, already-saved, unchanged]
+        commit:
+          $ref: "#/components/schemas/Commit"
+        blueprint:
+          $ref: "#/components/schemas/BlueprintItem"
+    SaveConflict:
+      type: object
+      additionalProperties: false
+      required: [error, message, reason, head]
+      properties:
+        error:
+          const: conflict
+        message:
+          type: string
+        reason:
+          enum: [file-changed, branch-moved]
+          description: >-
+            `file-changed`: the file on the branch differs from the file at
+            the base. `branch-moved`: the branch moved under the push and
+            again under its one retry.
+        head:
+          $ref: "#/components/schemas/Commit"
+        text:
+          type: string
+    SaveInvalid:
+      type: object
+      additionalProperties: false
+      required: [error, message, findings, warnings]
+      properties:
+        error:
+          const: invalid
+        message:
+          type: string
+        findings:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Finding"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+    SaveRemoteError:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error:
+          enum: [rejected, authentication, remote]
+        message:
+          type: string

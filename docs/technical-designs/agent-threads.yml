@@ -1,0 +1,821 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  related-to:
+    - t3code-environment-source
+    - durable-event-delivery
+    - blueprint-loader
+    - process-repository
+    - agent-tools
+    - actor-history
+    - environment-control
+  mitigates:
+    - t3code-command-receipts-undocumented
+  # GAP-EDGE: the technical-design schema declares no edge to the
+  # specifications a design builds on; `references` is the best fit.
+  references:
+    - agent-threads
+    - t3code-thread-events
+    - t3code-environments-configuration
+    - bindings-declaration
+objective: >-
+  Let a blueprint create T3code projects and agent threads on T3 Code and
+  start turns in them from templates in the process repository, so that a
+  project and a thread are created once and a turn is started once for
+  each entry of the state that asks for it, across a crash at any point
+  between sending the command and saving its result, so that a created
+  project's usage stays on the creating actor's portfolio item, and so
+  that the actor takes the changes of the turn it started and of no
+  other.
+background:
+  problems:
+    - >-
+      A turn sent twice is an agent doing the work twice. An invoked promise
+      that was running at a crash starts again with its actor, so whatever
+      it sent before the crash, it sends again.
+    - >-
+      A crash after the server accepts a command and before the actor saves
+      the result leaves Manifold with no record that the command was sent.
+    - >-
+      T3 Code 0.0.45 exposes no link from a turn to the user message that
+      requested it. The server's own projection records the requesting
+      message on each turn, and its read model gives the turn's
+      `requestedAt` from the server-normalized command's `createdAt`, the same time it gives
+      the user message.
+    - >-
+      Thread changes of a followed thread reach the actor whatever state it
+      is in: a change of an earlier turn delivered late, a change of another
+      followed thread, and a change of the actor's own turn taken before the
+      command's result, live or when resume drains the inbox.
+    - >-
+      The environment source publishes no change at or before an
+      environment's origin, which it takes asynchronously on its first
+      connection, so a turn that starts and settles before the origin is
+      baseline and never published.
+    - >-
+      T3 Code creates a project only at a workspace root that exists on its
+      host, unless the command asks the server to make it, and it holds
+      one active project per workspace root.
+    - >-
+      Usage of a thread no actor owns is attributed by its T3code project's
+      binding, and a project a process creates has no binding in the
+      process repository.
+design-challenges:
+  exactly-once: >-
+    A command re-sent after a crash must leave the server as if it was sent
+    once: one thread, one user message, one turn.
+  identity: >-
+    The id of a command must be fixed before it is sent, the same each time
+    the same state entry sends it, and different for every other entry.
+  correlation: >-
+    The actor must tell the changes of the turn it requested from every
+    other change it receives, with an identity it holds durably before the
+    request is sent, so that a change taken before the command's result or
+    after a restart is judged the same way.
+  readiness: >-
+    No command may be sent on an environment before the environment source
+    has committed the origin from which it publishes that environment's
+    changes.
+  templates: >-
+    A project title, a workspace root, a thread name, and a prompt are
+    rendered from Nunjucks templates in the process repository, and a
+    template error must reach the blueprint as an error it can handle.
+  attribution: >-
+    A project an actor creates is attributed to the actor's portfolio item
+    from the moment the server accepts it, and a project whose creation
+    failed is attributed to nothing.
+proposed-design:
+  high-level-overview: >-
+    The agent threads module, `packages/service/src/agent-threads/`, gives
+    the implementation registry four promise implementations,
+    `t3code-project-create`, `thread-create`, `turn-prepare`, and
+    `turn-start`, and one action, `follow-thread`.
+    `t3code-project-create`, `thread-create`, and `turn-prepare` derive
+    their ids from the invocation, the actor id, invoke id, and entry id that the
+    actor host's `invocationOf(args)` reads. `turn-start` derives its
+    command id from the message id `turn-prepare` gave, which the actor
+    holds in its context. Each command waits until the environment source
+    is ready on the command's environment, renders its template from the
+    process repository at the commit of the actor's blueprint version, and
+    is sent through a `T3Client` the module holds for the environment. The
+    T3 Code server records a receipt for every command id in the
+    transaction that stores the command's events, and answers a command id
+    it holds a receipt for with that receipt and nothing else, so a re-sent
+    command does nothing a second time. The environment source publishes
+    each turn's change with the id of the user message that requested the
+    turn, so a blueprint guards a turn's changes on the message id it holds.
+    The inputs, outputs, errors, and id derivation are specified in
+    `agent-threads`.
+  command-ids: >-
+    Every id a command carries is derived before the command is sent. An id
+    is a UUID made from the SHA-256 digest of the namespace
+    `manifold.agent-threads`, the id's kind, and the parts it is derived
+    from, as `agent-threads` defines. `t3code-project-create` derives its
+    command id and project id, and `thread-create` its command id and
+    thread id, from the actor id, the invoke id, and the entry id.
+    `turn-prepare` derives a message id the same way. `turn-start` derives
+    its command id from the message id it is given, so one message id is
+    sent as one command. The same state entry gives the same ids at every
+    attempt, before and after a restart. A new entry of the state, such as a
+    blueprint that leaves a state and enters it again, gives new ids, so it
+    creates a new project or thread or prepares a new turn. The invoke id is in the
+    derivation so that two invokes in one state entry never share an id.
+  server-receipts: >-
+    T3 Code 0.0.45 keeps one receipt per command id in its database, with
+    the aggregate the command targeted, its status, and the sequence of its
+    last event, written in the transaction that appends the command's
+    events. Before it decides a command, the server reads the receipt for
+    its id. An accepted receipt for the same aggregate answers with the
+    receipt's sequence and appends nothing. A rejected receipt answers with
+    a rejection that names the first rejection. A receipt for another
+    aggregate answers with a rejection that refuses to replay it. Receipts
+    are never deleted. Evidence status, measured against `t3` 0.0.45
+    started on a loopback port with its own data directory: `thread.create`
+    sent twice with one command id answered the same sequence both times,
+    and the thread kept the first title; `thread.turn.start` sent three
+    times with one command id answered the same sequence each time, and the
+    thread held one user message and one turn; a turn start with a command
+    id already used for another thread was rejected; a rejected command
+    sent again was rejected as previously rejected; both commands sent
+    again after the server was killed with `SIGKILL` and restarted on the
+    same data directory answered their first sequences, and the thread held
+    one user message. Reading the 0.0.45 source agrees: the orchestration
+    engine checks the receipt before the decider runs, and no statement
+    deletes a receipt. `project.create` keeps its receipt the same way,
+    keyed by the project: measured against `t3` 0.0.45 as above,
+    `project.create` sent twice with one command id and a changed title
+    answered the same sequence, and the project kept the first title; sent
+    again after the server was killed with `SIGKILL` and restarted on the
+    same data directory, it answered its first sequence, and the server
+    held one project; its command id sent for another project id was
+    refused as a replay for another project. The live test repeats the
+    measurement against the server release the environment source
+    targets.
+  project-command: >-
+    T3 Code creates a project with the `project.create` orchestration
+    command: `commandId`, `projectId`, `title`, `workspaceRoot`,
+    `createWorkspaceRootIfMissing`, an optional `defaultModelSelection`,
+    and `createdAt`, sent through `orchestration.dispatchCommand` or
+    `POST /api/orchestration/dispatch`, as the client release's command
+    schema defines. Before the server reads the receipt, it normalizes the
+    workspace root on its own host on every send: it trims the root,
+    expands a leading `~` to its home directory, and resolves it against
+    its working directory; a root that does not exist is made, with its
+    missing parents, when `createWorkspaceRootIfMissing` is `true`, and
+    fails the command otherwise; a root that is not a directory fails the
+    command. The decider then refuses a project id it already holds and a
+    workspace root that an active project already has. The server stores
+    a `project.created` event, and its shell subscription delivers the
+    project as a `project-upserted` item, which the environment source
+    applies to `projects(environment)`; Manifold publishes no router event
+    for it, since the invoke's result is the creating actor's signal.
+    Evidence status, measured against `t3` 0.0.45 started on a loopback
+    port with its own data directory: a missing root without the flag was
+    rejected with `Workspace root does not exist`, sent again was rejected
+    the same way, and no directory was made; with the flag the server made
+    the root and two missing parents and accepted the command; a root that
+    is a file was rejected with `Workspace root is not a directory`; a
+    second project at an active project's root was rejected naming that
+    project; a relative root was resolved against the server's working
+    directory and `~/` against its home directory; after a `SIGKILL`, a
+    restart, and removal of the root, the command sent again without the
+    flag was rejected, and with the flag the server made the root again
+    and answered the first receipt; the shell subscription delivered one
+    `project-upserted` item per project created. Read from the 0.0.45
+    source: `orchestration.dispatchCommand` and the HTTP dispatch route
+    require the `orchestration:operate` scope for every command type, so
+    `project.create` needs no other scope; a token with fewer scopes was
+    not measured, since `t3 auth session issue` grants every scope. The
+    module never makes a directory itself: the server's own normalization
+    makes it, under the token's existing scope, and only when the
+    blueprint asks with `createWorkspaceRoot`.
+  t3code-project-create: >-
+    `t3code-project-create` takes an optional environment, a title
+    template, a workspace root template, the values both render against,
+    and `createWorkspaceRoot`. It reads the invoking actor through
+    `actorOf` and refuses an actor with no environment and an actor whose
+    binding is archived, as `thread-create` does. The environment is the
+    input's, or the actor's when the input names none, and is one service
+    configuration declares. It renders the title and the workspace root,
+    each trimmed, waits for the source on that environment, and sends
+    `project.create` with the derived command id and project id, the
+    rendered title and root, and `createWorkspaceRootIfMissing` set to the
+    input's `createWorkspaceRoot`, through the source's `write` with no
+    thread. Before each send, inside the `write` admission, it checks the
+    root against the path rules of the host platform that the source's
+    current connection confirmed, as `workspace-roots` states, and once
+    the root passes it calls `sending` before the first attempt to send,
+    as `accepted-commands` states. A root that fails sends nothing and
+    calls no probe. Once the server answers with a sequence, it calls
+    `probe`, then records the project with
+    the actor id and the actor's portfolio item, `manifold.portfolioItem`,
+    through `recordProject`, then resolves with `{ projectId }`. An actor
+    with no portfolio item records nothing, and the project resolves as
+    unbound. The blueprint takes the output in the invoke's `onDone` and
+    assigns it into its context; a later `thread-create` takes it as its
+    `project`, unchanged.
+  workspace-roots: >-
+    A root's meaning depends on the host's path rules: T3 Code resolves it
+    with the path module of the platform it runs on, so `C:/a` and
+    `\\host\share` are relative on a POSIX host and land under the
+    server's working directory, and `/a` is drive-relative on Windows. The
+    module therefore checks a rendered root against the platform the
+    environment's server reports, `platform.os` of its environment
+    descriptor (`linux`, `darwin`, `windows`, or `unknown`), which the
+    environment source reads at every connection before it confirms the
+    `environmentId`, and answers through `platform(environment, signal)`
+    after readiness. On `linux` and `darwin` a root is absolute when it
+    begins with `/`; on `windows` when it begins with a drive letter, a
+    colon, and a separator, or is a complete UNC root of two separators,
+    a host name, a separator, and a non-empty share name, since a UNC path
+    with a host and no share, such as `//host`, resolves under the
+    server's current drive, `C:\host` from a working directory on `C:`;
+    on
+    every platform `~`, `~/`, and `~\` are accepted, since the server
+    expands them to its home directory on either platform. A root with a
+    control character is refused on every platform. A root that fails the
+    rule fails the invoke with `template`; a host reporting `unknown`
+    fails it with `environment`. The check is a pure function of the root
+    and the platform, in `workspace-root.ts`, and runs at each attempt
+    inside the `write` admission, so an attempt after an identity change
+    checks against the replacement server's platform. Evidence status:
+    the descriptor's `platform` was measured on `t3` 0.0.45 on Linux,
+    `{ "os": "linux", "arch": "x64" }`; the `~/` and `~\` expansion and
+    the resolution against the working directory are read from the 0.0.45
+    source and measured on Linux; a Windows host was not measured, and its
+    rule follows Node's `path.win32` resolution, which the server uses
+    there.
+  project-attribution: >-
+    A created project's usage is attributed to the creating actor's
+    portfolio item through Manifold's store. Usage of a thread the actor
+    owns already posts to the actor on its item; the record covers a
+    thread in the project that no actor owns, such as one an operator
+    opens there, which usage intake posts on the item
+    `portfolio.t3codeProject` resolves. The record is a row of
+    `t3_created_project` in the T3 Code environment source's tables,
+    keyed by environment and project id, holding the actor id and item,
+    written once the server accepts the command and before the invoke
+    resolves, so the record exists before the actor can start a thread in
+    the project. Portfolio resolution answers a created project with that
+    item, `via: "created"`, after the declared bindings and before the
+    top-level Other, so a binding the operator declares for it later
+    takes precedence. The record lives in the store because it is what
+    Manifold remembers of its own action, as the creating actor's
+    snapshot does; the process repository holds what the user declares,
+    and a binding the service committed would put a write to the user's
+    repository, and a merge with the user's own edits, in the path of
+    every project create. A failed invoke records nothing.
+  thread-create: >-
+    `thread-create` takes a T3code project id, a title template, the values
+    the templates render against, a model selection, and optionally a
+    runtime mode, an interaction mode, a branch, and a worktree path. It reads
+    the invoking actor through `actorOf`, refuses an actor with no
+    environment, or whose binding is archived, renders the title, waits for
+    the source, and sends `thread.create` with the derived command id and
+    thread id. It resolves with `{ threadId }`. The blueprint takes the
+    output in the invoke's `onDone`: the `follow-thread` action appends the
+    id to `context.manifold.threads`, so the actor's subscription follows
+    the thread's topic from that save, and an `expression.assign` may store
+    it at any other path the blueprint names. The actor host derives the
+    topic of each id in `context.manifold.threads` as
+    `threadTopic(context.manifold.environment, threadId)`, so the thread is
+    created on that environment and on no environment an input names. The
+    runtime mode is optional and defaults to `full-access`; an explicit
+    mode sets the permission the thread's agent runs with.
+  turn-prepare: >-
+    `turn-prepare` takes no input, sends nothing, and resolves at once with
+    `{ messageId }`, the message id derived from its invocation. Its
+    purpose is the order of saves: the blueprint assigns the message id to
+    its context in the invoke's `onDone`, and the actor's save of that
+    context commits before `turn-start` is invoked, so the actor holds the
+    identity of its turn before any command that could start the turn
+    exists. A restart before that save runs `turn-prepare` again, which
+    gives the same message id.
+  turn-start: >-
+    `turn-start` takes a thread id, the message id from `turn-prepare`, a
+    prompt template path, the values the template renders against, and
+    optionally a model selection, a runtime mode, and an interaction mode.
+    A mode it is not given is the thread's current mode, read from the
+    server's shell before the command. It renders the prompt, waits for the
+    source, and sends `thread.turn.start` whose user message carries the
+    given message id and the rendered text, with no attachments, under the
+    command id derived from the message id. It resolves with
+    `{ threadId, messageId }`. The thread is one the actor follows, so the
+    turn's changes reach the actor through routing by the thread's topic.
+  correlation: >-
+    The environment source gives each turn the id of the user message that
+    requested it, `messageId` on `t3.turn.started` and `t3.turn.settled`,
+    as `t3code-environment-source` describes, and `null` for a turn with no
+    such message. A turn started by `turn-start` carries the message id the
+    actor assigned from `turn-prepare`. A blueprint takes a turn's changes
+    on a state that encloses the invoking states, guarded on the thread id
+    and the message id it holds:
+    `event.threadId = context.thread and event.messageId = context.turn`.
+    The guard holds for every change of the actor's own turn whenever it is
+    taken: while `turn-start` is still sending, after it resolves, and when
+    resume drains the inbox before the restarted promise resolves; a change
+    taken while the promise runs exits the invoking state, which stops the
+    promise, and the command it sent is already accepted. The guard fails
+    for a change of an earlier turn delivered late, for a change of any
+    other followed thread, and for a turn an operator started from T3 Code,
+    since each carries another message id or thread id, and the actor takes
+    such a change with no transition. A message T3 Code steers into a turn
+    that was already running when it arrived requests no turn of its own,
+    so its message id is on no turn: a blueprint sends a turn when its
+    thread has no running turn, and gives its waiting state a deadline or
+    an escalation for a turn that never settles. The source publishes
+    `null` where it cannot tell which message requested a turn, such as two
+    user messages with the same time in a snapshot, so the guard never
+    takes a change it cannot attribute, and the same deadline or
+    escalation covers it.
+  readiness: >-
+    Every command waits until the environment source reports the command's
+    environment ready: its row is committed with an origin, and its
+    current connection has confirmed the server's `environmentId` against
+    it. The command's environment is the actor's for `thread-create`,
+    `turn-start`, and `startTurn`, and the selected environment for
+    `t3code-project-create`: the input's, else the actor's. A command
+    never waits on, or is sent to, any other environment, so a project
+    create on an environment that is not ready waits while the actor's own
+    environment is ready, and a project create on a ready environment is
+    sent while the actor's own environment is not. An operator's pause,
+    on which environment control holds thread and turn commands, does
+    not hold `t3code-project-create`, since it starts no thread
+    or turn; an operator's disconnect makes the environment not ready, so
+    it holds the create through this readiness. A restart before the
+    source's first transaction for the environment commits leaves no row,
+    so commands wait again until the next origin commits. While the source
+    resets an environment whose `environmentId` changed, the environment is
+    not ready. Each send enters the source's `write` boundary after any
+    thread shell read, so it checks readiness again immediately before
+    dispatch. An identity change blocks new sends and fails admitted sends;
+    the dispatcher retries the same command after the replacement origin
+    commits. The source records each interrupted write's thread for a fresh
+    observation, so a command accepted before cancellation is published
+    instead of becoming baseline. A `project.create` write names no
+    thread, so its interruption records nothing; the replacement origin's
+    shell lists every project the server holds, and the retry's receipt
+    answers a create the old connection's server accepted when the
+    replacement is the same server.
+    An environment the source stops fails the waiting command
+    with `environment`. Commands enter after a committed origin; interrupted
+    commands remain observations across its replacement. A thread the shell
+    lists with no row is subscribed with no cursor and compared with the
+    empty state, and a running or settled turn in it is published.
+  operator-holds: >-
+    The module reads the operator holds of `environment-control` through
+    the `holds` port of `t3code-environment-source`. A paused environment
+    takes no `thread-create` or `turn-start` command that a blueprint
+    invokes: each reads `held(environment)` inside the source's write
+    admission, synchronously and immediately before it dispatches, and
+    when paused is on it leaves the admission, waits on `changed` after
+    the sequence of that read, and enters the send again, reading the hold
+    again at the next admission. A resume that commits between the read
+    and the start of the wait has moved the sequence, so the wait ends at
+    once and the command is not stranded. The read and the dispatch run
+    without yielding, so no `thread-create` or `turn-start` is dispatched
+    after a pause commits, and one dispatched before it is the server's
+    to answer. A connection failure is still retried on the reconnect
+    backoff, never through `changed`. The wait has no time limit and ends when
+    the pause is lifted or the invoke stops, since it waits on an operator
+    action; the command keeps the ids it derived, so one that waited
+    through a restart is sent once. `startTurn`, the path of an escalation
+    answer, does not read the pause, so an answer is dispatched during a
+    pause and may start a turn, as
+    `let-escalation-answers-through-a-pause` records. A disconnected
+    environment takes no read and no command: the source is not ready
+    while the hold is on, so every call waits in `sourceReady`; the client
+    pool opens no client for the environment and fails a call that asks
+    for one as a lost connection, which the caller retries after the
+    source is ready; and a change that turns the hold on closes the
+    environment's client, so a command in flight fails as a lost
+    connection and is sent again with the same ids after reconnect.
+    `scheduled(environment)` counts the `thread-create`, `turn-start`, and
+    `startTurn` sends for the environment that have entered `dispatch` and
+    not yet left it, whatever they wait on.
+  child-blueprints: >-
+    A child state machine gets no routed events and no engine-owned
+    identity. `t3code-project-create`, `thread-create`, and `follow-thread`
+    are for top-level task blueprints. In a child, `actorOf` has no
+    environment, so `t3code-project-create` and `thread-create` fail with
+    `environment`, whatever environment the input names, and `follow-thread` changes
+    only the child's context, and its thread is not followed. A child that
+    needs a thread takes its id from the parent's input, and the parent
+    takes the thread's changes.
+  templates: >-
+    Templates are Nunjucks. A project's title and workspace root and a
+    thread's title are inline templates in the input. The prompt is the
+    repository-relative path of a template file. Each is rendered against
+    the input's `values`, which the blueprint maps from
+    the actor's context. Templates are read from the process repository at
+    the commit of the actor's blueprint version, through `revisionAt`, so a
+    restored actor renders the templates its blueprint was written with.
+    Each render uses a Nunjucks environment whose loader reads only that
+    revision, so an `include`, `import`, or `extends` resolves to another
+    repository-relative path at the same commit. Autoescape is off, since
+    the output is a prompt, not HTML, and an undefined value throws. A
+    template that is missing, does not parse, reads an undefined value, or
+    renders to text that is empty after trimming fails the invoke with a
+    `template` error. The rendered text is trimmed. Templates are trusted as
+    the process repository is: they render in the service process, and a
+    template can run whatever Nunjucks lets a template run.
+  clients: >-
+    The module holds one `T3Client` per environment, created on the first
+    command for the environment, with the environment's `url`, `reconnect`
+    backoff, `heartbeat`, and `openTimeoutMs`, and a credential store that
+    reads the token file of the environment's `t3code-token` credential
+    each time it is asked and refuses every write, as the environment
+    source does. Commands go through the client's
+    `threads.dispatcher.dispatch`, which validates the command, sends it
+    over the socket, and falls back to `POST /api/orchestration/dispatch`
+    when the socket cannot open. The module adds no client release:
+    `dispatch` takes a command with the ids the module derived.
+  credentials: >-
+    The token of an environment's `t3code-token` credential needs the
+    `orchestration:operate` scope for `project.create`, `thread.create`,
+    and `thread.turn.start`, and the `orchestration:read` scope the environment
+    source and the mode read use. One credential per environment serves
+    both modules.
+  validation: >-
+    Each input is validated at the boundary against its definition in
+    `agent-threads`, whose fields hold to the command schema of the client
+    release: a provider instance id is a slug of letters, digits, `-`, and
+    `_` that starts with a letter, at most 64 characters; a model, a
+    branch, and a worktree path are strings that are not empty after
+    trimming; option values are strings or booleans. The module trims the
+    strings it passes, so the client's own trimming changes nothing. An
+    input that fails fails the invoke with `input`. The client validates
+    every command again before it sends it, and a command it refuses with
+    `T3PreconditionError` fails with `input` too, carrying the client's
+    message, so a difference between the two schemas surfaces as the same
+    kind and never as `rejected`.
+  failures: >-
+    A failure that leaves the command's fate unknown is retried, and every
+    other failure fails the invoke. A connection that is lost or cannot
+    open is retried with the same command and the same ids after the next
+    delay of the environment's `reconnect` backoff, with no limit, until
+    the server answers or the invoke is stopped; the receipt makes a retry
+    of a command the server already accepted answer its first result.
+    Otherwise the promise rejects with an agent thread error, a plain
+    object so that it survives a snapshot save and expression evaluation,
+    whose `kind` is one of: `input`, an input that fails its schema or a
+    command the client refuses before sending; `environment`, an actor with
+    no environment, one service configuration does not declare, or one the
+    source has stopped; `archived`, a `thread-create` or
+    `t3code-project-create` through an archived binding; `template`, a
+    template error; `rejected`, a command the server rejects, with the
+    server's message, including a command rejected before and sent again;
+    and `unauthorized`, a token the server or the client refuses, or one
+    without the scope the command needs. A rejected command stays rejected
+    for its message id or state entry, since its ids are the same, so a
+    blueprint that retries prepares a new turn or enters the state again.
+  project-create-failures: |-
+    Each way `t3code-project-create` fails, with its kind in
+    `#/$defs/error` of the `agent-threads` schema asset. An invoke that
+    fails records no project and resolves no project id, so no
+    `thread-create` can start a thread in it.
+
+    | Failure | Kind | Behaviour |
+    | --- | --- | --- |
+    | Input fails `#/$defs/project-create-input`, or the client refuses the command | `input` | Fails before anything is sent. |
+    | Title or workspace root template is missing, reads an undefined value, does not parse, or renders empty after trimming | `template` | Fails before anything is sent. |
+    | Workspace root renders to a path that is not absolute under the host platform's rules, or holds a control character | `template` | Fails before anything is sent. |
+    | Actor has no environment, is a child, or names an environment service configuration does not declare | `environment` | Fails before anything is sent. |
+    | Host platform is `unknown` | `environment` | Fails before anything is sent. |
+    | Actor's GitHub Project binding is archived | `archived` | Fails before anything is sent. |
+    | Server rejects the command: a root that does not exist without `createWorkspaceRoot`, is not a directory, or cannot be made; a root an active project has; a project id or command id already used | `rejected` | Fails with the server's message as `serverMessage`. |
+    | Server or client refuses the token, or it lacks `orchestration:operate` | `unauthorized` | Fails. |
+    | Environment source stops the environment | `environment` | Fails. |
+    | Environment is down, its connection is lost or cannot open, the send times out, or the server answers with a server error | none | Waits: retries the same command and ids on the environment's `reconnect` backoff with no limit, until the server answers or the invoke stops. |
+    | Selected environment's source is not ready, an operator disconnected it, or its identity changes during the send | none | Waits: sends after the next origin commits, with the same ids, to that environment only. |
+    | Operator paused the selected environment | none | Does not hold: a pause holds thread and turn commands only. |
+    | Command sent and no answer received, so the outcome is unconfirmed | none | Waits: the retry sends the same ids, and the receipt answers the first outcome. |
+
+    An invoke stopped while it waits or while its command is in flight,
+    by a state exit or by the service's stop, rejects with no kind and
+    records nothing; a command the server accepted before the stop leaves
+    a project that no record attributes, which resolves as unbound until
+    an operator binds it. A later entry of the state sends new ids.
+  public-interface: |-
+    `packages/service/src/agent-threads/index.ts` exports exactly these
+    names.
+
+    ```ts
+    import type { Logger } from "@wyrd-company/t3code-client";
+    import type { ProcessRepositoryRevision } from "@wyrd-company/manifold-shared";
+    import type { fromPromise } from "xstate";
+    import type { Invocation, ActorHost } from "../actor-host/index.ts";
+    import type { ImplementationRegistry } from "../blueprint-loader/index.ts";
+    import type { CreatedProject, EnvironmentHolds, EnvironmentsConfiguration } from "../t3code-source/index.ts";
+
+    export function openAgentThreads(options: AgentThreadsOptions): AgentThreads;
+
+    export interface AgentThreadsOptions {
+      /** The loaded `environments` section, defaults applied. */
+      readonly environments: EnvironmentsConfiguration;
+      /** Resolves a `t3code-token` credential name to its token file path. */
+      readonly tokenFile: (credential: string) => string;
+      /** The actor host's `actorOf`; undefined for an actor it does not hold. */
+      readonly actorOf: ActorHost["actorOf"];
+      /** The actor host's invocation reader receives the full creator args. */
+      readonly invocationOf: (args: Parameters<Parameters<typeof fromPromise>[0]>[0]) => Invocation;
+      /** Whether the binding of a Project, by its node id, is archived at the current revision. */
+      readonly bindingArchived: (project: string) => boolean;
+      /** The environment source's `ready`. */
+      readonly sourceReady: (environment: string, signal?: AbortSignal) => Promise<void>;
+      /** The environment source's write admission boundary; `threadId` is `null` for `project.create`. */
+      readonly sourceWrite: <T>(environment: string, threadId: string | null, signal: AbortSignal, send: (signal: AbortSignal) => Promise<T>) => Promise<T>;
+      /** The environment source's `platform`: the host platform the current connection confirmed. */
+      readonly sourcePlatform: (environment: string, signal?: AbortSignal) => Promise<"darwin" | "linux" | "windows" | "unknown">;
+      /** The environment source's `recordCreatedProject`. */
+      readonly recordProject: (record: CreatedProject) => void;
+      readonly revisionAt: (commit: string) => Promise<ProcessRepositoryRevision | undefined>;
+      /** The operator holds of `environment-control`; none is held when absent. */
+      readonly holds?: EnvironmentHolds;
+      /** Called before the first attempt to send an invoked command. */
+      readonly sending?: (command: SendingCommand) => void;
+      /** Called after the server answers an invoked command and before the promise resolves. */
+      readonly probe?: (accepted: InvokedCommand) => void;
+      readonly logger?: Logger;
+    }
+
+    export interface AcceptedCommand {
+      readonly implementation: "t3code-project-create" | "thread-create" | "turn-start";
+      readonly commandId: string;
+      readonly sequence: number;
+    }
+
+    export type SendingCommand = ProjectCommand | ThreadCommand;
+
+    interface InvokedCommandBase {
+      readonly commandId: string;
+      /** The invocation of the implementation that sends it. */
+      readonly invocation: Invocation;
+      /** The environment the command is sent to. */
+      readonly environment: string;
+    }
+
+    export interface ProjectCommand extends InvokedCommandBase {
+      readonly implementation: "t3code-project-create";
+      readonly projectId: string;
+    }
+
+    export interface ThreadCommand extends InvokedCommandBase {
+      readonly implementation: "thread-create" | "turn-start";
+      readonly threadId: string;
+      /** The user message id of a `turn-start`; absent for `thread-create`. */
+      readonly messageId?: string;
+    }
+
+    export type InvokedCommand = SendingCommand & { readonly sequence: number };
+
+    export interface AgentThreads {
+      /** `t3code-project-create`, `thread-create`, `turn-prepare`, `turn-start`, and `follow-thread`. */
+      readonly implementations: ImplementationRegistry;
+      /** One read of a thread's session and tool activities, after the source is ready. */
+      readThread(environment: string, threadId: string, signal: AbortSignal): Promise<ThreadReading | undefined>;
+      /** Ids of the threads whose session is `running` or `starting`, from one shell read. */
+      runningThreads(environment: string, signal: AbortSignal): Promise<readonly string[]>;
+      /** `turn-start`'s dispatch with a given message id and literal text. */
+      startTurn(request: TurnRequest): Promise<AcceptedCommand>;
+      /** The thread and turn commands for the environment that wait to be answered. */
+      scheduled(environment: string): number;
+      /** Stops waits and retries, closes every client; resolves when they are closed. */
+      stop(): Promise<void>;
+    }
+
+    export interface ThreadReading {
+      readonly session: { readonly status: string; readonly activeTurnId: string | null } | null;
+      /** Every `tool.*` activity, with its turn id and `payload.toolCallId` when a string. */
+      readonly toolActivities: readonly { readonly turnId: string | null; readonly toolCallId: string | undefined }[];
+    }
+
+    export interface TurnRequest {
+      readonly environment: string;
+      readonly threadId: string;
+      readonly messageId: string;
+      readonly text: string;
+      readonly signal: AbortSignal;
+    }
+
+    export type { AgentThreadError, AgentThreadErrorKind } from "./types.ts";
+    ```
+
+    The actor host answers `actorOf` from `start`'s input or the restored
+    snapshot and blueprint version, before it starts or restores the actor,
+    so an invoke in an initial state reads the same answer as any other.
+    `bindingArchived` is answered by the service wiring from the portfolio
+    module's bindings at the current revision. `recordProject` is the
+    environment source's `recordCreatedProject`, and the service wiring
+    answers the portfolio's `createdProject` option from the source's
+    `createdProject`. The implementation catalog in `packages/shared`
+    lists `t3code-project-create` with its input and output contracts, so
+    the blueprint lint and the console's palette know it. `manifold.project` is the
+    Project node id, so the wiring maps it to its row in the GitHub mirror,
+    the row the GitHub source's `project` reads, and the row to its binding
+    with the portfolio's `githubProject`, as `service-assembly` states, so
+    the answer holds before the GitHub source starts; an actor with no
+    `project`, or whose Project has no mirror row or no binding, is not
+    archived.
+  service-reads-and-turns: >-
+    The agent tools module identifies a tool call and sends an answer
+    through this module's clients, so every T3 Code read and command goes
+    through one client per environment. `readThread` waits until the
+    environment source is ready, reads the thread with `threads.detail`,
+    and returns its session's status and active turn id and its `tool.*`
+    activities' turn ids and call ids, or `undefined` for a thread the
+    server does not hold; a lost connection rejects, and the caller reads
+    again. `runningThreads` reads the environment's shell once and returns
+    the threads whose session is `running` or `starting`. Both use the
+    `orchestration:read` scope. `startTurn` is the
+    dispatch path of `turn-start`: it reads the thread's current modes,
+    waits for the source, and sends `thread.turn.start` whose user message
+    carries the given message id and text under the command id derived from
+    that message id as `turn-start/command`, retrying a lost connection
+    with no limit on the environment's backoff until it is answered or its
+    signal aborts. It resolves with the accepted command, `implementation`
+    `turn-start`, and rejects with an agent thread error of kind
+    `rejected`, `unauthorized`, `environment`, or `input`, as `turn-start`
+    does.
+  accepted-commands: >-
+    `t3code-project-create`, `thread-create`, and `turn-start` call
+    `sending` once their command and its ids are built and before the
+    first attempt to send it, with the command id, the invocation that
+    sends it, and the environment the command is sent to, and with the
+    project id for `t3code-project-create`, the thread id for the others,
+    and for `turn-start` the message id. `t3code-project-create` calls it
+    inside the `write` admission once the root passes its check, so a
+    root that fails records no command. They call `probe` with
+    the same values and the server's sequence as soon as the server
+    answers the command, before they check their signal and before the
+    promise resolves, so an answer that arrives after the invoking state
+    exited is still reported. A request that the state's exit aborts
+    before its answer arrives calls no `probe`; the server may hold the
+    command. A command the server rejects calls no `probe`, and the
+    promise rejects with its error. Both are called synchronously, so the
+    actor's save of the promise's result follows every write they commit.
+    A restarted promise that sends the command again calls both again
+    with the same values, and a retry inside one promise may call
+    `sending` again with the same values.
+    `startTurn` calls neither. The service's `agent-threads` part passes
+    a `sending` that calls the history module's `commandSending` and then
+    the service's `sending` probe, and a `probe` that calls the service's
+    `command` probe and then the history module's `commandAccepted`, each
+    service probe when the service is started with one, for every
+    implementation, as `actor-history` states.
+  module-layout: >-
+    `index.ts` re-exports the public names. `ids.ts` holds the pure id
+    derivation. `inputs.ts` validates each input against its schema at the
+    boundary. `templates.ts` renders a title, a workspace root, and a
+    prompt from a revision. `workspace-root.ts` holds the pure check that a
+    rendered root is absolute under a host platform's path rules.
+    `commands.ts`
+    builds each command from the ids, the input, and the rendered text,
+    and maps a client error to a kind. `clients.ts` holds
+    the client per environment. `dispatch.ts` waits for the source, sends a
+    command, and retries a connection failure. `implementations.ts` builds
+    the registry part. Tests import only `index.ts`.
+  convergence: >-
+    `t3code-project-create` run twice for one state entry sends one command
+    id with one project id, so the server creates one project, answers
+    both with the first sequence, and the record is written once. A crash
+    after the server records the command and before the record is written
+    restarts the promise, which sends it again, is answered with the first
+    receipt, and writes the record. A crash after the record and before
+    the actor saves the result does the same, and the record stays as it
+    was. With `createWorkspaceRoot`, a root removed between the sends is
+    made again by the server's normalization before the receipt answers.
+    `thread-create` run twice for one state entry sends one command id with
+    one thread id, so the server creates one thread and answers both with
+    the first sequence. `turn-prepare` run twice gives one message id.
+    `turn-start` run twice for one message id sends one command id, so the
+    server holds one user message and one turn. A crash before the server
+    records a command leaves nothing on the server, and the restarted
+    promise sends it as the first time. A crash after the server records it
+    and before the actor saves the result restarts the promise, which sends
+    it again and is answered with the first receipt. `follow-thread` twice
+    follows the thread once. A command the server rejected is rejected
+    again with the same kind. A stop during a wait or a retry sends nothing
+    more. A promise stopped by a state exit while its command is in flight
+    leaves the command's fate to the server; a later entry sends new ids.
+  dependencies: >-
+    `@wyrd-company/t3code-client` 0.5.0, the release the environment source
+    uses: `T3Client`, `threads.dispatcher.dispatch`, `threads.get`,
+    `T3PreconditionError`, `commandId`, `threadId`, and `messageId`.
+    `nunjucks` for templates, with its own type declarations from
+    `@types/nunjucks`; its releases are infrequent. The module reads the
+    process repository through the `revisionAt` its options give it, and
+    waits on the environment source's `ready`.
+  tests: >-
+    Tests run against the fake T3 Code server of the environment source's
+    test suite, which also answers `orchestration.dispatchCommand` and
+    `POST /api/orchestration/dispatch` with receipts that behave as the
+    server receipts measured above: the same command id for the same
+    aggregate answers the first sequence and appends nothing, a rejected id
+    is rejected again, and an id used for another aggregate is rejected.
+    Behaviours proved, each red before green, through a real router, store,
+    actor host, and environment source: a blueprint that invokes
+    `thread-create`, `turn-prepare`, and `turn-start` creates one thread
+    with the rendered title, starts one turn with the rendered prompt and
+    the prepared message id, and takes that turn's `t3.turn.started` and
+    `t3.turn.settled`; ids are the same for one entry and differ for a
+    second entry of the same state; a settlement of an earlier turn of the
+    same thread delivered after the next turn is prepared, and a settlement
+    of a turn in a second followed thread, and a settlement the source
+    publishes with a `null` message id because two user messages in a
+    snapshot share the turn's `requestedAt`, each leave the actor waiting,
+    and the actor then takes its own turn's settlement; a turn the fake
+    server settles before `turn-start` resolves is taken from the
+    enclosing state; with the source's first connection held back, a
+    command waits, the fake server's turn starts and settles at once after
+    the command, and the actor takes both changes; a restart before the
+    source's first transaction commits leaves the command waiting until
+    the next origin; `thread-create` through an archived binding, for an
+    actor with no environment, and in a child blueprint each fail with
+    their kind; inputs with a provider instance id that is not a slug, an
+    empty or blank branch or worktree path, and a blank model each fail
+    with `input` before anything is sent, and a command the client refuses
+    fails with `input`; a missing template, a template that does not
+    parse, an undefined value, an `include` of a missing path, and an empty
+    render each fail with `template`; a command the server rejects fails
+    with `rejected` and the server's message, and fails the same way when
+    sent again with the same ids; a token without `orchestration:operate`
+    fails with `unauthorized`; a connection that drops after the server
+    accepts and before it answers is retried and the server holds one
+    turn; and `follow-thread` taken twice follows once. With the
+    environment paused, `thread-create` and `turn-start` wait and send
+    nothing, count in `scheduled`, and each sends once when the pause is
+    lifted, while `startTurn` sends at once; a pause that commits while a
+    command is dispatched leaves that command sent once; a resume that
+    commits after a `thread-create` read the pause and before its wait
+    started lets it send once with no further hold change; with the
+    environment disconnected, the fake server sees no socket from the
+    module, a command waits, and it is sent once after reconnect,
+    including one in flight when the disconnect committed. For `t3code-project-create`,
+    the fake server answers `project.create` with receipts as measured,
+    keeps the workspace roots that exist on its host as a set the test
+    seeds, makes a missing root when the command asks, and rejects a
+    missing root without the flag, a root that is a file, and a root an
+    active project has. Behaviours proved: a task actor whose blueprint
+    invokes `t3code-project-create` with templates over its context, then
+    `thread-create` with the output's project id, creates one project with
+    the rendered title and workspace root and starts one thread in it, and
+    `portfolio.t3codeProject` resolves the project to the actor's item;
+    `sending` is called once with the invocation, the environment, the
+    command id, and the project id before the fake server receives
+    `project.create`, and `probe` with the same values and the server's
+    sequence before the promise resolves, while a root that fails its
+    check and a command the server rejects call no `probe`, and the
+    failing root no `sending`;
+    one entry gives the same project id twice and a second entry another;
+    a title template that reads an undefined value, a workspace root
+    template that renders a relative path, a workspace root template that
+    renders empty, and a root of `C:/parcels/one` and one of
+    `\\host\share` on a fake server whose descriptor reports `linux`
+    each fail with `template`, and the fake server receives no
+    `project.create`; `C:/parcels/one` on a fake server that reports
+    `windows` is sent, and `//host` and `\\host\` on that server each fail
+    with `template` before any `project.create` is sent; a fake server that reports `unknown` fails the
+    invoke with `environment`; a missing root without
+    `createWorkspaceRoot` and a root an active project has each fail with
+    `rejected` and the server's message; in each of these failures the
+    store holds no `t3_created_project` row, the fake server received no
+    `thread.create`, and the blueprint takes the invoke's error transition
+    to the state it declares; a missing root with `createWorkspaceRoot` is
+    made; an environment the input names that service configuration does
+    not declare fails with `environment`, and an archived binding with
+    `archived`; with two fake servers, the actor's environment `A` ready
+    and the input's environment `B` held back before its first connection,
+    nothing reaches either server, the invoke waits, and once `B`'s origin
+    commits one `project.create` reaches `B` and none reaches `A`, and the
+    record names `B`; with `B` ready and `A` held back, the create reaches
+    `B` without waiting on `A`; a create on an environment the operator
+    paused is sent; a connection that drops after the server accepts and
+    before it answers is retried, the server holds one project, and the
+    store one row. The fault tests run
+    the service in a child Node process, which kills itself with `SIGKILL`
+    from the `probe` after the server answers and before the result is
+    saved, and the test asserts the signal, starts it again on the same
+    file, and checks the fake server: after a kill in `turn-start`, the
+    thread holds exactly one user message and one turn, and the actor
+    reaches the state its blueprint enters on that turn's
+    `t3.turn.settled`; after a kill in `thread-create`, the project holds
+    one thread, and the actor follows it; after a kill in
+    `t3code-project-create`, the fake server holds one project, the store
+    one `t3_created_project` row, and the actor reaches the state it
+    enters on the invoke's `onDone` with that project's id. The live test, run by the service
+    package's `test:live` script and not by `task check`, starts the `t3`
+    release the environment source targets, pinned as a devDependency, on a
+    loopback port with its own data directory and a provider instance that
+    is not configured, so no agent runs, and repeats the receipt
+    measurement: `project.create`, `thread.create`, and
+    `thread.turn.start` each sent twice with one command id, and again
+    after the server is killed with `SIGKILL` and restarted, give one
+    project, one thread, and one user message; and `project.create` at a
+    missing root is rejected without `createWorkspaceRootIfMissing` and
+    makes the root with it. With a
+    configured provider, and only when the run asks for agent turns, it
+    also shows that a thread snapshot's latest turn has the `requestedAt`
+    of the user message that requested it, which the source's attribution
+    from a snapshot rests on and which the 0.0.45 projection source shows:
+    both are the server-normalized command's `createdAt`. Values are generic and never drawn from Manifold's
+    own domain.

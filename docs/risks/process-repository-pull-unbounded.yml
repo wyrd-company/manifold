@@ -1,0 +1,36 @@
+# GAP-SCHEMA: the risk schema is marked WIP and has two defects, flagged
+# rather than followed: (1) it requires `slug`, which contradicts the standing
+# "artifact id = filename" bet — no slug field is authored here; (2) its
+# `required` list names `response` but the property is `response-strategy` —
+# the property spelling is used.
+$schema: https://refinery.systems/ontology/risk
+title: A process repository pull that hangs stops every later pull
+
+# GAP-EDGE: the risk schema declares no relationship-types; this edge
+# connects the design whose behavior carries the exposure.
+relationships:
+  related-to:
+    - process-repository
+
+description: >-
+  Pulls of the process repository are serialized, and isomorphic-git's Node
+  HTTP client sets no timeout on a request. A remote that accepts the
+  connection and then stops sending would leave the pull waiting, and every
+  pull requested after it waiting behind it, so the service would keep its
+  current commit and no push would apply until the service restarts.
+
+categories:
+  - technical
+
+likelihood: 2
+impact: 3
+
+response-strategy: mitigate
+# Mitigation: `pullTimeoutMs` in the `processRepository` section, default
+# 60000, bounds each pull's requests with an abort signal on isomorphic-git's
+# web HTTP client and the token mint. An aborted pull fails with kind
+# `remote`, leaves the current commit unchanged, and the next pull runs. The
+# process-repository design's tests prove it against a server that stalls
+# before and during the pack.
+
+status: mitigated

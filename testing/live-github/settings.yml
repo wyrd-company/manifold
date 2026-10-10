@@ -1,0 +1,17 @@
+# ---
+# relationships:
+#   implements: live-github-environment
+# ---
+organization: mmenm
+marker: live-env-owned
+repository: fixture-app
+processRepository: fixture-settings
+project: Fixture board
+seedIssues: 2
+credentials:
+  patFile: ~/gh_manifold_pat
+  pinggyTokenFile: ~/pinggy_access_token
+  appEnvFile: ~/manifold-app.env
+  appPrivateKeyFile: ~/manifold-app.pem
+pinggyHost: pro.pinggy.io
+sweepIntervalMs: 60000

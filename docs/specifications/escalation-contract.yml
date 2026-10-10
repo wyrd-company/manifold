@@ -1,0 +1,181 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design this contract serves.
+  realizes:
+    - escalations
+  references:
+    - blueprint
+    - escalations-configuration
+terms:
+  - escalation
+  - notification-destination
+description: |-
+  Defines how an escalation is raised from a blueprint, how its answer
+  reaches the asking state, what Manifold publishes to ntfy for it, and the
+  HTTP requests that read and answer it.
+  `docs/specifications/escalation-contract.schema.yml` is the
+  machine-readable definition of the escalate input, the answered event,
+  the escalation as the API returns it, the answer bodies, and the ntfy
+  messages.
+
+  Escalate input. A blueprint state invokes the actor implementation
+  `escalate` with an input, usually an `expression.map` mapping from
+  context:
+
+  - `question`, required: Markdown, 1 to 8,000 characters.
+  - `title`: plain text, 1 to 120 characters. Default `Question`.
+  - `choices`: zero to three choices, each `{ id, label }`. `id` is a
+    lower-case slug of at most 32 characters, unique within the
+    escalation; `label` is 1 to 40 characters. Default `[]`.
+  - `freeText`: whether a text answer is taken. Default `false`.
+  - `destinations`: declared names of notification destinations, unique.
+    Default `["default"]`.
+
+  The input has at least one choice or `freeText: true`. An input that
+  breaks a rule fails the invoke with an error, which the state handles in
+  its `onError`.
+
+  ```yaml
+  reviewing:
+    invoke:
+      id: ask
+      src: escalate
+      input:
+        type: expression.map
+        params:
+          expression: >-
+            { "title": "Shipment held", "question": "Release shipment " & context.shipment & "?",
+              "choices": [{ "id": "release", "label": "Release" }, { "id": "hold", "label": "Hold" }],
+              "freeText": true }
+    on:
+      escalation.answered:
+        - target: released
+          guard:
+            type: expression.guard
+            params:
+              expression: event.answer.choice = "release"
+        - target: held
+  ```
+
+  Answered event. While the asking state is active, the `escalate`
+  callback sends its actor one event when the escalation is answered:
+
+  - `type`: `escalation.answered`.
+  - `escalationId`: the escalation's id.
+  - `answer`: `{ choice }` with a choice id, or `{ text }`.
+  - `channel`: `link` for an answer through the answer endpoint, from the
+    page or an ntfy button; `api` for an answer through Manifold's API.
+
+  A blueprint that takes the event declares it under `schemas.events`
+  with a schema the event satisfies, such as
+  `#/$defs/escalation-answered-event`, and declares `escalate` under
+  `schemas.actors` with the escalate input schema.
+
+  Ids and keys. An escalation id is 22 characters of base64url. Its key is
+  32 random bytes written as 43 characters of base64url without padding.
+
+  ntfy messages. For each destination, Manifold publishes with
+  `POST {server}/`, `Content-Type: application/json`, and, when the
+  destination names a credential, `Authorization: Bearer {token}`. The
+  body is an ntfy JSON publish:
+
+  - an ask: `topic`; `sequence_id`, the escalation id; `title`;
+    `message`, the question, cut on a character boundary so the message
+    is at most 4,096 bytes, ending with a line that sends the reader to
+    the page when cut; `markdown: true`; `priority`, the destination's;
+    `tags: ["question"]`; `click`, the answer page URL with the key; and
+    `actions`, one `http` action per choice and, when free text is
+    allowed and there are fewer than three choices, a `view` action
+    labelled `Answer…` that opens the answer page.
+  - each `http` action: `label`, the choice's label; `url`,
+    `{publicUrl}/escalations/{id}/answer`; `method: POST`;
+    `headers: { "Content-Type": "application/x-www-form-urlencoded" }`;
+    `body`, `key={key}&choice={choiceId}`; `clear: true`.
+  - a close: `topic`; `sequence_id`, the escalation id; `title`;
+    `message`, the outcome, `Answered: {label or text} ({channel})` or
+    `Withdrawn`, at most 4,096 bytes in UTF-8: a text answer that would
+    pass the limit is cut on a character boundary and ends with `…`, and
+    the escalation keeps the whole answer; `markdown: true`; `priority: 1`; `tags`,
+    `["white_check_mark"]` when answered and `["heavy_multiplication_x"]`
+    when withdrawn. A close has no `click` and no `actions`.
+
+  Answer page. The answer key authorizes each request.
+
+  - `GET /escalations/{id}?key={key}` answers `200` with an HTML page
+    showing the title, the question as text, one button per choice, and a
+    text field when free text is allowed; for an escalation that is no
+    longer open, it shows how it ended. It never answers the escalation.
+  - `POST /escalations/{id}/answer`, body
+    `application/x-www-form-urlencoded` with `key` and exactly one of
+    `choice` and `text`, answers through the channel `link`. It answers
+    `200` with an HTML page that says the answer was recorded, or how the
+    escalation had already ended. Every response carries
+    `Access-Control-Allow-Origin: *`.
+  - A missing or wrong key, or an unknown id, answers `404`. An answer
+    that names no choice of the escalation, sends text to an escalation
+    that takes none, sends both or neither, or sends text over 4,096
+    Unicode code points answers `400` and changes nothing. A body over
+    64 KiB answers `413`. Text length is counted in code points after
+    decoding, so the longest valid answer, which takes about 49 KB
+    form-encoded, is accepted. Any other method answers `405`.
+
+  API. Always served under `/api/escalations` without authentication,
+  mounted with `mount`. Access control belongs to the deployment:
+  loopback by default, or a proxy in front. Bodies are JSON.
+
+  - `GET /api/escalations` answers `200` with `{ escalations }`, every
+    escalation newest first; `?status=open`, `answered`, or `withdrawn`
+    filters by status.
+  - `GET /api/escalations/{id}` answers `200` with the escalation, or `404`.
+  - `POST /api/escalations/{id}/answer` with `{ choice }` or `{ text }`
+    answers through the channel `api`: `200` with `{ outcome, escalation }`,
+    where `outcome` is `answered` when this answer won and `closed` when
+    the escalation had already ended; `400` with `{ error }` for an answer
+    the escalation does not take, or text over 4,096 code points; `404`
+    for an unknown id; `413` for a body over 64 KiB, which holds the
+    longest valid answer even with every character `\u`-escaped.
+
+  Service escalations. The service raises six kinds, each sent to the
+  `default` destination. Its `raiser` is
+  `{ type: "service", kind, subject, occurrence }`.
+  `held-actor`, `stranded-token`, `intake-failed`, `comparator-failed`,
+  and `migration-failed` take no free text. `agent-question` takes free text when its request asks.
+
+  | Kind | Title | Subject | Choices | Raised when |
+  |---|---|---|---|---|
+  | `held-actor` | `Question` | `{ actorId }` | `retry`, `dismiss` | An actor is held. |
+  | `stranded-token` | `Question` | `{ gate, tokenId }` | `return`, `dismiss` | A holder enters a trap of its gate. |
+  | `intake-failed` | `Intake failed` | `{ issue }` | `retry`, `dismiss` | Intake records a failure for an issue that is still tracked and unchanged since the attempt read it. |
+  | `comparator-failed` | `Comparator failed` | `{ gate }` | `retry`, `dismiss` | A gate's comparator is missing or fails to load or to evaluate. |
+  | `agent-question` | The task's name and the agent's title, as `agent-tools` gives it | `{ actorId, environment, threadId, turnId }` | Request choices | An agent asks a person through the agent tools module. |
+  | `migration-failed` | `Migration failed` | `{ version }` | `retry`, `dismiss` | An actor cannot migrate to a later blueprint version, for any reason but a version that fails to load. |
+
+  `actorId` is an actor id, `issue` an issue's GitHub node id, `gate` a
+  gate key, `<blueprintPath>#<statePath>`, `tokenId` a token id, and
+  `version` the blueprint version key the actors could not take.
+  `retry` on `intake-failed` takes the issue in again on the current
+  revision; `retry` on `comparator-failed` runs the gate again, loading
+  its comparator first when the gate has none; `retry` on
+  `migration-failed` attempts again every actor whose migration toward
+  that version failed, to the latest version of its path, as
+  `blueprint-migration` states. `dismiss` closes the
+  escalation and changes nothing else.
+
+  An escalation, as the API returns it, has `id`, `raiser`, `title`,
+  `question`, `choices`, `freeText`, `destinations`, `status`, `answer`
+  when answered, `raisedAt`, and `closedAt` when not open, with times as
+  milliseconds since the Unix epoch. It never carries the key or its
+  digest.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/escalation-contract.schema.yml` is a valid JSON
+  Schema 2020-12 document, and the constants `packages/shared` generates
+  from it equal it, checked by a test that parses the YAML file. The
+  `escalate` callback rejects an input the escalate input schema rejects.
+  Every event the callback sends, every escalation and answer body the API
+  returns, and every body the sender publishes, captured by a fake ntfy
+  server, validates against its definition, a service escalation of each
+  of the six kinds included. A blueprint that declares the
+  example's `reviewing` state lints clean with `escalate` among the actor
+  names. Fixtures use a domain unrelated to Manifold.

@@ -1,0 +1,39 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - blueprint-migration
+    - actor-host
+    - blueprint
+    - service-assembly
+description: >-
+  An actor keeps its saved blueprint version across service restarts. A
+  process author can change a blueprint while actors wait on events, and
+  migration determines when those actors take the later version at the
+  same path. The trigger determines whether an actor can finish on the
+  version it started on without the author keeping a separate path.
+considered-options:
+  "1": >-
+    Automatic with no opt-out. Attempt waiting actors at startup, after
+    an applied revision, and after a deferred actor saves. To keep running
+    actors on old text, save the new blueprint at another path.
+  "2": >-
+    Automatic with an opt-out. A blueprint version that declares
+    pinActors: true accepts no automatic migration from an earlier version.
+  "3": >-
+    Operator request only. An API request selects an actor or path for
+    migration; accepted requests and deferred attempts survive restart.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Automatic migration applies the author's process changes to running
+    work without another operator action or declaration. Separate paths
+    let the author keep old actors on old text. The trigger has no opt-out
+    flag and no operator request lifecycle to manage.
+expected-outcomes:
+  positive:
+    - Waiting actors take later blueprint versions through authored migration paths.
+    - Process changes reach running work without an operator migration request.
+    - Separate blueprint paths keep running work on distinct process definitions.
+  negative:
+    - An actor is not guaranteed to finish on the blueprint version it started on.
+    - Keeping running actors on old text requires saving the changed blueprint at another path.

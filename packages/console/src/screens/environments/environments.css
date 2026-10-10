@@ -1,0 +1,145 @@
+/*
+relationships:
+  implements: operator-console
+*/
+/* The shell supplies the title. Keep its layout scoped to this screen. */
+main:has(> .environments-screen) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  align-content: start;
+}
+main:has(> .environments-screen) > .page-title {
+  grid-column: 1;
+  grid-row: 1;
+  margin-bottom: 0;
+}
+.environments-screen {
+  display: contents;
+}
+.environments-heading {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+}
+.environments-screen > :not(.environments-heading) {
+  grid-column: 1 / -1;
+}
+.environments-table-scroll {
+  overflow-x: auto;
+}
+.environments-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  min-width: 850px;
+}
+.environments-table th {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  text-align: left;
+}
+.environments-table th,
+.environments-table td {
+  padding: 14px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.environments-table small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.environments-table .numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.environments-table th:last-child {
+  text-align: right;
+}
+.environment-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.environment-error {
+  overflow-wrap: anywhere;
+}
+.environment-connected {
+  background: var(--success);
+}
+.environment-connecting {
+  background: var(--warning);
+  animation: environment-ping 1.8s ease-in-out infinite;
+}
+.environment-error.status-dot {
+  background: var(--error);
+}
+.environment-disconnected {
+  background: var(--muted-foreground);
+}
+.environment-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.environments-caption {
+  font-size: 12px;
+  margin-top: -8px;
+}
+.environment-instructions {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  display: grid;
+  gap: 14px;
+}
+.environment-instructions h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+.environment-instructions p {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+.environment-instructions code,
+.environment-example pre {
+  font-family: var(--font-mono);
+}
+.environment-example {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  padding: 16px;
+}
+.environment-example pre {
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.environment-example button {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+}
+.environment-spinner {
+  animation: environment-spin 1s linear infinite;
+}
+@keyframes environment-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes environment-ping {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .environment-spinner,
+  .environment-connecting {
+    animation: none;
+  }
+}

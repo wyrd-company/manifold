@@ -1,0 +1,7 @@
+relationships:
+  verifies: usage-decoder
+provider: grok
+harness-version: "unavailable"
+decoder-version: 0.9.20
+shape-basis: Published provider types in @codeburn/core 0.9.20; synthetic records.
+version-basis: Harness is not installed; release-specific shape verification remains open.

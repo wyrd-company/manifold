@@ -1,0 +1,115 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design this section configures.
+  realizes:
+    - escalations
+  references:
+    - service-configuration
+    - escalation-contract
+terms:
+  - escalation
+  - notification-destination
+description: |-
+  Defines the `escalations` section of the service configuration, specified
+  by `service-configuration`: where the answer page is reached, the ntfy
+  topic behind each notification destination and how it is secured, and the
+  timing of requests to ntfy. It also defines the `ntfy-token` credential
+  kind. `docs/specifications/escalations-configuration.schema.yml` is the
+  machine-readable definition of the section's value and of the credential
+  kind. The root names the section as `escalations`, optional, default
+  `{}`, and lists `ntfy-token` among its credential kinds by `$ref` to
+  `https://manifold.wyrd.company/schemas/escalations-configuration#/$defs/ntfy-token-credential`.
+
+  `publicUrl` is the base URL at which a person's device reaches the
+  service's HTTP host, used in every answer page URL and button. Absent by
+  default; required when `destinations` is not empty.
+
+  `destinations` maps a notification destination's declared name to its
+  ntfy topic. Escalations a blueprint raises name destinations; the
+  service's own, and a blueprint's that names none, use `default`. Default
+  `{}`, in which case no notification is sent and escalations are answered
+  through Manifold's API.
+
+  - `server` is the base URL of the ntfy server. Default
+    `https://ntfy.sh`.
+  - `topic` is the ntfy topic: 1 to 64 letters, digits, `_`, and `-`.
+    Required.
+  - `posture` is how the topic is secured. Required.
+    - `open`: anyone who knows the topic's name can read it, such as an
+      unreserved topic on ntfy.sh. `credential` is optional. The service
+      warns at start that anyone who knows the topic can read and answer
+      every question, and warns again when the topic is shorter than 32
+      characters. A topic of at least 32 random characters is
+      recommended.
+    - `reserved`: a topic reserved to the user's account on a hosted
+      server, such as a paid ntfy.sh account. `credential` is required.
+    - `self-hosted`: a topic on the operator's own ntfy server, with
+      deny-all default access. `credential` is required. The service warns
+      when `server` is `https://ntfy.sh`.
+
+    For `reserved` and `self-hosted`, the service polls the topic once at
+    start without the credential and warns when the server lets it read.
+    No posture is refused.
+  - `credential` is the name of an `ntfy-token` credential, whose token the
+    service sends as a bearer with each publish.
+  - `priority` is the ntfy priority of a question, 1 to 5. Default 4.
+
+  `requestTimeoutMs` is the most time in milliseconds one request to an
+  ntfy server may take before the service aborts it. Default 30000.
+
+  `retryIntervalMs` is the time in milliseconds after a publish fails with
+  a network error, a timeout, `429`, or a `5xx` before the service tries
+  it again. Default 60000.
+
+  Credential kind `ntfy-token`. An ntfy access token that may publish to
+  the destination's topic. `tokenFile` is the path of a file holding the
+  token; a relative path resolves against the directory of the
+  configuration file. The token is the file's content with one trailing
+  line ending removed, and the service reads the file at each request, so
+  a replaced token applies to the next request.
+
+  An example configuration:
+
+  ```yaml
+  escalations:
+    publicUrl: https://service.example.net
+    destinations:
+      default:
+        topic: example-alerts
+        posture: reserved
+        credential: example-ntfy
+      night:
+        server: https://ntfy.example.net
+        topic: example-night
+        posture: self-hosted
+        credential: example-ntfy-self
+        priority: 5
+  credentials:
+    example-ntfy:
+      kind: ntfy-token
+      tokenFile: example-ntfy.token
+    example-ntfy-self:
+      kind: ntfy-token
+      tokenFile: example-ntfy-self.token
+  ```
+
+  Beyond the schema, the section is valid only when `publicUrl` is present
+  if any destination is, each `credential` names a credential of kind
+  `ntfy-token`, each destination of posture `reserved` or `self-hosted`
+  names a credential, and each `tokenFile` names a readable file. A failure
+  is an issue at the path of the property that breaks the rule, or, for a
+  missing property, at the object that lacks it.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/escalations-configuration.schema.yml` is a valid
+  JSON Schema 2020-12 document whose declared-name references resolve
+  against `service-configuration.schema.yml`. Loading a configuration with
+  no `escalations` section returns the section with every default and no
+  destinations. The service rejects a configuration whose `escalations`
+  value the schema rejects, naming the property; rejects a destination
+  without `publicUrl` at `/escalations`; rejects a `credential` that
+  `credentials` does not define, or that is not of kind `ntfy-token`;
+  rejects a `reserved` or `self-hosted` destination with no `credential`
+  at that destination; and rejects a missing token file at its
+  `tokenFile`. An `open` destination with no credential loads.

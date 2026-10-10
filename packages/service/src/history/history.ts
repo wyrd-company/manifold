@@ -1,0 +1,242 @@
+// ---
+// relationships:
+//   implements: actor-history
+// ---
+import type { SQLOutputValue } from "node:sqlite";
+import { storedText } from "../store/index.ts";
+import type { ActorHistory, StateVisit } from "@wyrd-company/manifold-shared/actors-api";
+import type { Store } from "../store/index.ts";
+import type { SaveHook } from "../actor-host/index.ts";
+import type { SendingCommand, InvokedCommand } from "../agent-threads/index.ts";
+import { historySteps } from "./migrations.ts";
+import { visitChange } from "./visits.ts";
+import type { VisitRow } from "./visits.ts";
+import { assembleHistory, stateVisit } from "./read.ts";
+import type { CommandRow } from "./read.ts";
+export interface HistoryOptions {
+  readonly store: Store;
+  readonly log: (entry: {
+    readonly level: "error";
+    readonly event: "history-write-failed";
+    readonly message: string;
+    readonly detail: { readonly actorId: string; readonly commandId: string };
+  }) => void;
+  readonly now?: () => number;
+}
+export interface History {
+  readonly saveHook: SaveHook;
+  commandSending(command: SendingCommand): void;
+  commandAccepted(command: InvokedCommand): void;
+  read(actorId: string): ActorHistory | undefined;
+  visits(actorId: string): readonly StateVisit[];
+  visitAt(actorId: string, at: number): number | undefined;
+  prune(actorId: string): number;
+}
+interface Pending {
+  command: SendingCommand;
+  sentAt: number;
+  acceptance?: { sequence: number; at: number };
+}
+export function openHistory({ store, log, now = Date.now }: HistoryOptions): History {
+  const { connection } = store,
+    { database: db } = connection;
+  connection.migrate("history", historySteps);
+  const pending = new Map<string, Pending>();
+  const insert = db.prepare(
+    "INSERT INTO history_command (command_id,actor_id,kind,invoke_id,entry_id,environment,thread_id,project_id,message_id,sent_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+  );
+  const accept = db.prepare(
+    "UPDATE history_command SET sequence=?,accepted_at=? WHERE command_id=? AND sequence IS NULL",
+  );
+  function apply(write: Pending) {
+    const c = write.command;
+    insert.run(
+      c.commandId,
+      c.invocation.actorId,
+      c.implementation === "t3code-project-create" ? "project-create" : c.implementation,
+      c.invocation.invokeId,
+      c.invocation.entryId,
+      c.environment,
+      c.implementation === "t3code-project-create" ? null : c.threadId,
+      c.implementation === "t3code-project-create" ? c.projectId : null,
+      c.implementation === "t3code-project-create" ? null : (c.messageId ?? null),
+      write.sentAt,
+    );
+    if (write.acceptance) accept.run(write.acceptance.sequence, write.acceptance.at, c.commandId);
+  }
+  function probe(command: SendingCommand, acceptance?: Pending["acceptance"]) {
+    const previous = pending.get(command.commandId);
+    const write: Pending = {
+      command,
+      sentAt: previous?.sentAt ?? now(),
+      ...(previous?.acceptance
+        ? { acceptance: previous.acceptance }
+        : acceptance
+          ? { acceptance }
+          : {}),
+    };
+    try {
+      connection.transaction(() => {
+        if (!previous) {
+          const row = db
+            .prepare("SELECT sent_at FROM history_command WHERE command_id=?")
+            .get(command.commandId);
+          if (row) write.sentAt = row["sent_at"] as number;
+        }
+        apply(write);
+      });
+      pending.delete(command.commandId);
+    } catch (error) {
+      pending.set(command.commandId, write);
+      log({
+        level: "error",
+        event: "history-write-failed",
+        message: error instanceof Error ? error.message : String(error),
+        detail: { actorId: command.invocation.actorId, commandId: command.commandId },
+      });
+    }
+  }
+  return {
+    commandSending: (command) => probe(command),
+    commandAccepted: (command) => probe(command, { sequence: command.sequence, at: now() }),
+    saveHook(save) {
+      for (const [id, write] of pending) {
+        if (write.command.invocation.actorId !== save.actorId) continue;
+        const row = db
+          .prepare("SELECT sent_at,sequence FROM history_command WHERE command_id=?")
+          .get(id);
+        if (
+          row &&
+          row["sent_at"] === write.sentAt &&
+          (!write.acceptance || row["sequence"] === write.acceptance.sequence)
+        )
+          pending.delete(id);
+        else apply(write);
+      }
+      const previous = readHistoryVisit(
+        db
+          .prepare(
+            "SELECT CAST(actor_id AS BLOB) AS actor_id, visit, CAST(machine AS BLOB) AS machine, state_value, entered_at, exited_at, CAST(exit_event_type AS BLOB) AS exit_event_type, CAST(exit_event_id AS BLOB) AS exit_event_id FROM history_visit WHERE actor_id=? ORDER BY visit DESC LIMIT 1",
+          )
+          .get(save.actorId),
+      ) as unknown as VisitRow | undefined;
+      const change = visitChange(previous, save),
+        at = now();
+      if (save.eventId)
+        db.prepare(
+          "INSERT INTO history_event (actor_id,event_id,visit) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+        ).run(save.actorId, save.eventId, previous?.visit ?? null);
+      let visit = change.visit;
+      if (change.starts) {
+        if (previous)
+          db.prepare(
+            "UPDATE history_visit SET exited_at=?,exit_event_type=?,exit_event_id=? WHERE actor_id=? AND visit=? AND exited_at IS NULL",
+          ).run(
+            at,
+            save.changedBy?.type ?? null,
+            save.changedBy?.eventId ?? null,
+            save.actorId,
+            previous.visit,
+          );
+        visit++;
+        db.prepare(
+          "INSERT INTO history_visit (actor_id,visit,machine,state_value,entered_at) VALUES (?,?,?,?,?)",
+        ).run(save.actorId, visit, save.machine, change.value, at);
+      }
+      if (change.ends)
+        db.prepare(
+          "UPDATE history_visit SET exited_at=? WHERE actor_id=? AND visit=? AND exited_at IS NULL",
+        ).run(at, save.actorId, visit);
+    },
+    visits(actorId) {
+      return (
+        db
+          .prepare(
+            "SELECT CAST(actor_id AS BLOB) AS actor_id, visit, CAST(machine AS BLOB) AS machine, state_value, entered_at, exited_at, CAST(exit_event_type AS BLOB) AS exit_event_type, CAST(exit_event_id AS BLOB) AS exit_event_id FROM history_visit WHERE actor_id=? ORDER BY visit",
+          )
+          .all(actorId)
+          .map(readHistoryVisit) as unknown as VisitRow[]
+      ).map(stateVisit);
+    },
+    visitAt(actorId, at) {
+      const row = db
+        .prepare(
+          "SELECT visit FROM history_visit WHERE actor_id=? ORDER BY (entered_at<=?) DESC, CASE WHEN entered_at<=? THEN entered_at END DESC,CASE WHEN entered_at<=? THEN visit END DESC,entered_at ASC,visit ASC LIMIT 1",
+        )
+        .get(actorId, at, at, at);
+      return row?.["visit"] as number | undefined;
+    },
+    prune(actorId) {
+      return connection.transaction(() => {
+        const links = db.prepare("DELETE FROM history_event WHERE actor_id=?").run(actorId).changes;
+        const commands = db
+          .prepare("DELETE FROM history_command WHERE actor_id=?")
+          .run(actorId).changes;
+        connection.afterCommit(() => {
+          for (const [id, write] of pending)
+            if (write.command.invocation.actorId === actorId) pending.delete(id);
+        });
+        return Number(links) + Number(commands);
+      });
+    },
+    read(actorId) {
+      const snapshot = store.loadSnapshot(actorId);
+      if (!snapshot) return undefined;
+      const visits = db
+        .prepare(
+          "SELECT CAST(actor_id AS BLOB) AS actor_id, visit, CAST(machine AS BLOB) AS machine, state_value, entered_at, exited_at, CAST(exit_event_type AS BLOB) AS exit_event_type, CAST(exit_event_id AS BLOB) AS exit_event_id FROM history_visit WHERE actor_id=? ORDER BY visit",
+        )
+        .all(actorId)
+        .map(readHistoryVisit) as unknown as VisitRow[];
+      const links = new Map(
+        db
+          .prepare(
+            "SELECT CAST(event_id AS BLOB) AS event_id, visit FROM history_event WHERE actor_id=? AND visit IS NOT NULL",
+          )
+          .all(actorId)
+          .map(readHistoryEvent)
+          .map((row) => [row["event_id"] as string, row["visit"] as number]),
+      );
+      const commands = db
+        .prepare(
+          "SELECT CAST(command_id AS BLOB) AS command_id, CAST(actor_id AS BLOB) AS actor_id, kind, CAST(invoke_id AS BLOB) AS invoke_id, CAST(entry_id AS BLOB) AS entry_id, CAST(environment AS BLOB) AS environment, CAST(thread_id AS BLOB) AS thread_id, CAST(project_id AS BLOB) AS project_id, CAST(message_id AS BLOB) AS message_id, sent_at, sequence, accepted_at FROM history_command WHERE actor_id=? ORDER BY sent_at,command_id",
+        )
+        .all(actorId)
+        .map(readHistoryCommand) as unknown as CommandRow[];
+      return assembleHistory(snapshot, visits, store.actorInbox(actorId), links, commands);
+    },
+  };
+}
+
+function readHistoryVisit<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    actor_id: storedText(values["actor_id"]!),
+    machine: storedText(values["machine"]!),
+    exit_event_type:
+      values["exit_event_type"] === null ? null : storedText(values["exit_event_type"]!),
+    exit_event_id: values["exit_event_id"] === null ? null : storedText(values["exit_event_id"]!),
+  } as T;
+}
+function readHistoryEvent<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return { ...values, event_id: storedText(values["event_id"]!) } as T;
+}
+function readHistoryCommand<T>(row: T): T {
+  if (row === undefined) return row;
+  const values = row as Record<string, SQLOutputValue>;
+  return {
+    ...values,
+    command_id: storedText(values["command_id"]!),
+    actor_id: storedText(values["actor_id"]!),
+    invoke_id: storedText(values["invoke_id"]!),
+    entry_id: storedText(values["entry_id"]!),
+    environment: storedText(values["environment"]!),
+    thread_id: values["thread_id"] === null ? null : storedText(values["thread_id"]!),
+    project_id: values["project_id"] === null ? null : storedText(values["project_id"]!),
+    message_id: values["message_id"] === null ? null : storedText(values["message_id"]!),
+  } as T;
+}

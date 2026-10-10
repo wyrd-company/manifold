@@ -1,0 +1,118 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose declaration this is.
+  realizes:
+    - portfolio
+  references:
+    - portfolio-declaration
+    - service-configuration
+    - agent-threads
+    - t3code-source-database-schema
+terms:
+  - binding
+  - portfolio-item
+description: >-
+  Defines `bindings.yml`, the file at the root of the process repository
+  that declares the bindings: which portfolio item each GitHub Project and
+  T3code project attaches to. `docs/specifications/bindings-declaration.schema.yml`
+  is the machine-readable definition of its document. Item ids name items
+  of `portfolio-declaration` at the same commit.
+
+  An absent file and an empty document both declare no bindings.
+
+  Names. A binding's name is its key. Names are unique across
+  `githubProjects` and `t3codeProjects` together, so a name identifies one
+  binding. Binding names, environment names, and item ids are declared
+  names, as `service-configuration` defines them, and the schema references
+  that one definition. An environment name is resolved by
+  service configuration; the declaration does not check that it exists.
+
+  GitHub Project bindings. A binding in `githubProjects` names the Project
+  by `owner`, the login of the organization or user that owns it, and
+  `number`, its number under that owner; `environment`, the environment
+  that places every thread for the Project's tasks; and `item`, the
+  portfolio item it attaches to. Logins compare without regard to case.
+  `t3codeProjects` lists the ids of the T3code projects on the binding's
+  environment that are associated with the Project, one or many.
+
+  T3code project bindings. A binding in `t3codeProjects` names the T3code
+  project by `environment` and `project`, its id on that environment, and
+  `item`, the portfolio item it attaches to.
+
+  Archive. `archived: true` archives a binding. An archived binding still
+  resolves, so that usage on its projects stays on its item, and it may
+  name an archived item. Manifold discovers no new task on the Project of
+  an archived GitHub Project binding and creates no T3code project or
+  thread through an archived binding.
+
+  Resolution. Every answer reads the bindings and the portfolio of one
+  commit, and the T3code projects that `t3code-project-create` invokes
+  created, which Manifold's store records with the creating actor's
+  portfolio item.
+
+  - A GitHub Project resolves to its binding's item. A GitHub Project with
+    no binding has no item; it is not a bound Project.
+
+  - A T3code project with its own binding resolves to that binding's item.
+
+  - A T3code project listed in a GitHub Project binding's
+    `t3codeProjects`, on that binding's environment, resolves to that
+    binding's item.
+
+  - Any other T3code project that a `t3code-project-create` invoke
+    created resolves to the creating actor's portfolio item, when the
+    portfolio declares that item.
+
+  - Any other T3code project resolves to the top-level Other, `other`.
+
+  An item may hold any number of projects of either kind.
+
+  Findings. Linting a bindings document gives findings with a kind, a
+  location, and a message. The location is the RFC 6901 JSON Pointer of the
+  offending value in the document. The kinds:
+
+  - `syntax`: the file does not parse as one YAML document. The location is
+    the empty pointer, and the message is the parser's, with its line and
+    column. No other finding is reported for that file.
+
+  - `schema`: the document does not validate against the schema. The
+    message is the validator's. No other finding is reported for a
+    document with a `schema` finding.
+
+  - `duplicate-binding`: a name is used in both `githubProjects` and
+    `t3codeProjects`. The location is the `t3codeProjects` entry.
+
+  - `duplicate-project`: a second GitHub Project binding names the same
+    owner and number, or a second T3code project binding names the same
+    environment and project id. The location is the later binding in
+    document order.
+
+  - `duplicate-association`: a T3code project id on one environment is
+    listed by two GitHub Project bindings. The location is the later
+    listing.
+
+  - `bound-and-associated`: a T3code project with its own binding is also
+    listed by a GitHub Project binding on the same environment. The
+    location is the T3code project binding.
+
+  - `unknown-item`: `item` names no item of the portfolio, or names an
+    Other item. Not reported when the portfolio document has a `syntax`
+    or `schema` finding.
+
+  - `archived-item`: a binding that is not archived names an archived item.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/bindings-declaration.schema.yml` is a valid JSON
+  Schema 2020-12 document, and equals the schema `packages/shared` embeds,
+  which a test shows. Tests of `lintPortfolioDeclaration` show each
+  finding kind with its location, and a digit-leading binding name or
+  environment name as a `schema` finding. Tests of the portfolio module's
+  resolution show a GitHub Project, a bound T3code project, an associated
+  T3code project, a created T3code project resolving to its creating
+  actor's item, a created T3code project that is also bound resolving to
+  its binding's item, a created T3code project whose item the portfolio
+  no longer declares resolving to `other`, an unbound T3code project
+  resolving to `other`, a login
+  in another case, an archived binding, and one item holding two GitHub
+  Projects and two T3code projects.

@@ -1,0 +1,46 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - agent-tools
+    - escalations
+    - agent-threads
+description: >-
+  An agent asks a person a question with `escalate` and ends its turn, so
+  no tool call waits on a person. The answer must reach the agent's thread
+  once, whenever it is given, including while the service is down. A
+  blueprint escalation's answer reaches the state that asked, and a
+  blueprint starts turns from prompt templates.
+considered-options:
+  "1": >-
+    Service escalation. The tool call raises an escalation of kind
+    `agent-question` through the escalations module; the service writes the
+    answer as a pending turn in the transaction that records its handling
+    and sends it to the thread with ids derived from the escalation id. The
+    actor hears `agent.escalated` and `agent.escalation.answered`, which a
+    blueprint may declare.
+  "2": >-
+    Blueprint escalation. The tool call reaches the actor as an event; the
+    blueprint's state invokes `escalate` with the agent's question, and on
+    the answer invokes `turn-prepare` and `turn-start` with a template that
+    carries it.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 makes an agent's question work in every process, the bundled
+    ones and the user's, with nothing declared: an agent can always ask and
+    is always answered in its thread, which is what the concept promises.
+    Carrying an answer back to the thread that asked is mechanical work the
+    engine does, and the escalations module's handlers and T3 Code's command
+    receipts already give the exactly-once delivery. The events keep the
+    actor informed, so a process that moves a card or pauses a deadline
+    while a person is asked still can. Option 2 loses the question when the
+    actor's current state does not take the event, and makes every process
+    repeat the same three states and a template for a behaviour no process
+    varies.
+expected-outcomes:
+  positive:
+    - An agent's question reaches a person and its answer reaches the thread whatever the blueprint declares.
+    - No blueprint carries a template or states for answering an agent.
+  negative:
+    - The answer's wording is the service's, not a template in the process repository.
+    - A blueprint that guards turns on their message id must take `agent.escalation.answered` to recognise the answer turn.

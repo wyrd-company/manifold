@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Allocation
+description: >-
+  A guaranteed percentage of a parent's capacity assigned to a portfolio item.

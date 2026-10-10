@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Comparator
+description: >-
+  The user's function that picks which task in a gate's population proceeds next.

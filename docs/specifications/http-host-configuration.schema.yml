@@ -1,0 +1,26 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: http-host-configuration
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/http-host-configuration
+title: HTTP host configuration
+description: >-
+  The value of the `http` section of the service configuration: where the
+  service's HTTP host listens.
+type: object
+additionalProperties: false
+properties:
+  host:
+    description: The address the HTTP host binds.
+    type: string
+    minLength: 1
+    default: 127.0.0.1
+  port:
+    description: The TCP port the HTTP host binds; 0 binds a free port.
+    type: integer
+    minimum: 0
+    maximum: 65535
+    default: 7480

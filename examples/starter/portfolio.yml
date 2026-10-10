@@ -1,0 +1,5 @@
+items:
+  work:
+    allocations:
+      agents:
+        guarantee: 100

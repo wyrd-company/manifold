@@ -1,0 +1,502 @@
+// ---
+// relationships:
+//   implements: task-metadata
+// ---
+import { createHash } from "node:crypto";
+import {
+  lintTaskMetadataDeclaration,
+  scopeOwnership,
+  scopeKey,
+} from "@wyrd-company/manifold-shared";
+import type {
+  ProcessRepositoryRevision,
+  TaskMetadataDeclaration,
+} from "@wyrd-company/manifold-shared";
+import type { TaskMetadataOptions } from "./types.ts";
+import type { metadataRecords } from "./records.ts";
+import type {
+  AppliedChange,
+  ApplyAnswer,
+  ApplyRequest,
+  BoundProject,
+  ConfigurationSource,
+  ProjectConfiguration,
+  ScopeInput,
+} from "./project-types.ts";
+import {
+  appliedConfiguration,
+  canonical,
+  planProjectConfiguration,
+  projectWrites,
+} from "./plan.ts";
+import { taskFieldValues } from "./values.ts";
+import type { TrackedIssueIndex } from "../github-source/index.ts";
+import { planScopeConfiguration } from "./scope-plan.ts";
+import { outsideRepositories } from "./repository-outside.ts";
+import { acceptFields } from "./accept.ts";
+export class ProjectRequestError extends Error {
+  readonly status: number;
+  readonly kind: string;
+  readonly detail: Record<string, unknown>;
+  constructor(status: number, kind: string, message: string, detail: Record<string, unknown> = {}) {
+    super(message);
+    this.status = status;
+    this.kind = kind;
+    this.detail = detail;
+  }
+}
+export function createProjects(
+  options: TaskMetadataOptions,
+  records: ReturnType<typeof metadataRecords>,
+  current: () => TaskMetadataDeclaration | undefined,
+  revision: () => ProcessRepositoryRevision | undefined,
+) {
+  const controller = new AbortController();
+  let queue: Promise<unknown> = Promise.resolve();
+  const now = options.now ?? Date.now;
+  let cachedSource: ConfigurationSource | undefined;
+  let closed = false;
+  async function source(signal = controller.signal) {
+    const value = await options.source(signal);
+    if (
+      !value.projectByNumber ||
+      !value.projectFields ||
+      !value.observeProjectFields ||
+      !value.writeProjectField
+    )
+      throw new ProjectRequestError(
+        503,
+        "unavailable",
+        "Project configuration source is unavailable",
+      );
+    cachedSource = value as ConfigurationSource;
+    return cachedSource;
+  }
+  void source().catch(() => {});
+  const bindings = () => options.bindings?.() ?? [];
+  function bound(name: string) {
+    if (closed)
+      throw new ProjectRequestError(503, "unavailable", "Project configuration is closed");
+    const binding = bindings().find((b) => b.binding === name);
+    if (!binding)
+      throw new ProjectRequestError(404, "unknown-binding", `Unknown Project binding: ${name}`);
+    return binding;
+  }
+  function resolved(s: ConfigurationSource, b: BoundProject) {
+    const project = s.projectByNumber(b.owner, b.number);
+    if (!project)
+      throw new ProjectRequestError(
+        409,
+        "unresolved-project",
+        `Project is unresolved: ${b.binding}`,
+      );
+    return project;
+  }
+  function scopesFor(
+    s: ConfigurationSource,
+    declaration: TaskMetadataDeclaration | undefined,
+    binding: string,
+    issues: TrackedIssueIndex | undefined = s.trackedIssueIndex?.(),
+  ): ScopeInput[] {
+    if (!declaration) return [];
+    const ownership = scopeOwnership(
+      declaration,
+      Object.fromEntries(bindings().map((b) => [b.binding, b.owner])),
+      (name) => {
+        const b = bindings().find((b) => b.binding === name);
+        const project = b && s.projectByNumber(b.owner, b.number);
+        return project && issues
+          ? [...issues.values()]
+              .filter((issue) => issue.items.some((item) => item.project.nodeId === project.nodeId))
+              .map((issue) => issue.issue.repository)
+          : [];
+      },
+    );
+    return [...ownership.values()]
+      .filter((owned) => owned.bindings.includes(binding))
+      .sort((a, b) => scopeKey(a.scope).localeCompare(scopeKey(b.scope)))
+      .map((owned) => ({
+        scope: owned.scope,
+        owned,
+        bindings: owned.bindings,
+        observed: s.scopeConfiguration?.(owned.scope),
+        applied: records.appliedScope(scopeKey(owned.scope)),
+      }));
+  }
+  async function observeScopes(
+    s: ConfigurationSource,
+    scopes: readonly ScopeInput[],
+    signal?: AbortSignal,
+  ): Promise<ScopeInput[]> {
+    return Promise.all(
+      scopes.map(async (scope) => ({
+        ...scope,
+        observed: s.observeScope ? await s.observeScope(scope.scope, signal) : scope.observed,
+      })),
+    );
+  }
+  async function plan(binding: string, signal?: AbortSignal) {
+    const b = bound(binding);
+    const s = await source(signal);
+    const project = resolved(s, b);
+    const issues = s.trackedIssueIndex?.();
+    const metadata = current()?.projects[binding];
+    let observation: { status: "fresh" } | { status: "stale"; message: string } = {
+      status: "fresh",
+    };
+    let fields;
+    try {
+      fields = await s.observeProjectFields(project.nodeId, signal);
+    } catch (error) {
+      fields = s.projectFields(project.nodeId);
+      if (!fields)
+        throw new ProjectRequestError(502, "unobserved", "Project fields have never been observed");
+      observation = {
+        status: "stale",
+        message: error instanceof Error ? error.message : "Project observation failed",
+      };
+    }
+    return {
+      ...planProjectConfiguration({
+        metadata: current()?.projects[binding],
+        fields: fields.fields,
+        applied: records.applied(binding, project.nodeId),
+        scopes: await observeScopes(s, scopesFor(s, current(), binding, issues), signal),
+        outside: outsideRepositories(metadata, project.nodeId, issues),
+      }),
+      binding,
+      owner: b.owner,
+      number: b.number,
+      projectNodeId: project.nodeId,
+      declarationCommit: revision()?.commit ?? records.commit() ?? null,
+      observedAt: fields.readAt,
+      observation,
+      frontMatter:
+        metadata &&
+        Object.values(metadata.fields).some((field) => field.storage.kind === "front-matter")
+          ? {
+              mismatched: [...(issues?.values() ?? [])].filter(
+                (issue) =>
+                  issue.items.some((item) => item.project.nodeId === project.nodeId) &&
+                  Object.entries(
+                    taskFieldValues({ metadata, project, issue, inScope: () => true }),
+                  ).some(
+                    ([name, value]) =>
+                      metadata.fields[name]?.storage.kind === "front-matter" &&
+                      value.state === "invalid",
+                  ),
+              ).length,
+            }
+          : null,
+    };
+  }
+  async function apply(binding: string, request: ApplyRequest): Promise<ApplyAnswer> {
+    const b = bound(binding);
+    const declaration = current();
+    const metadata = declaration?.projects[binding];
+    const commit = revision()?.commit ?? records.commit();
+    if (!metadata || !commit)
+      throw new ProjectRequestError(
+        409,
+        "undeclared",
+        `Project metadata is not declared: ${binding}`,
+      );
+    const s = await source();
+    const project = resolved(s, b);
+    const previous = records.applied(binding, project.nodeId);
+    const observed = await s.observeProjectFields(project.nodeId, controller.signal);
+    const scopes = await observeScopes(s, scopesFor(s, declaration, binding), controller.signal);
+    const input = { metadata, fields: observed.fields, applied: previous, scopes };
+    const unavailable = scopes.filter((scope) => scope.observed?.status !== "ready");
+    if (unavailable.length || (scopes.length && !s.writeScopeEntity))
+      throw new ProjectRequestError(
+        409,
+        "scope-unavailable",
+        "A reached storage scope is unavailable",
+        {
+          scopes: planProjectConfiguration({
+            ...input,
+            scopes: unavailable.length ? unavailable : scopes,
+          }).scopes,
+        },
+      );
+    const planned = planProjectConfiguration(input);
+    if (request.digest !== undefined && request.digest !== planned.digest)
+      throw new ProjectRequestError(409, "plan-stale", "Project configuration plan has changed");
+    const outcomes: AppliedChange[] = planned.changes.map((c) => ({
+      ...c,
+      outcome: c.requiresRemoval && !request.removeUndeclared ? "kept" : "not-run",
+    }));
+    const acceptance = planned.changes.filter((c) => c.side === "declaration");
+    let acceptedText: string | undefined;
+    let saveId: string | undefined;
+    if (acceptance.length) {
+      const captured = revision();
+      const baseRevision =
+        captured?.commit === commit ? captured : await options.revisionAt?.(commit);
+      if (!baseRevision || baseRevision.commit !== commit)
+        throw new ProjectRequestError(503, "unavailable", "Declaration revision is unavailable");
+      const [text, bindingsText] = await Promise.all([
+        baseRevision.read("task-metadata.yml"),
+        baseRevision.read("bindings.yml"),
+      ]);
+      acceptedText = acceptFields(text ?? "", binding, acceptance, input);
+      const lint = lintTaskMetadataDeclaration({
+        taskMetadata: acceptedText,
+        bindings: bindingsText,
+      });
+      if (!lint.ok)
+        throw new ProjectRequestError(
+          409,
+          "declaration-invalid",
+          lint.findings.map((f) => f.message).join("; "),
+        );
+      saveId = createHash("sha256")
+        .update(canonical({ binding, base: commit, text: acceptedText }))
+        .digest("hex")
+        .slice(0, 32);
+    }
+    let writes = 0;
+    let savedCommit: string | null = null;
+    for (const group of projectWrites(input, planned, project.nodeId, request.removeUndeclared)) {
+      try {
+        await s.writeProjectField(group.write, controller.signal);
+        writes++;
+      } catch (error) {
+        for (const c of group.changes)
+          outcomes[outcomes.findIndex((o) => o.id === c.id)] = { ...c, outcome: "failed" };
+        const kind = error instanceof Error && "kind" in error ? String(error.kind) : "transport";
+        throw new ProjectRequestError(
+          502,
+          kind,
+          error instanceof Error ? error.message : "GitHub write failed",
+          { writes, changes: outcomes },
+        );
+      }
+      for (const c of group.changes)
+        outcomes[outcomes.findIndex((o) => o.id === c.id)] = { ...c, outcome: "applied" };
+    }
+    for (const scope of scopes)
+      for (const group of planScopeConfiguration(scope, request.removeUndeclared).writes) {
+        if (group.changes.some((change) => change.requiresRemoval) && !request.removeUndeclared)
+          continue;
+        try {
+          await s.writeScopeEntity!(group.write, controller.signal);
+          writes++;
+          for (const change of group.changes)
+            outcomes[outcomes.findIndex((outcome) => outcome.id === change.id)] = {
+              ...change,
+              outcome: "applied",
+            };
+        } catch (error) {
+          for (const change of group.changes)
+            outcomes[outcomes.findIndex((outcome) => outcome.id === change.id)] = {
+              ...change,
+              outcome: "failed",
+            };
+          throw new ProjectRequestError(
+            502,
+            error instanceof Error && "kind" in error ? String(error.kind) : "transport",
+            error instanceof Error ? error.message : "Shared scope write failed",
+            { writes, changes: outcomes },
+          );
+        }
+      }
+    if (acceptedText !== undefined) {
+      if (!options.revisions)
+        throw new ProjectRequestError(503, "unavailable", "Declaration save is unavailable");
+      let saved;
+      try {
+        saved = await options.revisions.save({
+          base: commit,
+          message: `Accept GitHub changes to the task fields of ${binding}`,
+          saveId: saveId!,
+          files: [{ path: "task-metadata.yml", text: acceptedText }],
+        });
+      } catch (error) {
+        const pending = records.pending(binding, saveId!);
+        if (pending)
+          throw new ProjectRequestError(
+            409,
+            "declaration-pending",
+            "Accepted declaration is not in force",
+            { commit: pending, writes, changes: outcomes },
+          );
+        throw new ProjectRequestError(
+          502,
+          "declaration-unsaved",
+          error instanceof Error ? error.message : "Declaration save failed",
+          { writes, changes: outcomes },
+        );
+      }
+      if (saved.outcome === "conflict")
+        throw new ProjectRequestError(
+          409,
+          "declaration-conflict",
+          "Task metadata declaration changed",
+          { writes, changes: outcomes },
+        );
+      if (saved.outcome === "saved" && saved.blueprints === undefined) {
+        records.savePending(binding, saveId!, saved.commit, now());
+        throw new ProjectRequestError(
+          409,
+          "declaration-pending",
+          "Accepted declaration is not in force",
+          { commit: saved.commit, writes, changes: outcomes },
+        );
+      }
+      savedCommit = saved.commit;
+      const after = await s.observeProjectFields(project.nodeId, controller.signal);
+      const stillPending = planProjectConfiguration({
+        metadata: current()?.projects[binding],
+        fields: after.fields,
+        applied: previous,
+        scopes: await observeScopes(s, scopesFor(s, current(), binding), controller.signal),
+      }).changes.some((c) => c.side === "declaration");
+      if (stillPending) {
+        records.savePending(binding, saveId!, saved.commit, now());
+        throw new ProjectRequestError(
+          409,
+          "declaration-pending",
+          "Accepted declaration is not in force",
+          { commit: saved.commit, writes, changes: outcomes },
+        );
+      }
+      for (const c of acceptance)
+        outcomes[outcomes.findIndex((o) => o.id === c.id)] = { ...c, outcome: "applied" };
+    }
+    const after = await s.observeProjectFields(project.nodeId, controller.signal);
+    const latest = current()?.projects[binding];
+    if (!latest)
+      throw new ProjectRequestError(
+        409,
+        "undeclared",
+        "Project declaration was removed during Apply",
+      );
+    const applied = appliedConfiguration(latest, after.fields, previous);
+    const afterScopes = await observeScopes(s, scopesFor(s, current(), binding), controller.signal);
+    const failedObservation = afterScopes.filter((scope) => scope.observed?.status !== "ready");
+    if (failedObservation.length)
+      throw new ProjectRequestError(
+        502,
+        "scope-unavailable",
+        "A storage scope could not be observed after Apply",
+        {
+          writes,
+          changes: outcomes,
+          scopes: planProjectConfiguration({ ...input, scopes: failedObservation }).scopes,
+        },
+      );
+    records.recordApply(
+      binding,
+      project.nodeId,
+      revision()?.commit ?? records.commit()!,
+      applied,
+      now(),
+      afterScopes.map((scope) => ({
+        key: scopeKey(scope.scope),
+        applied: planScopeConfiguration(scope).applied!,
+      })),
+    );
+    return {
+      outcome: planned.changes.length ? "applied" : "in-sync",
+      changes: outcomes,
+      writes,
+      configuration: planProjectConfiguration({
+        metadata: latest,
+        fields: after.fields,
+        applied,
+        scopes: scopesFor(s, current(), binding),
+      }).configuration,
+      declarationCommit: savedCommit,
+    };
+  }
+  const projects: ProjectConfiguration = {
+    list: () => {
+      if (closed)
+        throw new ProjectRequestError(503, "unavailable", "Project configuration is closed");
+      return bindings().map((b) => {
+        const project = cachedSource?.projectByNumber(b.owner, b.number);
+        const fields = project ? cachedSource?.projectFields(project.nodeId) : undefined;
+        const applied = project ? records.applied(b.binding, project.nodeId) : undefined;
+        return {
+          ...b,
+          projectNodeId: project?.nodeId ?? null,
+          configuration: fields
+            ? planProjectConfiguration({
+                metadata: current()?.projects[b.binding],
+                fields: fields.fields,
+                applied,
+                scopes: scopesFor(cachedSource!, current(), b.binding),
+              }).configuration
+            : { state: "not-applied" as const },
+          lastApplied: applied ? { at: applied.at, commit: applied.commit } : null,
+          observedAt: fields?.readAt ?? null,
+        };
+      });
+    },
+    plan,
+    apply(binding, request) {
+      if (closed)
+        return Promise.reject(
+          new ProjectRequestError(503, "unavailable", "Project configuration is closed"),
+        );
+      const operation = queue
+        .catch(() => {})
+        .then(async () => {
+          try {
+            return await apply(binding, request);
+          } catch (error) {
+            if (error instanceof ProjectRequestError && error.status !== 502) throw error;
+            throw new ProjectRequestError(
+              502,
+              error instanceof Error && "kind" in error ? String(error.kind) : "transport",
+              error instanceof Error ? error.message : "Project Apply failed",
+              {
+                writes: 0,
+                changes: [],
+                ...(error instanceof ProjectRequestError ? error.detail : {}),
+              },
+            );
+          }
+        });
+      queue = operation;
+      return operation;
+    },
+    planDeclaration: (declaration) => {
+      const issues = cachedSource?.trackedIssueIndex?.();
+      return bindings().flatMap((b) => {
+        const project = cachedSource?.projectByNumber(b.owner, b.number);
+        const fields = project ? cachedSource?.projectFields(project.nodeId) : undefined;
+        if (!project || !fields) return [];
+        const planned = planProjectConfiguration({
+          metadata: declaration.projects[b.binding],
+          fields: fields.fields,
+          applied: records.applied(b.binding, project.nodeId),
+          scopes: scopesFor(cachedSource!, declaration, b.binding, issues),
+          outside: outsideRepositories(declaration.projects[b.binding], project.nodeId, issues),
+        });
+        return [
+          {
+            binding: b.binding,
+            owner: b.owner,
+            number: b.number,
+            configuration: planned.configuration,
+            changes: planned.changes,
+            fields: planned.fields,
+            scopes: planned.scopes,
+            outside: planned.outside,
+          },
+        ];
+      });
+    },
+  };
+  return {
+    projects,
+    async close() {
+      closed = true;
+      controller.abort();
+      await Promise.allSettled([queue]);
+    },
+  };
+}

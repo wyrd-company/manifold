@@ -4,6 +4,9 @@
   "private": true,
   "description": "The Manifold service: engine, store, integrations, and console host.",
   "license": "Apache-2.0",
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -13,12 +16,45 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "test": "vp test run"
+    "typecheck": "pnpm --filter @wyrd-company/manifold-shared build && tsc --noEmit",
+    "test": "pnpm --filter @wyrd-company/manifold-console build && vp test run",
+    "start": "node dist/main.js",
+    "test:live": "node src/agent-threads/live/receipt-check.ts",
+    "test:live:agent-tools": "node src/agent-tools/live/provider-check.ts",
+    "generate:bundle": "node scripts/generate-bundle.mjs && pnpm --filter @wyrd-company/manifold-shared exec vp fmt src/bundle.generated.ts"
+  },
+  "dependencies": {
+    "@gorules/zen-engine": "2.0.2",
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
+    "@octokit/auth-app": "^8.3.1",
+    "@octokit/graphql": "^9.0.5",
+    "@octokit/request": "^10.0.16",
+    "@wyrd-company/manifold-console": "workspace:*",
+    "@wyrd-company/manifold-shared": "workspace:*",
+    "@wyrd-company/t3code-client": "0.5.0",
+    "ajv": "^8.20.0",
+    "isomorphic-git": "^1.42.6",
+    "nunjucks": "^3.2.4",
+    "quickjs-emscripten-core": "0.32.0",
+    "sirv": "^3.0.2",
+    "toad-cache": "^3.7.4",
+    "typescript": "catalog:",
+    "xstate": "^5.33.2",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "@types/nunjucks": "^3.2.6",
+    "@types/ws": "^8.18.2",
+    "playwright": "^1.63.0",
+    "t3": "0.0.45",
+    "vite-plus": "catalog:",
+    "ws": "^8.22.0"
+  },
+  "relationships": {
+    "implements": [
+      "actors-api",
+      "operator-console"
+    ]
   }
 }

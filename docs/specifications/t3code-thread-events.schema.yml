@@ -1,0 +1,191 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: t3code-thread-events
+# ---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://manifold.wyrd.company/schemas/t3code-thread-events
+title: T3 Code thread events
+description: >-
+  The events the T3 Code environment source publishes, one per thread
+  change, as the `event` of a source event with source `t3`.
+$defs:
+  id:
+    description: An id as the T3 Code server sends it.
+    type: string
+    minLength: 1
+  timestamp:
+    description: An ISO 8601 date-time as the T3 Code server sends it.
+    type: string
+    format: date-time
+  thread-fields:
+    description: The fields every thread change carries.
+    type: object
+    required:
+      - type
+      - environment
+      - threadId
+      - projectId
+    properties:
+      environment:
+        description: The environment's declared name in service configuration.
+        type: string
+        maxLength: 64
+        pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      threadId:
+        $ref: "#/$defs/id"
+      projectId:
+        $ref: "#/$defs/id"
+  requesting-message:
+    description: >-
+      The id of the user message whose request the turn took, or null when
+      the source has none.
+    oneOf:
+      - $ref: "#/$defs/id"
+      - type: "null"
+  request-kind:
+    enum:
+      - approval
+      - user-input
+  turn-started:
+    allOf:
+      - $ref: "#/$defs/thread-fields"
+    required:
+      - turnId
+      - messageId
+    properties:
+      type:
+        const: t3.turn.started
+      environment: true
+      threadId: true
+      projectId: true
+      turnId:
+        $ref: "#/$defs/id"
+      messageId:
+        $ref: "#/$defs/requesting-message"
+    unevaluatedProperties: false
+  turn-settled:
+    allOf:
+      - $ref: "#/$defs/thread-fields"
+    required:
+      - turnId
+      - messageId
+      - state
+      - assistantMessageId
+      - error
+    properties:
+      type:
+        const: t3.turn.settled
+      environment: true
+      threadId: true
+      projectId: true
+      turnId:
+        $ref: "#/$defs/id"
+      messageId:
+        $ref: "#/$defs/requesting-message"
+      state:
+        enum:
+          - completed
+          - interrupted
+          - error
+      assistantMessageId:
+        oneOf:
+          - $ref: "#/$defs/id"
+          - type: "null"
+      error:
+        type:
+          - string
+          - "null"
+    unevaluatedProperties: false
+  request-opened:
+    allOf:
+      - $ref: "#/$defs/thread-fields"
+    required:
+      - requestId
+      - kind
+      - detail
+    properties:
+      type:
+        const: t3.request.opened
+      environment: true
+      threadId: true
+      projectId: true
+      requestId:
+        $ref: "#/$defs/id"
+      kind:
+        $ref: "#/$defs/request-kind"
+      detail:
+        description: The payload of the activity that opened the request, as sent.
+        type: object
+    unevaluatedProperties: false
+  request-resolved:
+    allOf:
+      - $ref: "#/$defs/thread-fields"
+    required:
+      - requestId
+      - kind
+    properties:
+      type:
+        const: t3.request.resolved
+      environment: true
+      threadId: true
+      projectId: true
+      requestId:
+        $ref: "#/$defs/id"
+      kind:
+        $ref: "#/$defs/request-kind"
+    unevaluatedProperties: false
+  session-failed:
+    allOf:
+      - $ref: "#/$defs/thread-fields"
+    required:
+      - failedAt
+      - error
+    properties:
+      type:
+        const: t3.session.failed
+      environment: true
+      threadId: true
+      projectId: true
+      failedAt:
+        $ref: "#/$defs/timestamp"
+      error:
+        type:
+          - string
+          - "null"
+    unevaluatedProperties: false
+  thread-archived:
+    allOf:
+      - $ref: "#/$defs/thread-fields"
+    required:
+      - archivedAt
+    properties:
+      type:
+        const: t3.thread.archived
+      environment: true
+      threadId: true
+      projectId: true
+      archivedAt:
+        $ref: "#/$defs/timestamp"
+    unevaluatedProperties: false
+  thread-deleted:
+    allOf:
+      - $ref: "#/$defs/thread-fields"
+    properties:
+      type:
+        const: t3.thread.deleted
+      environment: true
+      threadId: true
+      projectId: true
+    unevaluatedProperties: false
+  thread-change-event:
+    description: Any event the T3 Code environment source publishes.
+    oneOf:
+      - $ref: "#/$defs/turn-started"
+      - $ref: "#/$defs/turn-settled"
+      - $ref: "#/$defs/request-opened"
+      - $ref: "#/$defs/request-resolved"
+      - $ref: "#/$defs/session-failed"
+      - $ref: "#/$defs/thread-archived"
+      - $ref: "#/$defs/thread-deleted"

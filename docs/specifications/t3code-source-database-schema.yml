@@ -1,0 +1,86 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  # GAP-EDGE: the specification schema declares no edge to a technical
+  # design; `realizes` is the best fit for the design whose tables this is.
+  realizes:
+    - t3code-environment-source
+  references:
+    - retention
+    - store-database-schema
+    - t3code-thread-events
+description: >-
+  Defines the tables the T3 Code environment source owns in Manifold's
+  SQLite database file. `docs/specifications/t3code-source-database-schema.sql`
+  is the machine-readable definition: the schema the source's migrations
+  produce. The source receives the connection from the store and migrates
+  its tables with `migrate("tthree", steps)`, so every table it creates is named
+  `t3_<name>`.
+
+  Environments. `t3_environment` holds one row per environment the source
+  has connected to, keyed by its declared name. `environment_id` is the
+  `environmentId` the server's descriptor reported at the first connection.
+  `origin_sequence` is the `snapshotSequence` of the server's read model at
+  that connection; a change at or before it is never published. `shell_sequence` is the shell cursor: the
+  highest sequence of a shell item the source has handled.
+
+  Threads. `t3_thread` holds one row per thread the source has seen on an
+  environment, keyed by environment and thread id, and deleted only with
+  its environment, since usage intake reads its project and title for a
+  call that reaches the service at any time after. `status` is `followed` while the shell lists the thread,
+  `archived` after the shell removed it and the server still has it, and
+  `deleted` after the server no longer has it. `cursor` is the highest
+  sequence whose effect the row holds: the last applied event, the last
+  snapshot, or the shell sequence that reopened a thread caught up while
+  idle. `thread` is the compact thread as JSON. `project_id` holds the project
+  identity from the shell summary even before the first detail snapshot,
+  so a deletion can be published without a detail projection.
+  `attribution` is the turn attribution as JSON: `turnId`, the latest
+  turn's id; `messageId`, the id of the user message that requested it;
+  and `pendingMessageId`, the last user message no turn has taken; each
+  `null` when there is none. At the environment's first
+  connection every thread in the server's read model that is not deleted
+  gets a row holding its compact thread at the origin; a thread created
+  later gets its row from its shell summary, then its projection from its first snapshot. A row is written in the
+  transaction that publishes the changes it reflects.
+
+  Created projects. `t3_created_project` holds one row per T3code project
+  that a `t3code-project-create` invoke created on an environment, keyed by
+  environment and project id, and deleted with its environment, or by
+  retention once its environment is in the service configuration, its
+  presence is `removed`, no `t3_thread` row names its project, and its
+  creating actor's history is pruned, as `retention`
+  states.
+  `actor_id` is the invoking actor and `item` its portfolio item at the
+  invoke. The row is written once the server has accepted the
+  `project.create` command, before the invoke resolves, and writing it
+  again leaves the first row: `environment`, `project_id`, `actor_id`,
+  and `item` are the project's creation provenance and never change.
+  `presence` is what the source has observed of the project on the
+  environment's shell: `unseen` until the shell lists it, `listed` once a
+  shell snapshot or a `project-upserted` item lists it, and `removed` once
+  a `project-removed` item names it, a snapshot lists it with
+  `deletedAt`, or a snapshot omits it while it is `listed`. A snapshot
+  that omits an `unseen` project leaves it `unseen`, since the snapshot
+  may predate the create. `removed` is final. The source writes
+  `presence` in the transaction that advances `shell_sequence` past the
+  item that changed it.
+
+  Retirement. A `t3_created_project` row is retirable when its
+  `presence` is `removed` and no `t3_thread` row has its `environment`
+  and its `project_id` as `project_id`, whatever the thread's status.
+  Such a row can attribute nothing: T3 Code no longer lists the project,
+  so no new thread appears in it, and no thread the source keeps names
+  it, so no call reaches it through a thread. Deleting a retirable row
+  changes no resolution. `t3_thread_project` serves the thread check.
+  At 0.1.0, step 1 creates the complete schema in this file.
+  Schema changes edit that step in place and require a new store. After
+  0.1.0, steps are append-only, as `store` (migrations) defines.
+format: sql-ddl
+validation-criteria: >-
+  `docs/specifications/t3code-source-database-schema.sql` runs without error
+  on an empty SQLite database. A test starts the source on a store over an
+  empty file and compares the `type`, `name`, `tbl_name`, and `sql` of every
+  `sqlite_schema` row whose name starts with `t3_` with the rows the same
+  file's statements produce on a second empty database, with each run of
+  whitespace in `sql` read as one space; they are equal. After the source
+  starts, `schema_migration` holds the row `('tthree', 1)`.

@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Intake
+description: >-
+  The decision that gives a newly discovered task its blueprint and portfolio item.

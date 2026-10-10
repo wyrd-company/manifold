@@ -1,0 +1,111 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design
+# or to the seam it publishes through; `realizes` names the design this
+# contract serves and `references` the seam.
+relationships:
+  realizes:
+    - t3code-environment-source
+  references:
+    - router-events
+    - durable-event-delivery
+description: |-
+  Defines the thread changes the T3 Code environment source publishes: their
+  source name, topics, event types, payloads, and event ids.
+  `docs/specifications/t3code-thread-events.schema.yml` is the
+  machine-readable definition of each event. Every event is published
+  through `router-events` as a source event.
+
+  Source. The source name is `t3`. Each change is one source event with one
+  topic.
+
+  Topic. A thread's topic is `t3.environment.<environment>.thread.<thread>`:
+  `<environment>` is the environment's declared name from service
+  configuration, and `<thread>` is the thread id encoded. An id is encoded
+  as JavaScript's `encodeURIComponent` encodes it, then with every `.`
+  replaced by `%2E`, so an encoded id holds no `.`, whitespace, or control
+  character. `threadTopic(environment, threadId)`, exported by the source,
+  is the one implementation, and the actor host derives an actor's topics
+  through it. A thread whose id is not well-formed Unicode has no topic: the
+  source logs it and does not follow it.
+
+  ```ts
+  threadTopic("workstation", "a1.b2");
+  // "t3.environment.workstation.thread.a1%2Eb2"
+  ```
+
+  Event ids. An event id is the environment name, the server's
+  `environmentId` from its environment descriptor, the thread id, and the
+  change's own identity, joined by `/`, each id inside it encoded the same
+  way. A change reached through a live stream, a replay, or a snapshot has
+  one id, so the router accepts it once; two servers configured under one
+  name in turn, or one server under two names, never share an id, even
+  when they reuse thread, turn, and request ids:
+
+  | Event type | Event id |
+  | --- | --- |
+  | `t3.turn.started` | `<environment>/<environmentId>/<thread>/turn/<turnId>/started` |
+  | `t3.turn.settled` | `<environment>/<environmentId>/<thread>/turn/<turnId>/settled` |
+  | `t3.request.opened` | `<environment>/<environmentId>/<thread>/request/<requestId>/opened` |
+  | `t3.request.resolved` | `<environment>/<environmentId>/<thread>/request/<requestId>/resolved` |
+  | `t3.session.failed` | `<environment>/<environmentId>/<thread>/session-failed/<failedAt>` |
+  | `t3.thread.archived` | `<environment>/<environmentId>/<thread>/archived/<archivedAt>` |
+  | `t3.thread.deleted` | `<environment>/<environmentId>/<thread>/deleted` |
+
+  Payload. Every event carries `type`, `environment`, `threadId`, and
+  `projectId`, the id of the T3code project the thread belongs to on that
+  environment. Ids are the server's, unencoded.
+
+  - `t3.turn.started`: a turn began. `turnId`; `messageId`, the id of the
+    user message whose request the turn took, or `null` when the source
+    has none, as `t3code-environment-source` attributes it.
+  - `t3.turn.settled`: a turn ended. `turnId`; `messageId`, as for
+    `t3.turn.started`; `state`, `completed`,
+    `interrupted`, or `error`; `assistantMessageId`, the id of the turn's
+    assistant message or `null`; `error`, the session's last error when
+    `state` is `error`, otherwise `null`.
+  - `t3.request.opened`: the agent asked for an approval or for user input.
+    `requestId`; `kind`, `approval` or `user-input`; `detail`, the payload
+    of the activity that opened the request, as the server sent it, which
+    for user input holds its `questions`.
+  - `t3.request.resolved`: an open request is no longer open: answered,
+    declined, or gone stale. `requestId` and `kind`.
+  - `t3.session.failed`: the provider session failed with no turn running.
+    `failedAt`, the session's update time, and `error`, its last error or
+    `null`.
+  - `t3.thread.archived`: the thread was archived. `archivedAt`.
+  - `t3.thread.deleted`: the thread was deleted.
+
+  ```yaml
+  type: t3.turn.settled
+  environment: workstation
+  threadId: thread-1
+  projectId: project-1
+  turnId: turn-1
+  messageId: message-0
+  state: completed
+  assistantMessageId: message-1
+  error: null
+  ```
+
+  Order. A thread's changes are published in the order the source observes
+  them, and within one observation in the order turn started, turn
+  settled, request resolved, request opened, session failed. A turn first
+  observed already settled is published as started and then settled.
+
+  Coverage. Every change in a thread's latest turn, open requests, and
+  failed session after the environment's origin, the sequence of the
+  server's read model at the source's first connection, is published once.
+  When the server replaces a replay with a snapshot, a change that opened
+  and closed inside the replaced range is not published.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/t3code-thread-events.schema.yml` compiles with Ajv in
+  JSON Schema 2020-12 mode, and every `$defs` event validates as a routed
+  event of `router-events`. Every source event the source publishes in its
+  test suite validates against `#/$defs/thread-change-event`, has source
+  `t3`, one topic equal to `threadTopic` of its environment and thread id,
+  and the event id the table above gives for its type, with the
+  `environmentId` of the server it came from. `threadTopic` of a
+  fixture set of thread ids, including ids holding `.`, `%`, `/`, spaces,
+  and non-ASCII characters, gives topics the router accepts, and two
+  different ids give two different topics.

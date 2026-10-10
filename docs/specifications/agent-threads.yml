@@ -1,0 +1,279 @@
+$schema: https://refinery.systems/ontology/specification
+# GAP-EDGE: the specification schema declares no edge to a technical design
+# or to the specifications it builds on; `realizes` names the design this
+# contract serves and `references` the events and bindings it relies on.
+relationships:
+  realizes:
+    - agent-threads
+  references:
+    - blueprint
+    - t3code-thread-events
+    - bindings-declaration
+    - t3code-environments-configuration
+description: |-
+  Defines the implementations a blueprint invokes to create T3code
+  projects and agent threads and start turns on T3 Code:
+  `t3code-project-create`, `thread-create`, `turn-prepare`, and
+  `turn-start`, promise actors, and `follow-thread`, an action. It defines
+  their inputs, outputs, and errors, and the ids their commands carry.
+  `docs/specifications/agent-threads.schema.yml` is the machine-readable
+  definition of each input, output, and error. The implementations are for
+  top-level task blueprints: a child state machine has no environment and
+  no followed threads.
+
+  `thread-create`. Creates a thread in a T3code project on the invoking
+  actor's environment, `context.manifold.environment`, and resolves with
+  `{ threadId }`. Input:
+
+  - `project`, required: the id of the T3code project on that environment.
+  - `title`, required: a Nunjucks template for the thread's title.
+  - `values`: the object the template renders against. Default `{}`.
+  - `model`, required: the model selection: `instanceId`, the provider
+    instance on the server, a slug of letters, digits, `-`, and `_` that
+    starts with a letter, at most 64 characters; `model`, a string not
+    empty after trimming; and optional `options`, a map from an option id
+    to a string or a boolean.
+  - `runtimeMode`: `approval-required`, `auto-accept-edits`,
+    `auto`, or `full-access`, the permission the thread's agent runs with.
+    Default `full-access`.
+  - `interactionMode`: `default` or `plan`. Default `default`.
+  - `branch` and `worktreePath`: a string not empty after trimming, or
+    `null`. Default `null`.
+
+  `turn-prepare`. Takes no input, sends nothing, and resolves with
+  `{ messageId }`, the message id of the turn the state entry will request.
+  The blueprint assigns it to its context before it invokes `turn-start`.
+
+  `turn-start`. Starts a turn in a thread on the invoking actor's
+  environment from a prompt template, and resolves with
+  `{ threadId, messageId }`. Input:
+
+  - `threadId`, required: the thread, one the actor follows.
+  - `messageId`, required: the message id `turn-prepare` gave.
+  - `prompt`, required: the repository-relative path of a Nunjucks
+    template file in the process repository.
+  - `values`: the object the template renders against. Default `{}`.
+  - `model`: a model selection for this turn, as for `thread-create`.
+    Absent leaves the thread's.
+  - `runtimeMode` and `interactionMode`: as for `thread-create`. Absent
+    takes the thread's current mode.
+
+  Strings are trimmed before they are sent.
+
+  `follow-thread`. An action written in the `onDone` of a `thread-create`
+  invoke of a top-level blueprint. It appends `event.output.threadId` to
+  `context.manifold.threads` unless the list holds it, so the actor's
+  subscription follows the thread's topic. In a child blueprint it changes
+  only the child's context, and the thread is not followed.
+
+  Turn correlation. `t3.turn.started` and `t3.turn.settled` carry the
+  `messageId` of the user message that requested the turn. A blueprint
+  takes its turn's changes on a state that encloses the invoking states,
+  guarded on its thread id and the prepared message id, so a change of
+  another turn or another thread takes no transition, and a change of its
+  own turn is taken whether it arrives before or after `turn-start`
+  resolves.
+
+  ```yaml
+  working:
+    initial: opening
+    on:
+      t3.turn.settled:
+        target: reviewing
+        guard:
+          type: expression.guard
+          params:
+            expression: event.threadId = context.thread and event.messageId = context.turn
+    states:
+      opening:
+        invoke:
+          src: thread-create
+          input:
+            type: expression.map
+            params:
+              expression: >-
+                { "project": context.workspace, "title": "Parcel {{ parcel }}",
+                  "values": context, "runtimeMode": "approval-required",
+                  "model": { "instanceId": "agent", "model": "default" } }
+          onDone:
+            target: preparing
+            actions:
+              - follow-thread
+              - type: expression.assign
+                params:
+                  expression: '{ "thread": event.output.threadId }'
+      preparing:
+        invoke:
+          src: turn-prepare
+          onDone:
+            target: prompting
+            actions:
+              - type: expression.assign
+                params:
+                  expression: '{ "turn": event.output.messageId }'
+      prompting:
+        invoke:
+          src: turn-start
+          input:
+            type: expression.map
+            params:
+              expression: >-
+                { "threadId": context.thread, "messageId": context.turn,
+                  "prompt": "templates/parcel.njk", "values": context }
+          onDone: waiting
+      waiting: {}
+  ```
+
+  `t3code-project-create`. Creates a T3code project on an environment and
+  resolves with `{ projectId }`. Input, `#/$defs/project-create-input`:
+
+  - `environment`: the name of the environment, one service configuration
+    declares. Default: the invoking actor's environment,
+    `context.manifold.environment`.
+  - `title`, required: a Nunjucks template for the project's title.
+  - `workspaceRoot`, required: a Nunjucks template for the project's
+    workspace root, the directory on the environment's host that the
+    project's threads work in.
+  - `values`: the object both templates render against. Default `{}`.
+  - `createWorkspaceRoot`: `true` asks the T3 Code server to make the
+    workspace root, with any missing parent directories, when it does not
+    exist. Default `false`, under which a workspace root that does not
+    exist fails the invoke with `rejected`.
+
+  The rendered workspace root, trimmed, is absolute under the path rules
+  of the environment's host, the `platform.os` its T3 Code server reports
+  in its environment descriptor. On a `linux` or `darwin` host it begins
+  with `/`. On a `windows` host it begins with a drive letter, a colon,
+  and `\` or `/`, such as `C:\` or `C:/`, or is a complete UNC root:
+  two separators, a host name, a separator, and a share name, such as
+  `\\host\share` or `//host/share`. A UNC path with a host and no share,
+  such as `\\host` or `//host/`, resolves against the server's current
+  drive, so it is not absolute. On every host it may instead be
+  `~` alone or `~` followed by `/` or `\`, which the server expands to
+  its own home directory. It holds no control character. A root that is
+  not absolute under its host's rules, such as `C:/a` or `\\host\share`
+  on a `linux` host or `/a` on a `windows` host, fails with `template`,
+  so the server never resolves a root against its working directory. A
+  host that reports `unknown` fails the invoke with `environment`, since
+  no path rule holds for it. A workspace root that an active project on the
+  environment already has fails with `rejected`. The output's `projectId`
+  is the `project` a `thread-create` invoke takes to start a thread in the
+  new project, as `context.workspace` is in the example above.
+  `thread-create` starts its thread on the actor's environment, so the
+  actor starts threads in a project it created on its own environment.
+
+  ```yaml
+  opening:
+    invoke:
+      id: open-project
+      src: t3code-project-create
+      input:
+        type: expression.map
+        params:
+          expression: >-
+            { "title": "Parcel {{ parcel }}",
+              "workspaceRoot": "/srv/parcels/{{ parcel }}",
+              "values": context, "createWorkspaceRoot": true }
+      onDone:
+        target: working
+        actions:
+          - type: expression.assign
+            params:
+              expression: '{ "workspace": event.output.projectId }'
+      onError: stalled
+  ```
+
+  A project the invoke creates is attributed to the invoking actor's
+  portfolio item, `context.manifold.portfolioItem`: usage of a thread in
+  it that no actor owns is posted on that item, as
+  `bindings-declaration` resolves it.
+
+  Templates. Templates are Nunjucks, rendered with autoescape off and an
+  undefined value an error. They are read from the process repository at
+  the commit of the actor's blueprint version; an `include`, `import`, or
+  `extends` names another repository-relative path at that commit. A
+  rendered title or prompt is trimmed of surrounding whitespace, and must
+  not be empty.
+
+  Ids. An id of kind `k` derived from parts `p1 … pn` is a UUID made from
+  the SHA-256 digest of the UTF-8 bytes of `manifold.agent-threads`, `k`,
+  and the parts, joined by U+0000: the first 16 bytes of the digest, with
+  the high four bits of byte 6 set to `1000` and the high two bits of byte
+  8 set to `10`, written as 32 lowercase hexadecimal digits grouped
+  8-4-4-4-12. The invocation parts are the actor id, the invoke id, and the
+  entry id of the invoking state.
+
+  | Implementation | Kind | Parts | Carried as |
+  | --- | --- | --- | --- |
+  | `t3code-project-create` | `t3code-project-create/command` | invocation | `commandId` of `project.create` |
+  | `t3code-project-create` | `t3code-project-create/project` | invocation | `projectId` of `project.create`, and the output's `projectId` |
+  | `thread-create` | `thread-create/command` | invocation | `commandId` of `thread.create` |
+  | `thread-create` | `thread-create/thread` | invocation | `threadId` of `thread.create`, and the output's `threadId` |
+  | `turn-prepare` | `turn-prepare/message` | invocation | the output's `messageId` |
+  | `turn-start` | `turn-start/command` | the input's `messageId` | `commandId` of `thread.turn.start` |
+
+  `turn-start` sends the input's `messageId` as `message.messageId` of
+  `thread.turn.start`. `t3code-project-create` sends
+  `createWorkspaceRootIfMissing` as the input's `createWorkspaceRoot`.
+
+  Readiness. A command is sent only after the environment source is ready
+  on the command's environment, and waits until then: the actor's
+  environment for `thread-create` and `turn-start`, and the selected
+  environment for `t3code-project-create`, the input's or else the
+  actor's. A command never waits on, or is sent to, any other
+  environment. An operator's pause of an environment does not hold
+  `t3code-project-create`, which starts no thread or turn; an operator's
+  disconnect holds it through the source's readiness.
+
+  Errors. A failure rejects the promise with an agent thread error, a plain
+  object: `name` `AgentThreadError`, `kind`, and `message`, and for
+  `rejected` the server's message as `serverMessage`. Kinds:
+
+  - `input`: the input fails its schema, or the client refuses the command
+    before sending it.
+  - `environment`: the actor has no environment, service configuration
+    declares none of that name, the environment source stopped it, or,
+    for `t3code-project-create`, its host reports the platform `unknown`.
+  - `archived`: `thread-create` or `t3code-project-create` for an actor
+    whose GitHub Project binding is archived.
+  - `template`: a template is missing, does not parse, reads an undefined
+    value, or renders empty, or a workspace root renders to a path that is
+    not absolute under its host's rules or holds a control character.
+  - `rejected`: the server rejected the command, or rejected it before
+    and was sent it again. For `t3code-project-create` this includes a
+    workspace root that does not exist without `createWorkspaceRoot`, one
+    that is not a directory, one the server cannot make, and one an active
+    project already has.
+  - `unauthorized`: the server or the client refused the token, or the
+    token lacks the scope the command needs.
+
+  A lost connection or one that cannot open is retried with the same ids,
+  and never rejects the promise. A failed `t3code-project-create` records
+  no project attribution, and a blueprint that takes its error transition
+  has no project id to start a thread in.
+format: json-schema
+validation-criteria: >-
+  `docs/specifications/agent-threads.schema.yml` is a valid JSON Schema
+  2020-12 document. The module's tests validate every input they invoke
+  with against its definition, every output against its definition, and
+  every rejection against `#/$defs/error`, and show that an input the
+  schema rejects fails with `input`. A test shows that every input the
+  schema accepts, once trimmed, builds a command that the client release's
+  command schema accepts, for fixtures that include the boundary of each
+  field: a provider instance id of 64 characters and of 65, one starting
+  with a digit, an empty and a blank branch and worktree path, a blank
+  model, and option values of each type. A test derives each kind of id
+  for a fixture invocation and message id and compares it with a fixed
+  expected UUID, shows that the same invocation gives the same ids, and
+  that a different entry id gives different ids. A test shows that each
+  example in this specification lints clean with `t3code-project-create`,
+  `thread-create`, `turn-prepare`, `turn-start`, and `follow-thread` among
+  the implementation names, given its context and output schemas. A test
+  shows, for a `linux` host, that `/`, `/a`, `~`, `~/a`, and `~\a` are
+  accepted and that `a/b`, `./a`, `~a`, `C:/a`, `C:\a`, `\\host\share`,
+  an empty render, and a root with a line break each fail with
+  `template`; for a `windows` host, that `C:\`, `C:/a`, `\\host\share`,
+  `//host/share`, `\\host\share\a`, `~`, and `~\a` are accepted and that
+  `/a`, `\a`, `C:a`, `a\b`, `//host`, `\\host`, `\\host\`, and
+  `//host//` each fail with `template`; and that a host reporting
+  `unknown` fails with `environment`.

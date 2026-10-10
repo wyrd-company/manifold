@@ -1,0 +1,13 @@
+$schema: https://refinery.systems/ontology/term
+# GAP-EDGE: the term schema declares no edge to the artifacts that use a
+# term; `references` is the best fit for the designs that define it.
+relationships:
+  references:
+    - blueprint
+    - blueprint-loader
+    - default-process
+title: Bundle
+description: >-
+  The set of blueprints one Manifold build ships, by path, identified by a
+  digest of their texts. A bundled blueprint runs wherever the process
+  repository holds no file at its path.

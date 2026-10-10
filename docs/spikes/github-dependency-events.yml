@@ -1,0 +1,248 @@
+$schema: https://refinery.systems/ontology/spike
+title: GitHub events that carry dependency and Project changes
+
+relationships:
+  mitigates:
+    - github-events-incomplete
+  # GAP-EDGE: the spike schema defines only `mitigates`; `references` is the
+  # best fit for the technical design these findings inform.
+  references:
+    - durable-event-delivery
+
+objective:
+  - Which changes to dependencies, sub-issues, and Project items produce webhook deliveries, and what events and actions do they carry?
+  - Which changes must Manifold discover by polling the GitHub API instead?
+  - What does the one-repository-one-Project assumption look like in the GitHub API?
+
+background:
+  current-design: >-
+    The durable-event-delivery design assumes webhook deliveries carry all
+    required facts about dependency changes (blocked-by added or removed,
+    blocking issue closed or reopened), sub-issue changes, and Project item
+    changes. It specifies topics keyed by issue node id because Project item
+    deliveries carry no issue number. It includes reconciliation queries and
+    gap recovery through the hook deliveries API for delivery resilience.
+    Intake assumes a repository is linked to exactly one Project.
+  problems:
+    - Uncertainty about which GitHub events exist for dependency and Project changes and whether webhook coverage is complete.
+    - Uncertainty about which changes do not arrive as webhooks and require polling.
+    - Uncertainty about whether the API enforces or merely permits the one-repository-one-Project assumption.
+
+ideas:
+  - Create a throwaway test organization with two repositories and one Project with a custom single-select field. Register organization and repository webhooks (events *) on throwaway infrastructure and log all deliveries to disk with event, action, and full payload.
+  - For each change (add blocked-by relationship, add sub-issue, add issue to Project, etc.), trigger it through the GitHub REST or GraphQL API and match arriving deliveries by timestamp. Record event name, action, hook level, and which fields identify both ends of the relationship.
+  - For changes with no delivery, run GraphQL and REST queries to verify the change is discoverable by polling and to identify the fields (e.g., updatedAt, id, state, counts) needed for diffing against prior state.
+  - Test repository linking and repository-to-Projects relationships through GraphQL schema introspection and mutation operations to determine whether the API enforces or permits a one-to-many or many-to-many model.
+
+environment:
+  location: throwaway branch spike/github-dependency-events in wyrd-company/manifold
+  tools:
+    - Node.js v26 runtime
+    - GitHub GraphQL and REST APIs with fine-grained personal access token
+    - node:http receiver with X-Hub-Signature-256 verification
+    - Pinggy SSH tunnel for webhook delivery
+  resources:
+    - docs/technical-designs/durable-event-delivery.yml
+    - GitHub GraphQL schema introspection
+
+findings:
+  webhook-events-all-changes:
+    rating: GREEN
+    notes: >-
+      Measured: every dependency change (blocked-by add and remove), sub-issue
+      change (add and remove), Project item change (add, remove, field value
+      change), and Project-level event (create, close) produced webhook
+      deliveries. No delivery arrived for adding a single-select field to the
+      Project itself or for linking a repository to the Project (the latter
+      mutation was refused by the API due to insufficient token permissions).
+
+  organization-webhook-covers-all:
+    rating: GREEN
+    notes: >-
+      Measured: the organization webhook received deliveries for every
+      repository and project event. Repository webhooks received a duplicate
+      (same X-GitHub-Delivery GUID) for repository-scoped events (issues,
+      dependencies, sub-issues). The organization webhook received both
+      repository and project-scoped events. Organization-level webhooks alone
+      are sufficient; repository webhooks add no new information, only
+      duplication.
+
+  event-action-mapping-by-change:
+    verdict: complete mapping of changes to webhook events and actions
+    measurements:
+      dependency-changes: 4
+      sub-issue-changes: 4
+      project-item-changes: 3
+      project-level-changes: 2
+      no-delivery-changes: 2
+    notes: >-
+      Measured: a receiver logged all deliveries with full payloads for each
+      GitHub API call that changed state. Changes and their resulting events
+      (all via organization webhook; repository webhooks received duplicates):
+      blocked-by add fires blocked_by_added and blocking_added; blocked-by
+      remove fires blocked_by_removed and blocking_removed. For
+      cross-repository relationships, each event arrives at the repository
+      webhook of the involved issue plus organization. Blocking issue close or
+      reopen fires issues.closed or issues.reopened; no delivery is addressed
+      to the blocked issue. Sub-issue add fires sub_issue_added and
+      parent_issue_added (same routing pattern as blocked-by). Sub-issue
+      remove fires sub_issue_removed and parent_issue_removed. Issue add to
+      Project fires projects_v2_item.created then projects_v2_item.edited (Status
+      null to Todo, sender github-project-automation[bot]). Issue remove from
+      Project fires projects_v2_item.deleted. Project field change fires
+      projects_v2_item.edited with changes.field_value (from and to contain
+      field option ids and names). Issue close or reopen while on Project fires
+      issues.closed or issues.reopened plus projects_v2_item.edited automating
+      Status to Done. Reopen the issue: issues.reopened fires; project Status
+      stays Done. Project create fires projects_v2.created; Project close fires
+      projects_v2.closed. Add a single-select field to the Project: no delivery.
+      Link a repository to the Project: mutation refused with FORBIDDEN
+      (insufficient permissions). Measured payload fields identifying both ends
+      of relationships: dependency add/remove carry both issue ids, node ids,
+      numbers, states, and repository names. Sub-issue add/remove carry both
+      issue ids, node ids, repository names. Project item events carry item
+      node_id, content_node_id (the issue), content_type, project_node_id,
+      project_number. Blocking issue close carries the issue and a count of
+      open blocked issues but not which issues are blocked. Inferred: event id
+      is X-GitHub-Delivery GUID, stable across deliveries and redeliveries.
+
+  delivery-guid-stability:
+    verdict: preserved across hook levels and redelivery
+    measurements:
+      paired-deliveries: 34
+      guid-match-rate: "100%"
+    notes: >-
+      Measured: when the same event arrived at both repository and organization
+      webhooks, the X-GitHub-Delivery GUID was identical. All 34 such pairs had
+      matching GUIDs. When a failed delivery was redelivered through the hook
+      deliveries API, the GUID was preserved (same id, new delivery row with
+      redelivery flag). The GUID is stable across redelivery and can serve as
+      an event id for idempotency.
+
+  delivery-guid-ordering:
+    verdict: not sequenced
+    measurements:
+      paired-events: 34
+      random-order-pairs: 34
+      ordered-pairs: 0
+    notes: >-
+      Measured: for events arriving at both repository and organization
+      webhooks, the order was random. Sometimes the repository webhook received
+      the delivery first, sometimes the organization webhook. No pattern was
+      observed; ordering cannot be relied upon for sequencing.
+
+  github-delivery-retry-behavior:
+    verdict: no automatic retry; manual redelivery available via API
+    measurements:
+      attempts-per-event: 1
+      timeout-before-giveup: "within 1 second"
+      manual-redelivery-available: true
+    notes: >-
+      Measured: when the receiver was stopped and returned a 500 error, GitHub
+      marked the delivery failed with status giving up after 1 attempt. No
+      retry occurred over the following minute. The delivery remained visible
+      through the hook deliveries listing API and could be redelivered through
+      the attempts endpoint, returning 202 and redelivering immediately with
+      the same GUID. Manifold must implement redelivery logic and
+      reconciliation to ensure no events are lost.
+
+  payload-content-for-dependencies:
+    verdict: both ends identified within one repository; the local end only across repositories
+    measurements:
+      dependency-events: "issue_dependencies.blocked_by_added, blocked_by_removed, blocking_added, blocking_removed"
+    notes: >-
+      Measured: when both issues are in one repository, blocked-by payloads
+      carry the blocked issue id, number, node id, repository (full_name),
+      and state, plus the blocking issue id, number, node id, repository, and
+      state. For a cross-repository relationship, each delivery carries the
+      issue object only for the issue in its own repository and the other
+      end as its numeric id alone (`blocking_issue_id` or
+      `blocked_issue_id`); the second delivery of the pair carries the other
+      end. Sub-issue deliveries behave the same way with `parent_issue` and
+      `sub_issue`. The closed or reopened issue payload includes
+      issue_dependencies_summary (blocking and blockedBy counts and
+      open/total counts) but not the list of affected issues.
+
+  payload-content-for-project-items:
+    verdict: no issue number; node id is key present in all deliveries
+    measurements:
+      project-item-events: "projects_v2_item.created, edited, deleted"
+    notes: >-
+      Measured: project-v2-item payloads carry the item node_id, content_node_id,
+      content_type, project_node_id, and project_number. The content_node_id
+      identifies the issue, but no issue number or repository name is present.
+      The issue can only be resolved by content_node_id. For field value
+      changes, payloads include field_node_id, field_name, field_type,
+      project_number, and from/to option ids and names.
+
+  polling-coverage-for-gaps:
+    verdict: confirmed discoverable by polling
+    measurements:
+      query-types: GraphQL and REST
+      discovered-via-polling: blocking-issue-closed-via-blocked-side, sub-issue-closed-via-parent, repository-project-links, project-field-definitions, recovery-of-missed-deliveries
+    notes: >-
+      Measured: GraphQL issue query returned issue_dependencies_summary and
+      blockedBy/blocking lists with node ids, numbers, states, and repository
+      names. Changes visible: a blocking issue's close reduced the open count
+      in issueDependenciesSummary.blockedBy from 2 to 1, and the blockedBy node
+      changed state to CLOSED. Sub-issue closure updated subIssuesSummary to
+      completed 1 and percentCompleted 100. Project items query returned item
+      ids and field values with updatedAt. Diff keys: item id presence (absence
+      equals removed), content.id, field value optionId per field. Repository-project
+      links query returned totalCount 0 before and after linking (linking
+      failed due to permissions). Issue updatedAt did not move for dependency
+      add, sub-issue add, or project item add; a since sweep misses these
+      changes.
+
+  issue-number-collision-on-one-project:
+    verdict: confirmed; two repositories on one project can both have issue number 1
+    measurements:
+      repositories-on-project: 2
+      issue-number-collisions: 1
+    notes: >-
+      Measured: both test repositories had an issue numbered 1. Both were added
+      to the same Project. An issue on a Project can only be identified by its
+      content_node_id (which appears in project_v2_item payloads but no issue
+      number). A topic using issue number alone would be ambiguous when
+      multiple repositories feed one Project.
+
+  one-repo-one-project-api-model:
+    verdict: API models as many-to-many; assumption is Manifold policy not API requirement
+    measurements:
+      attempted-links: 2
+      link-failures: 2
+      failure-reason: FORBIDDEN Resource not accessible by personal access token
+      schema-cardinality: ProjectV2 repositories is RepositoryConnection; Repository projectsV2 is ProjectV2Connection
+    notes: >-
+      Measured: linkProjectV2ToRepository and createProjectV2 with repositoryId
+      both returned FORBIDDEN with message Resource not accessible by personal
+      access token. The token lacks the repository Contents permission. Schema
+      introspection showed both directions as connections, not singular fields.
+      A single repository can link to multiple Projects; the assumption is not
+      enforced by GitHub. Inferred: with Contents permission, linking would
+      succeed and the many-to-many model would be observable. The one-repository-one-Project
+      assumption is a Manifold policy choice that can be validated with
+      queries but not enforced by GitHub. Assumed: the same events and payloads
+      result from web interface changes, not just API; GitHub App webhooks see
+      the same events as organization webhooks; Contents permission is the only
+      missing permission for linking.
+
+conclusion: >-
+  Every dependency, sub-issue, Project item, and Project field change produces
+  a webhook delivery. Organization webhook coverage is complete; repository
+  webhooks are duplicates with identical delivery GUIDs. Delivery GUIDs are
+  stable across hook levels and redelivery but arrive in random order,
+  preventing high-water-mark sequencing. A router must expand blocking issue
+  closures through a cached graph because GitHub delivers the event only to the
+  blocking issue. Project item events identify issues only by content_node_id,
+  not issue number; multiple repositories on one Project share issue numbers,
+  making node id the necessary routing key. The GitHub API models
+  repository-project relationships as many-to-many; the one-repository-one-Project
+  is a choice not enforced by the API. GitHub makes one delivery attempt then
+  stops; redelivery via hook deliveries API and reconciliation queries (issue
+  dependencies, sub-issues, project items) are needed on resume and at slow
+  intervals. Repository linking requires a Contents permission the test token
+  did not hold.
+
+next-steps:
+  - Verify repository linking and the many-to-many relationship by testing with a token that has repository Contents permission, to confirm whether Manifold's one-repo-one-Project assumption is necessary or if policy enforcement is needed (requires explicit product owner approval for the Contents permission scope).

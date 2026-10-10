@@ -1,0 +1,394 @@
+# ---
+# relationships:
+#   # GAP-EDGE: no asset edge is declared; `asset-of` names the specification
+#   # this native definition belongs to.
+#   asset-of: portfolio-api
+# ---
+openapi: 3.1.0
+info:
+  title: Manifold portfolio API
+  version: 0.1.0
+  description: >-
+    The portfolio endpoint of Manifold's API: the portfolio read with
+    allocations, accounts, windows, balances, pricing, and the warnings of
+    the declaration in force.
+security: []
+paths:
+  /api/portfolio:
+    get:
+      operationId: readPortfolio
+      summary: Read the portfolio in force with each item's balance per account.
+      responses:
+        "200":
+          description: The portfolio items, the accounts, and the balances at `at`.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioResponse"
+        "404":
+          $ref: "#/components/responses/Error"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Error"
+components:
+  headers:
+    NoStore:
+      schema:
+        const: no-store
+  responses:
+    Error:
+      description: An error with its kind and message.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowed:
+      description: A method the endpoint does not take.
+      headers:
+        Allow:
+          schema:
+            const: GET
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Commit:
+      type: string
+      pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    Instant:
+      type: string
+      format: date-time
+      description: An ISO 8601 UTC instant with milliseconds.
+    Amount:
+      type: integer
+      minimum: 0
+      description: An amount in the account's native unit, as the ledger holds it; millionths of a US dollar for `usd`.
+    SignedAmount:
+      type: integer
+      description: An amount in the account's native unit that may be negative.
+    Percent:
+      type: number
+      minimum: 0
+      maximum: 100
+      description: A percentage with at most two decimal places.
+    DeclaredName:
+      type: string
+      pattern: "^[a-z][a-z0-9-]{0,63}$"
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum:
+            - not-found
+            - method-not-allowed
+            - internal
+        message:
+          type: string
+    PortfolioResponse:
+      type: object
+      additionalProperties: false
+      required: [commit, at, accounts, items, unallocated, pricing, warnings]
+      properties:
+        commit:
+          description: The commit of the declaration in force; null before the first accepted declaration.
+          oneOf:
+            - $ref: "#/components/schemas/Commit"
+            - type: "null"
+        at:
+          $ref: "#/components/schemas/Instant"
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Account"
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Item"
+        unallocated:
+          type: array
+          items:
+            $ref: "#/components/schemas/Unallocated"
+        pricing:
+          $ref: "#/components/schemas/Pricing"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+    Account:
+      type: object
+      additionalProperties: false
+      required: [name, declared]
+      properties:
+        name:
+          $ref: "#/components/schemas/DeclaredName"
+        declared:
+          type: boolean
+          description: Whether the accounts declaration in force declares the account.
+        archived:
+          type: boolean
+          description: True for an account the accounts declaration in force archives.
+        lastUsedAt:
+          $ref: "#/components/schemas/Instant"
+          description: The time of the latest call the service holds that charged the account.
+        unit:
+          enum: [usd]
+        kind:
+          enum: [api, subscription]
+        capacity:
+          type: object
+          additionalProperties: false
+          required: [amount, reset, every]
+          properties:
+            amount:
+              type: integer
+              minimum: 1
+              description: The declared amount converted to the ledger's integer.
+            reset:
+              type: string
+              description: The declared reset, as declared.
+            every:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              maxProperties: 1
+              properties:
+                hours:
+                  type: integer
+                  minimum: 1
+                days:
+                  type: integer
+                  minimum: 1
+                months:
+                  type: integer
+                  minimum: 1
+        window:
+          $ref: "#/components/schemas/Window"
+    Pricing:
+      type: object
+      additionalProperties: false
+      required: [bundledCommit, bundledModels, overrides, unpriced, unmetered]
+      properties:
+        bundledCommit:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+          description: The LiteLLM commit the bundled price table was generated from.
+        bundledModels:
+          type: integer
+          minimum: 0
+        overrides:
+          type: integer
+          minimum: 0
+          description: The number of model entries of `prices.yml` in force.
+        unpriced:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [provider, model, postings]
+            properties:
+              provider:
+                enum: [claude, codex, cursor, grok, opencode]
+              model:
+                oneOf:
+                  - type: string
+                    minLength: 1
+                  - type: "null"
+              postings:
+                type: integer
+                minimum: 1
+        unmetered:
+          description: Each provider and model with calls whose provider records no token counts.
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [provider, model, postings]
+            properties:
+              provider:
+                enum: [claude, codex, cursor, grok, opencode]
+              model:
+                oneOf:
+                  - type: string
+                    minLength: 1
+                  - type: "null"
+              postings:
+                type: integer
+                minimum: 1
+    Window:
+      type: object
+      additionalProperties: false
+      required: [key, opensAt, closesAt, capacity, used]
+      properties:
+        key:
+          type: string
+        opensAt:
+          $ref: "#/components/schemas/Instant"
+        closesAt:
+          $ref: "#/components/schemas/Instant"
+        capacity:
+          $ref: "#/components/schemas/Amount"
+        used:
+          $ref: "#/components/schemas/Amount"
+    Item:
+      type: object
+      additionalProperties: false
+      required:
+        [id, parent, title, other, archived, projects, activeTasks, completedTasks, allocations]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: A declared item id, or `other` or `<parent>/other` for an Other item.
+        parent:
+          oneOf:
+            - type: string
+            - type: "null"
+        title:
+          type: string
+          minLength: 1
+        other:
+          type: boolean
+        archived:
+          type: boolean
+        projects:
+          type: object
+          additionalProperties: false
+          required: [github, t3code]
+          properties:
+            github:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [binding, owner, number]
+                properties:
+                  binding:
+                    type: string
+                  owner:
+                    type: string
+                  number:
+                    type: integer
+                    minimum: 1
+            t3code:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [environment, project, via]
+                properties:
+                  binding:
+                    type: string
+                    description: Present for `via` `binding`.
+                  environment:
+                    type: string
+                  project:
+                    type: string
+                  via:
+                    enum: [binding, association, created]
+                  actorId:
+                    type: string
+                    description: The creating actor; present for `via` `created`.
+        activeTasks:
+          type: integer
+          minimum: 0
+        completedTasks:
+          type: integer
+          minimum: 0
+          description: The ended actors the store keeps whose portfolio item is the item or an item under it.
+        allocations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Allocation"
+        unallocated:
+          type: array
+          items:
+            $ref: "#/components/schemas/Unallocated"
+    Allocation:
+      type: object
+      additionalProperties: false
+      required:
+        - account
+        - declared
+        - guarantee
+        - amount
+        - actual
+        - outstanding
+        - available
+        - reservable
+        - lifetime
+      properties:
+        account:
+          $ref: "#/components/schemas/DeclaredName"
+        declared:
+          type: boolean
+          description: Whether the declaration in force has an allocation row for the item and account.
+        guarantee:
+          $ref: "#/components/schemas/Percent"
+        ceiling:
+          $ref: "#/components/schemas/Percent"
+        weight:
+          type: integer
+          minimum: 1
+        pacing:
+          type: object
+          additionalProperties: false
+          required: [burst]
+          properties:
+            burst:
+              $ref: "#/components/schemas/Percent"
+        amount:
+          $ref: "#/components/schemas/Amount"
+        actual:
+          $ref: "#/components/schemas/Amount"
+        outstanding:
+          $ref: "#/components/schemas/Amount"
+        available:
+          $ref: "#/components/schemas/SignedAmount"
+        reservable:
+          $ref: "#/components/schemas/Amount"
+        lifetime:
+          $ref: "#/components/schemas/Amount"
+    Unallocated:
+      type: object
+      additionalProperties: false
+      required: [account, percent, amount]
+      properties:
+        account:
+          $ref: "#/components/schemas/DeclaredName"
+        percent:
+          $ref: "#/components/schemas/Percent"
+        amount:
+          $ref: "#/components/schemas/Amount"
+    Finding:
+      type: object
+      additionalProperties: false
+      required: [file, kind, location, severity, message]
+      description: A warning of the declaration in force, as `lintAllocatedAccounts` gives it.
+      properties:
+        file:
+          const: portfolio
+        kind:
+          type: string
+          minLength: 1
+        location:
+          type: string
+          description: An RFC 6901 JSON Pointer in the file's document.
+        severity:
+          const: warning
+        message:
+          type: string
+        details:
+          type: object

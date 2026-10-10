@@ -1,0 +1,159 @@
+/* ---
+relationships:
+  implements: operator-console
+--- */
+.epics-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.epics-toolbar select {
+  max-width: 360px;
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+.epics-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.epics-toolbar label:first-child {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.epic-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+.epic-canvas {
+  height: 520px;
+}
+.epic-node {
+  width: 152px;
+  height: 84px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--tile);
+  box-shadow: 0 1px 2px #0001;
+  transition: opacity 150ms;
+}
+.epic-node.outside {
+  border-style: dashed;
+}
+.epic-node.selected {
+  border: 2px solid var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+.epic-node button {
+  pointer-events: all;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  text-align: left;
+  border: 0;
+  background: none;
+  color: inherit;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.epic-node button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+.epic-node-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.epic-node-top .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.epic-node-title {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 15px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.epic-node-lifecycle {
+  font-size: 9px;
+  line-height: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  margin-top: auto;
+}
+.epic-badge {
+  font-size: 8px;
+}
+.epic-done {
+  color: var(--success-foreground);
+}
+.epic-node .hollow {
+  border: 1px solid var(--muted-foreground);
+  background: none;
+}
+.epic-node .react-flow__handle {
+  visibility: hidden;
+}
+.epic-selection {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+}
+.epic-chain {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.epic-chain > span {
+  direction: ltr;
+  display: inline-block;
+}
+.epic-legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+.epic-legend .outside {
+  border: 1px dashed var(--border);
+  padding: 0 3px;
+}
+.primary-text {
+  color: var(--primary);
+}
+.epics-warning {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--warning-foreground);
+  border-radius: 6px;
+  color: var(--warning-foreground);
+}

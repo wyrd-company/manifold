@@ -1,0 +1,29 @@
+# GAP-SCHEMA: the WIP risk schema requires slug and response; artifact IDs
+# derive from filenames and its declared property is response-strategy.
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  # GAP-EDGE: the risk schema declares no edges; mitigated-by is the best fit.
+  mitigated-by:
+    - github-event-source
+    - operator-console
+    - intake
+    - gate-runtime
+title: GitHub mirror reads may grow with intake and gate population
+description: >-
+  Console Board, Task, and Epics requests, intake record checks and
+  reconciles, and gate grant rounds each use one mirror read and the
+  tracked issue index built from it. The intake runner reads the
+  whole mirror for each issue it takes, so a reconcile that queues every
+  tracked issue reads the mirror once per issue. Large Projects can occupy
+  the service thread long enough to delay delivery and operator requests.
+categories: [technical]
+likelihood: 2
+impact: 3
+response-strategy: mitigate
+status: open
+# Mitigation:
+# Console read, intake record check and reconcile, and grant round tests
+#   count exactly one tracked mirror read per request, check, or grant round
+#   with 10 and 1,000 tracked issues. The intake runner's per-issue reads
+#   need an equivalent measurement and a read of one issue that does not
+#   build every tracked issue.

@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Weight
+description: >-
+  A portfolio item's share of the unallocated remainder among its siblings with waiting work.

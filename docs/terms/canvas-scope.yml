@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+relationships:
+  # GAP-EDGE: the term schema declares no relationship edges; `references`
+  # names the artifacts that define and use this term.
+  references:
+    - operator-console
+title: Canvas scope
+description: >-
+  What the blueprint canvas draws: the whole blueprint, or one compound or
+  parallel state with every state nested in it and the states outside it
+  that its transitions reach. It is held in the editor's URL, never in the
+  blueprint or the draft.

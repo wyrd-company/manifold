@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Capacity
+description: >-
+  What an account can spend in a window.

@@ -1,0 +1,55 @@
+# GAP-SCHEMA: the risk schema is marked WIP; as in `github-events-incomplete`,
+# no slug is authored and the property is spelled `response-strategy`.
+$schema: https://refinery.systems/ontology/risk
+title: Anyone who reaches Manifold's HTTP host can use its API
+
+# GAP-EDGE: the risk schema declares no relationship-types; `mitigated-by`
+# names the decision and the configuration that bound the exposure.
+relationships:
+  mitigated-by:
+    - serve-the-api-without-authentication
+    - http-host-configuration
+    - service-distribution
+  related-to:
+    - escalation-links-exposed
+    - service-assembly
+    - blueprints-api
+    - process-repository
+
+description: >-
+  Manifold serves its API without authentication and leaves access
+  control to the deployment. A host bound beyond loopback, or a proxy that
+  forwards every path so that GitHub can reach the webhook path, lets
+  anyone who reaches it read every actor, answer any open escalation,
+  push usage that the ledger posts as actuals, read every blueprint, and
+  save any blueprint, which commits and pushes it to the process
+  repository as the GitHub App. A wrong answer moves an actor, releases a
+  held actor, or returns a stranded token; false usage spends a portfolio
+  item's balance and holds back the tasks behind its gates; a saved
+  blueprint changes what every new actor runs, including the prompts and
+  permission level of the agent threads it starts, and stays in the
+  repository's history.
+
+categories:
+  - security
+
+likelihood: 2
+impact: 5
+
+response-strategy: mitigate
+
+status: open
+
+# Mitigation: the host binds `127.0.0.1` by default. A deployment that must
+# be reached from outside puts a proxy in front that forwards exactly
+# `POST /webhooks/github`, whose deliveries the GitHub source verifies by
+# signature, and `GET /escalations/{id}` and `POST /escalations/{id}/answer`,
+# which need the escalation's key, as `service-distribution` states.
+# A page on another site cannot drive the save from the operator's browser:
+# the save takes only `application/json`, so a cross-site request needs a
+# preflight the host never grants, and a request marked
+# `Sec-Fetch-Site: cross-site`, or whose `Origin` matches neither its
+# `Host` nor its `X-Forwarded-Host`, answers `403`.
+# A DNS-rebinding page, whose origin and `Host` agree, is not stopped by
+# that check. A save never force-pushes, so every saved change is a commit
+# on the branch that `git revert` undoes.
