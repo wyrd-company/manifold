@@ -95,6 +95,9 @@ tasks:
       - node packages/service/scripts/package-service.mjs '{{.ARCH | default ""}}'
 
   package:smoke:
-    desc: Start the native service archive outside the workspace and check upgrades
+    desc: Check the isolated archive and upgrades (MODE=short or full; default full)
     cmds:
+      - node --test packages/service/scripts/smoke-selection.test.mjs packages/service/scripts/upgrade-modes.test.mjs
       - node packages/service/scripts/package-smoke.mjs
+    env:
+      SMOKE_MODE: '{{.MODE | default "full"}}'

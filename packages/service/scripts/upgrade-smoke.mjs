@@ -3,6 +3,7 @@
 //   verifies: service-distribution
 // ---
 import assert from "node:assert/strict";
+import { selectCut } from "./smoke-selection.mjs";
 import { execFile } from "node:child_process";
 import {
   chmod,
@@ -54,7 +55,9 @@ export async function checkUpgrades({
   tree,
   checkStart,
   start,
+  mode = "full",
 }) {
+  assert(["short", "full"].includes(mode), "Smoke mode must be short or full");
   const directory = join(temporary, "recovery");
   const templates = join(temporary, "templates");
   const references = join(temporary, "references");
@@ -204,6 +207,7 @@ fi
     await writeFile(count, "0");
     let index = 0;
     let killed = false;
+    const commands = [];
     for (const args of recovery) {
       try {
         await run("sh", [join(directory, "manifold-upgrade.sh"), ...args], {
@@ -224,10 +228,16 @@ fi
         killed = true;
         break;
       }
+      const operations = (await readFile(log, "utf8")).trim().split("\n").filter(Boolean);
+      while (commands.length < operations.length) commands.push(args[0]);
       index++;
     }
     if (stop) assert(killed, `Stop ${stop} was not reached`);
-    return { operations: (await readFile(log, "utf8")).trim().split("\n").filter(Boolean), index };
+    return {
+      operations: (await readFile(log, "utf8")).trim().split("\n").filter(Boolean),
+      index,
+      commands,
+    };
   }
   async function verify(expected) {
     assert.deepEqual((await state()).roles, expected, "Recovery reached the wrong installs");
@@ -282,6 +292,7 @@ fi
   const covered = new Set();
   let stops = 0;
   const startedEnds = new Set();
+  const selectedCuts = new Set();
   for (const [index, item] of worklist.entries()) {
     if (index % 10 === 0)
       console.log(
@@ -299,6 +310,25 @@ fi
       if (description.startsWith("tar ")) cuts.push({ during: true, removalTarget: 0 });
       for (const removalTarget of removalTargets.keys()) cuts.push({ during: true, removalTarget });
       for (const { during, removalTarget } of cuts) {
+        // Determine the command from each invocation, rather than infer it from filesystem operations.
+        const operationCommand = complete.commands[operation];
+        const cut = during ? removalTargets[removalTarget] || "extraction" : "after";
+        // The same shell operation serves distinct recovery paths. Keep those
+        // paths separate while avoiding every repeated state in the full graph.
+        let recovery = "";
+        if (operation === 0) recovery = JSON.stringify([item.origin, item.input.scratch]);
+        if (description === "mv -- manifold-service.next manifold-service.discard")
+          recovery =
+            operationCommand === "prepare"
+              ? complete.operations
+                  .slice(0, operation)
+                  .includes("mv -- manifold-service.staging/manifold-service manifold-service.next")
+                ? "equal-next"
+                : "present-next"
+              : item.input.roles[0]
+                ? "current-present"
+                : "current-absent";
+        if (!selectCut(mode, selectedCuts, operationCommand, description, cut, recovery)) continue;
         await restore(item.input);
         const stopped = await recover(item.recovery, operation + 1, during, removalTarget);
         assert.equal(stopped.operations.at(-1), description);
@@ -383,6 +413,20 @@ fi
     "Cleanup between the two scratch removals was not swept",
   );
   console.log(
-    `Upgrade smoke passed: six cases, ${worklist.length} recovery states, ${stops} SIGKILL stops, ${startedEnds.size} distinct origin/end starts; recovery-only operations covered.`,
+    JSON.stringify({
+      mode,
+      operationCoverage: [...selectedCuts].map((key) => JSON.parse(key)).sort(),
+    }),
   );
+  console.log(
+    `Upgrade smoke (${mode}) passed: six cases, ${worklist.length} recovery states, ${stops} SIGKILL stops, ${startedEnds.size} distinct origin/end starts; recovery-only operations covered.`,
+  );
+  return {
+    mode,
+    cases: 6,
+    recoveryStates: worklist.length,
+    stops,
+    starts: startedEnds.size,
+    operations: [...selectedCuts].map((key) => JSON.parse(key)),
+  };
 }

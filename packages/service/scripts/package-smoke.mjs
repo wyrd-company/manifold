@@ -16,6 +16,8 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const root = resolve(import.meta.dirname, "../../..");
 const { version } = JSON.parse(await readFile(join(root, "packages/service/package.json"), "utf8"));
+const mode = process.env.SMOKE_MODE || "full";
+assert(["short", "full"].includes(mode), "SMOKE_MODE must be short or full");
 const archive = resolve(
   process.argv[2] ||
     join(root, `dist/packages/manifold-service-${version}-linux-${process.arch}.tar.gz`),
@@ -160,7 +162,16 @@ try {
     `processRepository:\n  url: http://127.0.0.1:1/recipes.git\n  directory: state/process\nstore:\n  file: state/service.sqlite\nhttp:\n  host: 127.0.0.1\n  port: 0\n`,
   );
   await checkStart(current, configuration);
-  await checkUpgrades({ archive, temporary, deployment, configuration, tree, checkStart, start });
+  await checkUpgrades({
+    archive,
+    temporary,
+    deployment,
+    configuration,
+    tree,
+    checkStart,
+    start,
+    mode,
+  });
   process.stdout.write(
     "Archive smoke passed: isolation, native binding, start, HTTP, stop, upgrade recovery.\n",
   );
