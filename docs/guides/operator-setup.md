@@ -424,6 +424,11 @@ directories this environment's T3 Code server and providers use:
 | Grok               | `GROK_HOME`, else `~/.grok`                         |
 | OpenCode           | `OPENCODE_DATA_DIR`, else `$XDG_DATA_HOME/opencode` |
 
+Cursor records no token counts for the sessions T3 Code runs, which it keeps
+under `~/.cursor/acp-sessions/`. Their calls reach the task with their model
+and time as unmetered calls, with no tokens and no cost, and the console counts
+them apart from priced calls.
+
 A session pushed before its thread is in that database is not attributed to a
 task. Run the push with the same homes as the T3 Code server, the first time
 too. `--state-dir` keeps what the push has sent, by default

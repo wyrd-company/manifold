@@ -11,6 +11,7 @@ relationships:
     - usage-intake
     - t3code-session-mapping
     - task-usage-unattributable
+    - count-cursor-calls-as-unmetered
 
 description: >-
   Cursor keeps a session that T3 Code runs in its ACP session store, which

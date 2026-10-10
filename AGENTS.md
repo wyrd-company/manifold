@@ -69,7 +69,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **board** a KANBAN board
 - **boundary transition** a transition with exactly one end inside a canvas scope, drawn between the state inside and a node that stands for the state outside.
 - **bundle** the blueprints one Manifold build ships, by path, identified by a digest of their texts; a process repository file at the same path replaces a bundled blueprint.
-- **call** one model request recorded in a provider session file, with its timestamp, model, and token counts.
+- **call** one model request recorded in a provider session file, with its timestamp, model, and token counts when the provider records them.
 - **callback** an imperative actor that runs until its state exits, receiving and sending events.
 - **canvas scope** what the blueprint canvas draws: the whole blueprint, or one compound or parallel state with every state nested in it and the states outside it that its transitions reach, held in the editor's URL, never in the blueprint or the draft.
 - **capacity** what an account can spend in a window.
