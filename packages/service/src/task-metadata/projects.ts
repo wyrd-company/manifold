@@ -275,7 +275,7 @@ export function createProjects(
         outcomes[outcomes.findIndex((o) => o.id === c.id)] = { ...c, outcome: "applied" };
     }
     for (const scope of scopes)
-      for (const group of planScopeConfiguration(scope).writes) {
+      for (const group of planScopeConfiguration(scope, request.removeUndeclared).writes) {
         if (group.changes.some((change) => change.requiresRemoval) && !request.removeUndeclared)
           continue;
         try {

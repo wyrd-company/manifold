@@ -2,6 +2,7 @@
 // relationships:
 //   implements: task-metadata
 // ---
+import { acceptOrganization } from "./organization-accept.ts";
 import { isMap, isSeq, parseDocument } from "yaml";
 import { matchFields } from "./plan.ts";
 import type { PlanChange, PlanInput } from "./project-types.ts";
@@ -15,6 +16,10 @@ export function acceptFields(
   const document = parseDocument(text);
   const matches = matchFields(input);
   for (const change of changes.filter((c) => c.side === "declaration")) {
+    if (change.scope?.kind === "organization") {
+      acceptOrganization(document, change, input);
+      continue;
+    }
     const path = ["projects", binding, "fields", change.target.taskField!];
     if (change.action === "remove") {
       document.deleteIn(path);

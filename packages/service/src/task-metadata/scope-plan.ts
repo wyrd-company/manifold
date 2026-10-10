@@ -2,6 +2,7 @@
 // relationships:
 //   implements: task-metadata
 // ---
+import { organizationPlan } from "./organization-plan.ts";
 import { scopeKey } from "@wyrd-company/manifold-shared";
 import type { OwnedEntity } from "@wyrd-company/manifold-shared";
 import type {
@@ -152,7 +153,12 @@ function write(
   throw new TypeError("Entity does not belong to its storage scope");
 }
 /** Shared entity matching and dispatch. Kind-specific adapters extend comparison at this seam. */
-export function planScopeConfiguration(input: ScopeInput): ScopePlan {
+export function planScopeConfiguration(input: ScopeInput, remove = true): ScopePlan {
+  return input.scope.kind === "organization"
+    ? organizationPlan(input, remove)
+    : sharedScopePlan(input);
+}
+function sharedScopePlan(input: ScopeInput): ScopePlan {
   if (input.observed?.status !== "ready") return { changes: [], writes: [], applied: undefined };
   const changes: PlanChange[] = [];
   const writes: { write: ScopeEntityWrite; changes: readonly PlanChange[] }[] = [];

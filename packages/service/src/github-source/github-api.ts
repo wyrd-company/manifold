@@ -367,6 +367,26 @@ export function createGitHubApi(options: GitHubSourceOptions, clock: RouterClock
       controller?.abort();
     },
     query,
+    rest<T>(
+      owner: string,
+      route: string,
+      parameters: Record<string, unknown>,
+      signal?: AbortSignal,
+    ): Promise<{ data: T }> {
+      return call(
+        owner,
+        async (token, signal) => {
+          const response = await request(route, {
+            ...parameters,
+            baseUrl: options.configuration.apiUrl,
+            headers: { authorization: `token ${token}` },
+            request: { signal },
+          });
+          return { data: response.data as T };
+        },
+        signal,
+      );
+    },
     async readBody(owner: string, id: string, signal?: AbortSignal) {
       const data = await query<{
         node: { body: string; lastEditedAt: string | null; createdAt: string } | null;

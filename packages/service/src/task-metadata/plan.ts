@@ -2,6 +2,7 @@
 // relationships:
 //   implements: task-metadata
 // ---
+import { organizationChangeOwnedBy } from "./organization-plan.ts";
 import { planScopeConfiguration } from "./scope-plan.ts";
 import { createHash } from "node:crypto";
 import type { ProjectMetadata } from "@wyrd-company/manifold-shared";
@@ -271,7 +272,11 @@ export function planProjectConfiguration(input: PlanInput): ProjectPlan {
     );
     const local = reached
       .flatMap((scope) => planScopeConfiguration(scope).changes)
-      .filter((change) => change.target.taskField === taskField);
+      .filter(
+        (change) =>
+          change.target.taskField === taskField ||
+          organizationChangeOwnedBy(reached, change, taskField),
+      );
     const ready =
       reached.length > 0 && reached.every((scope) => scope.observed?.status === "ready");
     statuses.push({

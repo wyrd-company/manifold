@@ -3,6 +3,7 @@
 //   implements: github-event-source
 // ---
 import { createHash } from "node:crypto";
+import { organizationFields } from "./organization-fields.ts";
 import { taskWriteRecords, writeBody } from "./body-write.ts";
 import type { StorageScope } from "@wyrd-company/manifold-shared";
 import { trackedIssueIndex } from "./mirror.ts";
@@ -41,6 +42,7 @@ export function createRunner(
   clock: RouterClock,
 ) {
   const api = createGitHubApi(options, clock);
+  const organization = organizationFields(api, clock.now, mirror.scopeConfiguration);
   const moves = moveRecords(options.store.connection);
   const taskWrites = taskWriteRecords(options.store.connection);
   type Job =
@@ -744,14 +746,16 @@ export function createRunner(
           message: `GitHub owner is not configured: ${owner}`,
           readAt: clock.now(),
         }
-      : options.storageAdapters
-        ? await options.storageAdapters.observeScope(scope, signal)
-        : {
-            scope,
-            status: "unsupported",
-            message: "Storage adapter is unavailable",
-            readAt: clock.now(),
-          };
+      : scope.kind === "organization"
+        ? await organization.observeScope(scope, signal)
+        : options.storageAdapters
+          ? await options.storageAdapters.observeScope(scope, signal)
+          : {
+              scope,
+              status: "unsupported",
+              message: "Storage adapter is unavailable",
+              readAt: clock.now(),
+            };
     options.store.connection.transaction(() => mirror.observeScope(observed));
     return observed;
   }
@@ -762,9 +766,12 @@ export function createRunner(
       serial(() => scopeObservation(scope, signal), signal),
     writeScopeEntity: (write: ScopeEntityWrite, signal?: AbortSignal) =>
       serial(async () => {
-        if (!options.storageAdapters)
+        if (!("organization" in write) && !options.storageAdapters)
           throw new GitHubWriteError("unavailable", "Storage adapter is unavailable");
-        const entity = await options.storageAdapters.writeScopeEntity(write, signal);
+        const entity =
+          "organization" in write
+            ? await organization.writeScopeEntity(write, signal)
+            : await options.storageAdapters!.writeScopeEntity(write, signal);
         const scope: StorageScope =
           "organization" in write
             ? { kind: "organization", organization: write.organization }
@@ -823,6 +830,8 @@ export function createRunner(
               signal,
             );
             mirror.enqueue("item", item.nodeId, project.nodeId);
+          } else if (storage.kind === "issue-field" || storage.kind === "issue-type") {
+            await organization.writeTaskField(write, issue, signal);
           } else {
             if (!options.storageAdapters)
               throw new GitHubWriteError("unavailable", "Storage adapter is unavailable");
