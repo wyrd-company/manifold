@@ -419,8 +419,8 @@ findings:
       partial final JSONL record and expect an availability/error result. These are contract
       experiments, not claims that those errors or values were observed on a provider.
   percentage-and-token-ratio:
-    verdict: "No stable empirical ratio established: Claude changes are below displayed precision;
-      Codex account-wide deltas are confounded."
+    verdict: "No stable empirical ratio established: Claude session and all-model weekly changes
+      are below displayed precision; Codex account-wide deltas are confounded."
     measurements:
       live-pairs:
         claude: 2
@@ -528,8 +528,8 @@ findings:
       crash. No reset is inferred from a process restart. Existing schema
       steps are edited in place; no migration or store conversion is proposed.
   claude-live-pairs:
-    verdict: Live five-hour and two weekly readings; two completed model calls below displayed
-      percentage resolution.
+    verdict: Live session, all-model weekly and Fable weekly readings; two completed calls show
+      no displayed movement in the session and all-model weekly windows.
     measurements:
       caller: Claude Code 2.1.294, existing default subscription login; account identity omitted.
       readings:
@@ -575,8 +575,6 @@ findings:
           sessionPercentAfter: 2
           allModelsWeeklyBefore: 12
           allModelsWeeklyAfter: 12
-          modelScopedWeeklyBefore: 2
-          modelScopedWeeklyAfter: 2
         - observedAt: 2026-10-10T03:02:11.844Z
           finishedAt: 2026-10-10T03:02:13.313Z
           model: claude-sonnet-5-5
@@ -591,20 +589,25 @@ findings:
           sessionPercentAfter: 2
           allModelsWeeklyBefore: 12
           allModelsWeeklyAfter: 12
-          modelScopedWeeklyBefore: 2
-          modelScopedWeeklyAfter: 2
+      fableOverageIncludedWeekly:
+        reportedWindow: Current week (Fable)
+        usedPercentReadings: [2, 2, 2]
+        scope: Fable overage-included weekly bucket returned by /usage.
+        applicability: This is not a model-scoped quota measurement for either the Haiku or
+          Sonnet call; only session and all-model weekly readings are paired with those calls.
       totalApiEquivalentUsd: 0.0036185
-      observedUnits: Integer used percentages; five-hour session, all-model weekly, model-scoped
-        weekly. Exact rounding rule is not reported.
+      observedUnits: Integer used percentages; five-hour session, all-model weekly and Fable
+        overage-included weekly. Exact rounding rule is not reported.
       observedResets: CLI reports Oct 10 07:59 UTC for session and Oct 14 16:59 UTC for both
         weeklies; retains reported minute precision, not an invented exact second.
       cacheScope: Both calls report one-hour cache creation, zero cache reads. No warm-cache
         comparison available from these tiny prompts.
       preliminaryRead: Before controlled sampling, an untimed /usage read showed session 0%,
-        all-model weekly 11%, model weekly 2%; the first timed baseline already showed 2%, 12%,
+        all-model weekly 11%, Fable weekly 2%; the first timed baseline already showed 2%, 12%,
         2%.
       stop: Two tiny completed calls, 1678 disjoint top-level tokens including cache creation. No
-        displayed movement; stop rather than spend enough to force a percentage tick.
+        displayed movement in session or all-model weekly usage; stop rather than spend enough
+        to force a percentage tick.
       counterMismatch: First call top-level usage input/output 2/33 differs from modelUsage
         input/output 1174/47. Pairing uses top-level per-request usage; discrepancy is
         retained, not silently combined.
@@ -658,10 +661,16 @@ findings:
       firstEvent: 2026-10-05T21:07:19.009Z
       lastEvent: 2026-10-10T03:04:01.732Z
       malformedLines: 0
-      pairing: Adjacent token_count events within one file; require positive total_tokens delta,
-        nondecreasing used percentage, equal model/plan/limit id/window minutes and identical
-        reset field. Skip missing info and fields. Record input, cached-input and output
-        deltas; reasoning is an output subset.
+      pairing: Read each file in record order. Carry the latest preceding turn_context payload
+        model forward to each token_count event in that file. Pair adjacent token_count events
+        with quota; compute token deltas by subtracting their cumulative
+        payload.info.total_token_usage fields, not info.last_token_usage. Require a positive
+        total_tokens delta, nondecreasing used percentage, equal carried model/plan/limit
+        id/window minutes and identical reset field. Skip missing info and fields. Record
+        input_tokens, cached_input_tokens, output_tokens and reasoning_output_tokens deltas;
+        reasoning is an output subset. Split counts by the carried model and compute points
+        per million tokens as (used_percent after minus before) times 1000000 divided by the
+        cumulative total_tokens delta.
       intervals: 7875
       zeroPercentDelta: 7747
       positivePercentDelta: 128
@@ -862,8 +871,9 @@ findings:
 conclusion: >-
   The stable released T3 Code supports six providers. Claude CLI /usage and Codex non-secret
   rollout/native RPC sources are observed live through credential-owning installed CLIs. Claude
-  exposes session and two weekly readings; tiny calls on two models produce no displayed
-  movement. The observed Codex Pro account has a weekly primary window, no secondary and three
+  exposes session, all-model weekly and Fable weekly readings; tiny Haiku and Sonnet calls
+  produce no displayed movement in session or all-model weekly usage. The observed Codex Pro
+  account has a weekly primary window, no secondary and three
   available reset credits. Its 7875 exact-reset paired historical intervals across four models
   do not establish an isolated quota/token ratio: concurrent account use, integer percentages
   and reporting lag confound thread-local tokens. No actual reset or controlled cold/warm
