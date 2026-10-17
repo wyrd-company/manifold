@@ -3,8 +3,8 @@ packages:
 
 # One exact version per shared tool, referenced as `catalog:` by every package.
 catalog:
-  "@types/node": 24.19.0
-  bun: 1.4.2
+  "@types/node": 24.19.2
+  bun: 1.4.3
   typescript: 6.0.3
   vite-plus: 0.3.3
 
